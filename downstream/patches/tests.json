@@ -61,5 +61,12 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0009-Fix-remote-history-test-fixtures.patch": {
+    "regression": [
+      {"platform": "macos", "run": "cd macos && swift test"}
+    ],
+    "related": [],
+    "reason": ""
   }
 }
