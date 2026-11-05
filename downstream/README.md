@@ -19,8 +19,9 @@ credentials in this repository or a patch.
 
 Use `downstream/patch-build` for all ongoing fork work: the upstream pin,
 application mail patches, test registrations, CI, packaging and release tools.
-Do not create a branch per task or per fork release. Existing task branches
-are historical references; do not delete or rewrite them as part of migration.
+Do not create a branch per task or per fork release. Remove obsolete task
+branches only after confirming their commits are retained here. Publish this
+branch before deleting remote task branches; never rewrite published tags.
 
 Application development still happens in disposable prepared trees. Export
 its commits as mail patches and commit the queue and maintenance changes on
