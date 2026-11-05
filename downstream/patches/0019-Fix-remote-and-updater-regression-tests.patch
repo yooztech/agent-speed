@@ -1,0 +1,140 @@
+From 8959c2efda603433cceac18b6ab350efa2299869 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 19:23:47 +0800
+Subject: [PATCH] Fix remote and updater regression tests
+
+---
+ .../AgentSpeed.Presentation/Boards/BoardFeed.cs   |  2 +-
+ .../AgentSpeed.Core.Tests/RemoteConsumerTests.cs  | 12 ++++++------
+ .../UpdatePackageTests.cs                         | 15 ++++++++-------
+ .../UpdateScheduleTests.cs                        |  4 ++--
+ 4 files changed, 17 insertions(+), 16 deletions(-)
+
+diff --git a/windows/src/AgentSpeed.Presentation/Boards/BoardFeed.cs b/windows/src/AgentSpeed.Presentation/Boards/BoardFeed.cs
+index e091996d..df36e28e 100644
+--- a/windows/src/AgentSpeed.Presentation/Boards/BoardFeed.cs
++++ b/windows/src/AgentSpeed.Presentation/Boards/BoardFeed.cs
+@@ -133,7 +133,7 @@ public sealed class BoardFeed
+     }
+ 
+     /// <summary>The all-sources new peak (engine event) for a board tracking every source.</summary>
+-    public bool Accepts(SpeedEvent speedEvent) => _feed.Accepts(speedEvent);
++    public bool Accepts(SpeedEvent speedEvent) => OrbSubset.Accepts(speedEvent, Sources);
+ 
+     /// <summary>Advances the tier and title holds without new data; true when either changed.</summary>
+     public bool Tick(double nowSeconds)
+diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+index ee507564..1f362af8 100644
+--- a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
++++ b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+@@ -31,7 +31,7 @@ public sealed class RemoteConsumerTests
+         var sources = hub.Snapshot.Sources.Where(s => s.HostId.HasValue).ToArray();
+         Assert.Equal(2, sources.Length);
+         Assert.Contains(sources, s => s.HostId == other);
+-        Assert.Single(sources.Where(s => s.HostId == first || s.HostId == duplicate));
++        Assert.Single(sources, s => s.HostId == first || s.HostId == duplicate);
+ 
+         hub.RemoveRemoteHost(other);
+         Assert.Equal(10, hub.Snapshot.Today.Output);
+@@ -48,8 +48,8 @@ public sealed class RemoteConsumerTests
+         hub.UpdateRemoteHost(a, "a", true, json: Snapshot("a", 1).Replace("\"agents\":[]", agents));
+         hub.UpdateRemoteHost(b, "b", true, json: Snapshot("b", 1).Replace("\"agents\":[]", agents));
+ 
+-        var first = Assert.Single(hub.Snapshot.Agents.Where(agent => agent.HostId == a));
+-        var second = Assert.Single(hub.Snapshot.Agents.Where(agent => agent.HostId == b));
++        var first = Assert.Single(hub.Snapshot.Agents, agent => agent.HostId == a);
++        var second = Assert.Single(hub.Snapshot.Agents, agent => agent.HostId == b);
+         Assert.NotEqual(first.Id, second.Id);
+         Assert.NotEqual(first.ParentId, second.ParentId);
+         Assert.Equal(AgentPhase.Generating, first.Phase);
+@@ -61,7 +61,7 @@ public sealed class RemoteConsumerTests
+         var hub = await Task.Run(() => new SpeedHub());
+         var id = Guid.NewGuid();
+         hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 42, "null"));
+-        var unknown = Assert.Single(hub.Snapshot.Sources.Where(s => s.HostId == id));
++        var unknown = Assert.Single(hub.Snapshot.Sources, s => s.HostId == id);
+         Assert.False(unknown.LiveAvailable);
+         Assert.True(unknown.TodayAvailable);
+         Assert.Equal(42, unknown.Today.Output);
+@@ -70,7 +70,7 @@ public sealed class RemoteConsumerTests
+         var status = Assert.Single(hub.Snapshot.RemoteHosts);
+         Assert.False(status.Online);
+         Assert.Equal("offline", status.Error);
+-        var offline = Assert.Single(hub.Snapshot.Sources.Where(s => s.HostId == id));
++        var offline = Assert.Single(hub.Snapshot.Sources, s => s.HostId == id);
+         Assert.False(offline.LiveAvailable);
+         Assert.False(offline.Available);
+         Assert.False(offline.TodayAvailable);
+@@ -117,7 +117,7 @@ public sealed class RemoteConsumerTests
+         var frame = Snapshot("machine", 42).Replace(
+             DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), "2000-01-01");
+         hub.UpdateRemoteHost(id, "host", true, json: frame);
+-        var source = Assert.Single(hub.Snapshot.Sources.Where(s => s.HostId == id));
++        var source = Assert.Single(hub.Snapshot.Sources, s => s.HostId == id);
+         Assert.False(source.TodayAvailable);
+         Assert.Equal(0, hub.Snapshot.Today.Output);
+         Assert.False(hub.Snapshot.RemoteTodayComplete);
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs
+index ad60f201..480e47c0 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs
+@@ -20,7 +20,7 @@ public class UpdatePackageTests
+         Assert.Equal(UpdateFailure.Invalid, exception.Failure);
+     }
+ 
+-    private static ReleaseInfo WithAssets(params ReleaseAsset[] assets) => TestReleases.Release(assets: assets);
++    private static ReleaseInfo WithAssets(params ReleaseAsset[] assets) => TestReleases.Release("v1.2.0-fork.1", assets: assets);
+ 
+     private static PackageEntry Exe(long length = 1000) => new(UpdatePackage.ExecutableName, length);
+ 
+@@ -96,7 +96,7 @@ public class UpdatePackageTests
+     [InlineData(Architecture.Arm64, Arm64)]
+     public void PlanPicksPackageAndChecksums(Architecture architecture, string packageName)
+     {
+-        var release = TestReleases.Release();
++        var release = TestReleases.Release("v1.2.0-fork.1");
+ 
+         var plan = UpdatePackage.Plan(release, architecture, UpdateSource.GitHub);
+ 
+@@ -157,12 +157,13 @@ public class UpdatePackageTests
+     }
+ 
+     [Fact]
+-    public void PlanRejectsDraftsPreReleasesAndUnsupportedArchitectures()
++    public void PlanRejectsDraftsPreReleasesUpstreamAndUnsupportedArchitectures()
+     {
+-        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release(isDraft: true), Architecture.X64, UpdateSource.GitHub));
+-        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release(isPreRelease: true), Architecture.X64, UpdateSource.GitHub));
+-        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release(), Architecture.X86, UpdateSource.GitHub));
+-        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release(), Architecture.Arm, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0-fork.1", isDraft: true), Architecture.X64, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0-fork.1", isPreRelease: true), Architecture.X64, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0"), Architecture.X64, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0-fork.1"), Architecture.X86, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0-fork.1"), Architecture.Arm, UpdateSource.GitHub));
+         Assert.Throws<ArgumentNullException>(() => UpdatePackage.Plan(null!, Architecture.X64, UpdateSource.GitHub));
+         Assert.Throws<ArgumentNullException>(() => UpdatePackage.Plan(TestReleases.Release(), Architecture.X64, null!));
+     }
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs
+index ed19dc3b..7d1c50d2 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs
+@@ -199,13 +199,13 @@ public class UpdateScheduleTests
+     [Fact]
+     public void UnparseableStoredTagIsComparedByTagText()
+     {
+-        var release = TestReleases.Release("v1.2.0") with { Tag = "release-2026-10" };
++        var release = TestReleases.Release("v1.2.0-fork.1") with { Tag = "release-2026-10" };
+ 
+         Assert.True(UpdateSchedule.IsSameVersion(release, "release-2026-10"));
+         Assert.True(UpdateSchedule.IsSameVersion(release, " RELEASE-2026-10 "));
+         Assert.False(UpdateSchedule.IsSameVersion(release, "release-2026"));
+         Assert.Equal(UpdateOffer.Skipped, UpdateSchedule.Evaluate(Current, release, "Release-2026-10", manual: false));
+-        Assert.True(UpdateSchedule.IsSameVersion(release, "v1.2.0"));
++        Assert.True(UpdateSchedule.IsSameVersion(release, "v1.2.0-fork.1"));
+     }
+ 
+     [Fact]
+-- 
+2.41.0
+

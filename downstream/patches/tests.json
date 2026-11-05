@@ -127,5 +127,15 @@
     "regression": [{"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests"}],
     "related": [],
     "reason": ""
+  },
+  "0019-Fix-remote-and-updater-regression-tests.patch": {
+    "regression": [{"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests"}],
+    "related": [],
+    "reason": ""
+  },
+  "0020-Fix-fork-release-feed-boundary-fixture.patch": {
+    "regression": [{"platform": "macos", "run": "cd macos && swift test"}],
+    "related": [],
+    "reason": ""
   }
 }

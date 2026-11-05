@@ -1,0 +1,37 @@
+From 6f0b479c620e02ec1e24ce4e3b4d5bedd4ce6536 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 19:25:12 +0800
+Subject: [PATCH] Fix fork release feed boundary fixture
+
+---
+ macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift b/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift
+index d7861f55..09f9b5b4 100644
+--- a/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift
++++ b/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift
+@@ -197,7 +197,7 @@ struct ReleaseFeedTests {
+ 
+     /// A valid release whose body pads the document to exactly `size` bytes.
+     static func padded(to size: Int) -> Data {
+-        let prefix = #"{"tag_name":"v1.0.0","body":""#
++        let prefix = #"{"tag_name":"v1.0.0-fork.1","body":""#
+         let suffix = #""}"#
+         let filler = String(repeating: "a", count: size - prefix.utf8.count - suffix.utf8.count)
+         return Data((prefix + filler + suffix).utf8)
+@@ -205,9 +205,9 @@ struct ReleaseFeedTests {
+ 
+     @Test func acceptsResponsesUpToTheLimit() throws {
+         let data = Self.padded(to: ReleaseFeed.maxBytes)
+-        #expect(data.count == 2 * 1024 * 1024)
++        #expect(data.count == 20 * 1024 * 1024)
+         let release = try ReleaseFeed.decode(data)
+-        #expect(release.notes.utf8.count == ReleaseFeed.maxBytes - 31)
++        #expect(release.notes.utf8.count == ReleaseFeed.maxBytes - 38)
+     }
+ 
+     @Test func rejectsOversizedResponses() {
+-- 
+2.41.0
+

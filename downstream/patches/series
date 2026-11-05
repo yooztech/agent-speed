@@ -16,3 +16,5 @@
 0016-Select-orb-sources-independently-by-host.patch
 0017-Fix-orb-host-selection-and-peak-regressions.patch
 0018-Fix-remote-snapshot-return-syntax.patch
+0019-Fix-remote-and-updater-regression-tests.patch
+0020-Fix-fork-release-feed-boundary-fixture.patch
