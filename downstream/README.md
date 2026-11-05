@@ -15,6 +15,21 @@ exactly the same keys. The queue carries remote monitoring, native multi-host
 integration, fork release and updater changes, and platform fixes. Never place
 credentials in this repository or a patch.
 
+## Single maintenance branch
+
+Use `downstream/patch-build` for all ongoing fork work: the upstream pin,
+application mail patches, test registrations, CI, packaging and release tools.
+Do not create a branch per task or per fork release. Existing task branches
+are historical references; do not delete or rewrite them as part of migration.
+
+Application development still happens in disposable prepared trees. Export
+its commits as mail patches and commit the queue and maintenance changes on
+`downstream/patch-build`; never copy the patched application tree over this
+maintenance checkout. `main` is not an additional required staging branch.
+Validated release tags are created from the long-lived maintenance branch.
+Published tags and assets remain immutable.
+
+
 ## Remote sources
 
 On macOS and Windows, local sources and enabled SSH-connected Linux hosts
@@ -52,7 +67,7 @@ and byte equality. CI also runs `downstream/test-verify-collector-zip.py` with
 synthetic archives covering missing, non-executable, changed and valid files.
 
 The `Release` workflow runs on `v*` tag pushes in `yooztech/agent-speed`; the
-tagged commit must be an ancestor of `main`. Fork tags use `vX.Y.Z-fork.N`,
+tagged commit must be an ancestor of `downstream/patch-build`. Fork tags use `vX.Y.Z-fork.N`,
 and the version must equal `VERSION` in the prepared tree. For this release,
 the tag is `v1.6.1-fork.2`; see `docs/releases/v1.6.1-fork.2.md` for release
 notes and limitations. The workflow publishes Linux, macOS and Windows
@@ -131,7 +146,9 @@ Registry commands are trusted code: review them before running verification.
 1. Prepare a separate checkout outside the main workspace. Make focused,
    linear commits there, with application code, tests and directly relevant
    product documentation together. Do not include `downstream/` or this fork's
-   handoff document. Do not commit or reset the main workspace.
+   handoff document. Do not reset the maintenance workspace or commit patched
+   application files there; commit only queue and maintenance changes on
+   `downstream/patch-build`.
 2. With a clean development checkout and the configured pin as an ancestor,
    export into another new directory outside the main workspace:
 
