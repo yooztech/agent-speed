@@ -42,6 +42,14 @@ reports exclude remote data. See the [fork release notes](../docs/releases/v1.6.
 for setup, collector requirements and verification limitations.
 Floating orb source settings on macOS and Windows also allow selection by host
 and source, including enabled remote hosts.
+On Windows, global source switches apply to local and remote instances of a
+source. An orb's host/source exclusions are separate: they affect that orb and
+its associated views without excluding the same source on another host.
+Undetected sources do not make an otherwise valid rate incomplete; detected
+sources with unknown rates and offline intervals remain unknown and produce
+history gaps. Chart estimate indicators mean that the visible range contains
+estimated segments, not necessarily that the current rate is being estimated;
+omp does not provide per-token measurements.
 
 ## CI and releases
 

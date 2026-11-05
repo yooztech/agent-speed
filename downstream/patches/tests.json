@@ -147,5 +147,13 @@
     "regression": [{"platform": "windows", "run": "./windows/scripts/test-installer.ps1"}],
     "related": [],
     "reason": ""
+  },
+  "0023-Fix-source-selection-and-estimate-visibility.patch": {
+    "regression": [
+      {"platform": "macos", "run": "cd macos && swift test --filter LiveChartAvailabilityTests"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemoteConsumerTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~OrbFeedTests && dotnet test windows/tests/AgentSpeed.Windows.Tests --filter FullyQualifiedName~DashboardRemoteCompletenessTests"}
+    ],
+    "related": [],
+    "reason": ""
   }
 }
