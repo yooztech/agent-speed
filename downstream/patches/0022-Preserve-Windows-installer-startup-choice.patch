@@ -15,7 +15,7 @@ respecting explicit command-line task selections and later user changes.
 diff --git a/windows/scripts/installer.iss b/windows/scripts/installer.iss
 --- a/windows/scripts/installer.iss
 +++ b/windows/scripts/installer.iss
-@@ -53,14 +53,56 @@ Name: "{userdesktop}\Agent Speed"; Filename: "{app}\AgentSpeed.exe"; WorkingDir:
+@@ -53,13 +53,55 @@ Name: "{userdesktop}\Agent Speed"; Filename: "{app}\AgentSpeed.exe"; WorkingDir:
  const
    RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
  
