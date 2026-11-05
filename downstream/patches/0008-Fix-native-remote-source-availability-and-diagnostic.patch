@@ -1,0 +1,363 @@
+From d6f81af02f07c9bc9f0d7cf9395887a605a56157 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 17:15:04 +0800
+Subject: [PATCH] Fix native remote source availability and diagnostics
+
+---
+ README.md                                     |  3 +
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  1 -
+ .../AgentSpeed/App/RemoteSnapshot.swift       | 12 ++-
+ .../Dashboard/RemoteHostsView.swift           | 18 ++++
+ .../AgentSpeed/History/HistoryViewModel.swift | 48 ++++-----
+ .../RemoteHostStatusTests.swift               | 30 ++++++
+ .../AgentSpeedAppTests/RemoteHostsTests.swift | 98 +++++++++++++++++--
+ 7 files changed, 173 insertions(+), 37 deletions(-)
+ create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteHostStatusTests.swift
+
+diff --git a/README.md b/README.md
+index 19ac5351..021305e2 100644
+--- a/README.md
++++ b/README.md
+@@ -111,6 +111,8 @@ Remote monitoring is opt-in. Configure an SSH host alias in `~/.ssh/config` for
+ logs, including its user, port and identity as needed. Use normal SSH host-key verification, pre-trust the host key,
+ and use noninteractive key or SSH agent authentication. Enable each host in Settings → Sources. Local sources and all
+ enabled remote sources appear together in the native dashboard; source identity includes the host and source kind.
++Settings → Sources shows each host's online, offline or disabled status and its last connection error until a successful
++snapshot arrives.
+ Local diagnostic reports and live reporting contain local data only, not remote data. Remote SSH is independent of the
+ network switch: disable the host to stop it. The app selects its bundled collector for the host architecture, uploads
+ it over SSH and runs it over SSH standard streams. There is no HTTP service, listening port, Python runtime or sudo.
+@@ -119,6 +121,7 @@ The Linux collector reuses the native measurement core, including omp parsing an
+ remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
+ stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
+ On macOS, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
++When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
+ Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
+ response rates use the logged duration. In particular omp commonly writes a response when it completes, so remote
+ monitoring cannot measure per-token streaming speed or infer an unrecorded time to first token. End-to-end speed includes
+diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+index 6c454927..cd5e8a66 100644
+--- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
++++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+@@ -258,7 +258,6 @@ final class RemoteHosts {
+         workers[host.id] = worker
+         states[host.id, default: RemoteHostState()].connectionID = UUID()
+         states[host.id, default: RemoteHostState()].historyReceivedOnConnection = false
+-        states[host.id, default: RemoteHostState()].error = nil
+         worker.start()
+     }
+ 
+diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
+index a5957faf..45e278d0 100644
+--- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
++++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
+@@ -49,6 +49,7 @@ extension RemoteHosts {
+                         source.liveCostRateAvailable = false
+                         source.todayAvailable = false
+                         result.sourceInstances.append(SourceInstance(hostID: host.id, status: source))
++                        if case .noSources = result.state { result.state = .running }
+                         if let index = result.sources.firstIndex(where: { $0.kind == source.kind }) {
+                             result.sources[index].liveRateAvailable = false
+                             result.sources[index].liveCostRateAvailable = false
+@@ -96,7 +97,9 @@ extension RemoteHosts {
+             result.toolsCount += agents.filter { $0.phase == .tools }.count
+             for source in sources {
+                 result.liveRateAvailable = result.liveRateAvailable && source.liveRateAvailable
+-                result.todayAvailable = result.todayAvailable && source.todayAvailable
++                if source.available {
++                    result.todayAvailable = result.todayAvailable && source.todayAvailable
++                }
+                 if source.liveRateAvailable {
+                     result.live.output += source.live.output
+                     result.live.total += source.live.total
+@@ -112,11 +115,16 @@ extension RemoteHosts {
+                     result.todayCost.add(source.todayCost)
+                 }
+                 if let index = result.sources.firstIndex(where: { $0.kind == source.kind }) {
++                    let existingAvailable = result.sources[index].available
+                     result.sources[index].enabled = result.sources[index].enabled || source.enabled
+                     result.sources[index].available = result.sources[index].available || source.available
+                     result.sources[index].sessionCount += source.sessionCount
+                     result.sources[index].activeAgents += source.activeAgents
+-                    result.sources[index].todayAvailable = result.sources[index].todayAvailable && source.todayAvailable
++                    if source.available {
++                        result.sources[index].todayAvailable = existingAvailable
++                            ? result.sources[index].todayAvailable && source.todayAvailable
++                            : source.todayAvailable
++                    }
+                     result.sources[index].liveRateAvailable = result.sources[index].liveRateAvailable && source.liveRateAvailable
+                     result.sources[index].liveCostRateAvailable = false
+                     if source.liveRateAvailable {
+diff --git a/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
+index d24adea4..c978e721 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
+@@ -1,5 +1,17 @@
+ import SwiftUI
+ 
++enum RemoteHostConnectionStatus: String {
++    case disabled = "Disabled"
++    case online = "Online"
++    case offline = "Offline"
++
++    init(host: RemoteHost, state: RemoteHostState?) {
++        if !host.enabled { self = .disabled }
++        else if state?.online == true { self = .online }
++        else { self = .offline }
++    }
++}
++
+ struct RemoteHostSettings: View {
+     let remote: RemoteHosts
+     @State private var label = ""
+@@ -11,6 +23,12 @@ struct RemoteHostSettings: View {
+                     VStack(alignment: .leading) {
+                         Text(host.label.isEmpty ? host.destination : host.label)
+                         Text(host.destination).font(.caption).foregroundStyle(.secondary)
++                        Text(RemoteHostConnectionStatus(host: host, state: remote.states[host.id]).rawValue)
++                            .font(.caption).foregroundStyle(.secondary)
++                        if host.enabled, let error = remote.states[host.id]?.error, !error.isEmpty {
++                            Text(error).font(.caption).foregroundStyle(.secondary)
++                                .textSelection(.enabled)
++                        }
+                     }
+                     Spacer()
+                     Toggle("Enabled", isOn: Binding(get: { host.enabled }, set: { enabled in
+diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+index e380d873..0049d5b5 100644
+--- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
++++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+@@ -21,30 +21,9 @@ final class HistoryViewModel {
+     /// Stored traffic days (METRICS 10.9).
+     let traffic: TrafficStore
+     private let appModel: AppModel?
+-    private var enabledRemoteStates: [RemoteHostState] {
+-        guard let remote = appModel?.remoteHosts else { return [] }
+-        let states = remote.hosts.filter(\.enabled).map { remote.states[$0.id] ?? RemoteHostState() }
+-        var machines: [String: RemoteHostState] = [:]
+-        var unidentified: [RemoteHostState] = []
+-        for state in states {
+-            guard let id = state.snapshot?.machineId else { unidentified.append(state); continue }
+-            if let previous = machines[id] {
+-                let fresh = state.online && state.historyReceivedOnConnection
+-                let previousFresh = previous.online && previous.historyReceivedOnConnection
+-                if fresh != previousFresh {
+-                    if fresh { machines[id] = state }
+-                } else if (state.historyReceivedAt ?? .distantPast) > (previous.historyReceivedAt ?? .distantPast) {
+-                    machines[id] = state
+-                }
+-            } else {
+-                machines[id] = state
+-            }
+-        }
+-        return unidentified + Array(machines.values)
+-    }
+-
+-    var combinedUsage: [DailyUsage] {
+-        guard let remote = appModel?.remoteHosts else { return store.days }
++    /// Select each machine's history per source, using the same connections for status and data.
++    private var remoteHistorySelection: (usage: [DailyUsage], states: [RemoteHostState]) {
++        guard let remote = appModel?.remoteHosts else { return ([], []) }
+         let hosts = remote.hosts.filter(\.enabled).sorted {
+             let left = remote.states[$0.id], right = remote.states[$1.id]
+             let leftFresh = left?.online == true && left?.historyReceivedOnConnection == true
+@@ -53,17 +32,32 @@ final class HistoryViewModel {
+             return (left?.historyReceivedAt ?? .distantPast) > (right?.historyReceivedAt ?? .distantPast)
+         }
+         var seen: [String: Set<SourceKind>] = [:]
+-        var usage = store.days
++        var representatives: [String: RemoteHostState] = [:]
++        var contributingMachines: Set<String> = []
++        var selectedStates: [RemoteHostState] = []
++        var usage: [DailyUsage] = []
+         for host in hosts {
+-            guard let state = remote.states[host.id], let days = state.historyUsage else { continue }
++            let state = remote.states[host.id] ?? RemoteHostState()
+             let identity = state.snapshot?.machineId ?? host.id.uuidString
++            if representatives[identity] == nil { representatives[identity] = state }
++            guard let days = state.historyUsage else { continue }
+             let sources = Set(days.map(\.source)).subtracting(seen[identity] ?? [])
++            guard !sources.isEmpty else { continue }
+             usage.append(contentsOf: days.filter { sources.contains($0.source) })
+             seen[identity, default: []].formUnion(sources)
++            contributingMachines.insert(identity)
++            selectedStates.append(state)
+         }
+-        return usage
++        selectedStates.append(contentsOf: representatives.compactMap { identity, state in
++            contributingMachines.contains(identity) ? nil : state
++        })
++        return (usage, selectedStates)
+     }
+ 
++    private var enabledRemoteStates: [RemoteHostState] { remoteHistorySelection.states }
++
++    var combinedUsage: [DailyUsage] { store.days + remoteHistorySelection.usage }
++
+     var localUnpricedDiagnostics: UnpricedView {
+         HistoryAggregator.unpriced(store.days, source: source, rangeKind: rangeKind, range: content.range,
+                                    excluded: content.costOptions.excluded(for: source), table: cost.prices.book.current)
+diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostStatusTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostStatusTests.swift
+new file mode 100644
+index 00000000..05e31ad8
+--- /dev/null
++++ b/macos/Tests/AgentSpeedAppTests/RemoteHostStatusTests.swift
+@@ -0,0 +1,30 @@
++import Foundation
++import Testing
++@testable import AgentSpeed
++
++@Suite("Remote host connection status")
++struct RemoteHostStatusTests {
++    @Test func statusReflectsEnabledAndConnectionState() {
++        var host = RemoteHost(label: "Server", destination: "server")
++        var state = RemoteHostState()
++        state.online = true
++        #expect(RemoteHostConnectionStatus(host: host, state: state) == .disabled)
++        host.enabled = true
++        #expect(RemoteHostConnectionStatus(host: host, state: nil) == .offline)
++        #expect(RemoteHostConnectionStatus(host: host, state: state) == .online)
++        state.disconnected()
++        state.error = "SSH authentication failed"
++        #expect(RemoteHostConnectionStatus(host: host, state: state) == .offline)
++        host.enabled = false
++        #expect(RemoteHostConnectionStatus(host: host, state: state) == .disabled)
++    }
++
++    @Test func successfulSnapshotClearsConnectionError() throws {
++        var state = RemoteHostState()
++        state.error = "SSH authentication failed"
++        let message = try #require(RemoteMessage.decode(Data(#"{"version":1,"type":"snapshot"}"#.utf8)))
++        state.apply(message)
++        #expect(state.online)
++        #expect(state.error == nil)
++    }
++}
+diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+index 73489f07..a458c4e6 100644
+--- a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+@@ -139,6 +139,42 @@ struct RemoteHostsTests {
+         let offlineInstance = try #require(offline.sourceInstances.first { $0.hostID == offlineID })
+         #expect(!offlineInstance.status.todayAvailable && !offlineInstance.status.liveRateAvailable)
+ 
++        var noLocalSources = local
++        noLocalSources.state = .noSources
++        noLocalSources.sources = []
++        let offlineOnly = RemoteHosts(defaults: defaults, states: [offlineID: disconnected]).combinedSnapshot(noLocalSources)
++        if case .running = offlineOnly.state {} else { Issue.record("Cached remote sources must keep the dashboard running") }
++        let cachedSource = try #require(offlineOnly.sources.first { $0.kind == .codex })
++        #expect(!cachedSource.liveRateAvailable && !cachedSource.liveCostRateAvailable && !cachedSource.todayAvailable)
++        let cachedInstance = try #require(offlineOnly.sourceInstances.first { $0.hostID == offlineID })
++        #expect(!cachedInstance.status.liveRateAvailable && !cachedInstance.status.liveCostRateAvailable && !cachedInstance.status.todayAvailable)
++        #expect(!offlineOnly.liveRateAvailable && !offlineOnly.todayAvailable)
++
++        func collectorState(ompTodayKnown: Bool) throws -> RemoteHostState {
++            let sources: [[String: Any]] = SourceKind.allCases.map { kind in
++                let installed = kind == .omp
++                let todayKnown = installed && ompTodayKnown
++                return ["source": kind.rawValue, "enabled": true, "available": installed,
++                        "sessions": 0, "active_agents": 0, "live_output": 0, "live_total": 0,
++                        "today_input": 0, "today_output": installed ? 12 : 0, "today_requests": 0,
++                        "today_cached_input": todayKnown ? (0 as Any) : NSNull(),
++                        "today_cache_write_input": todayKnown ? (0 as Any) : NSNull(),
++                        "today_reasoning": todayKnown ? (0 as Any) : NSNull()]
++            }
++            let payload: [String: Any] = ["version": 1, "type": "snapshot", "machine_id": "collector",
++                                          "timezone": zone, "sources": sources]
++            var state = RemoteHostState()
++            state.apply(try #require(RemoteMessage.decode(JSONSerialization.data(withJSONObject: payload))))
++            return state
++        }
++        let collector = RemoteHosts(defaults: defaults, states: [offlineID: try collectorState(ompTodayKnown: true)])
++            .combinedSnapshot(noLocalSources)
++        #expect(collector.todayAvailable)
++        #expect(collector.today.output == noLocalSources.today.output + 12)
++        let unknownCollector = RemoteHosts(defaults: defaults, states: [offlineID: try collectorState(ompTodayKnown: false)])
++            .combinedSnapshot(noLocalSources)
++        #expect(!unknownCollector.todayAvailable)
++
+         defaults.set(try JSONEncoder().encode([
+             RemoteHost(id: a, label: "Lower", destination: "alice@host", enabled: true),
+             RemoteHost(id: b, label: "Upper", destination: "Alice@host", enabled: true),
+@@ -217,6 +253,45 @@ struct RemoteHostsTests {
+         check(state, stale: false)
+     }
+ 
++    @Test @MainActor func historyStatusIncludesEachContributingSource() throws {
++        let suite = "RemoteHistorySources.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let codexID = UUID(), piID = UUID(), duplicateID = UUID()
++        let configured = [codexID, piID, duplicateID].map {
++            RemoteHost(id: $0, label: $0.uuidString, destination: $0.uuidString, enabled: true)
++        }
++        defaults.set(try JSONEncoder().encode(configured), forKey: "remoteHosts.v1")
++        func state(source: String, output: Int, partial: Bool, offline: Bool) throws -> RemoteHostState {
++            var result = RemoteHostState()
++            result.apply(try #require(message(#"{"version":1,"type":"snapshot","machine_id":"same-machine"}"#)))
++            let history = #"{"version":1,"type":"history","partial":\#(partial),"days":[{"day":"2026-01-01","source":"\#(source)","requests":1,"input":0,"cached_input":0,"cache_write_input":0,"output":\#(output),"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null}]}"#
++            result.apply(try #require(message(history)))
++            if offline { result.disconnected() }
++            return result
++        }
++        let codex = try state(source: "codex", output: 10, partial: false, offline: false)
++        let pi = try state(source: "pi", output: 20, partial: true, offline: true)
++        let duplicate = try state(source: "codex", output: 30, partial: true, offline: true)
++        let hosts = RemoteHosts(defaults: defaults, states: [codexID: codex, piID: pi, duplicateID: duplicate])
++        let store = HistoryStore()
++        let app = AppModel(settings: AppSettings(defaults: defaults), history: store, remoteHosts: hosts)
++        let view = HistoryViewModel(store: store, l10n: app.l10n, accessibility: app.accessibility,
++                                    cost: app.cost, traffic: app.traffic, model: app)
++        #expect(view.combinedUsage.filter { $0.day == "2026-01-01" }.map(\.totals.output).sorted() == [10, 20])
++        #expect(view.remoteHistoryStale)
++        #expect(view.remoteHistoryPartial)
++        #expect(view.remoteHistoryReceivedAt == [codex.historyReceivedAt, pi.historyReceivedAt].compactMap { $0 }.min())
++
++        let duplicateOnlyHosts = RemoteHosts(defaults: defaults, states: [codexID: codex, piID: codex, duplicateID: duplicate])
++        let duplicateOnlyApp = AppModel(settings: AppSettings(defaults: defaults), history: store, remoteHosts: duplicateOnlyHosts)
++        let duplicateOnlyView = HistoryViewModel(store: store, l10n: duplicateOnlyApp.l10n,
++                                                accessibility: duplicateOnlyApp.accessibility, cost: duplicateOnlyApp.cost,
++                                                traffic: duplicateOnlyApp.traffic, model: duplicateOnlyApp)
++        #expect(!duplicateOnlyView.remoteHistoryStale)
++        #expect(!duplicateOnlyView.remoteHistoryPartial)
++    }
++
+     @Test @MainActor func combinedHistoryAndExportKeepLocalStoreIsolated() async throws {
+         let suite = "RemoteTargetTests.\(UUID().uuidString)"
+         let defaults = try #require(UserDefaults(suiteName: suite))
+@@ -285,15 +360,24 @@ struct RemoteHostsTests {
+     }
+ 
+     @Test func completionsAreMeasuredIsolatedAndBounded() throws {
+-        let measured = try #require(message(#"{"version":1,"type":"completion","source":"pi","output":123,"speed":12.5}"#))
+-        let unknown = try #require(message(#"{"version":1,"type":"completion","source":"pi","output":7,"speed":null}"#))
++        func completion(id: String, output: Int, speed: String) throws -> RemoteMessage {
++            let json = #"{"version":1,"type":"completion","response_id":"\#(id)","source":"pi","output":\#(output),"speed":\#(speed)}"#
++            return try #require(RemoteMessage.decode(Data(json.utf8)))
++        }
+         var first = RemoteHostState(); let second = RemoteHostState()
+-        for _ in 0..<12 { first.apply(measured) }
+-        first.apply(unknown)
++        for id in 0..<12 {
++            first.apply(try completion(id: "\(id)", output: id, speed: "12.5"))
++        }
++        first.apply(try completion(id: "unknown", output: 7, speed: "null"))
++        first.apply(try completion(id: "unknown", output: 7, speed: "null"))
+         #expect(first.completions.count == 10)
+-        #expect(first.completions[0].speed == nil)
+-        #expect(first.completions[1].speed == 12.5)
+-        #expect(first.completions[1].output == 123)
++        let latest = try #require(first.completions.first)
++        #expect(latest.speed == nil)
++        #expect(latest.output == 7)
++        let measured = try #require(first.completions.dropFirst().first)
++        #expect(measured.speed == 12.5)
++        #expect(measured.output == 11)
++        #expect(first.completions.map(\.output) == [7, 11, 10, 9, 8, 7, 6, 5, 4, 3])
+         #expect(second.completions.isEmpty)
+     }
+ 
+-- 
+2.41.0
+

@@ -54,5 +54,12 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0008-Fix-native-remote-source-availability-and-diagnostic.patch": {
+    "regression": [
+      {"platform": "macos", "run": "cd macos && swift test"}
+    ],
+    "related": [],
+    "reason": ""
   }
 }
