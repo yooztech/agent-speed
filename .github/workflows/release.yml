@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
       - name: Verify trusted release tag
         run: |
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$ ]]
           git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD
       - name: Prepare downstream tree
@@ -162,9 +162,13 @@ jobs:
             echo "Release is already published; leaving its assets unchanged."
             exit 0
           fi
-          : > notes.md
-          if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
-            cat "docs/releases/${GITHUB_REF_NAME}.md" >> notes.md
+          if [[ "$GITHUB_REF_NAME" == *-fork.* ]]; then
+            cp "docs/releases/${GITHUB_REF_NAME}.md" notes.md
+          else
+            : > notes.md
+            if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
+              cat "docs/releases/${GITHUB_REF_NAME}.md" >> notes.md
+            fi
+            sed "s/{{VERSION}}/${GITHUB_REF_NAME}/g" .github/release-notes.md >> notes.md
           fi
-          sed "s/{{VERSION}}/${GITHUB_REF_NAME}/g" .github/release-notes.md >> notes.md
-          gh release create "$GITHUB_REF_NAME" dist/* --title "Agent Speed ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
+          gh release create "$GITHUB_REF_NAME" dist/* --title "Agent Speed ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag --prerelease=false

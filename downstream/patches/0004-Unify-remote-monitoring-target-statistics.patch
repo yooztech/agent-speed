@@ -1,0 +1,1835 @@
+From 2c19efccae8c0b27c52f3558836eb4f379029f6f Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 15:58:20 +0800
+Subject: [PATCH] Unify remote monitoring target statistics
+
+---
+ README.md                                     |  16 +-
+ linux/collector/protocol.cpp                  |  77 +++++++++-
+ linux/tests/collector_test.cpp                |  66 ++++++++
+ macos/Sources/AgentSpeed/App/AppModel.swift   |  15 +-
+ .../AgentSpeed/App/HeroFrameHarness.swift     |   2 +-
+ .../AgentSpeed/App/MotionHarness.swift        |   2 +-
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  73 ++++++++-
+ .../AgentSpeed/App/RemoteSnapshot.swift       | 116 ++++++++++++++
+ .../App/Traffic/TrafficController.swift       |   2 +-
+ .../AgentSpeed/Dashboard/DashboardView.swift  |  35 ++++-
+ .../Dashboard/RemoteDashboard.swift           | 143 ++++++++++++++++++
+ .../Dashboard/RemoteHostsView.swift           |  11 +-
+ .../AgentSpeed/Dashboard/TodayCostRow.swift   |   4 +-
+ .../AgentSpeed/History/HistoryContent.swift   |   1 +
+ .../AgentSpeed/History/HistoryToolbar.swift   |   2 +-
+ .../AgentSpeed/History/HistoryViewModel.swift |  57 ++++++-
+ .../History/HistoryWindowController.swift     |   8 +-
+ .../History/Model/HistoryText.swift           |  15 +-
+ .../History/Views/DailyTableView.swift        |   8 +-
+ .../History/Views/HistoryBreakdownView.swift  |   6 +-
+ .../History/Views/HistoryChartLayers.swift    |   2 +-
+ .../History/Views/HistoryChartView.swift      |  18 ++-
+ .../History/Views/HistoryTooltip.swift        |   2 +-
+ .../History/Views/HistoryView.swift           |  61 ++++++--
+ .../AgentSpeed/Localization/StringTable.swift |   3 +
+ .../MenuBar/StatusItemAccessibility.swift     |   8 +-
+ .../MenuBar/StatusItemIntelligence.swift      |   2 +-
+ .../MenuBar/StatusItemRenderer.swift          |   4 +-
+ .../MenuBar/StatusItemSecondary.swift         |   2 +-
+ .../AgentSpeed/MenuBar/StatusItemValue.swift  |   2 +-
+ .../Orb/Nameplate/OrbNameplateContent.swift   |   2 +-
+ .../AgentSpeed/Orb/OrbWindowController.swift  |   2 +-
+ .../SettingsWindow/Panes/CostPane.swift       |   4 +-
+ .../AgentSpeed/Support/BoardMenus.swift       |   2 +-
+ .../Sources/AgentSpeed/Support/OrbMenus.swift |   2 +-
+ .../AgentSpeedAppTests/RemoteHostsTests.swift | 125 +++++++++++++++
+ spec/DESIGN.md                                |  16 +-
+ spec/METRICS.md                               |   2 +
+ spec/NETWORK.md                               |  16 +-
+ 39 files changed, 847 insertions(+), 87 deletions(-)
+ create mode 100644 macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
+ create mode 100644 macos/Sources/AgentSpeed/Dashboard/RemoteDashboard.swift
+
+diff --git a/README.md b/README.md
+index 5f30dd9b..16d5d5ba 100644
+--- a/README.md
++++ b/README.md
+@@ -110,9 +110,11 @@ Ordinary Claude Desktop chat conversations are not stored on your computer, so t
+ Remote monitoring is opt-in and separate from local monitoring and live reporting. Configure an SSH host alias in
+ `~/.ssh/config` for the Linux account that owns the agent logs, including its user, port and identity as needed. Use
+ normal SSH host-key verification, pre-trust the host key, and use noninteractive key or SSH agent authentication.
+-Enable each host in Settings → Sources; its data appears in a separate dashboard panel. Remote SSH is independent of
+-the network switch: disable the host to stop it. The app selects its bundled collector for the host architecture,
+-uploads it over SSH and runs it over SSH standard streams. There is no HTTP service, listening port, Python runtime or sudo.
++Enable each host in Settings → Sources, then select the local machine or one remote host in the dashboard. Dashboard
++and history statistics belong to the selected target; hosts are not added together. Local collection and reporting
++continue in the background when a remote target is selected. Remote SSH is independent of the network switch: disable
++the host to stop it. The app selects its bundled collector for the host architecture, uploads it over SSH and runs it
++over SSH standard streams. There is no HTTP service, listening port, Python runtime or sudo.
+ 
+ The Linux collector reuses the native measurement core, including omp parsing and parent/child deduplication. The
+ remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
+@@ -122,6 +124,14 @@ response rates use the logged duration. In particular omp commonly writes a resp
+ monitoring cannot measure per-token streaming speed or infer an unrecorded time to first token. End-to-end speed includes
+ the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
+ 
++The remote dashboard shows live rates, sources, agents, today's statistics and a history entry when available. Remote
++data does not include categorized today's token totals, project paths, traffic or a continuous live chart; unavailable
++values, including missing price data, remain unknown.
++History dates follow the remote host's local time zone.
++The history window follows the selected target. If an older collector lacks the remote date or complete daily
++breakdown, that history is unavailable and cannot be exported. Partial log reads are marked as potentially incomplete;
++network and performance history are not available for remote targets.
++
+ The collector keeps a private history cache on the Linux host at `~/.cache/agentspeed-collector/history.sqlite3`.
+ An exclusive lock allows one collector to use it; concurrent collectors or an unsafe or unavailable cache use memory
+ instead. Changes to the monitored source configuration reset the cache. On reconnect, history is refreshed from the
+diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
+index fc28c519..d35f7c45 100644
+--- a/linux/collector/protocol.cpp
++++ b/linux/collector/protocol.cpp
+@@ -2,10 +2,12 @@
+ #include "agentspeed/history_analyzer.hpp"
+ 
+ #include <cmath>
++#include <ctime>
+ #include <iomanip>
+ #include <locale>
+ #include <sstream>
+ #include <string_view>
++#include <type_traits>
+ 
+ namespace collector {
+ namespace {
+@@ -23,7 +25,9 @@ void number(std::ostream& out, double value) {
+     if (std::isfinite(value)) out << value; else out << "null";
+ }
+ template<class T> void optionalNumber(std::ostream& out, const std::optional<T>& value) {
+-    if (value) number(out, static_cast<double>(*value)); else out << "null";
++    if (!value) out << "null";
++    else if constexpr (std::is_integral_v<T>) out << *value;
++    else number(out, *value);
+ }
+ void optionalText(std::ostream& out, const std::optional<std::string>& value) {
+     if (value) text(out, *value); else out << "null";
+@@ -48,7 +52,33 @@ std::string Protocol::snapshot(const agentspeed::Snapshot& v) {
+     optionalNumber(o, v.todayAverage);
+     o << ",\"live_output\":"; if (v.liveRateComplete) number(o, v.liveOutput); else o << "null";
+     o << ",\"live_total\":"; if (v.liveRateComplete) number(o, v.liveTotal); else o << "null";
+-    o << ",\"estimated_share\":"; number(o, v.estimatedShare);
++    o << ",\"estimated_share\":"; if (v.liveRateComplete) number(o, v.estimatedShare); else o << "null";
++    o << ",\"today_start_ms\":" << v.todayStartMs << ",\"peak_today\":";
++    if (v.liveRateComplete && (v.todayAverage || v.liveOutput > 0)) number(o, v.peakToday); else o << "null";
++    o << ",\"today_day\":";
++    const std::time_t seconds = static_cast<std::time_t>(v.todayStartMs / 1000);
++    std::tm local{};
++    char day[11];
++    if (localtime_r(&seconds, &local) && std::strftime(day, sizeof(day), "%Y-%m-%d", &local) == 10) text(o, day);
++    else o << "null";
++    o << ",\"today_cost_micro_usd\":" << v.todayCostMicroUsd
++      << ",\"today_unpriced_requests\":" << v.todayUnpricedRequests
++      << ",\"partial_history\":" << (v.warnings.partialHistory ? "true" : "false") << ",\"sources\":[";
++    bool firstSource = true;
++    for (const auto& s : v.sources) {
++        if (!firstSource) o << ',';
++        firstSource = false;
++        o << "{\"source\":"; text(o, agentspeed::sourceId(s.source));
++        o << ",\"enabled\":" << (s.enabled ? "true" : "false") << ",\"available\":" << (s.available ? "true" : "false")
++          << ",\"sessions\":" << s.sessions << ",\"active_agents\":" << s.activeAgents << ",\"live_output\":";
++        if (v.liveRateComplete) number(o, s.liveOutput); else o << "null";
++        o << ",\"live_total\":"; if (v.liveRateComplete) number(o, s.liveTotal); else o << "null";
++        o << ",\"estimated_share\":"; if (v.liveRateComplete) number(o, s.liveEstimatedShare); else o << "null";
++        o << ",\"today_input\":" << s.todayInput << ",\"today_output\":" << s.todayOutput
++          << ",\"today_requests\":" << s.todayRequests << ",\"today_cost_micro_usd\":" << s.todayCostMicroUsd
++          << ",\"unpriced_requests\":" << s.unpricedRequests << '}';
++    }
++    o << ']';
+     o << ",\"generating\":" << v.generating << ",\"tools\":" << v.tools << ",\"agents\":[";
+     bool first = true;
+     for (const auto& a : v.agents) {
+@@ -64,6 +94,10 @@ std::string Protocol::snapshot(const agentspeed::Snapshot& v) {
+         if (a.parentId) text(o, id(*a.parentId)); else o << "null";
+         o << ",\"last_line_ms\":";
+         if (a.lastLineMs) o << *a.lastLineMs; else o << "null";
++        o << ",\"depth\":" << a.depth << ",\"effort\":"; optionalText(o, a.effort);
++        o << ",\"speed\":"; optionalText(o, a.speed);
++        o << ",\"effort_configured\":" << (a.effortConfigured ? "true" : "false")
++          << ",\"speed_configured\":" << (a.speedConfigured ? "true" : "false");
+         o << '}';
+     }
+     o << "]}";
+@@ -84,6 +118,45 @@ std::string Protocol::history(const std::vector<agentspeed::history::DailyUsage>
+           << ",\"output\":" << t.output << ",\"reasoning\":" << t.reasoning
+           << ",\"measured_output\":" << t.measuredOutput << ",\"measured_ms\":" << t.measuredMs << ",\"peak\":";
+         optionalNumber(o, d.peak);
++        o << ",\"unfinalized\":" << t.unfinalized << ",\"agents\":" << t.agents << ",\"cost_micro_usd\":";
++        optionalNumber(o, t.costMicroUsd);
++        o << ",\"unpriced_requests\":"; optionalNumber(o, t.unpricedRequests);
++        o << ",\"models\":[";
++        bool firstItem = true;
++        for (const auto& [model, value] : t.models) {
++            if (!firstItem) o << ',';
++            firstItem = false;
++            o << "{\"model\":"; text(o, model);
++            o << ",\"requests\":" << value.requests << ",\"output\":" << value.output
++              << ",\"measured_output\":" << value.measuredOutput << ",\"measured_ms\":" << value.measuredMs
++              << ",\"cost_micro_usd\":"; optionalNumber(o, value.costMicroUsd);
++            o << ",\"unpriced_requests\":"; optionalNumber(o, value.unpricedRequests);
++            o << '}';
++        }
++        o << "],\"modes\":[";
++        firstItem = true;
++        for (const auto& [key, value] : t.modes) {
++            if (!firstItem) o << ',';
++            firstItem = false;
++            o << "{\"model\":"; text(o, key.model);
++            o << ",\"kind\":"; text(o, agentspeed::modeKindName(key.kind));
++            o << ",\"mode\":"; text(o, key.mode);
++            o << ",\"evidence\":"; text(o, key.evidence);
++            o << ",\"provider\":"; optionalText(o, key.provider);
++            o << ",\"requests\":" << value.requests << ",\"output\":" << value.output
++              << ",\"measured_output\":" << value.measuredOutput << ",\"measured_ms\":" << value.measuredMs << '}';
++        }
++        o << "],\"unpriced\":[";
++        firstItem = true;
++        for (const auto& [fact, count] : t.unpriced) {
++            if (!firstItem) o << ',';
++            firstItem = false;
++            o << "{\"model\":"; text(o, fact.model);
++            o << ",\"provider\":"; optionalText(o, fact.provider);
++            o << ",\"fast\":" << (fact.fast ? "true" : "false") << ",\"no_date\":"
++              << (fact.noDate ? "true" : "false") << ",\"count\":" << count << '}';
++        }
++        o << ']';
+         o << '}';
+     }
+     o << "]}";
+diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
+index 479b9263..73b10038 100644
+--- a/linux/tests/collector_test.cpp
++++ b/linux/tests/collector_test.cpp
+@@ -16,12 +16,21 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
+     agentspeed::Snapshot snapshot;
+     snapshot.nowMs = 123;
+     snapshot.estimatedShare = 0.75;
++    snapshot.todayStartMs = 100;
++    snapshot.todayCostMicroUsd = 42;
++    snapshot.warnings.partialHistory = true;
++    agentspeed::SourceRow source;
++    source.todayOutput = 17;
++    source.available = true;
++    snapshot.sources.push_back(source);
+     agentspeed::AgentRow row;
+     row.id = "/secret/session";
+     row.project = "/secret/project";
+     row.parentId = "/secret/parent";
+     row.model = "model\"name";
+     row.phase = agentspeed::Phase::Generating;
++    row.effort = "high";
++    row.effortConfigured = true;
+     snapshot.agents.push_back(row);
+     auto wire = protocol.snapshot(snapshot);
+     EXPECT_EQ(wire.find("/secret"), std::string::npos);
+@@ -31,17 +40,62 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
+     const auto root = doc.root();
+     EXPECT_EQ(root["type"].string(), "snapshot");
+     EXPECT_TRUE(root["today_average"].isNull());
++    EXPECT_EQ(root["today_start_ms"].raw(), "100");
++    const auto todayDay = root["today_day"].string();
++    ASSERT_TRUE(todayDay.has_value());
++    EXPECT_EQ(todayDay->size(), 10u);
++    EXPECT_TRUE(root["peak_today"].isNull());
++    EXPECT_EQ(root["today_cost_micro_usd"].raw(), "42");
++    EXPECT_EQ(root["partial_history"].raw(), "true");
++    EXPECT_EQ(root["sources"].at(0)["today_output"].raw(), "17");
++    EXPECT_EQ(root["sources"].at(0)["available"].raw(), "true");
++    EXPECT_EQ(root["agents"].at(0)["effort"].string(), "high");
++    EXPECT_EQ(root["agents"].at(0)["effort_configured"].raw(), "true");
+     EXPECT_EQ(root["agents"].at(0)["model"].string(), "model\"name");
+     EXPECT_EQ(root["agents"].at(0)["phase"].string(), "generating");
+     EXPECT_FALSE(root["agents"].at(0)["project"].valid());
+     EXPECT_EQ(protocol.snapshot(snapshot), wire);
+ }
+ 
++TEST(CollectorProtocol, ConnectionIdsAreStableAndIndependent) {
++    collector::Protocol first, second;
++    agentspeed::Snapshot snapshot;
++    agentspeed::AgentRow a;
++    a.id = "private-a";
++    snapshot.agents.push_back(a);
++    agentspeed::json::Document one;
++    const auto oneWire = first.snapshot(snapshot);
++    ASSERT_TRUE(one.parse(oneWire));
++    EXPECT_EQ(one.root()["agents"].at(0)["id"].string(), "1");
++    snapshot.agents[0].id = "private-b";
++    agentspeed::json::Document two;
++    const auto twoWire = first.snapshot(snapshot);
++    ASSERT_TRUE(two.parse(twoWire));
++    EXPECT_EQ(two.root()["agents"].at(0)["id"].string(), "2");
++    agentspeed::json::Document reconnected;
++    const auto reconnectWire = second.snapshot(snapshot);
++    ASSERT_TRUE(reconnected.parse(reconnectWire));
++    EXPECT_EQ(reconnected.root()["agents"].at(0)["id"].string(), "1");
++}
++
+ TEST(CollectorProtocol, HistoryAndCompletionPreserveUnknowns) {
+     agentspeed::history::DailyUsage day;
+     day.key.day = "2026-11-05";
+     day.totals.measuredOutput = 15;
+     day.totals.measuredMs = 2000;
++    day.totals.agents = 2;
++    day.totals.unfinalized = 3;
++    day.totals.models["model"].output = 15;
++    day.totals.models["model"].costMicroUsd = 9007199254740993LL;
++    agentspeed::history::ModeKey mode;
++    mode.model = "model";
++    mode.kind = agentspeed::ModeKind::Effort;
++    mode.mode = "high";
++    mode.evidence = "recorded";
++    day.totals.modes[mode].measuredMs = 2000;
++    agentspeed::history::UnpricedFact fact;
++    fact.model = "model";
++    day.totals.unpriced[fact] = 1;
+     agentspeed::json::Document history;
+     agentspeed::history::Report report;
+     const auto historyWire = collector::Protocol::history({day}, report);
+@@ -57,6 +111,14 @@ TEST(CollectorProtocol, HistoryAndCompletionPreserveUnknowns) {
+     EXPECT_EQ(row["measured_output"].raw(), "15");
+     EXPECT_EQ(row["measured_ms"].raw(), "2000");
+     EXPECT_TRUE(row["peak"].isNull());
++    EXPECT_EQ(row["agents"].raw(), "2");
++    EXPECT_EQ(row["unfinalized"].raw(), "3");
++    EXPECT_TRUE(row["cost_micro_usd"].isNull());
++    EXPECT_EQ(row["models"].at(0)["cost_micro_usd"].raw(), "9007199254740993");
++    EXPECT_EQ(row["modes"].at(0)["kind"].string(), "effort");
++    EXPECT_EQ(row["modes"].at(0)["measured_ms"].raw(), "2000");
++    EXPECT_TRUE(row["unpriced"].at(0)["provider"].isNull());
++    EXPECT_EQ(row["unpriced"].at(0)["count"].raw(), "1");
+     agentspeed::Completion event;
+     event.output = 10;
+     agentspeed::json::Document completion;
+@@ -80,14 +142,18 @@ TEST(CollectorProtocol, UnknownGeneratingRateIsNull) {
+     row.phase = agentspeed::Phase::Generating;
+     row.liveRateComplete = rate.complete;
+     snapshot.agents.push_back(row);
++    snapshot.sources.emplace_back();
+     collector::Protocol protocol;
+     const auto wire = protocol.snapshot(snapshot);
+     agentspeed::json::Document doc;
+     ASSERT_TRUE(doc.parse(wire));
+     EXPECT_TRUE(doc.root()["live_output"].isNull());
++    EXPECT_TRUE(doc.root()["estimated_share"].isNull());
+     EXPECT_TRUE(doc.root()["live_total"].isNull());
+     EXPECT_TRUE(doc.root()["agents"].at(0)["live_output"].isNull());
+     EXPECT_TRUE(doc.root()["agents"].at(0)["live_total"].isNull());
++    EXPECT_TRUE(doc.root()["sources"].at(0)["live_output"].isNull());
++    EXPECT_TRUE(doc.root()["sources"].at(0)["estimated_share"].isNull());
+ }
+ 
+ TEST(CollectorProtocol, HistoryTimezoneFollowsEnvironment) {
+diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
+index 90c5f171..ab62822a 100644
+--- a/macos/Sources/AgentSpeed/App/AppModel.swift
++++ b/macos/Sources/AgentSpeed/App/AppModel.swift
+@@ -63,6 +63,11 @@ final class AppModel {
+     /// Live reporting (DESIGN 11): off until the user confirms a service.
+     let report: ReportController
+     let remoteHosts: RemoteHosts
++    /// The dashboard and history show exactly one target; nil selects this Mac.
++    var selectedRemoteHostID: UUID?
++    var selectedRemoteState: RemoteHostState? {
++        selectedRemoteHostID.flatMap { remoteHosts.states[$0] }
++    }
+     /// The menu bar intelligence block's thinking line, hidden after its rate has read 0 for 3 s (DESIGN 10).
+     let barThinking = StatusItemThinkingHold()
+ 
+@@ -88,12 +93,13 @@ final class AppModel {
+         store: SpeedStore = SpeedStore(),
+         settings: AppSettings = AppSettings(),
+         updates: UpdateController? = nil,
+-        history: HistoryStore = HistoryStore()
++        history: HistoryStore = HistoryStore(),
++        remoteHosts: RemoteHosts? = nil
+     ) {
+         self.store = store
+         self.history = history
+         self.settings = settings
+-        remoteHosts = RemoteHosts(defaults: settings.storage)
++        self.remoteHosts = remoteHosts ?? RemoteHosts(defaults: settings.storage)
+         self.updates = updates ?? UpdateController()
+         l10n = Localizer(preference: settings.language)
+         gauge = LiveGauge()
+@@ -125,7 +131,10 @@ final class AppModel {
+         return PriceSyncController.defaultAppDataDirectory
+     }
+ 
+-    var snapshot: SpeedSnapshot { store.snapshot }
++    var snapshot: SpeedSnapshot {
++        guard let id = selectedRemoteHostID else { return store.snapshot }
++        return remoteHosts.states[id]?.dashboardSnapshot ?? .empty
++    }
+ 
+     /// Effects level after Reduce Motion.
+     var effectsLevel: EffectsLevel { accessibility.effectiveLevel(settings.effects) }
+diff --git a/macos/Sources/AgentSpeed/App/HeroFrameHarness.swift b/macos/Sources/AgentSpeed/App/HeroFrameHarness.swift
+index e2be7819..d18dccca 100644
+--- a/macos/Sources/AgentSpeed/App/HeroFrameHarness.swift
++++ b/macos/Sources/AgentSpeed/App/HeroFrameHarness.swift
+@@ -144,7 +144,7 @@ enum HeroFrameHarness {
+                     at: CGPoint(x: 156, y: 96 + travel * (1 - (p < 1 ? incoming.travel : 1))), size: 15,
+                     weight: .semibold, color: label.withAlphaComponent(p < 1 && gauge.previousTitle != gauge.title ? incoming.alpha : 1))
+         canvas.context.restoreGState()
+-        let snapshot = model.snapshot
++        let snapshot = model.store.snapshot
+         canvas.text(model.l10n("agents.context", idle ? 0 : snapshot.generatingCount, idle ? 0 : snapshot.toolsCount),
+                     at: CGPoint(x: 156, y: 118), size: 13, color: secondary)
+         let level = clip.reduceMotion ? "Reduce Motion" : "\(clip.level)"
+diff --git a/macos/Sources/AgentSpeed/App/MotionHarness.swift b/macos/Sources/AgentSpeed/App/MotionHarness.swift
+index 776d03d1..d53847b4 100644
+--- a/macos/Sources/AgentSpeed/App/MotionHarness.swift
++++ b/macos/Sources/AgentSpeed/App/MotionHarness.swift
+@@ -156,7 +156,7 @@ final class MotionHarness: NSObject {
+         try? csv.write(to: directory.appendingPathComponent("motion.csv"), atomically: true, encoding: .utf8)
+         var summary = error.map { "error: \($0)\n" } ?? ""
+         summary += "scrollers=\(NSScroller.preferredScrollerStyle == .legacy ? "legacy" : "overlay") "
+-        summary += "reduceMotion=\(model.accessibility.reduceMotion) agents=\(model.snapshot.agents.count)\n"
++        summary += "reduceMotion=\(model.accessibility.reduceMotion) agents=\(model.store.snapshot.agents.count)\n"
+         for name in Self.phases {
+             summary += describe(name, samples.filter { $0.phase == name })
+         }
+diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+index 242462d6..3550b53b 100644
+--- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
++++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+@@ -1,5 +1,6 @@
+ import Foundation
+ import Observation
++import AgentSpeedCore
+ 
+ struct RemoteHost: Codable, Identifiable, Equatable {
+     var id: UUID = UUID()
+@@ -24,6 +25,11 @@ struct RemoteAgent: Decodable, Identifiable, Sendable {
+     let subagent: Bool
+     let parentId: String?
+     let lastLineMs: Double?
++    let depth: Int?
++    let effort: String?
++    let speed: String?
++    let effortConfigured: Bool?
++    let speedConfigured: Bool?
+ }
+ 
+ struct RemoteDay: Decodable, Identifiable, Sendable {
+@@ -39,6 +45,59 @@ struct RemoteDay: Decodable, Identifiable, Sendable {
+     let measuredOutput: Int
+     let measuredMs: Double
+     let peak: Double?
++    let unfinalized: Int?
++    let agents: Int?
++    let costMicroUsd: Int64?
++    let unpricedRequests: Int?
++    let models: [RemoteModelUsage]?
++    let modes: [RemoteModeUsage]?
++    let unpriced: [RemoteUnpriced]?
++}
++
++struct RemoteModelUsage: Decodable, Sendable {
++    let model: String
++    let requests: Int
++    let output: Int
++    let measuredOutput: Int
++    let measuredMs: Int64
++    let costMicroUsd: Int64?
++    let unpricedRequests: Int?
++}
++
++struct RemoteModeUsage: Decodable, Sendable {
++    let model: String
++    let kind: String
++    let mode: String
++    let evidence: String
++    let provider: String?
++    let requests: Int
++    let output: Int
++    let measuredOutput: Int
++    let measuredMs: Int64
++}
++
++struct RemoteUnpriced: Decodable, Sendable {
++    let model: String?
++    let provider: String?
++    let fast: Bool
++    let noDate: Bool
++    let count: Int
++}
++
++struct RemoteSource: Decodable, Sendable {
++    let source: String
++    let enabled: Bool
++    let available: Bool
++    let sessions: Int
++    let activeAgents: Int
++    let liveOutput: Double?
++    let liveTotal: Double?
++    let estimatedShare: Double?
++    let todayInput: Int
++    let todayOutput: Int
++    let todayRequests: Int
++    let todayCostMicroUsd: Int64?
++    let unpricedRequests: Int?
+ }
+ 
+ struct RemoteMessage: Decodable, Sendable {
+@@ -47,6 +106,13 @@ struct RemoteMessage: Decodable, Sendable {
+     let nowMs: Double?
+     let todayOutput: Int?
+     let todayInput: Int?
++    let todayStartMs: Double?
++    let todayDay: String?
++    let peakToday: Double?
++    let todayCostMicroUsd: Int64?
++    let todayUnpricedRequests: Int?
++    let partialHistory: Bool?
++    let sources: [RemoteSource]?
+     let todayRequests: Int?
+     let todayAverage: Double?
+     let liveOutput: Double?
+@@ -81,6 +147,7 @@ struct RemoteHostState {
+     var snapshot: RemoteMessage?
+     var days: [RemoteDay] = []
+     var historyPartial: Bool?
++    var historyReceivedAt: Date?
+     var completions: [RemoteCompletion] = []
+     var error: String?
+ 
+@@ -92,6 +159,7 @@ struct RemoteHostState {
+         } else if message.type == "history", let replacement = message.days {
+             days = replacement
+             historyPartial = message.partial
++            historyReceivedAt = Date()
+         } else if message.type == "completion", let source = message.source, let output = message.output {
+             completions.insert(RemoteCompletion(source: source, output: output, speed: message.speed), at: 0)
+             if completions.count > 10 { completions.removeLast() }
+@@ -109,8 +177,9 @@ final class RemoteHosts {
+     @ObservationIgnored private var reconnects: [UUID: Task<Void, Never>] = [:]
+     private static let key = "remoteHosts.v1"
+ 
+-    init(defaults: UserDefaults) {
++    init(defaults: UserDefaults, states: [UUID: RemoteHostState] = [:]) {
+         self.defaults = defaults
++        self.states = states
+         hosts = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([RemoteHost].self, from: $0) } ?? []
+     }
+ 
+@@ -118,10 +187,12 @@ final class RemoteHosts {
+ 
+     func save(_ host: RemoteHost) {
+         guard host.validDestination else { return }
++        let destinationChanged = hosts.first(where: { $0.id == host.id }).map { $0.destination != host.destination } ?? false
+         if let index = hosts.firstIndex(where: { $0.id == host.id }) { hosts[index] = host }
+         else { hosts.append(host) }
+         persist()
+         disconnect(host.id)
++        if destinationChanged { states.removeValue(forKey: host.id) }
+         if host.enabled { connect(host) }
+     }
+ 
+diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
+new file mode 100644
+index 00000000..08989fad
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
+@@ -0,0 +1,116 @@
++import Foundation
++import AgentSpeedCore
++
++/// Availability is separate from the non-optional fields of the native display model.
++struct RemoteCapabilities {
++    var live = false
++    var sources = false
++    var peak = false
++    var cost = false
++    var history = false
++    var todayStart = false
++    let traffic = false
++    let todayBreakdown = false
++    let chart = false
++    let agentProject = false
++    let liveCost = false
++}
++
++extension RemoteHostState {
++    var capabilities: RemoteCapabilities {
++        var result = RemoteCapabilities()
++        if let snapshot {
++            result.live = snapshot.liveOutput != nil && snapshot.liveTotal != nil
++            result.sources = snapshot.sources != nil
++            result.peak = snapshot.peakToday != nil
++            result.cost = snapshot.todayCostMicroUsd != nil && snapshot.todayUnpricedRequests != nil
++            result.todayStart = snapshot.todayStartMs != nil
++        }
++        result.history = historyUsage != nil
++        return result
++    }
++
++    var dashboardSnapshot: SpeedSnapshot? {
++        guard let message = snapshot else { return nil }
++        let timestamp = message.nowMs.map { Date(timeIntervalSince1970: $0 / 1000) } ?? .distantPast
++        let sources = (message.sources ?? []).compactMap { source -> SourceStatus? in
++            guard let kind = SourceKind(rawValue: source.source) else { return nil }
++            let live = Rate(output: source.liveOutput ?? 0, total: source.liveTotal ?? 0)
++            let share = source.estimatedShare ?? 0
++            return SourceStatus(kind: kind, enabled: source.enabled, rootPath: "", available: source.available,
++                sessionCount: source.sessions, live: live,
++                today: TokenTotals(requests: source.todayRequests, input: source.todayInput, output: source.todayOutput),
++                activeAgents: source.activeAgents,
++                liveEstimated: Rate(output: live.output * share, total: live.total * share),
++                todayCost: CostTally(costMicroUsd: source.todayCostMicroUsd ?? 0, unpricedRequests: source.unpricedRequests ?? source.todayRequests))
++        }
++        let agents = (message.agents ?? []).compactMap { agent -> AgentStatus? in
++            guard let source = SourceKind(rawValue: agent.source), let phase = AgentPhase(rawValue: agent.phase) else { return nil }
++            func modes(configured: Bool) -> ExecutionModes {
++                let evidence: ExecutionModeEvidence = configured ? .configured : .selected
++                let scope: ExecutionModeScope = configured ? .configuration : .session
++                var facts: [ExecutionModeFact] = []
++                if (agent.effortConfigured == true) == configured, let effort = agent.effort,
++                   let fact = ExecutionModeFact(kind: .effort, rawValue: effort, evidence: evidence, scope: scope) { facts.append(fact) }
++                if (agent.speedConfigured == true) == configured, let speed = agent.speed,
++                   let fact = ExecutionModeFact(kind: .serviceTier, rawValue: speed, evidence: evidence, scope: scope) { facts.append(fact) }
++                return ExecutionModes(facts)
++            }
++            var status = AgentStatus(id: agent.id, source: source, project: "", model: agent.model, phase: phase,
++                isSubagent: agent.subagent, live: Rate(output: agent.liveOutput ?? 0, total: agent.liveTotal ?? 0),
++                recentSpeed: nil, lastActivity: agent.lastLineMs.map { Date(timeIntervalSince1970: $0 / 1000) } ?? timestamp,
++                parentId: agent.parentId, modes: modes(configured: false))
++            status.configuredModes = modes(configured: true)
++            return status
++        }
++        return SpeedSnapshot(timestamp: timestamp, state: .running,
++            live: Rate(output: message.liveOutput ?? 0, total: message.liveTotal ?? 0),
++            liveEstimatedShare: message.estimatedShare ?? 0,
++            peakToday: Rate(output: message.peakToday ?? 0), peakTodayAt: nil,
++            averageToday: message.todayAverage,
++            today: TokenTotals(requests: message.todayRequests ?? 0, input: message.todayInput ?? 0, output: message.todayOutput ?? 0),
++            sources: sources, agents: agents, generatingCount: message.generating ?? 0, toolsCount: message.tools ?? 0,
++            history: [], lastResponse: nil, warnings: message.partialHistory == true ? [.partialHistory] : [],
++            dayStart: message.todayStartMs.map { Date(timeIntervalSince1970: $0 / 1000) } ?? .distantPast,
++            todayCost: CostTally(costMicroUsd: message.todayCostMicroUsd ?? 0, unpricedRequests: message.todayUnpricedRequests ?? (message.todayRequests ?? 0)))
++    }
++
++    var historyUsage: [DailyUsage]? {
++        guard historyPartial != nil else { return nil }
++        var result: [DailyUsage] = []
++        for day in days {
++            guard let source = SourceKind(rawValue: day.source), let unfinalized = day.unfinalized,
++                  let agents = day.agents, let models = day.models, let modes = day.modes,
++                  let unpriced = day.unpriced, day.measuredMs.isFinite, day.measuredMs >= 0,
++                  day.measuredMs < Double(Int64.max) else { return nil }
++            let modelUsage = models.map { model in
++                ModelUsage(model: model.model, requests: model.requests, output: model.output,
++                    measuredOutput: model.measuredOutput, measuredMs: model.measuredMs,
++                    cost: remoteCost(model.costMicroUsd, model.unpricedRequests))
++            }
++            var modeUsage: [ExecutionModeUsage] = []
++            for mode in modes {
++                guard let kind = ExecutionModeKind(rawValue: mode.kind) else { return nil }
++                modeUsage.append(ExecutionModeUsage(model: mode.model,
++                    attribution: ExecutionModeAttribution(kind: kind, mode: mode.mode, evidence: mode.evidence, provider: mode.provider),
++                    requests: mode.requests, output: mode.output, measuredOutput: mode.measuredOutput, measuredMs: mode.measuredMs))
++            }
++            let facts = unpriced.map { fact in
++                UnpricedFact(key: UnpricedFactKey(model: fact.model, provider: fact.provider, fast: fact.fast, noDate: fact.noDate), requests: fact.count)
++            }
++            let cost = remoteCost(day.costMicroUsd, day.unpricedRequests)
++            result.append(DailyUsage(day: day.day, source: source,
++                totals: TokenTotals(requests: day.requests, input: day.input, cachedInput: day.cachedInput,
++                    cacheWriteInput: day.cacheWriteInput, output: day.output, reasoning: day.reasoning),
++                measuredOutput: day.measuredOutput, measuredMs: Int64(day.measuredMs), unfinalized: unfinalized,
++                agents: agents, peak: day.peak, models: modelUsage, cost: cost, modeUsage: modeUsage,
++                unpriced: UnpricedReading(requests: day.requests, noCostData: cost == nil ? day.requests : 0, facts: facts)))
++        }
++        return result
++    }
++}
++
++private func remoteCost(_ cost: Int64?, _ unpriced: Int?) -> CostTally? {
++    guard let cost, let unpriced else { return nil }
++    return CostTally(costMicroUsd: cost, unpricedRequests: unpriced)
++}
+diff --git a/macos/Sources/AgentSpeed/App/Traffic/TrafficController.swift b/macos/Sources/AgentSpeed/App/Traffic/TrafficController.swift
+index 7cedbe73..08d8e446 100644
+--- a/macos/Sources/AgentSpeed/App/Traffic/TrafficController.swift
++++ b/macos/Sources/AgentSpeed/App/Traffic/TrafficController.swift
+@@ -33,7 +33,7 @@ final class TrafficController {
+         loops.append(ObservationLoop { [weak self] in
+             guard let self else { return }
+             // The effects preview publishes made-up agents; the monitor only ever sees the real ones.
+-            let snapshot = self.model.snapshot
++            let snapshot = self.model.store.snapshot
+             guard !self.model.store.isPreviewing else { return }
+             self.monitor.update(agents: snapshot.agents)
+         })
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+index af677edc..6307ae69 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+@@ -27,6 +27,10 @@ struct DashboardView: View {
+                     .padding(.bottom, DashboardLayout.sectionSpacing)
+                     .transition(model.accessibility.reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+             }
++            if !model.remoteHosts.hosts.isEmpty || model.selectedRemoteHostID != nil {
++                MonitoringTargetPicker(model: model)
++                    .padding(.bottom, DashboardLayout.sectionSpacing)
++            }
+             DashboardContent(model: model)
+                 .dashboardFlexible()
+             Hairline()
+@@ -53,12 +57,36 @@ struct DashboardView: View {
+     }
+ }
+ 
++private struct MonitoringTargetPicker: View {
++    let model: AppModel
++
++    var body: some View {
++        Picker("Monitoring target", selection: Binding(
++            get: { model.selectedRemoteHostID },
++            set: { model.selectedRemoteHostID = $0 }
++        )) {
++            Text("This Mac").tag(Optional<UUID>.none)
++            ForEach(model.remoteHosts.hosts) { host in
++                Text(host.label.isEmpty ? host.destination : host.label).tag(Optional(host.id))
++            }
++            if let id = model.selectedRemoteHostID, !model.remoteHosts.hosts.contains(where: { $0.id == id }) {
++                Text("Removed remote host").tag(Optional(id))
++            }
++        }
++        .labelsHidden()
++        .help("Choose one monitoring target")
++    }
++}
++
+ /// Switches between startup, missing-sources and live layouts.
+ private struct DashboardContent: View {
+     let model: AppModel
+ 
+     var body: some View {
+         Group {
++            if let id = model.selectedRemoteHostID {
++                RemoteDashboard(model: model, hostID: id)
++            } else {
+             switch model.snapshot.state {
+             case .starting(let progress):
+                 if model.remoteHosts.hosts.isEmpty {
+@@ -66,7 +94,7 @@ private struct DashboardContent: View {
+                 } else {
+                     ScrollView {
+                         LoadingState(model: model, progress: progress)
+-                        RemoteHostsView(remote: model.remoteHosts)
++                        RemoteHostsView(model: model)
+                     }
+                 }
+             case .noSources:
+@@ -75,13 +103,14 @@ private struct DashboardContent: View {
+                 } else {
+                     ScrollView {
+                         NoSourcesState(model: model)
+-                        RemoteHostsView(remote: model.remoteHosts)
++                        RemoteHostsView(model: model)
+                     }
+                 }
+             case .running:
+                 DashboardSections(model: model)
+                     .transition(.opacity)
+             }
++            }
+         }
+         .animation(Motion.fade, value: StateKind(model.snapshot.state))
+     }
+@@ -154,7 +183,7 @@ private struct DashboardDetails: View {
+             }
+             if !model.remoteHosts.hosts.isEmpty {
+                 SectionDivider()
+-                RemoteHostsView(remote: model.remoteHosts)
++                RemoteHostsView(model: model)
+             }
+             if !warnings.isEmpty {
+                 WarningsFootnote(model: model, warnings: warnings)
+diff --git a/macos/Sources/AgentSpeed/Dashboard/RemoteDashboard.swift b/macos/Sources/AgentSpeed/Dashboard/RemoteDashboard.swift
+new file mode 100644
+index 00000000..2c1f4493
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/Dashboard/RemoteDashboard.swift
+@@ -0,0 +1,143 @@
++import AgentSpeedCore
++import SwiftUI
++
++/// Remote values are shown independently of the local gauge, traffic and accounting pipelines.
++struct RemoteDashboard: View {
++    let model: AppModel
++    let hostID: UUID
++
++    var body: some View {
++        let host = model.remoteHosts.hosts.first { $0.id == hostID }
++        let state = model.remoteHosts.states[hostID]
++        ScrollView {
++            VStack(alignment: .leading, spacing: DashboardLayout.sectionSpacing) {
++                HStack {
++                    Text(host.map { $0.label.isEmpty ? $0.destination : $0.label } ?? "Remote host")
++                        .font(.headline)
++                    Spacer()
++                    Text(host?.enabled != true ? "DISABLED" : state?.online == true ? "LIVE" : "OFFLINE · STALE")
++                        .font(.caption.weight(.semibold))
++                        .foregroundStyle(state?.online == true && host?.enabled == true ? Color.green : Color.secondary)
++                }
++                if let error = state?.error { Text(error).font(.caption).foregroundStyle(.secondary) }
++                if let state, let message = state.snapshot {
++                    remoteContents(message, state: state)
++                } else {
++                    Text("Remote data unavailable").foregroundStyle(.secondary)
++                }
++                if !model.remoteHosts.hosts.isEmpty {
++                    SectionDivider()
++                    RemoteHostsView(model: model)
++                }
++            }
++            .frame(maxWidth: .infinity, alignment: .leading)
++        }
++    }
++
++    @ViewBuilder
++    private func remoteContents(_ message: RemoteMessage, state: RemoteHostState) -> some View {
++        let l10n = model.l10n
++        VStack(alignment: .leading, spacing: Spacing.xs) {
++            Text(l10n("unit.tokS")).font(.caption).foregroundStyle(.secondary)
++            Text(rate(model.settings.metric == .output ? message.liveOutput : message.liveTotal))
++                .font(.system(size: 32, weight: .semibold, design: .rounded))
++            if let share = message.estimatedShare, share > 0 {
++                Text("Includes estimated live output").font(.caption).foregroundStyle(.secondary)
++            }
++            Text("Generating: \(message.generating.map(String.init) ?? "unavailable") · Tools: \(message.tools.map(String.init) ?? "unavailable")")
++                .font(.caption).foregroundStyle(.secondary)
++        }
++        SectionDivider()
++        unavailable(l10n("mac.dashboard.chart"), detail: "Remote live history unavailable")
++        SectionDivider()
++        VStack(alignment: .leading, spacing: Spacing.xs) {
++            SectionTitle(text: l10n("dashboard.sources"), latin: model.dashboardLatinCaps)
++            if let sources = message.sources {
++                if sources.isEmpty { Text(l10n("dashboard.sources.empty")).foregroundStyle(.secondary) }
++                ForEach(sources.indices, id: \.self) { index in
++                    let source = sources[index]
++                    HStack {
++                        Text(source.source)
++                        Spacer()
++                        Text(SpeedFormat.tokens(source.todayOutput))
++                        Text(rate(model.settings.metric == .output ? source.liveOutput : source.liveTotal))
++                            .monospacedDigit().foregroundStyle(.secondary)
++                    }.font(DashboardFont.row)
++                    Text("Input: \(SpeedFormat.tokens(source.todayInput)) · Requests: \(source.todayRequests) · Sessions: \(source.sessions) · Active: \(source.activeAgents)")
++                        .font(.caption).foregroundStyle(.secondary)
++                    if let cost = source.todayCostMicroUsd, let unpriced = source.unpricedRequests {
++                        Text("Cost: \(Double(cost) / 1_000_000, format: .currency(code: "USD")) · Unpriced requests: \(unpriced)")
++                            .font(.caption).foregroundStyle(.secondary)
++                    } else {
++                        Text("Cost unavailable").font(.caption).foregroundStyle(.secondary)
++                    }
++                }
++            } else { Text("Unavailable").foregroundStyle(.secondary) }
++        }
++        SectionDivider()
++        VStack(alignment: .leading, spacing: Spacing.xs) {
++            SectionTitle(text: l10n("dashboard.agents"), latin: model.dashboardLatinCaps)
++            if let agents = message.agents {
++                if agents.isEmpty { Text("No active agents").foregroundStyle(.secondary) }
++                ForEach(agents) { agent in
++                    VStack(alignment: .leading, spacing: 2) {
++                        HStack {
++                            Text(agent.source).fontWeight(.medium)
++                            Text(agent.phase).foregroundStyle(.secondary)
++                            Spacer()
++                            Text(rate(model.settings.metric == .output ? agent.liveOutput : agent.liveTotal))
++                                .monospacedDigit()
++                        }
++                        Text([agent.model ?? "Model unavailable", agent.effort, agent.speed].compactMap { $0 }.joined(separator: " · "))
++                            .font(.caption).foregroundStyle(.secondary)
++                    }.font(DashboardFont.row)
++                }
++                Text("Project details unavailable").font(.caption).foregroundStyle(.secondary)
++            } else { Text("Unavailable").foregroundStyle(.secondary) }
++        }
++        SectionDivider()
++        VStack(alignment: .leading, spacing: Spacing.xs) {
++            HStack {
++                SectionTitle(text: l10n("dashboard.today"), latin: model.dashboardLatinCaps)
++                Spacer()
++                Button(l10n("mac.dashboard.history")) { model.commands?.showHistory(source: nil) }
++                    .buttonStyle(DashboardInlineButtonStyle())
++            }
++            if let day = message.todayDay { Text(day).font(.caption).foregroundStyle(.secondary) }
++            if message.partialHistory == true {
++                Text("History is partial").font(.caption).foregroundStyle(.secondary)
++            }
++            remoteMetric(l10n("today.output"), message.todayOutput.map(SpeedFormat.tokens))
++            remoteMetric(l10n("today.input"), message.todayInput.map(SpeedFormat.tokens))
++            remoteMetric(l10n("today.requests"), message.todayRequests.map(String.init))
++            remoteMetric(l10n("today.average"), message.todayAverage.map(SpeedFormat.speed))
++            remoteMetric("\(l10n("today.peak")) (output)", message.peakToday.map(SpeedFormat.speed))
++            if state.capabilities.cost, let snapshot = state.dashboardSnapshot, let requests = message.todayRequests {
++                remoteMetric("Cost", model.cost.tallyText(snapshot.todayCost, requests: requests))
++            } else {
++                remoteMetric("Cost", nil)
++            }
++            Text("Token breakdown unavailable").font(.caption).foregroundStyle(.secondary)
++        }
++        if model.settings.trafficEnabled {
++            SectionDivider()
++            unavailable("Traffic", detail: "Remote traffic unavailable")
++        }
++    }
++
++    private func rate(_ value: Double?) -> String {
++        value.map(SpeedFormat.speed) ?? "Unavailable"
++    }
++
++    private func remoteMetric(_ label: String, _ value: String?) -> some View {
++        HStack { Text(label); Spacer(); Text(value ?? "Unavailable").monospacedDigit() }
++            .font(DashboardFont.row)
++    }
++
++    private func unavailable(_ title: String, detail: String) -> some View {
++        VStack(alignment: .leading, spacing: Spacing.xs) {
++            SectionTitle(text: title, latin: model.dashboardLatinCaps)
++            Text(detail).font(DashboardFont.row).foregroundStyle(.secondary)
++        }
++    }
++}
+diff --git a/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
+index 676db1d2..93e5d91e 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
+@@ -1,14 +1,19 @@
+ import SwiftUI
+ 
+-/// Remote data is deliberately presented separately from the local dashboard and its history.
++/// Remote cards select the target shown in the dashboard and history.
+ struct RemoteHostsView: View {
+-    let remote: RemoteHosts
++    let model: AppModel
++    private var remote: RemoteHosts { model.remoteHosts }
+     var body: some View {
+         if !remote.hosts.isEmpty {
+             VStack(alignment: .leading, spacing: 8) {
+                 Text("REMOTE HOSTS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                 ForEach(remote.hosts) { host in
+-                    RemoteHostCard(host: host, state: remote.states[host.id] ?? RemoteHostState())
++                    Button { model.selectedRemoteHostID = host.id } label: {
++                        RemoteHostCard(host: host, state: remote.states[host.id] ?? RemoteHostState())
++                    }
++                    .buttonStyle(.plain)
++                    .help("Show this host in the dashboard")
+                 }
+             }
+         }
+diff --git a/macos/Sources/AgentSpeed/Dashboard/TodayCostRow.swift b/macos/Sources/AgentSpeed/Dashboard/TodayCostRow.swift
+index 670d0f14..87b02524 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/TodayCostRow.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/TodayCostRow.swift
+@@ -70,9 +70,9 @@ struct TodayCostSummary {
+     let spoken: String
+ 
+     @MainActor
+-    init(model: AppModel) {
++    init(model: AppModel, snapshot: SpeedSnapshot? = nil) {
+         let billable = model.cost.billable
+-        for status in model.snapshot.sources where status.today.requests > 0 {
++        for status in (snapshot ?? model.snapshot).sources where status.today.requests > 0 {
+             guard billable.contains(status.kind) else {
+                 excluded.append(status.kind)
+                 continue
+diff --git a/macos/Sources/AgentSpeed/History/HistoryContent.swift b/macos/Sources/AgentSpeed/History/HistoryContent.swift
+index ebd2cb5a..8b5aa5ca 100644
+--- a/macos/Sources/AgentSpeed/History/HistoryContent.swift
++++ b/macos/Sources/AgentSpeed/History/HistoryContent.swift
+@@ -22,6 +22,7 @@ struct ChartSegment: Identifiable, Equatable, Sendable {
+ struct HistoryChartModel: Equatable, Sendable {
+     let range: DayRange
+     let today: DayKey
++    var todayInProgress = true
+     /// Daily output with the speed line, or daily cost without it (DESIGN 9).
+     var metric: HistoryChartMetric = .output
+     /// Bottom first.
+diff --git a/macos/Sources/AgentSpeed/History/HistoryToolbar.swift b/macos/Sources/AgentSpeed/History/HistoryToolbar.swift
+index eeb88eb3..bdf6d92e 100644
+--- a/macos/Sources/AgentSpeed/History/HistoryToolbar.swift
++++ b/macos/Sources/AgentSpeed/History/HistoryToolbar.swift
+@@ -177,7 +177,7 @@ final class HistoryToolbar: NSObject, NSToolbarDelegate {
+         if let index = Self.ranges.firstIndex(of: model.rangeKind), rangeControl.selectedSegment != index {
+             rangeControl.selectedSegment = index
+         }
+-        let canExport = !content.rows.isEmpty
++        let canExport = model.remoteHistoryAvailable && !content.rows.isEmpty
+         if exportItem?.isEnabled != canExport { exportItem?.isEnabled = canExport }
+         _ = model.accessibility.reduceMotion
+     }
+diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+index 5f792f5e..49e64638 100644
+--- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
++++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+@@ -20,6 +20,29 @@ final class HistoryViewModel {
+     let cost: CostDisplay
+     /// Stored traffic days (METRICS 10.9).
+     let traffic: TrafficStore
++    private let appModel: AppModel?
++    @ObservationIgnored private var previousRemoteHostID: UUID?
++
++    var isRemote: Bool { appModel?.selectedRemoteHostID != nil }
++    var remoteHistoryAvailable: Bool {
++        guard let id = appModel?.selectedRemoteHostID else { return true }
++        guard let state = appModel?.remoteHosts.states[id],
++              let day = state.snapshot?.todayDay, DayKey(day) != nil else { return false }
++        return state.historyUsage != nil
++    }
++    var remoteHistoryPartial: Bool {
++        guard let id = appModel?.selectedRemoteHostID else { return false }
++        return appModel?.remoteHosts.states[id]?.historyPartial == true
++    }
++    var remoteHistoryStale: Bool {
++        guard let id = appModel?.selectedRemoteHostID else { return false }
++        return appModel?.remoteHosts.hosts.first(where: { $0.id == id })?.enabled != true ||
++            appModel?.remoteHosts.states[id]?.online != true
++    }
++    var remoteHistoryReceivedAt: Date? {
++        guard let id = appModel?.selectedRemoteHostID else { return nil }
++        return appModel?.remoteHosts.states[id]?.historyReceivedAt
++    }
+     /// Pointer, keyboard and selection state, kept apart so hovering never rebuilds the content.
+     let interaction = HistoryInteraction()
+ 
+@@ -49,12 +72,15 @@ final class HistoryViewModel {
+     @ObservationIgnored private var dataLoop: ObservationLoop?
+     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+ 
+-    init(store: HistoryStore, l10n: Localizer, accessibility: AccessibilityState, cost: CostDisplay, traffic: TrafficStore) {
++    init(store: HistoryStore, l10n: Localizer, accessibility: AccessibilityState, cost: CostDisplay, traffic: TrafficStore,
++         model: AppModel? = nil) {
+         self.store = store
+         self.l10n = l10n
+         self.accessibility = accessibility
+         self.cost = cost
+         self.traffic = traffic
++        self.appModel = model
++        self.previousRemoteHostID = model?.selectedRemoteHostID
+         let stored = cost.settings.storage.object(forKey: Self.includeSubscriptionsKey) as? Bool
+         let include = stored ?? cost.settings.includeSubscriptions
+         includeSubscriptions = include
+@@ -78,6 +104,17 @@ final class HistoryViewModel {
+             _ = self.cost.settings.subscriptionSources
+             _ = (self.traffic.days, self.traffic.since, self.cost.settings.trafficIncludeTools, self.cost.settings.trafficUnit)
+             _ = self.cost.settings.enabledSources
++            let target = self.appModel?.selectedRemoteHostID
++            if target != self.previousRemoteHostID {
++                self.previousRemoteHostID = target
++                self.source = nil
++                self.customRange = nil
++                if self.rangeKind == .custom { self.rangeKind = .days30 }
++                self.interaction.reset()
++                self.perfSelection = nil
++                if self.chartMetric == .traffic { self.chartMetric = .output }
++            }
++            if let target { _ = self.appModel?.remoteHosts.states[target]?.historyUsage }
+             self.rebuild()
+         }
+         let center = NotificationCenter.default
+@@ -127,7 +164,7 @@ final class HistoryViewModel {
+ 
+     /// The chart's (and a single day's breakdown's) metric: output or cost.
+     func select(metric: HistoryChartMetric) {
+-        guard metric != chartMetric else { return }
++        guard metric != chartMetric, metric != .traffic || offersTraffic else { return }
+         chartMetric = metric
+         interaction.hover(nil, from: .chart)
+         rebuild()
+@@ -162,6 +199,7 @@ final class HistoryViewModel {
+     }
+ 
+     func refresh() {
++        guard !isRemote else { return }
+         store.refresh()
+     }
+ 
+@@ -172,6 +210,7 @@ final class HistoryViewModel {
+ 
+     /// Re-reads today's logs without the analysing progress, so the live day updates in place.
+     func refreshToday() {
++        guard !isRemote else { return }
+         store.refresh(showsProgress: false)
+     }
+ 
+@@ -181,17 +220,21 @@ final class HistoryViewModel {
+             return
+         }
+         needsRebuild = false
+-        let today = DayKey(Date(), calendar: HistoryDates.calendar)
++        let remoteDay = appModel?.selectedRemoteHostID.flatMap { appModel?.remoteHosts.states[$0]?.snapshot?.todayDay }
++        let today = remoteDay.flatMap(DayKey.init) ?? DayKey(Date(), calendar: HistoryDates.calendar)
+         let options = HistoryCostOptions(
+             marked: cost.settings.subscriptionSources, includeSubscriptions: includeSubscriptions, metric: chartMetric
+         )
++        let remoteID = appModel?.selectedRemoteHostID
++        let usage = remoteID.flatMap { appModel?.remoteHosts.states[$0]?.historyUsage } ?? (remoteID == nil ? store.days : [])
+         let next = HistoryContent.build(
+-            usage: store.days, source: source, rangeKind: rangeKind, customRange: customRange, sort: sort,
++            usage: usage, source: source, rangeKind: rangeKind, customRange: customRange, sort: sort,
+             today: today, l10n: l10n, money: HistoryMoney(cost), costOptions: options,
+-            traffic: Self.historyTraffic(traffic, settings: cost.settings), prices: cost.prices.book.current
++            traffic: remoteID == nil ? Self.historyTraffic(traffic, settings: cost.settings) : .none,
++            prices: cost.prices.book.current
+         )
+         if next != content { content = next }
+-        let nextPerf = PerfHistoryContent.build(store.perfRecords, range: next.range, source: source, today: today)
++        let nextPerf = PerfHistoryContent.build(remoteID == nil ? store.perfRecords : [], range: next.range, source: source, today: today)
+         if nextPerf != perf { perf = nextPerf }
+     }
+ 
+@@ -202,7 +245,7 @@ final class HistoryViewModel {
+     }
+ 
+     /// The metric control offers traffic while measuring is on or traffic history exists (DESIGN 10).
+-    var offersTraffic: Bool { cost.settings.trafficEnabled || !traffic.days.isEmpty }
++    var offersTraffic: Bool { !isRemote && (cost.settings.trafficEnabled || !traffic.days.isEmpty) }
+ }
+ 
+ /// Hover, keyboard focus day, row selection and the reveal flash.
+diff --git a/macos/Sources/AgentSpeed/History/HistoryWindowController.swift b/macos/Sources/AgentSpeed/History/HistoryWindowController.swift
+index f3d825b8..8fd9f194 100644
+--- a/macos/Sources/AgentSpeed/History/HistoryWindowController.swift
++++ b/macos/Sources/AgentSpeed/History/HistoryWindowController.swift
+@@ -71,7 +71,7 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
+     private func ensureWindow() -> (NSWindow, HistoryViewModel) {
+         if let window, let viewModel { return (window, viewModel) }
+         let viewModel = HistoryViewModel(store: model.history, l10n: model.l10n, accessibility: model.accessibility, cost: model.cost,
+-                                         traffic: model.traffic)
++                                         traffic: model.traffic, model: model)
+         let root = HistoryView(model: viewModel).appEnvironment(model)
+         let host = NSHostingController(rootView: root)
+         host.sizingOptions = []
+@@ -89,7 +89,9 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
+         self.viewModel = viewModel
+         titleLoop = ObservationLoop { [weak self] in
+             guard let self, let window = self.window else { return }
+-            let title = self.model.l10n("history.title")
++            let base = self.model.l10n("history.title")
++            let host = self.model.selectedRemoteHostID.flatMap { id in self.model.remoteHosts.hosts.first { $0.id == id } }
++            let title = host.map { "\(base) — \($0.label)" } ?? base
+             if window.title != title { window.title = title }
+         }
+         return (window, viewModel)
+@@ -121,7 +123,7 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
+     private func export() {
+         guard let viewModel, let window else { return }
+         let content = viewModel.content
+-        guard !content.rows.isEmpty else { return }
++        guard viewModel.remoteHistoryAvailable, !content.rows.isEmpty else { return }
+         let l10n = model.l10n
+         let data = HistoryCSV.encode(HistoryCSV.build(content.rows, source: content.source, money: content.money,
+                                                       traffic: content.columns.contains(.traffic)))
+diff --git a/macos/Sources/AgentSpeed/History/Model/HistoryText.swift b/macos/Sources/AgentSpeed/History/Model/HistoryText.swift
+index e29993b6..5fb1e989 100644
+--- a/macos/Sources/AgentSpeed/History/Model/HistoryText.swift
++++ b/macos/Sources/AgentSpeed/History/Model/HistoryText.swift
+@@ -205,7 +205,8 @@ enum HistoryText {
+     }
+ 
+     /// Everything a day holds, as one sentence for screen readers; `traffic` when the table shows its column.
+-    static func accessible(_ day: DaySummary, today: DayKey, money: HistoryMoney? = nil, traffic: Bool = false, _ l10n: Localizer) -> String {
++    static func accessible(_ day: DaySummary, today: DayKey, money: HistoryMoney? = nil, traffic: Bool = false,
++                           inProgress: Bool = true, _ l10n: Localizer) -> String {
+         var parts = [
+             labelled(l10n("history.table.output"), fullNumber(day.output, l10n), l10n),
+             labelled(l10n("history.table.input"), fullNumber(day.input, l10n), l10n),
+@@ -223,7 +224,7 @@ enum HistoryText {
+             let models = day.models.prefix(3).map { modelWithSpeed($0, l10n) } + (day.models.count > 3 ? [l10n("mac.history.models.more", day.models.count - 3)] : [])
+             parts.append(labelled(l10n("history.table.models"), models.joined(separator: ", "), l10n))
+         }
+-        return labelled(dayTitle(day.day, today: today, l10n), join(parts, l10n), l10n)
++        return labelled(dayTitle(day.day, today: today, inProgress: inProgress, l10n), join(parts, l10n), l10n)
+     }
+ 
+     /// A breakdown bar's name: the source, the model, or `其他模型`.
+@@ -289,8 +290,8 @@ enum HistoryText {
+     }
+ 
+     /// The day's long date, with `進行中` for today.
+-    static func dayTitle(_ day: DayKey, today: DayKey, _ l10n: Localizer) -> String {
+-        day == today ? "\(longDate(day, l10n)) \(l10n("history.inProgress"))" : longDate(day, l10n)
++    static func dayTitle(_ day: DayKey, today: DayKey, inProgress: Bool = true, _ l10n: Localizer) -> String {
++        inProgress && day == today ? "\(longDate(day, l10n)) \(l10n("history.inProgress"))" : longDate(day, l10n)
+     }
+ 
+     /// A day's traffic read aloud (`traffic.a11y.pair`; the day is named by its context), or that it was not recorded.
+@@ -310,9 +311,9 @@ enum HistoryText {
+     }
+ 
+     /// A traffic chart day for screen readers: the date, its traffic and notes, or that it was not recorded.
+-    static func accessibleTraffic(_ day: DayKey, traffic: DayTraffic?, today: DayKey, _ l10n: Localizer) -> String {
+-        guard let traffic else { return labelled(dayTitle(day, today: today, l10n), l10n("history.traffic.notRecorded"), l10n) }
++    static func accessibleTraffic(_ day: DayKey, traffic: DayTraffic?, today: DayKey, inProgress: Bool = true, _ l10n: Localizer) -> String {
++        guard let traffic else { return labelled(dayTitle(day, today: today, inProgress: inProgress, l10n), l10n("history.traffic.notRecorded"), l10n) }
+         let parts = [labelled(l10n("history.table.traffic"), spokenTraffic(traffic, l10n), l10n)] + trafficNotes(traffic, l10n)
+-        return labelled(dayTitle(day, today: today, l10n), join(parts, l10n), l10n)
++        return labelled(dayTitle(day, today: today, inProgress: inProgress, l10n), join(parts, l10n), l10n)
+     }
+ }
+diff --git a/macos/Sources/AgentSpeed/History/Views/DailyTableView.swift b/macos/Sources/AgentSpeed/History/Views/DailyTableView.swift
+index e820b254..ba4e7509 100644
+--- a/macos/Sources/AgentSpeed/History/Views/DailyTableView.swift
++++ b/macos/Sources/AgentSpeed/History/Views/DailyTableView.swift
+@@ -90,6 +90,7 @@ struct DailyTableRow: View {
+     let widths: [CGFloat]
+     var gap: CGFloat = HistoryColumnLayout.gap
+     let today: DayKey
++    var todayInProgress = true
+     let money: HistoryMoney
+     let l10n: Localizer
+     let interaction: HistoryInteraction
+@@ -123,8 +124,9 @@ struct DailyTableRow: View {
+             Button(l10n("mac.history.copy")) { onCopy(row.day) }
+         }
+         .accessibilityElement(children: .ignore)
+-        .accessibilityLabel(HistoryText.dayTitle(row.day, today: today, l10n))
+-        .accessibilityValue(HistoryText.accessible(row, today: today, money: money, traffic: columns.contains(.traffic), l10n))
++        .accessibilityLabel(HistoryText.dayTitle(row.day, today: today, inProgress: todayInProgress, l10n))
++        .accessibilityValue(HistoryText.accessible(row, today: today, money: money, traffic: columns.contains(.traffic),
++                                                   inProgress: todayInProgress, l10n))
+         .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+         .accessibilityAction { onSelect(row.day) }
+     }
+@@ -141,7 +143,7 @@ struct DailyTableRow: View {
+                 Text(text)
+                     .fontWeight(row.day == today ? .semibold : .regular)
+                     .foregroundStyle(primary)
+-                if row.day == today {
++                if todayInProgress && row.day == today {
+                     Circle()
+                         .fill(emphasized ? Color.white : Color.accentColor)
+                         .frame(width: 5, height: 5)
+diff --git a/macos/Sources/AgentSpeed/History/Views/HistoryBreakdownView.swift b/macos/Sources/AgentSpeed/History/Views/HistoryBreakdownView.swift
+index deaba35a..41cf95aa 100644
+--- a/macos/Sources/AgentSpeed/History/Views/HistoryBreakdownView.swift
++++ b/macos/Sources/AgentSpeed/History/Views/HistoryBreakdownView.swift
+@@ -13,6 +13,8 @@ struct HistoryBreakdownCard: View {
+     let money: HistoryMoney
+     let l10n: Localizer
+     let reduceMotion: Bool
++    var offersTraffic = true
++    var todayInProgress = true
+     /// Output or cost sorts and sizes the bars (DESIGN 9).
+     @Binding var metric: HistoryChartMetric
+     let onSelectSource: (SourceKind) -> Void
+@@ -23,7 +25,7 @@ struct HistoryBreakdownCard: View {
+     var body: some View {
+         let dark = colorScheme == .dark
+         let columns = BreakdownColumns(names: breakdown.items.map { HistoryText.breakdownName($0.subject, l10n) })
+-        let inProgress = breakdown.day == today
++        let inProgress = todayInProgress && breakdown.day == today
+         // Bars spring to their new lengths; under Reduce Motion the rows crossfade instead.
+         let identity = reduceMotion ? "\(breakdown.day)-\(breakdown.kind)-\(breakdown.metric)-\(source?.rawValue ?? "all")" : "breakdown"
+         VStack(alignment: .leading, spacing: Spacing.xxs) {
+@@ -60,7 +62,7 @@ struct HistoryBreakdownCard: View {
+         HStack(alignment: .firstTextBaseline, spacing: BreakdownColumns.spacing) {
+             HStack(alignment: .firstTextBaseline, spacing: Spacing.s) {
+                 Picker(l10n(breakdown.metric.titleKey), selection: $metric) {
+-                    ForEach(HistoryChartMetric.allCases) { metric in
++                    ForEach(offersTraffic ? HistoryChartMetric.allCases : [.output, .cost]) { metric in
+                         Text(l10n(metric.titleKey)).tag(metric)
+                     }
+                 }
+diff --git a/macos/Sources/AgentSpeed/History/Views/HistoryChartLayers.swift b/macos/Sources/AgentSpeed/History/Views/HistoryChartLayers.swift
+index 0ce226b1..2c3c3564 100644
+--- a/macos/Sources/AgentSpeed/History/Views/HistoryChartLayers.swift
++++ b/macos/Sources/AgentSpeed/History/Views/HistoryChartLayers.swift
+@@ -270,7 +270,7 @@ private struct TodayMarker: View {
+     var body: some View {
+         let today = chart.today
+         let segments = chart.segments.filter { $0.day == today }
+-        if chart.range.contains(today), !segments.isEmpty, let center = ChartPointerLayer.centerX(today, proxy: proxy),
++        if chart.todayInProgress, chart.range.contains(today), !segments.isEmpty, let center = ChartPointerLayer.centerX(today, proxy: proxy),
+            let total = segments.last?.upper, let topY = proxy.position(forY: total), let baseY = proxy.position(forY: 0) {
+             let width = geometry.barWidth
+             let left = frame.minX + center - width / 2
+diff --git a/macos/Sources/AgentSpeed/History/Views/HistoryChartView.swift b/macos/Sources/AgentSpeed/History/Views/HistoryChartView.swift
+index 5b1fdda1..046a313c 100644
+--- a/macos/Sources/AgentSpeed/History/Views/HistoryChartView.swift
++++ b/macos/Sources/AgentSpeed/History/Views/HistoryChartView.swift
+@@ -10,7 +10,11 @@ struct HistoryChartCard: View {
+     @Environment(\.colorSchemeContrast) private var contrast
+ 
+     var body: some View {
+-        let chart = model.content.chart
++        let chart = {
++            var chart = model.content.chart
++            chart.todayInProgress = !model.remoteHistoryStale
++            return chart
++        }()
+         let l10n = model.l10n
+         VStack(alignment: .leading, spacing: Spacing.s) {
+             ChartLegend(chart: chart, l10n: l10n, dark: colorScheme == .dark, increasedContrast: contrast == .increased,
+@@ -259,15 +263,17 @@ struct HistoryChartView: View {
+                 // Each day with traffic, read as its traffic (DESIGN 10, Accessibility), as on Windows.
+                 ForEach(chart.traffic.filter { !$0.value.shown.isZero || !($0.value.machine ?? .zero).isZero }.keys.sorted(), id: \.self) { day in
+                     Rectangle()
+-                        .accessibilityLabel(HistoryText.dayTitle(day, today: chart.today, l10n))
+-                        .accessibilityValue(HistoryText.accessibleTraffic(day, traffic: chart.traffic[day], today: chart.today, l10n))
++                        .accessibilityLabel(HistoryText.dayTitle(day, today: chart.today, inProgress: chart.todayInProgress, l10n))
++                        .accessibilityValue(HistoryText.accessibleTraffic(day, traffic: chart.traffic[day], today: chart.today,
++                                                                          inProgress: chart.todayInProgress, l10n))
+                         .accessibilityAction { interaction.revealInTable(day) }
+                 }
+             } else {
+                 ForEach(chart.days.values.sorted { $0.day < $1.day }) { day in
+                     Rectangle()
+-                        .accessibilityLabel(HistoryText.dayTitle(day.day, today: chart.today, l10n))
+-                        .accessibilityValue(HistoryText.accessible(day, today: chart.today, money: chart.money, l10n))
++                        .accessibilityLabel(HistoryText.dayTitle(day.day, today: chart.today, inProgress: chart.todayInProgress, l10n))
++                        .accessibilityValue(HistoryText.accessible(day, today: chart.today, money: chart.money,
++                                                                  inProgress: chart.todayInProgress, l10n))
+                         .accessibilityAction { interaction.revealInTable(day.day) }
+                 }
+             }
+@@ -293,7 +299,7 @@ struct HistoryChartView: View {
+                 upper: segment.upload ? segment.upper : segment.upper + overlap,
+                 extendDown: segment.upload ? overlap : 0,
+                 style: AnyShapeStyle(barStyle(segment.source, dark: dark)
+-                    .opacity((segment.day == chart.today ? 0.5 : 1) * (segment.upload ? 0.55 : 1)))
++                    .opacity((chart.todayInProgress && segment.day == chart.today ? 0.5 : 1) * (segment.upload ? 0.55 : 1)))
+             )
+         }
+         var line: [ChartPoint] = []
+diff --git a/macos/Sources/AgentSpeed/History/Views/HistoryTooltip.swift b/macos/Sources/AgentSpeed/History/Views/HistoryTooltip.swift
+index 6b89684f..e5c9a0fb 100644
+--- a/macos/Sources/AgentSpeed/History/Views/HistoryTooltip.swift
++++ b/macos/Sources/AgentSpeed/History/Views/HistoryTooltip.swift
+@@ -17,7 +17,7 @@ struct HistoryTooltip: View {
+                 Text(HistoryText.longDate(day, l10n))
+                     .font(HistoryFont.tooltipTitle)
+                     .lineLimit(1)
+-                if day == chart.today {
++                if chart.todayInProgress && day == chart.today {
+                     Text(l10n("history.inProgress"))
+                         .font(.system(size: 10, weight: .semibold))
+                         .foregroundStyle(Color.accentColor)
+diff --git a/macos/Sources/AgentSpeed/History/Views/HistoryView.swift b/macos/Sources/AgentSpeed/History/Views/HistoryView.swift
+index 23fe92ff..d755a63c 100644
+--- a/macos/Sources/AgentSpeed/History/Views/HistoryView.swift
++++ b/macos/Sources/AgentSpeed/History/Views/HistoryView.swift
+@@ -19,8 +19,29 @@ struct HistoryView: View {
+ 
+     private func windowContent(_ content: HistoryContent) -> some View {
+         VStack(spacing: 0) {
++            if model.isRemote {
++                HStack(spacing: Spacing.s) {
++                    if model.remoteHistoryStale { Text(model.l10n("history.remoteStale")) }
++                    if let received = model.remoteHistoryReceivedAt {
++                        Text(HistoryText.updated(received, now: Date(), model.l10n))
++                    }
++                }
++                .font(HistoryFont.cardNote)
++                .foregroundStyle(.historySecondary)
++                .padding(Spacing.s)
++            }
++            if model.remoteHistoryPartial {
++                Text(model.l10n("history.remotePartial"))
++                    .font(HistoryFont.cardNote)
++                    .foregroundStyle(.historySecondary)
++                    .padding(Spacing.s)
++            }
+             Group {
+-                if content.isEmpty {
++                if model.isRemote && !model.remoteHistoryAvailable {
++                    Text(model.l10n("history.remoteUnavailable"))
++                        .foregroundStyle(.historySecondary)
++                        .frame(maxWidth: .infinity, maxHeight: .infinity)
++                } else if content.isEmpty {
+                     emptyLayout(content)
+                         .transition(.opacity)
+                 } else {
+@@ -29,20 +50,28 @@ struct HistoryView: View {
+                 }
+             }
+             .animation(HistoryMotion.fade, value: content.isEmpty)
+-            HistoryFooter(store: model.store, l10n: model.l10n, unpriced: content.unpriced, rateNote: model.rateNote,
+-                          trafficSince: content.trafficSince.map {
+-                              model.l10n("history.traffic.since", HistoryText.shortDate($0, today: content.today, model.l10n))
+-                          },
+-                          onRefresh: model.refresh)
++            if !model.isRemote {
++                HistoryFooter(store: model.store, l10n: model.l10n, unpriced: content.unpriced, rateNote: model.rateNote,
++                              trafficSince: content.trafficSince.map {
++                                  model.l10n("history.traffic.since", HistoryText.shortDate($0, today: content.today, model.l10n))
++                              },
++                              onRefresh: model.refresh)
++            }
+         }
+         .frame(minWidth: 720, minHeight: 480)
+     }
+ 
+     private func emptyLayout(_ content: HistoryContent) -> some View {
+         VStack(alignment: .leading, spacing: 0) {
+-            HistoryHeader(content: content, l10n: model.l10n)
+-            HistoryEmptyState(state: model.store.state, l10n: model.l10n)
+-                .frame(maxWidth: .infinity, maxHeight: .infinity)
++            HistoryHeader(content: content, l10n: model.l10n, todayInProgress: !model.remoteHistoryStale)
++            if model.isRemote {
++                Text(model.l10n("history.empty"))
++                    .foregroundStyle(.historySecondary)
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++            } else {
++                HistoryEmptyState(state: model.store.state, l10n: model.l10n)
++                    .frame(maxWidth: .infinity, maxHeight: .infinity)
++            }
+         }
+         .padding(HistoryLayout.outerPadding)
+         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+@@ -55,7 +84,7 @@ struct HistoryView: View {
+                 // No pinned lazy sections (macOS issue #21): the sections above the table are eager, the rows lazy and
+                 // unpinned, and the column titles stick by a drawing offset that never feeds back into layout.
+                 VStack(alignment: .leading, spacing: 0) {
+-                    HistoryHeader(content: content, l10n: model.l10n)
++                    HistoryHeader(content: content, l10n: model.l10n, todayInProgress: !model.remoteHistoryStale)
+                         .padding(.bottom, HistoryLayout.sectionSpacing)
+                     SummaryCardsView(
+                         cards: content.cards,
+@@ -73,6 +102,8 @@ struct HistoryView: View {
+                                 money: content.money,
+                                 l10n: model.l10n,
+                                 reduceMotion: model.accessibility.reduceMotion,
++                                offersTraffic: model.offersTraffic,
++                                todayInProgress: !model.remoteHistoryStale,
+                                 metric: Binding(get: { model.chartMetric }, set: { model.select(metric: $0) })
+                             ) { source in
+                                 model.select(source: source)
+@@ -87,8 +118,10 @@ struct HistoryView: View {
+                     .padding(.bottom, HistoryLayout.sectionSpacing + Spacing.xxs)
+                     EffortHistorySection(model: model)
+                         .padding(.bottom, HistoryLayout.sectionSpacing)
+-                    PerfHistorySection(model: model)
+-                        .padding(.bottom, HistoryLayout.sectionSpacing)
++                    if !model.isRemote {
++                        PerfHistorySection(model: model)
++                            .padding(.bottom, HistoryLayout.sectionSpacing)
++                    }
+                     Text(model.l10n("mac.history.table"))
+                         .font(HistoryFont.sectionTitle)
+                         .accessibilityAddTraits(.isHeader)
+@@ -110,6 +143,7 @@ struct HistoryView: View {
+                                 widths: widths,
+                                 gap: gap,
+                                 today: content.today,
++                                todayInProgress: !model.remoteHistoryStale,
+                                 money: content.money,
+                                 l10n: model.l10n,
+                                 interaction: model.interaction,
+@@ -218,6 +252,7 @@ struct HistoryView: View {
+ struct HistoryHeader: View {
+     let content: HistoryContent
+     let l10n: Localizer
++    var todayInProgress = true
+ 
+     @Environment(\.colorScheme) private var colorScheme
+ 
+@@ -239,7 +274,7 @@ struct HistoryHeader: View {
+                 }
+                 Text(HistoryText.rangeSubtitle(content.range, l10n))
+                     .contentTransition(.numericText())
+-                if content.range.isSingleDay, content.range.start == content.today {
++                if todayInProgress, content.range.isSingleDay, content.range.start == content.today {
+                     InProgressBadge(l10n: l10n)
+                 }
+             }
+diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+index 719f1f03..f477e92c 100644
+--- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
++++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+@@ -173,6 +173,9 @@ enum StringTable {
+         "effort.ultra.detail": Entry("ultra：最大推理，並自動分派子任務", "ultra：最大推理，并自动分派子任务", "ultra: maximum reasoning with automatic task delegation", "ultra：最大の推論と自動的なタスク委任"),
+         "effort.ultracode.detail": Entry("ultracode：最大推理，並由多個 agent 協作", "ultracode：最大推理，并由多个 agent 协作", "ultracode: maximum effort with multi-agent workflows", "ultracode：最大の推論と複数 agent のワークフロー"),
+         "history.allSources": Entry("全部來源", "全部来源", "All Sources", "すべてのソース"),
++        "history.remoteUnavailable": Entry("此遠端主機的完整歷史紀錄尚不可用。", "此远端主机的完整历史记录尚不可用。", "Complete history is not available for this remote host.", "このリモートホストの完全な履歴は利用できません。"),
++        "history.remotePartial": Entry("部分遠端日誌無法讀取，歷史紀錄可能不完整。", "部分远端日志无法读取，历史记录可能不完整。", "Some remote logs could not be read; history may be incomplete.", "一部のリモートログを読み取れなかったため、履歴が不完全な可能性があります。"),
++        "history.remoteStale": Entry("遠端主機離線或已停用；顯示的是先前的歷史紀錄。", "远端主机离线或已停用；显示的是先前的历史记录。", "Remote host offline or disabled; showing previously received history.", "リモートホストはオフラインまたは無効です。以前に受信した履歴を表示しています。"),
+         "history.analyzing": Entry("正在分析歷史紀錄… %d%%", "正在分析历史记录… %d%%", "Analyzing history… %d%%", "履歴を分析中… %d%%"),
+         "history.analyzingFiles": Entry("%d / %d 個檔案", "%d / %d 个文件", "%d of %d files", "%d / %d ファイル"),
+         "history.cancel": Entry("取消", "取消", "Cancel", "キャンセル"),
+diff --git a/macos/Sources/AgentSpeed/MenuBar/StatusItemAccessibility.swift b/macos/Sources/AgentSpeed/MenuBar/StatusItemAccessibility.swift
+index d1ed87cc..6a5e9af1 100644
+--- a/macos/Sources/AgentSpeed/MenuBar/StatusItemAccessibility.swift
++++ b/macos/Sources/AgentSpeed/MenuBar/StatusItemAccessibility.swift
+@@ -18,13 +18,13 @@ final class StatusItemAccessibility {
+         loop = ObservationLoop { [weak self] in
+             guard let self else { return }
+             _ = (self.model.gauge.readoutValue, self.model.gauge.title, self.model.l10n.language)
+-            _ = (self.model.settings.liveUnit, self.model.snapshot.liveCost, self.model.cost.currency)
+-            if self.model.settings.barSecondary { _ = self.model.snapshot.sources }
++            _ = (self.model.settings.liveUnit, self.model.store.snapshot.liveCost, self.model.cost.currency)
++            if self.model.settings.barSecondary { _ = self.model.store.snapshot.sources }
+             _ = (self.model.settings.barTraffic, self.model.settings.barIntelligence)
+             if self.model.settings.barTraffic.isNetwork { _ = self.model.traffic.snapshot.timestamp }
+             // The score, its supplying agent's state and N, and the end of the thinking hold (DESIGN 10, 12).
+             if self.model.settings.barIntelligence {
+-                _ = (self.model.snapshot.intelligence, self.model.snapshot.agents, self.model.barThinking.hidden)
++                _ = (self.model.store.snapshot.intelligence, self.model.store.snapshot.agents, self.model.barThinking.hidden)
+             }
+             self.schedule()
+         }
+@@ -72,7 +72,7 @@ final class StatusItemAccessibility {
+             return l10n("a11y.orb.traffic", TrafficText.spoken(rx), TrafficText.spoken(tx))
+         }
+         // The tooltip names the agent that supplies 性能 on a line of its own (DESIGN 10, `perf.tooltip.top`).
+-        let snapshot = model.snapshot
++        let snapshot = model.store.snapshot
+         let topAgent = intelligence == nil ? nil
+             : StatusItemIntelligence.topAgent(snapshot.intelligence.score, agents: snapshot.agents, l10n: l10n)
+         func tooltip(_ text: String) -> String {
+diff --git a/macos/Sources/AgentSpeed/MenuBar/StatusItemIntelligence.swift b/macos/Sources/AgentSpeed/MenuBar/StatusItemIntelligence.swift
+index 463affb3..20320157 100644
+--- a/macos/Sources/AgentSpeed/MenuBar/StatusItemIntelligence.swift
++++ b/macos/Sources/AgentSpeed/MenuBar/StatusItemIntelligence.swift
+@@ -47,7 +47,7 @@ struct StatusItemIntelligence: Equatable {
+     init?(model: AppModel) {
+         let settings = model.settings
+         guard settings.barIntelligence, settings.barMode != .glyph else { return nil }
+-        let snapshot = model.snapshot
++        let snapshot = model.store.snapshot
+         self.init(snapshot.intelligence, agents: snapshot.agents, l10n: model.l10n, thinkingHidden: model.barThinking.hidden)
+     }
+ 
+diff --git a/macos/Sources/AgentSpeed/MenuBar/StatusItemRenderer.swift b/macos/Sources/AgentSpeed/MenuBar/StatusItemRenderer.swift
+index 3f917ed7..e12796f4 100644
+--- a/macos/Sources/AgentSpeed/MenuBar/StatusItemRenderer.swift
++++ b/macos/Sources/AgentSpeed/MenuBar/StatusItemRenderer.swift
+@@ -32,7 +32,7 @@ final class StatusItemRenderer {
+             _ = settings.barSecondary
+             if settings.liveUnit == .cost || settings.barSecondary {
+                 // The money value follows the snapshot, the currency, the rates and the marks (DESIGN 9).
+-                _ = (self.model.snapshot.sources, self.model.cost.currency, self.model.cost.rate, settings.billableSources)
++                _ = (self.model.store.snapshot.sources, self.model.cost.currency, self.model.cost.rate, settings.billableSources)
+             }
+             _ = settings.liveUnit
+             _ = (settings.trafficEnabled, settings.barTraffic, settings.trafficUnit, settings.barIntelligence)
+@@ -43,7 +43,7 @@ final class StatusItemRenderer {
+             // The intelligence block follows every engine tick (the score, its supplying agent's provisional mark) and
+             // the end of the thinking hold (DESIGN 10, 12).
+             if settings.barIntelligence {
+-                _ = (self.model.snapshot.intelligence, self.model.snapshot.agents, self.model.barThinking.hidden)
++                _ = (self.model.store.snapshot.intelligence, self.model.store.snapshot.agents, self.model.barThinking.hidden)
+             }
+             self.render()
+         }
+diff --git a/macos/Sources/AgentSpeed/MenuBar/StatusItemSecondary.swift b/macos/Sources/AgentSpeed/MenuBar/StatusItemSecondary.swift
+index 076a13ff..eba00a0f 100644
+--- a/macos/Sources/AgentSpeed/MenuBar/StatusItemSecondary.swift
++++ b/macos/Sources/AgentSpeed/MenuBar/StatusItemSecondary.swift
+@@ -39,7 +39,7 @@ struct StatusItemSecondary: Equatable {
+                     number: money.unknown ? "–" : (money.atLeast ? "≥" : "") + money.number,
+                     unit: money.unit,
+                     dim: money.unknown || money.value == 0)
+-        let summary = TodayCostSummary(model: model)
++        let summary = TodayCostSummary(model: model, snapshot: model.store.snapshot)
+         let unknown = summary.total.isUnknown(requests: summary.requests)
+         let amount = cost.amount(microUsd: summary.requests == 0 ? 0 : summary.total.costMicroUsd).number
+         let atLeast = summary.requests > 0 && summary.total.unpricedRequests > 0
+diff --git a/macos/Sources/AgentSpeed/MenuBar/StatusItemValue.swift b/macos/Sources/AgentSpeed/MenuBar/StatusItemValue.swift
+index 04650693..b0a553f1 100644
+--- a/macos/Sources/AgentSpeed/MenuBar/StatusItemValue.swift
++++ b/macos/Sources/AgentSpeed/MenuBar/StatusItemValue.swift
+@@ -21,7 +21,7 @@ enum StatusItemValue {
+ 
+     /// The billable live cost rate, whatever the live unit (the money block uses it next to tok/s).
+     static func liveMoney(_ model: AppModel) -> LiveMoney {
+-        let snapshot = model.snapshot
++        let snapshot = model.store.snapshot
+         return model.cost.live(OrbSubset.cost(snapshot, sources: nil, billable: model.cost.billable),
+                                agentCount: snapshot.agents.count)
+     }
+diff --git a/macos/Sources/AgentSpeed/Orb/Nameplate/OrbNameplateContent.swift b/macos/Sources/AgentSpeed/Orb/Nameplate/OrbNameplateContent.swift
+index 335c156a..080cc2c2 100644
+--- a/macos/Sources/AgentSpeed/Orb/Nameplate/OrbNameplateContent.swift
++++ b/macos/Sources/AgentSpeed/Orb/Nameplate/OrbNameplateContent.swift
+@@ -73,7 +73,7 @@ enum OrbNameplateContentBuilder {
+         guard !dots.isEmpty else {
+             return [NameplateFace.Item(dot: .spectrum, text: l10n("orbs.sources.all"), role: .text)]
+         }
+-        let statuses = Dictionary(model.snapshot.sources.map { ($0.kind, $0.enabled) }, uniquingKeysWith: { first, _ in first })
++        let statuses = Dictionary(model.store.snapshot.sources.map { ($0.kind, $0.enabled) }, uniquingKeysWith: { first, _ in first })
+         let fallback = model.orbs.runtime(config.id)?.feed.unavailableTitleKey ?? "source.notFound"
+         return dots.map { dot in
+             let name = l10n(dot.source.titleKey)
+diff --git a/macos/Sources/AgentSpeed/Orb/OrbWindowController.swift b/macos/Sources/AgentSpeed/Orb/OrbWindowController.swift
+index 07d0ba95..33cb1d57 100644
+--- a/macos/Sources/AgentSpeed/Orb/OrbWindowController.swift
++++ b/macos/Sources/AgentSpeed/Orb/OrbWindowController.swift
+@@ -650,7 +650,7 @@ final class OrbWindowController {
+         func item(_ dot: (source: SourceKind, available: Bool)) -> OrbChipItem {
+             let name = l10n(dot.source.titleKey)
+             guard !dot.available else { return OrbChipItem(id: dot.source.rawValue, color: dot.source.tint, text: name, secondary: false) }
+-            let reason = model.snapshot.sources.first { $0.kind == dot.source }.map { $0.enabled ? "source.notFound" : "source.disabled" }
++            let reason = model.store.snapshot.sources.first { $0.kind == dot.source }.map { $0.enabled ? "source.notFound" : "source.disabled" }
+                 ?? status ?? "source.notFound"
+             return OrbChipItem(id: dot.source.rawValue, color: dot.source.tint, text: name + " · " + l10n(reason), secondary: true)
+         }
+diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/CostPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/CostPane.swift
+index 7d0791b6..2750680a 100644
+--- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/CostPane.swift
++++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/CostPane.swift
+@@ -113,7 +113,7 @@ private struct SubscriptionsSection: View {
+         @Bindable var settings = model.settings
+         let l10n = model.l10n
+         let detected = SourceKind.allCases.filter { kind in
+-            model.snapshot.sources.first { $0.kind == kind }.map { $0.isDetected } ?? false
++            model.store.snapshot.sources.first { $0.kind == kind }.map { $0.isDetected } ?? false
+         }
+         Section {
+             ForEach(detected) { kind in
+@@ -235,7 +235,7 @@ private struct PriceTableSection: View {
+ 
+     /// Today's models without a price and why, over every enabled source (selectable, so they can be reported).
+     private var unpricedToday: [UnpricedDisplay.TodayItem] {
+-        let snapshot = model.snapshot
++        let snapshot = model.store.snapshot
+         let day = DayKey(snapshot.dayStart, calendar: HistoryDates.calendar).description
+         return UnpricedDisplay.todayItems(UnpricedDisplay.today(snapshot.sources, day: day, table: model.prices.book.current))
+     }
+diff --git a/macos/Sources/AgentSpeed/Support/BoardMenus.swift b/macos/Sources/AgentSpeed/Support/BoardMenus.swift
+index b6831655..0603ec26 100644
+--- a/macos/Sources/AgentSpeed/Support/BoardMenus.swift
++++ b/macos/Sources/AgentSpeed/Support/BoardMenus.swift
+@@ -13,7 +13,7 @@ enum BoardMenus {
+         menu.autoenablesItems = false
+         let boards = model.boards
+         guard let board = boards.board(id) else { return menu }
+-        let statuses = Dictionary(uniqueKeysWithValues: model.snapshot.sources.map { ($0.kind, $0) })
++        let statuses = Dictionary(uniqueKeysWithValues: model.store.snapshot.sources.map { ($0.kind, $0) })
+         var status: [SourceKind: String] = [:]
+         for (kind, source) in statuses where OrbSubset.isUnavailable(source) {
+             status[kind] = source.enabled ? "source.notFound" : "source.disabled"
+diff --git a/macos/Sources/AgentSpeed/Support/OrbMenus.swift b/macos/Sources/AgentSpeed/Support/OrbMenus.swift
+index 071a5745..17736db1 100644
+--- a/macos/Sources/AgentSpeed/Support/OrbMenus.swift
++++ b/macos/Sources/AgentSpeed/Support/OrbMenus.swift
+@@ -100,7 +100,7 @@ enum OrbMenus {
+             model?.orbs.setSources(.all, of: orb.id)
+         })
+         submenu.addItem(.separator())
+-        let statuses = Dictionary(uniqueKeysWithValues: model.snapshot.sources.map { ($0.kind, $0) })
++        let statuses = Dictionary(uniqueKeysWithValues: model.store.snapshot.sources.map { ($0.kind, $0) })
+         for source in SourceKind.allCases {
+             let tracked = !orb.sources.isAll && orb.sources.tracks(source)
+             let entry = ActionMenuItem(l10n(source.titleKey), state: tracked ? .on : .off) { [weak model] in
+diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+index 19d5f0ae..609a0f45 100644
+--- a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+@@ -1,3 +1,4 @@
++import AgentSpeedCore
+ import Foundation
+ import Testing
+ @testable import AgentSpeed
+@@ -34,6 +35,130 @@ struct RemoteHostsTests {
+         #expect(a.days.isEmpty)
+     }
+ 
++    @Test func interleavedHostsKeepSnapshotsHistoryAndCompletionsSeparateAfterReconnect() throws {
++        let aSnapshot = try #require(message(#"{"version":1,"type":"snapshot","today_output":101,"live_output":null}"#))
++        let bSnapshot = try #require(message(#"{"version":1,"type":"snapshot","today_output":202,"live_output":0}"#))
++        let aHistory = try #require(message(#"{"version":1,"type":"history","partial":true,"days":[{"day":"2026-01-01","source":"pi","requests":1,"input":10,"cached_input":0,"cache_write_input":0,"output":101,"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null}]}"#))
++        let bHistory = try #require(message(#"{"version":1,"type":"history","partial":false,"days":[{"day":"2026-01-01","source":"pi","requests":2,"input":20,"cached_input":0,"cache_write_input":0,"output":202,"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null}]}"#))
++        let completion = try #require(message(#"{"version":1,"type":"completion","source":"pi","output":9,"speed":null}"#))
++        var a = RemoteHostState(); var b = RemoteHostState()
++        a.apply(aSnapshot); b.apply(bSnapshot)
++        a.apply(aHistory); b.apply(bHistory); a.apply(completion)
++        a.online = false
++        #expect(!a.online && b.online)
++        #expect(a.snapshot?.liveOutput == nil)
++        #expect(b.snapshot?.liveOutput == 0)
++        #expect(a.days.first?.output == 101 && b.days.first?.output == 202)
++        #expect(a.historyPartial == true && b.historyPartial == false)
++        #expect(a.completions.first?.speed == nil && b.completions.isEmpty)
++        a.apply(aSnapshot)
++        #expect(a.online && b.online)
++        #expect(a.snapshot?.todayOutput == 101 && b.snapshot?.todayOutput == 202)
++        #expect(a.days.first?.output == 101 && b.days.first?.output == 202)
++    }
++
++    @Test @MainActor func remoteHistoryConversionAndExportPreserveUnknowns() throws {
++        let wire = #"{"version":1,"type":"history","partial":false,"days":[{"day":"2026-11-05","source":"codex","requests":1,"input":5,"cached_input":1,"cache_write_input":0,"output":10,"reasoning":2,"measured_output":10,"measured_ms":1000,"peak":null,"unfinalized":0,"agents":1,"cost_micro_usd":null,"unpriced_requests":null,"models":[{"model":"x","requests":1,"output":10,"measured_output":10,"measured_ms":1000,"cost_micro_usd":null,"unpriced_requests":null}],"modes":[{"model":"x","kind":"effort","mode":"high","evidence":"recorded","provider":null,"requests":1,"output":10,"measured_output":10,"measured_ms":1000}],"unpriced":[{"model":"x","provider":null,"fast":false,"no_date":false,"count":1}]}]}"#
++        var state = RemoteHostState()
++        state.apply(try #require(message(wire)))
++        let usage = try #require(state.historyUsage)
++        let day = try #require(usage.first)
++        #expect(usage.count == 1)
++        #expect(day.source == .codex && day.totals.output == 10)
++        #expect(day.peak == nil && day.cost == nil)
++        #expect(day.models.count == 1 && day.modeUsage.count == 1)
++        let content = HistoryContent.build(
++            usage: usage, source: nil, rangeKind: .days30, customRange: nil,
++            sort: HistorySort(), today: try #require(DayKey("2026-11-05")), l10n: Localizer(preference: .en)
++        )
++        let csv = HistoryCSV.build(content.rows, source: content.source)
++        let rows = csv.components(separatedBy: "\r\n").filter { !$0.isEmpty }
++        try #require(rows.count == 2)
++        #expect(rows[1].hasPrefix("2026-11-05,all,1,5,1,0,10,2,"))
++        let columns = rows[1].components(separatedBy: ",")
++        try #require(columns.count >= 18)
++        #expect(columns[12].isEmpty)
++        #expect(columns[16].isEmpty && columns[17].isEmpty)
++    }
++
++    @Test func legacyHistoryIsNotMisrepresentedAsCompleteBreakdown() throws {
++        var state = RemoteHostState()
++        state.apply(try #require(message(#"{"version":1,"type":"history","days":[{"day":"2026-01-01","source":"pi","requests":1,"input":10,"cached_input":0,"cache_write_input":0,"output":5,"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null}]}"#)))
++        #expect(state.historyUsage == nil)
++    }
++
++    @Test @MainActor func switchingTargetsKeepsDashboardHistoryAndExportIsolated() async throws {
++        let suite = "RemoteTargetTests.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let today = DayKey(Date(), calendar: HistoryDates.calendar).description
++        func remote(_ output: Int) throws -> RemoteHostState {
++            let snapshot = #"{"version":1,"type":"snapshot","today_day":"\#(today)","today_output":\#(output),"live_output":null,"live_total":null}"#
++            let history = #"{"version":1,"type":"history","partial":false,"days":[{"day":"\#(today)","source":"codex","requests":1,"input":5,"cached_input":0,"cache_write_input":0,"output":\#(output),"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null,"unfinalized":0,"agents":1,"cost_micro_usd":null,"unpriced_requests":null,"models":[],"modes":[],"unpriced":[]}]}"#
++            var state = RemoteHostState()
++            state.apply(try #require(message(snapshot)))
++            state.apply(try #require(message(history)))
++            return state
++        }
++        let firstID = UUID(), secondID = UUID(), missingID = UUID()
++        let configured = [
++            RemoteHost(id: firstID, label: "First", destination: "first", enabled: true),
++            RemoteHost(id: secondID, label: "Second", destination: "second", enabled: true),
++        ]
++        defaults.set(try JSONEncoder().encode(configured), forKey: "remoteHosts.v1")
++        var offline = try remote(202)
++        offline.online = false
++        let hosts = RemoteHosts(defaults: defaults, states: [firstID: try remote(101), secondID: offline])
++        let store = HistoryStore()
++        store.publish(state: .ready(updatedAt: Date()), days: PreviewHistory.days(endingAt: Date(), count: 1, calendar: HistoryDates.calendar))
++        let app = AppModel(settings: AppSettings(defaults: defaults), history: store, remoteHosts: hosts)
++        let view = HistoryViewModel(store: store, l10n: app.l10n, accessibility: app.accessibility, cost: app.cost, traffic: app.traffic, model: app)
++        let localRows = view.content.rows
++        func settle() async { for _ in 0..<8 { await Task.yield() } }
++        func csv() -> String { HistoryCSV.build(view.content.rows, source: view.content.source) }
++
++        app.selectedRemoteHostID = firstID
++        await settle()
++        #expect(app.snapshot.today.output == 101)
++        #expect(app.selectedRemoteState?.capabilities.live == false)
++        #expect(app.selectedRemoteState?.capabilities.chart == false)
++        #expect(app.selectedRemoteState?.capabilities.todayBreakdown == false)
++        #expect(app.selectedRemoteState?.capabilities.cost == false)
++        #expect(view.content.rows.first?.output == 101)
++        #expect(view.remoteHistoryAvailable)
++        #expect(!view.remoteHistoryStale)
++        #expect(view.remoteHistoryReceivedAt != nil)
++        view.select(range: .today)
++        #expect(view.content.range.isSingleDay)
++        #expect(!view.offersTraffic)
++        view.select(metric: .traffic)
++        #expect(view.chartMetric != .traffic)
++        view.select(range: .days30)
++        view.select(source: .codex)
++        #expect(csv().contains(",101,"))
++        app.selectedRemoteHostID = secondID
++        await settle()
++        #expect(view.source == nil)
++        #expect(app.selectedRemoteState?.online == false)
++        #expect(view.remoteHistoryStale)
++        #expect(view.remoteHistoryReceivedAt != nil)
++        #expect(app.snapshot.today.output == 202)
++        #expect(view.content.rows.first?.output == 202)
++        #expect(csv().contains(",202,") && !csv().contains(",101,"))
++        app.selectedRemoteHostID = missingID
++        await settle()
++        #expect(app.selectedRemoteState?.online == nil)
++        #expect(!view.remoteHistoryAvailable)
++        #expect(view.remoteHistoryStale)
++        #expect(view.remoteHistoryReceivedAt == nil)
++        #expect(view.content.rows.isEmpty)
++        #expect(csv().components(separatedBy: "\r\n").filter { !$0.isEmpty }.count == 1)
++        app.selectedRemoteHostID = nil
++        await settle()
++        #expect(!view.remoteHistoryStale)
++        #expect(view.content.rows == localRows)
++    }
++
+     @Test func partialHistoryReplacesCompletenessPerHost() throws {
+         let partial = try #require(message(#"{"version":1,"type":"history","days":[],"partial":true}"#))
+         let complete = try #require(message(#"{"version":1,"type":"history","days":[],"partial":false}"#))
+diff --git a/spec/DESIGN.md b/spec/DESIGN.md
+index 016d0632..08b09bc6 100644
+--- a/spec/DESIGN.md
++++ b/spec/DESIGN.md
+@@ -1815,11 +1815,17 @@ Windows only. macOS has no equivalent: the system places menu bar items and the
+ macOS: popover-style panel under the menu bar item. Windows: flyout above the taskbar with Mica. Width 368 pt/DIP.
+ Follows system light/dark. Corner radius: platform default (macOS 12–16 pt, Windows 8 px). 20 pt padding.
+ 
+-macOS also offers explicitly enabled SSH remote hosts in Settings → Sources. Remote data appears in a separate
+-per-host dashboard panel and history, not in local totals. A disconnected host retains its last data marked
+-offline/stale; unknown values are not displayed as zero, and inferred in-flight speeds are identified as estimates.
+-The panel keeps up to ten recent completion events per host in memory, showing their output and measured speed when
+-available; an absent speed remains unknown.
++macOS also offers explicitly enabled SSH remote hosts in Settings → Sources. The dashboard target selector chooses
++the local machine or one remote host; dashboard and history statistics are scoped to that target and never added
++together. Local collection and reporting continue in the background while a remote host is selected. A disconnected
++host retains its last data marked offline/stale; unknown values are not displayed as zero, and inferred in-flight
++speeds are identified as estimates. Recent completion events remain scoped to their host.
++Remote cards can also select a target. Remote status distinguishes live, offline/stale and disabled; the selected
++remote view presents live rates, sources, agents, today's statistics and history, marking missing data unavailable.
++The history window follows the selected target. Remote network and performance history are unavailable; an older
++collector without the remote date or complete daily breakdown cannot provide or export that history. Partial log
++reads are marked as potentially incomplete.
++Disconnected or disabled remote history is marked offline/cached with its receive time and has no in-progress marker.
+ Connection and privacy rules are in NETWORK 7; measurement semantics are in METRICS.
+ 
+ Sections (top to bottom, 16 pt spacing, hairline separators):
+diff --git a/spec/METRICS.md b/spec/METRICS.md
+index e0834f4e..c4395a4a 100644
+--- a/spec/METRICS.md
++++ b/spec/METRICS.md
+@@ -12,6 +12,8 @@ unavailable field is unknown, not zero; a disconnected or stale host is offline,
+ transcripts generally record a complete response after it finishes, and do not establish a measured TTFT. The default
+ end-to-end rate includes the wait for the first token. No routing, account cooldown or retry information can be
+ inferred when absent from the transcript.
++Remote history days use the remote host's local date. Today’s categorized token totals, project paths, traffic and a
++continuous live curve are not supplied by the collector and must not be inferred from missing fields.
+ 
+ ## 1. Vocabulary
+ 
+diff --git a/spec/NETWORK.md b/spec/NETWORK.md
+index d3e50987..17ab5cb0 100644
+--- a/spec/NETWORK.md
++++ b/spec/NETWORK.md
+@@ -235,9 +235,19 @@ newline-delimited JSON snapshots, replacement history and completion events. Onl
+ labels needed for presentation cross the connection: raw transcripts, prompts, conversation content, tool arguments
+ and outputs, and absolute working paths do not. SSH credentials are not embedded in the protocol or stored in logs.
+ 
+-Each configured host has a stable identity and a separate remote view and history. Snapshots and history replace the
+-previous state rather than accumulating on reconnect; the client must not combine remote history with local usage as
+-if it were local. The collector persists its history cache in `~/.cache/agentspeed-collector/history.sqlite3` on the
++Protocol v1 may include optional source summaries, agent mode details, today boundaries and cost, and history
++aggregates. Missing live rates, peaks and history costs are unknown (`null`), not zero. Timestamps use Unix
++milliseconds; history days use the remote host's local date and `measured_ms` is a duration in milliseconds. The
++collector does not provide categorized today's token totals, project paths, traffic or a continuous live curve;
++reconnection must not join disconnected curve segments into a continuous measurement.
++`today_day` is the remote local date in `YYYY-MM-DD` form, or null if conversion fails. `peak_today` is null when no
++peak can be measured or live data is incomplete. If global live data is incomplete, each source's live rates and
++estimated share are also null.
++
++Each configured host has a stable identity and separate remote data and history. The macOS dashboard selects the
++local machine or one remote host rather than adding their statistics; local collection and reporting continue in the
++background. Snapshots and history replace the previous state rather than accumulating on reconnect. The collector
++persists its history cache in `~/.cache/agentspeed-collector/history.sqlite3` on the
+ remote host, in an owned mode-0700 directory with a mode-0600 database. A nonblocking exclusive `flock` on `history.lock`
+ is held for the collector's lifetime; concurrent collectors and unsafe or unavailable caches fall back to memory.
+ Changes to the source configuration reset the cache; analyzer version, time zone and pricing changes also invalidate
+-- 
+2.41.0
+

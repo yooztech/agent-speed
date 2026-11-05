@@ -1,18 +1,20 @@
 # Downstream patch queue
 
-The upstream baseline is pinned in `config.json`; the initial pin reports
-version `1.6.1` (`384ce020cc655133e95aaad5cc085f3985f0ed99`). The fork's
-maintenance files are not application patches. Build and package from a
+The upstream baseline is pinned in `config.json` at version `1.6.1`
+(`384ce020cc655133e95aaad5cc085f3985f0ed99`). The maintenance workspace's
+root `VERSION` remains the upstream baseline; do not change it to the fork
+version. The application patch queue sets the prepared tree's `VERSION` to
+`1.6.1-fork.1`, which is the version used for release builds and tag checks.
+Maintenance files are not application patches. Build and package from a
 prepared tree, not from the main workspace. Python 3, Git, network access to
 the upstream URL, and the relevant platform toolchain are required.
 
 `patches/series` is the sole application order. Each entry names one numbered
 `git format-patch` mail patch in the same directory. `patches/tests.json` has
-exactly the same keys. The queue contains the remote monitoring patch and a
-macOS compilation fix for its Remote hosts settings section: the section uses
-explicit content, header and footer closures, matching the existing settings
-forms. The fix registers `cd macos && swift test` as its regression check.
-Never place credentials in this repository or a patch.
+exactly the same keys. The queue contains remote monitoring, its macOS
+settings compilation fix, the fork version patch, and unified per-target
+dashboard and history statistics. Never place credentials in this repository
+or a patch.
 
 ## CI and releases
 
@@ -30,10 +32,10 @@ packaged executable matches it. The
 Windows job also builds from a prepared tree. The separate `Linux` workflow
 runs on pushes, pull requests and manual dispatch and builds/tests the core;
 its desktop packages use Qt 6.8.3 and target x86_64 and arm64. Manual dispatch
-has no release input and uploads Actions artifacts only. On a `vX.Y.Z` tag
-push, Linux waits for the release workflow to create the draft and uploads its
-packages there; other runs use the prepared tree's CMake version with a `-dev`
-suffix.
+has no release input and uploads Actions artifacts only. On a
+`vX.Y.Z-fork.N` tag push, Linux waits for the release workflow to create the
+draft and uploads its packages there; other runs use the prepared tree's
+CMake version with a `-dev` suffix.
 
 To check a macOS bundle locally against its tested Linux collector, run
 `python3 downstream/verify-collector-zip.py <zip> <collector>` from the
@@ -42,13 +44,15 @@ and byte equality. CI also runs `downstream/test-verify-collector-zip.py` with
 synthetic archives covering missing, non-executable, changed and valid files.
 
 The `Release` workflow runs on `v*` tag pushes in `yooztech/agent-speed`; the
-tagged commit must be an ancestor of `main`. The tag must be `vX.Y.Z` and its
-version must equal `VERSION` in the prepared
-tree. It publishes macOS and Windows artifacts, including the x86_64 collector
-in the macOS bundle. Existing drafts receive assets but remain drafts; an
-already published release is left unchanged. Linux release assets are handled
-separately by the Linux workflow. A successful build does not establish runtime
-compatibility on every target system; see the platform-specific checks below.
+tagged commit must be an ancestor of `main`. Fork tags use `vX.Y.Z-fork.N`,
+and the version must equal `VERSION` in the prepared tree. For this release,
+the tag is `v1.6.1-fork.1`; see `docs/releases/v1.6.1-fork.1.md` for release
+notes and limitations. The workflow publishes macOS and Windows artifacts,
+including the x86_64 collector in the macOS bundle. Existing drafts receive
+assets but remain drafts; an already published release is left unchanged.
+Linux release assets are handled separately by the Linux workflow. A successful
+build does not establish runtime compatibility on every target system; real
+SSH end-to-end operation has not been verified on a physical remote host.
 
 ## Prepare and verify
 

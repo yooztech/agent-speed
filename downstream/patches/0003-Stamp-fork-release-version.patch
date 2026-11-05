@@ -1,0 +1,191 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Subject: [PATCH] Stamp fork release version across platforms
+
+Keep platform numeric versions separate from the visible release version.
+
+---
+diff --git a/VERSION b/VERSION
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-1.6.1
++1.6.1-fork.1
+diff --git a/linux/app/CMakeLists.txt b/linux/app/CMakeLists.txt
+--- a/linux/app/CMakeLists.txt
++++ b/linux/app/CMakeLists.txt
+@@ -156,7 +156,8 @@
+     agentspeed_core Qt6::Core Qt6::Gui Qt6::Network Qt6::OpenGL Qt6::WebSockets Qt6::Widgets Qt6::Qml Qt6::Quick Qt6::QuickControls2 PkgConfig::XCB)
+ target_include_directories(agent-speed PRIVATE src)
+-# The release version (a tag v1.6.0 builds 1.6.0); local builds keep the project's.
++# Default to the release version; packagers can still override it.
+-set(AGENTSPEED_VERSION "${PROJECT_VERSION}" CACHE STRING "The version the app reports")
++file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../VERSION" AGENTSPEED_DEFAULT_VERSION LIMIT_COUNT 1)
++set(AGENTSPEED_VERSION "${AGENTSPEED_DEFAULT_VERSION}" CACHE STRING "The version the app reports")
+ target_compile_definitions(agent-speed PRIVATE AGENTSPEED_VERSION="${AGENTSPEED_VERSION}")
+ 
+ install(TARGETS agent-speed RUNTIME DESTINATION bin)
+diff --git a/macos/scripts/build-app.sh b/macos/scripts/build-app.sh
+--- a/macos/scripts/build-app.sh
++++ b/macos/scripts/build-app.sh
+@@ -22,9 +22,9 @@
+ "$APP_NAME.app", signs it ad hoc and packs it into $ZIP_NAME.
+ 
+ Options:
+-  --version X.Y.Z   Marketing version (default: contents of VERSION at the
++  --version X.Y.Z[-suffix]  Release version (default: contents of VERSION at the
+                     repo root, else $DEFAULT_VERSION). A leading "v" is ignored.
+-  --build N         Bundle build number, CFBundleVersion (default: the version).
++  --build N         Bundle build number, CFBundleVersion (default: numeric version).
+   --output DIR      Output directory (default: <repo>/dist).
+   --binary PATH     Package an existing universal executable instead of
+                     running swift build.
+@@ -76,10 +76,11 @@
+ fi
+ VERSION="${VERSION:-$DEFAULT_VERSION}"
+ VERSION="${VERSION#v}"
+-[[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+-    || die "Invalid version \"$VERSION\"." "Expected three numbers separated by dots, e.g. 1.2.3."
++[[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] \
++    || die "Invalid version \"$VERSION\"." "Expected a version such as 1.2.3 or 1.2.3-fork.1."
++NUMERIC_VERSION="${VERSION%%-*}"
+ 
+-BUILD_NUMBER="${BUILD_NUMBER:-$VERSION}"
++BUILD_NUMBER="${BUILD_NUMBER:-$NUMERIC_VERSION}"
+ [[ "$BUILD_NUMBER" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] \
+     || die "Invalid build number \"$BUILD_NUMBER\"." "Expected up to three numbers separated by dots, e.g. 42 or 1.2.3."
+ 
+@@ -151,7 +152,7 @@
+ cp "$BINARY" "$APP_DIR/Contents/MacOS/$EXECUTABLE"
+ chmod 755 "$APP_DIR/Contents/MacOS/$EXECUTABLE"
+ 
+-sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD_NUMBER/g" \
++sed -e "s/__VERSION__/$VERSION/g" -e "s/__NUMERIC_VERSION__/$NUMERIC_VERSION/g" -e "s/__BUILD__/$BUILD_NUMBER/g" \
+     "$PLIST_TEMPLATE" > "$APP_DIR/Contents/Info.plist"
+ if grep -q '__[A-Z_]*__' "$APP_DIR/Contents/Info.plist"; then
+     die "Info.plist still contains unresolved placeholders." "$(grep -o '__[A-Z_]*__' "$APP_DIR/Contents/Info.plist" | sort -u | tr '\n' ' ')"
+diff --git a/macos/Resources/Info.plist b/macos/Resources/Info.plist
+--- a/macos/Resources/Info.plist
++++ b/macos/Resources/Info.plist
+@@ -25,8 +25,10 @@
+ 	<string>Agent Speed</string>
+ 	<key>CFBundlePackageType</key>
+ 	<string>APPL</string>
++	<key>AgentSpeedVersion</key>
++	<string>__VERSION__</string>
+ 	<key>CFBundleShortVersionString</key>
+-	<string>__VERSION__</string>
++	<string>__NUMERIC_VERSION__</string>
+ 	<key>CFBundleVersion</key>
+ 	<string>__BUILD__</string>
+ 	<key>LSApplicationCategoryType</key>
+diff --git a/macos/Sources/AgentSpeed/Support/AppInfo.swift b/macos/Sources/AgentSpeed/Support/AppInfo.swift
+--- a/macos/Sources/AgentSpeed/Support/AppInfo.swift
++++ b/macos/Sources/AgentSpeed/Support/AppInfo.swift
+@@ -4,7 +4,8 @@
+     static let repositoryURL = URL(string: "https://github.com/zoefix/agent-speed")!
+ 
+     static var version: String {
+-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
++        Bundle.main.object(forInfoDictionaryKey: "AgentSpeedVersion") as? String
++            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+     }
+ 
+     static var build: String {
+diff --git a/macos/Sources/AgentSpeed/Updates/UpdateConfiguration.swift b/macos/Sources/AgentSpeed/Updates/UpdateConfiguration.swift
+--- a/macos/Sources/AgentSpeed/Updates/UpdateConfiguration.swift
++++ b/macos/Sources/AgentSpeed/Updates/UpdateConfiguration.swift
+@@ -23,7 +23,8 @@
+ 
+     /// An unbundled build (`swift run`) has no marketing version and counts as development (`0.0.0`).
+     static var bundleVersion: String {
+-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
++        Bundle.main.object(forInfoDictionaryKey: "AgentSpeedVersion") as? String
++            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+     }
+ 
+     static func current(environment: [String: String] = ProcessInfo.processInfo.environment) -> UpdateConfiguration {
+diff --git a/macos/Sources/AgentSpeed/Updates/Install/PackageValidator.swift b/macos/Sources/AgentSpeed/Updates/Install/PackageValidator.swift
+--- a/macos/Sources/AgentSpeed/Updates/Install/PackageValidator.swift
++++ b/macos/Sources/AgentSpeed/Updates/Install/PackageValidator.swift
+@@ -67,8 +67,8 @@
+         guard let info = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+               info["CFBundleIdentifier"] as? String == UpdateConfiguration.bundleIdentifier,
+               info["CFBundlePackageType"] as? String == "APPL",
+-              let shortVersion = info["CFBundleShortVersionString"] as? String,
+-              SemanticVersion(shortVersion) == expectedVersion,
++              let releaseVersion = (info["AgentSpeedVersion"] ?? info["CFBundleShortVersionString"]) as? String,
++              SemanticVersion(releaseVersion) == expectedVersion,
+               let executable = info["CFBundleExecutable"] as? String,
+               !executable.isEmpty, !executable.contains("/"), executable != "..", executable != "." else {
+             throw UpdateFailure.invalidPackage
+diff --git a/macos/Sources/AgentSpeedProbe/DumpUnpriced.swift b/macos/Sources/AgentSpeedProbe/DumpUnpriced.swift
+--- a/macos/Sources/AgentSpeedProbe/DumpUnpriced.swift
++++ b/macos/Sources/AgentSpeedProbe/DumpUnpriced.swift
+@@ -26,7 +26,8 @@
+             }
+         }
+         let view = UnpricedView(parts: parts, table: table, range: range)
+-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
++        let version = Bundle.main.object(forInfoDictionaryKey: "AgentSpeedVersion") as? String
++            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+         FileHandle.standardOutput.write(Data(UnpricedText.render(view, app: .current(version: version)).utf8))
+         let elapsed = Int(Date().timeIntervalSince(started) * 1000)
+         FileHandle.standardError.write(Data("unpriced: \(parts.count) parts, \(view.unpriced) unpriced requests in \(elapsed) ms\n".utf8))
+diff --git a/tests/test_release_version.py b/tests/test_release_version.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_release_version.py
+@@ -0,0 +1,50 @@
++#!/usr/bin/env python3
++"""Exercise release version parsing without requiring macOS build tools."""
++import plistlib
++from pathlib import Path
++import subprocess
++import tempfile
++import unittest
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++class ReleaseVersionTests(unittest.TestCase):
++    def parse(self, *args):
++        script = (ROOT / "macos/scripts/build-app.sh").read_text()
++        script = script.split('[[ "$(uname -s)" == "Darwin" ]]', 1)[0]
++        script += "\nprintf '%s\\n' \"$VERSION|$NUMERIC_VERSION|$BUILD_NUMBER\"\n"
++        with tempfile.TemporaryDirectory() as tmp:
++            root = Path(tmp)
++            path = root / "macos/scripts/build-app.sh"
++            path.parent.mkdir(parents=True)
++            path.write_text(script)
++            (root / "VERSION").write_text((ROOT / "VERSION").read_text())
++            return subprocess.run(["bash", str(path), *args], text=True, capture_output=True)
++
++    def test_fork_default_and_numeric_bundle_versions(self):
++        result = self.parse()
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(result.stdout.strip(), "1.6.1-fork.1|1.6.1|1.6.1")
++        template = (ROOT / "macos/Resources/Info.plist").read_text()
++        info = plistlib.loads(template.replace("__VERSION__", "1.6.1-fork.1")
++                              .replace("__NUMERIC_VERSION__", "1.6.1")
++                              .replace("__BUILD__", "1.6.1").encode())
++        self.assertEqual(info["AgentSpeedVersion"], "1.6.1-fork.1")
++        self.assertEqual(info["CFBundleShortVersionString"], "1.6.1")
++        self.assertEqual(info["CFBundleVersion"], "1.6.1")
++
++    def test_explicit_version_and_build(self):
++        result = self.parse("--version", "v2.3.4-rc.1", "--build", "42")
++        self.assertEqual(result.returncode, 0, result.stderr)
++        self.assertEqual(result.stdout.strip(), "2.3.4-rc.1|2.3.4|42")
++
++    def test_rejects_invalid_versions_and_builds(self):
++        for args in (("--version", "1.6.1-"), ("--version", "1.6.1-x/y"),
++                     ("--build", "1.6.1-fork.1")):
++            with self.subTest(args=args):
++                self.assertNotEqual(self.parse(*args).returncode, 0)
++
++
++if __name__ == "__main__":
++    unittest.main()
+-- 
+2.41.0

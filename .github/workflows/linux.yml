@@ -1,7 +1,7 @@
 name: Linux
 
 # Build and test the prepared downstream tree on branches, pull requests and manual runs.
-# A vX.Y.Z tag push also attaches both architectures' packages to the release.
+# A vX.Y.Z or vX.Y.Z-fork.N tag push also attaches both architectures' packages to the release.
 on:
   push:
     branches: ["**"]
@@ -75,7 +75,8 @@ jobs:
       - name: Version
         id: version
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$ ]]; then
+            test "$(cat "$RUNNER_TEMP/agent-speed/VERSION")" = "${GITHUB_REF_NAME#v}"
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
             echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           else
