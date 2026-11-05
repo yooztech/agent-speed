@@ -137,5 +137,10 @@
     "regression": [{"platform": "macos", "run": "cd macos && swift test"}],
     "related": [],
     "reason": ""
+  },
+  "0021-Fix-fork-update-relaunch-integration-fixture.patch": {
+    "regression": [{"platform": "macos", "run": "python3 macos/scripts/test-update-relaunch.py"}],
+    "related": [],
+    "reason": ""
   }
 }
