@@ -114,5 +114,13 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0017-Fix-orb-host-selection-and-peak-regressions.patch": {
+    "regression": [
+      {"platform": "macos", "run": "cd macos && swift test"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests && dotnet test windows/tests/AgentSpeed.Windows.Tests"}
+    ],
+    "related": [],
+    "reason": ""
   }
 }
