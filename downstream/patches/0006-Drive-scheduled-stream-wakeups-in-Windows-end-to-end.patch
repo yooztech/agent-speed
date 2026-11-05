@@ -1,0 +1,53 @@
+From 74cb6bd01ce47665269c707d357bf0d83e894332 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 16:23:19 +0800
+Subject: [PATCH] Drive scheduled stream wakeups in Windows end-to-end test
+
+---
+ .../Reporting/ReportStreamEndToEndTests.cs               | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/windows/tests/AgentSpeed.Core.Tests/Reporting/ReportStreamEndToEndTests.cs b/windows/tests/AgentSpeed.Core.Tests/Reporting/ReportStreamEndToEndTests.cs
+index 3590a8e0..db69258e 100644
+--- a/windows/tests/AgentSpeed.Core.Tests/Reporting/ReportStreamEndToEndTests.cs
++++ b/windows/tests/AgentSpeed.Core.Tests/Reporting/ReportStreamEndToEndTests.cs
+@@ -118,6 +118,7 @@ public sealed class ReportStreamEndToEndTests
+         {
+             await Task.Delay(30);
+             driver.Tick(active: true, changed: true, observedAgo: 25);
++            await driver.Until(() => driver.Scheduler.Counters.Accepted == i + 1 && driver.Scheduler.AwaitingCount == 0);
+         }
+ 
+         await driver.Until(() => driver.Scheduler.Counters.Accepted == 4 && driver.Scheduler.AwaitingCount == 0);
+@@ -186,6 +187,7 @@ public sealed class ReportStreamEndToEndTests
+         private readonly object _gate = new();
+         private readonly Dictionary<int, byte[]> _bodies = [];
+         private readonly List<string> _log = [];
++        private bool _active;
+         private IReportStreamSocket? _socket;
+ 
+         public ReportStreamScheduler Scheduler { get; } = new(device.Document.WebSocket, device.Document.Limits.HeartbeatSeconds, jitter: () => 1);
+@@ -207,6 +209,7 @@ public sealed class ReportStreamEndToEndTests
+         {
+             lock (_gate)
+             {
++                _active = active;
+                 var now = Now;
+                 Apply(Scheduler.Tick(now, active, changed, observedAgo is { } ago ? now - ago : null));
+             }
+@@ -227,6 +230,12 @@ public sealed class ReportStreamEndToEndTests
+             {
+                 lock (_gate)
+                 {
++                    var now = Now;
++                    if (Scheduler.WakeAt is { } wake && now >= wake)
++                    {
++                        Apply(Scheduler.Tick(now, _active));
++                    }
++
+                     if (condition())
+                     {
+                         return;
+-- 
+2.41.0
+

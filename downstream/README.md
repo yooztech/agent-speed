@@ -13,8 +13,9 @@ the upstream URL, and the relevant platform toolchain are required.
 `git format-patch` mail patch in the same directory. `patches/tests.json` has
 exactly the same keys. The queue contains remote monitoring, its macOS
 settings compilation fix, the fork version patch, unified per-target
-dashboard and history statistics, and remote freshness and source completeness
-fixes. Never place credentials in this repository or a patch.
+dashboard and history statistics, remote freshness and source completeness
+fixes, and the Windows stream end-to-end test driver fix. Never place
+credentials in this repository or a patch.
 
 ## CI and releases
 

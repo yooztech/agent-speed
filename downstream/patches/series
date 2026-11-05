@@ -3,3 +3,4 @@
 0003-Stamp-fork-release-version.patch
 0004-Unify-remote-monitoring-target-statistics.patch
 0005-Fix-remote-history-freshness-and-source-rate-complet.patch
+0006-Drive-scheduled-stream-wakeups-in-Windows-end-to-end.patch
