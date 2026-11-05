@@ -34,7 +34,7 @@ jobs:
       - name: Check version and contracts
         working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: |
-          test "$(cat VERSION)" = "${GITHUB_REF_NAME#v}"
+          test -s VERSION
           python3 spec/tools/reference.py --check-fixtures
           python3 spec/tools/report_reference.py
           python3 spec/tools/execution_modes_reference.py
@@ -111,6 +111,15 @@ jobs:
         run: |
           macos/scripts/build-app.sh --version "${GITHUB_REF_NAME#v}" --collectors "$RUNNER_TEMP/collectors"
           python3 "$GITHUB_WORKSPACE/downstream/verify-collector-zip.py" dist/AgentSpeed-macOS.zip "$RUNNER_TEMP/collectors/linux-x86_64/agent-speed-collector"
+      - name: Verify macOS archive version
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
+        run: |
+          mkdir -p "$RUNNER_TEMP/mac-version"
+          ditto -x -k dist/AgentSpeed-macOS.zip "$RUNNER_TEMP/mac-version"
+          plist="$RUNNER_TEMP/mac-version/Agent Speed.app/Contents/Info.plist"
+          version="${GITHUB_REF_NAME#v}"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :AgentSpeedVersion' "$plist")" = "$version"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = "${version%%-*}"
       - uses: actions/upload-artifact@v7
         with:
           name: AgentSpeed-macOS
@@ -175,6 +184,19 @@ jobs:
               finally { $sha.Dispose(); $stream.Dispose() }
               if ($actual -ne $expected) { throw "Collector mismatch in $arch bundle" }
             } finally { $zip.Dispose() }
+          }
+      - name: Verify Windows artifact versions
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          foreach ($arch in @('x64', 'arm64')) {
+            $dir = Join-Path $env:RUNNER_TEMP "version-$arch"
+            Expand-Archive "dist/AgentSpeed-Windows-$arch.zip" -DestinationPath $dir
+            $actual = ((Get-Item (Join-Path $dir 'AgentSpeed.exe')).VersionInfo.ProductVersion -split '\+')[0]
+            if ($actual -ne $version) { throw "Windows $arch executable version $actual != $version" }
+            $actual = (Get-Item "dist/AgentSpeed-Windows-$arch-Setup.exe").VersionInfo.ProductVersion
+            if ($actual -ne $version) { throw "Windows $arch installer version $actual != $version" }
           }
       - name: Smoke test Windows installer
         working-directory: ${{ runner.temp }}/agent-speed-prepared
@@ -259,16 +281,7 @@ jobs:
             exit 1
           fi
           if [ -z "$existing" ]; then
-            if [[ "$GITHUB_REF_NAME" == *-fork.* ]]; then
-              cp "docs/releases/${GITHUB_REF_NAME}.md" notes.md
-            else
-              : > notes.md
-              if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
-                cat "docs/releases/${GITHUB_REF_NAME}.md" >> notes.md
-              fi
-              sed "s/{{VERSION}}/${GITHUB_REF_NAME}/g" .github/release-notes.md >> notes.md
-            fi
-            gh release create "$GITHUB_REF_NAME" --draft --title "Agent Speed ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
+            gh release create "$GITHUB_REF_NAME" --draft --title "Agent Speed ${GITHUB_REF_NAME}" --generate-notes --verify-tag
           fi
           gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           verify_tag

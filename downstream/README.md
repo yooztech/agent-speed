@@ -3,9 +3,10 @@
 The upstream baseline is pinned in `config.json` at version `1.6.1`
 (`384ce020cc655133e95aaad5cc085f3985f0ed99`). The maintenance workspace's
 root `VERSION` remains the upstream baseline; do not change it to the fork
-version. The application patch queue sets the prepared tree's `VERSION` to
-`1.6.1-fork.2`, which is the version used for release builds and tag checks.
-Maintenance files are not application patches. Build and package from a
+version. The application patch queue may set a fork version in a prepared
+tree for development, but release builds inject their version from the tag
+through `GITHUB_REF_NAME` on every platform. Maintenance files are not
+application patches. Build and package from a
 prepared tree, not from the main workspace. Python 3, Git, network access to
 the upstream URL, and the relevant platform toolchain are required.
 
@@ -27,8 +28,8 @@ Application development still happens in disposable prepared trees. Export
 its commits as mail patches and commit the queue and maintenance changes on
 `downstream/patch-build`; never copy the patched application tree over this
 maintenance checkout. `main` is not an additional required staging branch.
-Validated release tags are created from the long-lived maintenance branch.
-Published tags and assets remain immutable.
+Release tags are created from the latest already-committed
+`downstream/patch-build` revision. Published tags and assets remain immutable.
 
 
 ## Remote sources
@@ -66,7 +67,8 @@ after all required jobs succeed. The separate `CI` workflow has been removed;
 `Linux` is a reusable workflow called by `Release`, not a separately
 dispatchable gate. Ordinary branch pushes do not publish or start full builds.
 
-Run the release wrapper from a clean `downstream/patch-build` checkout:
+Commit and push all intended changes to `downstream/patch-build`, then run the
+release wrapper from a clean checkout of that branch:
 
 ```sh
 bash downstream/release.sh --plan  # read-only inspection
@@ -79,6 +81,9 @@ releases, drafts, and Actions, including permission to write releases and
 Actions. It queries the latest upstream release and its tag commit; if that
 commit does not match `downstream/config.json`, it stops rather than silently
 building a stale pin. First migrate the pin and patch queue, then retry.
+The wrapper tags the latest already-committed `downstream/patch-build`; it
+does not stamp versions, create commits, or modify the patch queue or docs.
+Make and commit any needed queue or documentation changes before launching it.
 The wrapper selects the next fork number after the highest published release.
 An unpublished candidate of that number is retried by cancelling its old runs
 and cleaning up the old draft and tag before recreating it. The wrapper checks
@@ -97,7 +102,8 @@ synthetic archives covering missing, non-executable, changed and valid files.
 
 The `Release` workflow runs on `v*` tag pushes in `yooztech/agent-speed`; the
 tagged commit must be an ancestor of `downstream/patch-build`. Fork tags use
-`vX.Y.Z-fork.N`, and the version must equal `VERSION` in the prepared tree.
+`vX.Y.Z-fork.N`; `GITHUB_REF_NAME` supplies the version injected into the
+prepared release tree and used by all platform builds and packages.
 The workflow publishes Linux, macOS and Windows artifacts together, including
 the x86_64 collector in macOS and Windows packages. Windows offers both a
 portable ZIP and a per-user installer.

@@ -70,12 +70,8 @@ jobs:
       - name: Version
         id: version
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$ ]]; then
-            test "$(cat "$RUNNER_TEMP/agent-speed/VERSION")" = "${GITHUB_REF_NAME#v}"
-            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=$(sed -nE 's/^project\(AgentSpeedLinux VERSION ([0-9.]+).*/\1/p' "$RUNNER_TEMP/agent-speed/linux/CMakeLists.txt")-dev" >> "$GITHUB_OUTPUT"
-          fi
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$ ]]
+          echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: Build the app
         env:
           CXX: g++-12
@@ -87,6 +83,18 @@ jobs:
         env:
           QMAKE: ${{ env.QT_ROOT_DIR }}/bin/qmake
         run: '"$RUNNER_TEMP/agent-speed/linux/packaging/package.sh" build dist "${{ steps.version.outputs.value }}"'
+      - name: Verify packaged versions
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          image="$GITHUB_WORKSPACE/dist/AgentSpeed-Linux-${{ matrix.arch }}.AppImage"
+          deb="$GITHUB_WORKSPACE/dist/agent-speed_${version}_${{ matrix.debarch }}.deb"
+          test "$(dpkg-deb -f "$deb" Version)" = "$version"
+          mkdir -p "$RUNNER_TEMP/image" "$RUNNER_TEMP/deb"
+          (cd "$RUNNER_TEMP/image" && "$image" --appimage-extract >/dev/null)
+          dpkg-deb -x "$deb" "$RUNNER_TEMP/deb"
+          for executable in "$RUNNER_TEMP/image/squashfs-root/usr/bin/agent-speed" "$RUNNER_TEMP/deb/opt/agent-speed/bin/agent-speed"; do
+            strings "$executable" | grep -Fx -- "$version" || strings -el "$executable" | grep -Fx -- "$version"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: agent-speed-linux-${{ matrix.host }}

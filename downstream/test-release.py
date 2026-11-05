@@ -100,19 +100,22 @@ class ReleaseDriverTests(unittest.TestCase):
 
     def launch(self, api, plan=False):
         observed = []
-        def stamp(root, tag):
-            prepared = root / "prepared"
-            content = tag + "\n"
-            if prepared.exists() and prepared.read_text() == content:
-                return []
-            prepared.write_text(content)
-            return [Path("prepared")]
-        with patch.object(driver, "ROOT", self.root), patch.object(driver, "api", api), \
-             patch.object(driver, "verify_origin"), \
-             patch.object(driver, "stamp", stamp), \
-             patch.object(driver, "watch", side_effect=lambda *args: observed.append(args)), \
-             patch.object(sys, "argv", ["release.py"] + (["--plan"] if plan else [])):
-            driver.main()
+        head = git(self.root, "rev-parse", "HEAD")
+        status = git(self.root, "status", "--porcelain", "--untracked-files=all")
+        files = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*")
+                 if p.is_file() and ".git" not in p.relative_to(self.root).parts}
+        try:
+            with patch.object(driver, "ROOT", self.root), patch.object(driver, "api", api), \
+                 patch.object(driver, "verify_origin"), \
+                 patch.object(driver, "watch", side_effect=lambda *args: observed.append(args)), \
+                 patch.object(sys, "argv", ["release.py"] + (["--plan"] if plan else [])):
+                driver.main()
+        finally:
+            self.assertEqual(git(self.root, "rev-parse", "HEAD"), head)
+            self.assertEqual(git(self.root, "status", "--porcelain", "--untracked-files=all"), status)
+            self.assertEqual({p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*")
+                              if p.is_file() and ".git" not in p.relative_to(self.root).parts}, files)
+            self.assertEqual(git(self.remote, "rev-parse", "refs/heads/downstream/patch-build"), self.latest)
         return observed
 
     def check_tag_push_failure_retry(self, accepted):
@@ -134,11 +137,10 @@ class ReleaseDriverTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 self.launch(api)
         self.assertEqual(len(attempted), 1)
-        prepared = git(self.root, "rev-parse", "HEAD")
-        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/downstream/patch-build"), prepared)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD"), self.latest)
         self.assertEqual(git(self.root, "tag", "-l", tag), "")
         remote_tag = git(self.root, "ls-remote", "--refs", "origin", ref)
-        self.assertEqual(remote_tag, f"{prepared}\t{ref}" if accepted else "")
+        self.assertEqual(remote_tag, f"{self.latest}\t{ref}" if accepted else "")
 
         retry_pushes = []
         def record_pushes(*args):
@@ -149,11 +151,11 @@ class ReleaseDriverTests(unittest.TestCase):
         with patch.object(driver, "git", side_effect=record_pushes):
             observed = self.launch(api)
         self.assertEqual([args[-1] for args in retry_pushes],
-                         ([":" + ref] if accepted else []) + [prepared + ":" + ref])
-        self.assertEqual(git(self.root, "rev-parse", "HEAD"), prepared)
-        self.assertEqual(self.remote_sha(tag), prepared)
+                         ([":" + ref] if accepted else []) + [self.latest + ":" + ref])
+        self.assertEqual(git(self.root, "rev-parse", "HEAD"), self.latest)
+        self.assertEqual(self.remote_sha(tag), self.latest)
         self.assertEqual(git(self.root, "tag", "-l", tag), "")
-        self.assertEqual(observed[0][:2], (tag, prepared))
+        self.assertEqual(observed[0][:2], (tag, self.latest))
 
     def test_tag_push_failure_before_remote_acceptance_retries(self):
         self.check_tag_push_failure_retry(accepted=False)
@@ -161,15 +163,14 @@ class ReleaseDriverTests(unittest.TestCase):
     def test_tag_push_failure_after_remote_acceptance_retries(self):
         self.check_tag_push_failure_retry(accepted=True)
 
-    def test_draft_and_old_tag_are_replaced_at_latest_prepared_commit(self):
+    def test_draft_and_old_tag_are_replaced_at_original_head(self):
         api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()], active=True)
         observed = self.launch(api)
         self.assertEqual(self.remote_sha("v1.2.3-fork.1"), self.old)
-        current = git(self.root, "rev-parse", "HEAD")
-        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), current)
-        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/downstream/patch-build"), current)
-        self.assertEqual(git(self.root, "rev-parse", "HEAD^"), self.latest)
-        self.assertEqual(observed[0][:2], ("v1.2.3-fork.2", current))
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
+        self.assertEqual(git(self.remote, "rev-parse", "refs/heads/downstream/patch-build"), self.latest)
+        self.assertEqual(git(self.root, "rev-parse", "HEAD"), self.latest)
+        self.assertEqual(observed[0][:2], ("v1.2.3-fork.2", self.latest))
         self.assertTrue(any(method == "POST" and path.endswith("/42/cancel") for method, path in api.calls))
         self.assertTrue(any(method == "DELETE" and path.endswith("/releases/2") for method, path in api.calls))
 

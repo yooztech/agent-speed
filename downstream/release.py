@@ -12,10 +12,6 @@ import sys
 import time
 from urllib.parse import quote
 
-sys.dont_write_bytecode = True
-
-from release_stamp import stamp
-
 ROOT = Path(__file__).resolve().parent.parent
 BRANCH = 'downstream/patch-build'
 REPO = 'yooztech/agent-speed'
@@ -31,6 +27,12 @@ def command(args, *, capture=True):
 
 def git(*args):
     return command(['git', *args]).strip()
+
+
+def check_checkout(commit):
+    if (git('branch', '--show-current') != BRANCH or git('rev-parse', 'HEAD') != commit
+            or git('status', '--porcelain', '--untracked-files=all')):
+        raise RuntimeError('local branch, HEAD or working tree changed during release')
 
 
 def api(path, method='GET'):
@@ -212,6 +214,7 @@ def main():
         if args.plan:
             return
         cancel_and_wait(tag)
+        check_checkout(current)
         draft = ensure_unpublished(tag)
         if select(releases(), version) != tag:
             raise RuntimeError('published release history changed; retry planning')
@@ -233,28 +236,17 @@ def main():
             git('push', f'--force-with-lease=refs/tags/{tag}:{old_tag}', 'origin', f':refs/tags/{tag}')
         if local_tag:
             git('tag', '-d', tag)
-        changed = stamp(ROOT, tag)
-        if changed:
-            git('add', '--', *map(str, changed))
-            git('commit', '-m', f'Prepare {tag} release')
-        new_head = git('rev-parse', 'HEAD')
-        if git('status', '--porcelain', '--untracked-files=all'):
-            raise RuntimeError('unexpected worktree changes after version preparation')
         if remote_ref(branch_ref) != current:
-            raise RuntimeError('remote branch changed; refusing to push')
-        if new_head != current:
-            git('push', f'--force-with-lease={branch_ref}:{current}', 'origin', f'HEAD:{branch_ref}')
-        if remote_ref(branch_ref) != new_head:
-            raise RuntimeError('remote branch is not the prepared commit')
+            raise RuntimeError('remote branch changed before tagging')
         ensure_unpublished(tag)
         if remote_ref('refs/tags/' + tag) is not None:
             raise RuntimeError('candidate tag appeared concurrently')
         old_ids = {r['id'] for r in runs(tag)}
-        if remote_ref(branch_ref) != new_head:
+        check_checkout(current)
+        if remote_ref(branch_ref) != current:
             raise RuntimeError('remote branch changed before tagging')
-        git('push', f'--force-with-lease=refs/tags/{tag}:', 'origin', f'{new_head}:refs/tags/{tag}')
-        watch(tag, new_head, old_ids)
-
+        git('push', f'--force-with-lease=refs/tags/{tag}:', 'origin', f'{current}:refs/tags/{tag}')
+        watch(tag, current, old_ids)
 
 if __name__ == '__main__':
     try:
