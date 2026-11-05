@@ -52,14 +52,22 @@ test registry affects the build without copying application files into the
 maintenance checkout. Preparation needs Python 3, Git and access to the pinned
 upstream repository on every runner.
 
-`CI` runs on pushes to any branch, pull requests and manual dispatch. It builds
-and tests the dynamically linked Linux x86_64 collector on Ubuntu 22.04 for
-inclusion in the macOS and Windows packages. The separate `Linux` workflow
-runs on branch pushes, pull requests and manual dispatch and builds/tests the
-core; its desktop packages use Qt 6.8.3 and target x86_64 and arm64. These
-runs upload Actions artifacts only, using the prepared tree's CMake version
-with a `-dev` suffix. The `Release` workflow calls the same Linux workflow for
-tagged builds and waits for both architectures before publishing.
+`CI` runs only by manual dispatch, not on commits, branch pushes or pull-request
+updates. Batch related fixes before requesting a full build. It builds and
+tests the dynamically linked Linux x86_64 collector on Ubuntu 22.04 for
+inclusion in the macOS and Windows packages. `Linux` runs only by manual
+dispatch or as a reusable workflow; it builds/tests the core and packages Qt
+6.8.3 desktop apps for x86_64 and arm64. Validation runs upload Actions
+artifacts only. `Release` runs on version tags, calls the Linux workflow and
+waits for all platform packages before publishing; ordinary branch pushes do
+not publish or start full builds.
+
+After a batch of changes on the long-lived branch, request validation with:
+
+```sh
+gh workflow run ci.yml --ref downstream/patch-build
+gh workflow run linux.yml --ref downstream/patch-build
+```
 
 To check a macOS bundle locally against its tested Linux collector, run
 `python3 downstream/verify-collector-zip.py <zip> <collector>` from the

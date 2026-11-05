@@ -1,11 +1,8 @@
 name: Linux
 
-# Build and test on branches, pull requests and manual runs; release calls this workflow.
+# Run explicitly for validation; the release workflow calls this for tagged builds.
 on:
-  push:
-    branches: ["**"]
   workflow_call:
-  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
