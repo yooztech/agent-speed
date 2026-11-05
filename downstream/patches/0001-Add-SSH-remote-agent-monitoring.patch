@@ -1,0 +1,2027 @@
+From 75a01158378e135fb8ecefd167749faead49e691 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 13:24:46 +0800
+Subject: [PATCH] Add SSH remote agent monitoring
+
+---
+ README.md                                     |  65 ++++-
+ linux/CMakeLists.txt                          |   1 +
+ linux/collector/CMakeLists.txt                |   6 +
+ linux/collector/history_cache.cpp             |  77 ++++++
+ linux/collector/history_cache.hpp             |  22 ++
+ linux/collector/main.cpp                      | 144 +++++++++++
+ linux/collector/protocol.cpp                  |  99 +++++++
+ linux/collector/protocol.hpp                  |  22 ++
+ linux/core/include/agentspeed/engine.hpp      |   2 +
+ linux/core/include/agentspeed/snapshot.hpp    |   2 +
+ linux/core/src/engine.cpp                     |  17 +-
+ linux/core/src/history_analyzer.cpp           |   2 +-
+ linux/core/src/monitor_snapshot.cpp           |   2 +
+ linux/core/src/omp_parser.cpp                 |  29 +--
+ linux/tests/CMakeLists.txt                    |   6 +-
+ linux/tests/collector_integration_test.cpp    | 174 +++++++++++++
+ linux/tests/collector_test.cpp                | 152 +++++++++++
+ linux/tests/engine_fixture_test.cpp           |  27 ++
+ linux/tests/history_test.cpp                  |  44 ++++
+ linux/tests/parser_fixture_test.cpp           |  49 ++++
+ macos/Sources/AgentSpeed/App/AppModel.swift   |   3 +
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  | 243 ++++++++++++++++++
+ .../AgentSpeed/Dashboard/DashboardView.swift  |  24 +-
+ .../Dashboard/RemoteHostsView.swift           | 129 ++++++++++
+ .../SettingsWindow/Panes/SourcesPane.swift    |   1 +
+ .../AgentSpeedAppTests/RemoteHostsTests.swift |  92 +++++++
+ macos/scripts/build-app.sh                    |  28 ++
+ macos/scripts/build-linux-collector.sh        |  39 +++
+ spec/DESIGN.md                                |   7 +
+ spec/METRICS.md                               |   9 +
+ spec/NETWORK.md                               |  46 +++-
+ 31 files changed, 1524 insertions(+), 39 deletions(-)
+ create mode 100644 linux/collector/CMakeLists.txt
+ create mode 100644 linux/collector/history_cache.cpp
+ create mode 100644 linux/collector/history_cache.hpp
+ create mode 100644 linux/collector/main.cpp
+ create mode 100644 linux/collector/protocol.cpp
+ create mode 100644 linux/collector/protocol.hpp
+ create mode 100644 linux/tests/collector_integration_test.cpp
+ create mode 100644 linux/tests/collector_test.cpp
+ create mode 100644 macos/Sources/AgentSpeed/App/RemoteHosts.swift
+ create mode 100644 macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
+ create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+ create mode 100755 macos/scripts/build-linux-collector.sh
+
+diff --git a/README.md b/README.md
+index d2ab76a7..5f30dd9b 100644
+--- a/README.md
++++ b/README.md
+@@ -105,9 +105,72 @@ The full, testable specification lives in [`spec/METRICS.md`](spec/METRICS.md).
+ 
+ Ordinary Claude Desktop chat conversations are not stored on your computer, so they cannot be measured; WorkBuddy conversations that run in the cloud are not counted either.
+ 
++## Remote Linux monitoring on macOS
++
++Remote monitoring is opt-in and separate from local monitoring and live reporting. Configure an SSH host alias in
++`~/.ssh/config` for the Linux account that owns the agent logs, including its user, port and identity as needed. Use
++normal SSH host-key verification, pre-trust the host key, and use noninteractive key or SSH agent authentication.
++Enable each host in Settings → Sources; its data appears in a separate dashboard panel. Remote SSH is independent of
++the network switch: disable the host to stop it. The app selects its bundled collector for the host architecture,
++uploads it over SSH and runs it over SSH standard streams. There is no HTTP service, listening port, Python runtime or sudo.
++
++The Linux collector reuses the native measurement core, including omp parsing and parent/child deduplication. The
++remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
++stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
++Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
++response rates use the logged duration. In particular omp commonly writes a response when it completes, so remote
++monitoring cannot measure per-token streaming speed or infer an unrecorded time to first token. End-to-end speed includes
++the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
++
++The collector keeps a private history cache on the Linux host at `~/.cache/agentspeed-collector/history.sqlite3`.
++An exclusive lock allows one collector to use it; concurrent collectors or an unsafe or unavailable cache use memory
++instead. Changes to the monitored source configuration reset the cache. On reconnect, history is refreshed from the
++cache and logs rather than added to the previous display. If a file cannot be read, its previous cached contribution
++is retained when available, and the history frame is marked `partial: true`.
++The flag covers known discovered-file and database errors: inaccessible directories or failed metadata checks may be
++skipped during discovery, and unchanged cached files are not reopened. Thus `partial: false` does not guarantee
++exhaustive discovery or filesystem readability.
++
++In one read-only measurement on a local home directory with 7,233 omp JSONL files, the first snapshot arrived after
++8.546 seconds, but no history frame arrived within 90 seconds. During a subsequent 10-second sample, the collector used
++12.63 seconds of CPU time and about 106,988 KiB RSS. The history scan was still running, so these figures describe an ongoing
++scan, not steady-state incremental resource usage; they do not establish when history would finish loading.
++In a separate optimized Release build measurement before the history performance fix, on the same roughly 7,233 files,
++the first snapshot arrived after 3.461 seconds and the first history frame after 79.225 seconds; RSS was 139,716 KiB at
++79.3 seconds. These are observations of initial scanning, not steady-state resource usage.
++
++In a post-fix optimized local smoke run on roughly the same 7,233 files, the initial snapshot arrived after 2.583 seconds
++and history after 50.670 seconds, with 88 aggregate rows and 129,872 KiB RSS. A reconnect using the same cache produced
++a snapshot after 1.350 seconds and history after 1.851 seconds, with 88 rows and 120,664 KiB RSS. Both runs exited
++successfully; their history reported `partial: false`, subject to the discovery and readability limitations above.
++These measurements describe this workload's initial scan and cached reconnect, not steady-state incremental usage.
++
++### Building and packaging the Linux collectors
++
++Build natively on compatible Linux x86_64 and aarch64 hosts. The collector needs CMake 3.22+, a C++20 compiler,
++pkg-config, and development libraries for zstd, Brotli decoder, SQLite, ICU and OpenSSL Crypto (on Ubuntu:
++`libzstd-dev libbrotli-dev libsqlite3-dev libicu-dev libssl-dev`). No Qt is needed for the headless collector.
++On each target architecture run:
++
++```sh
++macos/scripts/build-linux-collector.sh
++```
++
++The optional argument selects the output directory; by default it writes under `dist/collectors`. Copy the resulting
++`linux-x86_64` and/or `linux-aarch64` directories to the Mac's `dist/collectors`, or supply their parent directory to
++`macos/scripts/build-app.sh --collectors DIR`. App packaging does not require collector artifacts, so a default build
++without them cannot monitor remote hosts. Include the artifact for each remote architecture you need; the client reports
++a missing collector if that architecture was not bundled. Each is bundled as
++`Resources/collectors/linux-<architecture>/agent-speed-collector`. The executable dynamically links system libraries:
++build against a compatible target Linux and install the matching runtime libraries on the remote host. To build just
++the collector without packaging, configure `cmake -S linux -B linux/build -DAGENTSPEED_BUILD_APP=OFF` and build the
++`agentspeed-collector` target; the executable is `linux/build/collector/agentspeed-collector`.
++
+ ## Privacy
+ 
+-Read-only. Local-only. No telemetry, no accounts. Agent Speed makes only three kinds of automatic network requests, and each one sends nothing about you: the update check against GitHub Releases, a daily download of the public model price table from this repository (GitHub, with jsDelivr as a mirror), and — only when you show costs in a currency other than US dollars — a daily download of public exchange rates (open.er-api.com, with the fawazahmed0 currency API and Frankfurter as fallbacks). Every user requests the same files, so no server learns your currency, models or usage. One switch in Settings turns all network access off; costs then use the price table and rates shipped with the app. Agent Speed never stores or displays conversation content — only token counts, model names and project folder names. The usage history keeps only daily totals (including each day's API-equivalent cost) and each model's daily performance figures, in a small database on your computer (`~/Library/Application Support/AgentSpeed`, `%LOCALAPPDATA%\AgentSpeed`), and can be cleared in Settings. Updates are verified against the release's SHA-256 checksums before they are installed; the checksums are published with the release, so they catch corrupted or tampered downloads, not a compromised repository. The price table is plain data checked against strict rules; it is not signed.
++Agent Speed reads transcripts without modifying them. Remote monitoring and live reporting are separately opt-in; there is no telemetry or account requirement. With remote monitoring enabled, the Linux collector sends only whitelisted metrics and presentation labels over SSH, never raw transcripts, prompts, conversation content, tool arguments or outputs, or absolute working paths. SSH uses the system configuration and host-key verification; do not put passwords or private keys in logs or the repository. Remote history is isolated from local history and reconstructed from server logs when the collector restarts.
++
++The three automatic network requests send no activity data: the update check against GitHub Releases, the daily public model price table (GitHub, with jsDelivr as a mirror), and, for non-USD costs, public exchange rates (open.er-api.com, with the fawazahmed0 currency API and Frankfurter as fallbacks). Servers can see the connection's IP address and time. Local usage history keeps daily totals and each model's daily performance figures in a database on your computer (`~/Library/Application Support/AgentSpeed`, `%LOCALAPPDATA%\AgentSpeed`) and can be cleared in Settings. Updates are checked against release SHA-256 checksums, which detect corrupted or tampered downloads but not a compromised repository. The price table is validated plain data, not signed.
+ 
+ Network traffic: Agent Speed counts how many bytes programs send and receive, on this computer only. It never reads content, addresses or destinations; only live reporting (below), if you turn it on, sends your agents' byte counts to the service you chose. On Windows, per-agent traffic needs an optional helper service that runs as the restricted Local Service account and only counts bytes per process; it is installed and removed with one administrator prompt each ([details](spec/WINDOWS-SERVICE.md)).
+ 
+diff --git a/linux/CMakeLists.txt b/linux/CMakeLists.txt
+index 52ce3422..d2d1feba 100644
+--- a/linux/CMakeLists.txt
++++ b/linux/CMakeLists.txt
+@@ -14,6 +14,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+ endif()
+ 
+ add_subdirectory(core)
++add_subdirectory(collector)
+ 
+ if(AGENTSPEED_BUILD_APP)
+     add_subdirectory(app)
+diff --git a/linux/collector/CMakeLists.txt b/linux/collector/CMakeLists.txt
+new file mode 100644
+index 00000000..b64cb4d1
+--- /dev/null
++++ b/linux/collector/CMakeLists.txt
+@@ -0,0 +1,6 @@
++find_package(Threads REQUIRED)
++add_library(agentspeed_collector_protocol STATIC protocol.cpp history_cache.cpp)
++target_include_directories(agentspeed_collector_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
++target_link_libraries(agentspeed_collector_protocol PUBLIC agentspeed_core)
++add_executable(agentspeed-collector main.cpp)
++target_link_libraries(agentspeed-collector PRIVATE agentspeed_collector_protocol Threads::Threads)
+diff --git a/linux/collector/history_cache.cpp b/linux/collector/history_cache.cpp
+new file mode 100644
+index 00000000..571e0e2b
+--- /dev/null
++++ b/linux/collector/history_cache.cpp
+@@ -0,0 +1,77 @@
++#include "history_cache.hpp"
++
++#include <cerrno>
++#include <fcntl.h>
++#include <sys/file.h>
++#include <sys/stat.h>
++#include <unistd.h>
++
++namespace collector {
++namespace {
++bool safeDirectory(int fd, bool privateDirectory) {
++    struct stat st{};
++    return fd >= 0 && fstat(fd, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == geteuid() &&
++           !(st.st_mode & (privateDirectory ? 0077 : 0022));
++}
++bool safeFile(int fd) {
++    struct stat st{};
++    return fd >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == geteuid() &&
++           st.st_nlink == 1 && !(st.st_mode & 0077);
++}
++}
++HistoryCache::HistoryCache(const std::string& home) {
++    if (home.empty() || home.front() != '/') return;
++    const int root = ::open(home.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
++    if (!safeDirectory(root, false)) { if (root >= 0) close(root); return; }
++    if (mkdirat(root, ".cache", 0700) < 0 && errno != EEXIST) { close(root); return; }
++    const int cache = openat(root, ".cache", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
++    close(root);
++    if (!safeDirectory(cache, false)) { if (cache >= 0) close(cache); return; }
++    if (mkdirat(cache, "agentspeed-collector", 0700) < 0 && errno != EEXIST) { close(cache); return; }
++    dir_ = openat(cache, "agentspeed-collector", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
++    close(cache);
++    if (!safeDirectory(dir_, true)) { if (dir_ >= 0) close(dir_); dir_ = -1; return; }
++    lock_ = openat(dir_, "history.lock", O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
++    if (!safeFile(lock_) || flock(lock_, LOCK_EX | LOCK_NB) < 0) {
++        if (lock_ >= 0) close(lock_);
++        lock_ = -1;
++        return;
++    }
++    const int db = openat(dir_, "history.sqlite3", O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
++    if (!safeFile(db)) { if (db >= 0) close(db); return; }
++    close(db);
++    path_ = home + "/.cache/agentspeed-collector/history.sqlite3";
++}
++HistoryCache::~HistoryCache() {
++    if (lock_ >= 0) close(lock_);
++    if (dir_ >= 0) close(dir_);
++}
++std::unique_ptr<agentspeed::history::Store> HistoryCache::open(const std::string& identity) const {
++    if (!path_.empty()) {
++        try {
++            auto store = agentspeed::history::Store::open(path_);
++            const auto existing = store->meta("collectorIdentity");
++            if (!existing) store->setMeta("collectorIdentity", identity);
++            else if (*existing != identity) {
++                store.reset();
++                for (const char* name : {"history.sqlite3", "history.sqlite3-wal", "history.sqlite3-shm"}) {
++                    if (unlinkat(dir_, name, 0) < 0 && errno != ENOENT)
++                        return agentspeed::history::Store::open(":memory:");
++                }
++                const int db = openat(dir_, "history.sqlite3", O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
++                if (!safeFile(db)) {
++                    if (db >= 0) close(db);
++                    return agentspeed::history::Store::open(":memory:");
++                }
++                close(db);
++                store = agentspeed::history::Store::open(path_);
++                store->setMeta("collectorIdentity", identity);
++            }
++            return store;
++        } catch (...) {
++            // A cache is optional; the collector must still operate when it is unavailable or corrupt.
++        }
++    }
++    return agentspeed::history::Store::open(":memory:");
++}
++}
+diff --git a/linux/collector/history_cache.hpp b/linux/collector/history_cache.hpp
+new file mode 100644
+index 00000000..637b823a
+--- /dev/null
++++ b/linux/collector/history_cache.hpp
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <memory>
++#include <string>
++
++#include "agentspeed/history_store.hpp"
++
++namespace collector {
++// An exclusive process lock protects the analyzer's in-memory ownership ledger as well as SQLite writes.
++class HistoryCache {
++public:
++    explicit HistoryCache(const std::string& home);
++    ~HistoryCache();
++    HistoryCache(const HistoryCache&) = delete;
++    HistoryCache& operator=(const HistoryCache&) = delete;
++    std::unique_ptr<agentspeed::history::Store> open(const std::string& identity) const;
++private:
++    int dir_ = -1;
++    int lock_ = -1;
++    std::string path_;
++};
++}
+diff --git a/linux/collector/main.cpp b/linux/collector/main.cpp
+new file mode 100644
+index 00000000..f9759531
+--- /dev/null
++++ b/linux/collector/main.cpp
+@@ -0,0 +1,144 @@
++#include "protocol.hpp"
++#include "history_cache.hpp"
++
++#include "agentspeed/history_analyzer.hpp"
++#include "agentspeed/history_store.hpp"
++#include "agentspeed/monitor.hpp"
++#include "agentspeed/price_book.hpp"
++#include "agentspeed/tz.hpp"
++
++#include <atomic>
++#include <cerrno>
++#include <chrono>
++#include <ctime>
++#include <cstdlib>
++#include <fstream>
++#include <iterator>
++#include <sstream>
++#include <exception>
++#include <fcntl.h>
++#include <iostream>
++#include <mutex>
++#include <poll.h>
++#include <signal.h>
++#include <thread>
++#include <unistd.h>
++
++namespace {
++std::int64_t nowMs() {
++    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
++}
++std::int64_t todayStart(std::int64_t now) {
++    const std::time_t seconds = static_cast<std::time_t>(now / 1000);
++    std::tm local{};
++    localtime_r(&seconds, &local);
++    local.tm_hour = local.tm_min = local.tm_sec = 0;
++    local.tm_isdst = -1;
++    return static_cast<std::int64_t>(std::mktime(&local)) * 1000;
++}
++std::string cacheIdentity(const agentspeed::SourceLocations& locations, const std::set<agentspeed::SourceKind>& enabled) {
++    std::ostringstream out;
++    auto add = [&](const std::string& s) { out << s.size() << ':' << s; };
++    for (const auto source : enabled) out << static_cast<int>(source) << ',';
++    out << ';';
++    for (const auto& [family, path] : locations.fileRoots()) { out << static_cast<int>(family) << ','; add(path); }
++    add(locations.openCodeRoot); add(locations.zcodeRoot); add(locations.hermesRoot);
++    for (const auto& path : locations.openClawRoots) add(path);
++    out << locations.ompAutomatic << locations.piAutomatic << locations.openClawAutomatic
++        << locations.codexAutomatic << locations.hermesChosen;
++    return out.str();
++}
++std::string zoneIdentity() {
++    const char* tz = std::getenv("TZ");
++    std::string id = tz ? tz : "";
++    auto name = id;
++    if (!name.empty() && name.front() == ':') name.erase(0, 1);
++    std::string path = "/etc/localtime";
++    if (!name.empty() && name.front() != '/' && name.find("..") == std::string::npos)
++        path = "/usr/share/zoneinfo/" + name;
++    std::ifstream file(path, std::ios::binary);
++    return id + '\0' + std::string(std::istreambuf_iterator<char>(file), {});
++}
++}
++int main(int argc, char**) {
++    if (argc != 1) {
++        std::cerr << "usage: agentspeed-collector\n";
++        return 2;
++    }
++    signal(SIGPIPE, SIG_IGN);
++    if (fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK) < 0 ||
++        fcntl(STDOUT_FILENO, F_SETFL, fcntl(STDOUT_FILENO, F_GETFL) | O_NONBLOCK) < 0) return 1;
++    try {
++        auto config = agentspeed::MonitorConfig::fromEnvironment();
++        agentspeed::Monitor monitor(config);
++        collector::Protocol protocol;
++        auto now = nowMs();
++        monitor.start(now, todayStart(now));
++        std::mutex outputMutex;
++        std::atomic<bool> stopping{false};
++        auto checkInput = [&](short events) {
++            if (events & (POLLERR | POLLNVAL)) { stopping = true; return; }
++            if (events & (POLLIN | POLLHUP)) {
++                char buf[256];
++                const auto n = read(STDIN_FILENO, buf, sizeof(buf));
++                if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) stopping = true;
++            }
++        };
++        auto emit = [&](const std::string& line) {
++            std::lock_guard lock(outputMutex);
++            const std::string_view parts[] = {line, "\n"};
++            for (auto part : parts) {
++                while (!part.empty() && !stopping) {
++                    pollfd fds[] = {{STDIN_FILENO, POLLIN, 0}, {STDOUT_FILENO, POLLOUT, 0}};
++                    const int ready = poll(fds, 2, 1000);
++                    if (ready < 0) { if (errno != EINTR) stopping = true; continue; }
++                    checkInput(fds[0].revents);
++                    if (stopping) break;
++                    if (fds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) { stopping = true; break; }
++                    if (fds[1].revents & POLLOUT) {
++                        const auto n = write(STDOUT_FILENO, part.data(), part.size());
++                        if (n > 0) part.remove_prefix(static_cast<std::size_t>(n));
++                        else if (n < 0 && errno != EAGAIN && errno != EINTR) stopping = true;
++                    }
++                }
++            }
++        };
++        emit(protocol.snapshot(monitor.snapshot(now, todayStart(now))));
++        std::thread history([&] {
++            try {
++                const char* home = std::getenv("HOME");
++                collector::HistoryCache cache(home ? home : "");
++                auto store = cache.open(cacheIdentity(config.locations, config.enabled));
++                agentspeed::history::Analyzer analyzer(*store, std::make_shared<agentspeed::pricing::PriceBook>());
++                auto zone = agentspeed::localZone(agentspeed::processEnvironment());
++                const auto zoneId = zoneIdentity();
++                while (!stopping) {
++                    auto report = analyzer.run(config.locations, config.enabled, zone, zoneId, [&] { return stopping.load(); });
++                    if (!stopping && !report.cancelled)
++                        emit(collector::Protocol::history(analyzer.days(), report));
++                    for (int i = 0; i < 60 && !stopping; ++i)
++                        std::this_thread::sleep_for(std::chrono::seconds(1));
++                }
++            } catch (const std::exception&) {
++                std::cerr << "history unavailable\n";
++            }
++        });
++        while (!stopping) {
++            pollfd input{STDIN_FILENO, POLLIN, 0};
++            int result = poll(&input, 1, 1000);
++            if (result < 0) break;
++            if (result > 0) checkInput(input.revents);
++            if (stopping) break;
++            now = nowMs();
++            monitor.poll(now, todayStart(now));
++            emit(protocol.snapshot(monitor.snapshot(now, todayStart(now))));
++            for (const auto& event : monitor.takeCompletions()) emit(collector::Protocol::completion(event));
++        }
++        stopping = true;
++        history.join();
++        return 0;
++    } catch (const std::exception&) {
++        std::cerr << "collector unavailable\n";
++        return 1;
++    }
++}
+diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
+new file mode 100644
+index 00000000..fc28c519
+--- /dev/null
++++ b/linux/collector/protocol.cpp
+@@ -0,0 +1,99 @@
++#include "protocol.hpp"
++#include "agentspeed/history_analyzer.hpp"
++
++#include <cmath>
++#include <iomanip>
++#include <locale>
++#include <sstream>
++#include <string_view>
++
++namespace collector {
++namespace {
++void text(std::ostream& out, std::string_view value) {
++    static constexpr char hex[] = "0123456789abcdef";
++    out << '"';
++    for (unsigned char c : value) {
++        if (c == '"' || c == '\\') out << '\\' << static_cast<char>(c);
++        else if (c < 0x20) out << "\\u00" << hex[c >> 4] << hex[c & 15];
++        else out << static_cast<char>(c);
++    }
++    out << '"';
++}
++void number(std::ostream& out, double value) {
++    if (std::isfinite(value)) out << value; else out << "null";
++}
++template<class T> void optionalNumber(std::ostream& out, const std::optional<T>& value) {
++    if (value) number(out, static_cast<double>(*value)); else out << "null";
++}
++void optionalText(std::ostream& out, const std::optional<std::string>& value) {
++    if (value) text(out, *value); else out << "null";
++}
++std::ostringstream stream() {
++    std::ostringstream out;
++    out.imbue(std::locale::classic());
++    out << std::setprecision(17);
++    return out;
++}
++}
++std::string Protocol::id(const std::string& raw) {
++    auto [it, inserted] = ids_.try_emplace(raw);
++    if (inserted) it->second = std::to_string(ids_.size());
++    return it->second;
++}
++std::string Protocol::snapshot(const agentspeed::Snapshot& v) {
++    auto o = stream();
++    o << "{\"version\":1,\"type\":\"snapshot\",\"now_ms\":" << v.nowMs
++      << ",\"today_output\":" << v.todayOutput << ",\"today_input\":" << v.todayInput
++      << ",\"today_requests\":" << v.todayRequests << ",\"today_average\":";
++    optionalNumber(o, v.todayAverage);
++    o << ",\"live_output\":"; if (v.liveRateComplete) number(o, v.liveOutput); else o << "null";
++    o << ",\"live_total\":"; if (v.liveRateComplete) number(o, v.liveTotal); else o << "null";
++    o << ",\"estimated_share\":"; number(o, v.estimatedShare);
++    o << ",\"generating\":" << v.generating << ",\"tools\":" << v.tools << ",\"agents\":[";
++    bool first = true;
++    for (const auto& a : v.agents) {
++        if (!first) o << ',';
++        first = false;
++        o << "{\"id\":"; text(o, id(a.id));
++        o << ",\"source\":"; text(o, agentspeed::sourceId(a.source));
++        o << ",\"model\":"; optionalText(o, a.model);
++        o << ",\"phase\":"; text(o, agentspeed::phaseId(a.phase));
++        o << ",\"live_output\":"; if (a.liveRateComplete) number(o, a.liveOutput); else o << "null";
++        o << ",\"live_total\":"; if (a.liveRateComplete) number(o, a.liveTotal); else o << "null";
++        o << ",\"subagent\":" << (a.subagent ? "true" : "false") << ",\"parent_id\":";
++        if (a.parentId) text(o, id(*a.parentId)); else o << "null";
++        o << ",\"last_line_ms\":";
++        if (a.lastLineMs) o << *a.lastLineMs; else o << "null";
++        o << '}';
++    }
++    o << "]}";
++    return o.str();
++}
++std::string Protocol::history(const std::vector<agentspeed::history::DailyUsage>& days, const agentspeed::history::Report& report) {
++    auto o = stream();
++    o << "{\"version\":1,\"type\":\"history\",\"partial\":" << (report.filesUnreadable ? "true" : "false") << ",\"days\":[";
++    bool first = true;
++    for (const auto& d : days) {
++        if (!first) o << ',';
++        first = false;
++        const auto& t = d.totals;
++        o << "{\"day\":"; text(o, d.key.day);
++        o << ",\"source\":"; text(o, agentspeed::sourceId(d.key.source));
++        o << ",\"requests\":" << t.requests << ",\"input\":" << t.input
++          << ",\"cached_input\":" << t.cachedInput << ",\"cache_write_input\":" << t.cacheWriteInput
++          << ",\"output\":" << t.output << ",\"reasoning\":" << t.reasoning
++          << ",\"measured_output\":" << t.measuredOutput << ",\"measured_ms\":" << t.measuredMs << ",\"peak\":";
++        optionalNumber(o, d.peak);
++        o << '}';
++    }
++    o << "]}";
++    return o.str();
++}
++std::string Protocol::completion(const agentspeed::Completion& v) {
++    auto o = stream();
++    o << "{\"version\":1,\"type\":\"completion\",\"source\":"; text(o, agentspeed::sourceId(v.source));
++    o << ",\"output\":" << v.output << ",\"speed\":"; optionalNumber(o, v.speed);
++    o << '}';
++    return o.str();
++}
++}
+diff --git a/linux/collector/protocol.hpp b/linux/collector/protocol.hpp
+new file mode 100644
+index 00000000..b01ec5ef
+--- /dev/null
++++ b/linux/collector/protocol.hpp
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <map>
++#include <string>
++#include <vector>
++
++#include "agentspeed/history.hpp"
++#include "agentspeed/snapshot.hpp"
++namespace agentspeed::history { struct Report; }
++
++namespace collector {
++// IDs are generated locally, never derived from paths or session identifiers.
++class Protocol {
++public:
++    std::string snapshot(const agentspeed::Snapshot& value);
++    static std::string history(const std::vector<agentspeed::history::DailyUsage>& days, const agentspeed::history::Report& report);
++    static std::string completion(const agentspeed::Completion& value);
++private:
++    std::string id(const std::string& raw);
++    std::map<std::string, std::string> ids_;
++};
++}
+diff --git a/linux/core/include/agentspeed/engine.hpp b/linux/core/include/agentspeed/engine.hpp
+index 8b1aefd2..6a72fa35 100644
+--- a/linux/core/include/agentspeed/engine.hpp
++++ b/linux/core/include/agentspeed/engine.hpp
+@@ -55,6 +55,8 @@ struct LiveRate {
+     double output = 0;
+     double total = 0;
+     double estimatedShare = 0;
++    // False when an overlapping response lacks a speed reference or active generation cannot be estimated.
++    bool complete = true;
+ };
+ LiveRate liveRate(const std::vector<Response>& responses, const std::vector<Agent>& agents, std::int64_t now);
+ 
+diff --git a/linux/core/include/agentspeed/snapshot.hpp b/linux/core/include/agentspeed/snapshot.hpp
+index 08d56e03..54297547 100644
+--- a/linux/core/include/agentspeed/snapshot.hpp
++++ b/linux/core/include/agentspeed/snapshot.hpp
+@@ -28,6 +28,7 @@ struct AgentRow {
+     Phase phase = Phase::Idle;
+     double liveOutput = 0;
+     double liveTotal = 0;
++    bool liveRateComplete = true;
+     int depth = 0;
+     bool subagent = false;
+     std::optional<std::string> parentId;
+@@ -103,6 +104,7 @@ struct Snapshot {
+     std::int64_t nowMs = 0;
+     double liveOutput = 0;
+     double liveTotal = 0;
++    bool liveRateComplete = true;
+     double estimatedShare = 0;
+     std::int64_t todayOutput = 0;
+     std::int64_t todayInput = 0;
+diff --git a/linux/core/src/engine.cpp b/linux/core/src/engine.cpp
+index b9cbdbe6..118ad88d 100644
+--- a/linux/core/src/engine.cpp
++++ b/linux/core/src/engine.cpp
+@@ -120,6 +120,7 @@ LiveRate liveRate(const std::vector<Response>& responses, const std::vector<Agen
+     const std::int64_t w0 = now - kWindowMs;
+     const auto parts = split(responses);
+     double measuredOut = 0, measuredTot = 0, estimatedOut = 0, estimatedTot = 0;
++    bool complete = true;
+     for (const auto* r : parts.valid) {
+         const auto [s, e] = *interval(*r);
+         const double frac = overlap(w0, now, s, e) / static_cast<double>(e - s);
+@@ -127,17 +128,23 @@ LiveRate liveRate(const std::vector<Response>& responses, const std::vector<Agen
+         measuredTot += static_cast<double>(r->output + r->input) * frac;
+     }
+     for (const auto* r : parts.unmeasured) {
+-        const auto sp = estimatedSpeed(parts.valid, now, agentOf(*r, agents));
+-        if (!sp) continue;
+         const auto [s, e] = *interval(*r);
++        const auto sp = estimatedSpeed(parts.valid, now, agentOf(*r, agents));
++        if (!sp) {
++            if (overlap(w0, now, s, e) > 0) complete = false;
++            continue;
++        }
+         const double secs = overlap(w0, now, s, e) / 1000.0;
+         estimatedOut += sp->output * secs;
+         estimatedTot += sp->total * secs;
+     }
+     for (const auto& a : agents) {
+-        if (!estimatesInFlight(a, now)) continue;
++        if (!estimatesInFlight(a, now)) {
++            if (a.phase == Phase::Generating && (!a.lastLineMs || now - *a.lastLineMs <= kStaleMs)) complete = false;
++            continue;
++        }
+         const auto sp = estimatedSpeed(parts.valid, now, a);
+-        if (!sp) continue;
++        if (!sp) { complete = false; continue; }
+         const double secs = overlap(w0, now, estimateStart(a, responses), now) / 1000.0;
+         estimatedOut += sp->output * secs;
+         estimatedTot += sp->total * secs;
+@@ -145,7 +152,7 @@ LiveRate liveRate(const std::vector<Response>& responses, const std::vector<Agen
+     const double window = static_cast<double>(kWindowMs) / 1000.0;
+     const double denom = measuredOut + estimatedOut;
+     return {(measuredOut + estimatedOut) / window, (measuredTot + estimatedTot) / window,
+-            denom > 0 ? estimatedOut / denom : 0.0};
++            denom > 0 ? estimatedOut / denom : 0.0, complete};
+ }
+ 
+ LiveCost liveCost(const std::vector<Response>& responses, const std::vector<Agent>& agents, std::int64_t now) {
+diff --git a/linux/core/src/history_analyzer.cpp b/linux/core/src/history_analyzer.cpp
+index 008e8745..d5038d86 100644
+--- a/linux/core/src/history_analyzer.cpp
++++ b/linux/core/src/history_analyzer.cpp
+@@ -306,7 +306,7 @@ Report Analyzer::run(const SourceLocations& locations, const std::set<SourceKind
+     }
+     flush(pending_);
+     saveBindings();
+-    if (!report.cancelled) {
++    if (!report.cancelled && report.filesUnreadable == 0) {
+         store_.setMeta("timeZone", zoneId);
+         store_.setMeta("priceTableVersion", priceVersion);
+         if (work.openCode) store_.setMeta("opencode", work.openCode->identity);
+diff --git a/linux/core/src/monitor_snapshot.cpp b/linux/core/src/monitor_snapshot.cpp
+index 542db2a7..b2d08b50 100644
+--- a/linux/core/src/monitor_snapshot.cpp
++++ b/linux/core/src/monitor_snapshot.cpp
+@@ -188,6 +188,7 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
+     const auto live = engine::liveRate(recent, agents, nowMs);
+     snap.liveOutput = live.output;
+     snap.liveTotal = live.total;
++    snap.liveRateComplete = live.complete;
+     snap.estimatedShare = live.estimatedShare;
+     const auto today = engine::todayStats(responses, todayStartMs, nowMs);
+     snap.todayOutput = today.output;
+@@ -233,6 +234,7 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
+         const auto rate = engine::liveRate(byAgent[id], {self}, nowMs);
+         row.liveOutput = rate.output;
+         row.liveTotal = rate.total;
++        row.liveRateComplete = rate.complete;
+         row.depth = depth[id];
+         row.subagent = info.isSubagent;
+         row.parentId = self.parentId;
+diff --git a/linux/core/src/omp_parser.cpp b/linux/core/src/omp_parser.cpp
+index 18754f06..fa8c289e 100644
+--- a/linux/core/src/omp_parser.cpp
++++ b/linux/core/src/omp_parser.cpp
+@@ -93,14 +93,7 @@ void readCall(const json::Value& o, Line& line, std::optional<std::string>* topT
+     line.tokens.reasoning = reasoning;
+ }
+ 
+-std::optional<Line> readLine(std::string_view text, bool& malformed) {
+-    malformed = false;
+-    json::Document doc;
+-    if (!doc.parse(text) || !doc.root().isObject()) {
+-        malformed = true;
+-        return std::nullopt;
+-    }
+-    const auto root = doc.root();
++Line readLine(const json::Value& root) {
+     Line line;
+     const auto type = root["type"];
+     enum class Type { Other, Title, Session, Message, ModelUsage, Custom, ServiceTierChange, ThinkingLevelChange } t = Type::Other;
+@@ -247,10 +240,12 @@ void OmpParser::probeHeader(ResponseSink& sink) {
+     std::string first;
+     for (int i = 0; i < 2 && std::getline(in, first); ++i) {
+         if (!first.empty() && first.back() == '\r') first.pop_back();
+-        bool malformed = false;
+-        if (auto line = readLine(first, malformed); line && line->kind == Kind::Session) {
+-            apply(*line, sink);
+-            observeText(first);
++        json::Document doc;
++        if (!doc.parse(first) || !doc.root().isObject()) continue;
++        auto line = readLine(doc.root());
++        if (line.kind == Kind::Session) {
++            apply(line, sink);
++            observe(doc.root(), first);
+             return;
+         }
+     }
+@@ -258,14 +253,14 @@ void OmpParser::probeHeader(ResponseSink& sink) {
+ 
+ void OmpParser::feed(std::string_view text, ResponseSink& sink) {
+     if (json::isBlank(text)) return;
+-    bool malformed = false;
+-    auto line = readLine(text, malformed);
+-    if (malformed) {
++    json::Document doc;
++    if (!doc.parse(text) || !doc.root().isObject()) {
+         countMalformed();
+         return;
+     }
+-    apply(*line, sink);
+-    observeText(text);
++    auto line = readLine(doc.root());
++    apply(line, sink);
++    observe(doc.root(), text);
+ }
+ 
+ void OmpParser::apply(const Line& line, ResponseSink& sink) {
+diff --git a/linux/tests/CMakeLists.txt b/linux/tests/CMakeLists.txt
+index 77dc5081..8048ca80 100644
+--- a/linux/tests/CMakeLists.txt
++++ b/linux/tests/CMakeLists.txt
+@@ -6,6 +6,8 @@ FetchContent_MakeAvailable(googletest)
+ 
+ add_executable(agentspeed_tests
+     board_test.cpp
++    collector_test.cpp
++    collector_integration_test.cpp
+     current_values_test.cpp
+     discovery_test.cpp
+     droid_test.cpp
+@@ -33,7 +35,9 @@ add_executable(agentspeed_tests
+     unpriced_test.cpp
+     work_signals_test.cpp
+ )
+-target_link_libraries(agentspeed_tests PRIVATE agentspeed_core GTest::gtest_main)
++target_link_libraries(agentspeed_tests PRIVATE agentspeed_core agentspeed_collector_protocol GTest::gtest_main)
++add_dependencies(agentspeed_tests agentspeed-collector)
++target_compile_definitions(agentspeed_tests PRIVATE AGENTSPEED_COLLECTOR_PATH="$<TARGET_FILE:agentspeed-collector>")
+ target_compile_definitions(agentspeed_tests PRIVATE
+     AGENTSPEED_SPEC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../spec")
+ 
+diff --git a/linux/tests/collector_integration_test.cpp b/linux/tests/collector_integration_test.cpp
+new file mode 100644
+index 00000000..7a2293ef
+--- /dev/null
++++ b/linux/tests/collector_integration_test.cpp
+@@ -0,0 +1,174 @@
++#include <gtest/gtest.h>
++
++#include <chrono>
++#include <cstdio>
++#include <cstdlib>
++#include <ctime>
++#include <cerrno>
++#include <fcntl.h>
++#include <filesystem>
++#include <fstream>
++#include <poll.h>
++#include <signal.h>
++#include <string>
++#include <sys/wait.h>
++#include <unistd.h>
++
++#include "agentspeed/json.hpp"
++#include "agentspeed/monitor.hpp"
++#include "protocol.hpp"
++
++TEST(CollectorIntegration, GrokWithoutInFlightStartHasUnknownLiveRates) {
++    constexpr std::int64_t base = 1792497600000;
++    constexpr std::int64_t dayStart = 1792454400000;
++    char home[] = "/tmp/agentspeed-grok-rate-test-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    const auto sessions = std::filesystem::path(home) / "sessions";
++    const auto dir = sessions / "work/one";
++    std::filesystem::create_directories(dir);
++    std::ofstream(dir / "summary.json") << R"({"info":{"id":"one","cwd":"/projects/nova"},"current_model_id":"grok-4.5"})";
++    std::ofstream(dir / "updates.jsonl");
++
++    agentspeed::RootSettings settings;
++    settings.grokBuild = sessions.string();
++    agentspeed::MonitorConfig config;
++    config.locations = agentspeed::SourceLocations::resolve(settings, agentspeed::processEnvironment(), "/nonexistent-home");
++    config.enabled = {agentspeed::SourceKind::GrokBuild};
++    agentspeed::Monitor monitor(std::move(config));
++    monitor.start(base + 1000, dayStart);
++    std::ofstream(dir / "updates.jsonl", std::ios::app)
++        << R"({"timestamp":1792497603,"method":"_x.ai/session/update","params":{"sessionId":"one","update":{"sessionUpdate":"tool_call_update","status":"completed"},"_meta":{"agentTimestampMs":1792497603000}}})" << '\n';
++    monitor.poll(base + 5000, dayStart);
++    ASSERT_EQ(monitor.agents().size(), 1u);
++    const auto& agent = monitor.agents().begin()->second;
++    EXPECT_EQ(agent.phase, agentspeed::Phase::Generating);
++    EXPECT_FALSE(agent.inFlightStartMs.has_value());
++
++    collector::Protocol protocol;
++    agentspeed::json::Document doc;
++    const auto wire = protocol.snapshot(monitor.snapshot(base + 5000, dayStart));
++    ASSERT_TRUE(doc.parse(wire));
++    const auto root = doc.root();
++    EXPECT_TRUE(root["live_output"].isNull());
++    EXPECT_TRUE(root["live_total"].isNull());
++    ASSERT_EQ(root["agents"].size(), 1u);
++    EXPECT_EQ(root["agents"].at(0)["phase"].string(), "generating");
++    EXPECT_TRUE(root["agents"].at(0)["live_output"].isNull());
++    EXPECT_TRUE(root["agents"].at(0)["live_total"].isNull());
++    std::filesystem::remove_all(home);
++}
++
++TEST(CollectorIntegration, AppendsMetricsWithoutLeakingContentAndStopsOnEof) {
++    char home[] = "/tmp/agentspeed-collector-test-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-private-project";
++    std::filesystem::create_directories(dir);
++    const auto file = dir / "2026-10-20T10-48-00-000Z_01a158ec-db00-75e2-83a6-00013c6ef362.jsonl";
++    const auto now = std::time(nullptr);
++    std::tm utc{};
++    gmtime_r(&now, &utc);
++    char stamp[32];
++    std::strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
++    {
++        std::ofstream out(file);
++        out << "{\"type\":\"session\",\"version\":3,\"id\":\"01a158ec-db00-75e2-83a6-00013c6ef362\",\"timestamp\":\"" << stamp << "\",\"cwd\":\"/private-project\"}\n";
++    }
++    int input[2], output[2];
++    ASSERT_EQ(pipe(input), 0);
++    ASSERT_EQ(pipe(output), 0);
++    const auto pid = fork();
++    ASSERT_GE(pid, 0);
++    if (pid == 0) {
++        dup2(input[0], STDIN_FILENO);
++        dup2(output[1], STDOUT_FILENO);
++        close(input[0]); close(input[1]); close(output[0]); close(output[1]);
++        setenv("HOME", home, 1);
++        unsetenv("PI_CODING_AGENT_DIR"); unsetenv("PI_CONFIG_DIR");
++        execl(AGENTSPEED_COLLECTOR_PATH, AGENTSPEED_COLLECTOR_PATH, nullptr);
++        _exit(127);
++    }
++    close(input[0]); close(output[1]);
++    std::string data;
++    bool initial = false, completion = false, changed = false;
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
++    std::size_t consumed = 0;
++    while (std::chrono::steady_clock::now() < deadline && !(completion && changed)) {
++        pollfd fd{output[0], POLLIN, 0};
++        if (poll(&fd, 1, 1000) <= 0) continue;
++        char bytes[8192];
++        const auto n = read(output[0], bytes, sizeof(bytes));
++        if (n <= 0) break;
++        data.append(bytes, static_cast<std::size_t>(n));
++        std::size_t end;
++        while ((end = data.find('\n', consumed)) != std::string::npos) {
++            const auto line = data.substr(consumed, end - consumed);
++            consumed = end + 1;
++            agentspeed::json::Document doc;
++            if (!doc.parse(line)) continue;
++            const auto root = doc.root();
++            if (root["type"].string() == "snapshot") {
++                if (!initial) {
++                    initial = true;
++                    std::ofstream out(file, std::ios::app);
++                    out << "{\"type\":\"message\",\"id\":\"private-id\",\"parentId\":null,\"timestamp\":\"" << stamp
++                        << "\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"private-prompt-marker\"}],\"api\":\"openai-responses\",\"provider\":\"openai\",\"model\":\"gpt-5.5\",\"usage\":{\"input\":300,\"output\":410,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":710},\"stopReason\":\"stop\",\"timestamp\":" << static_cast<long long>(now) * 1000 << ",\"duration\":3000}}\n";
++                } else if (root["today_output"].count() >= 410) changed = true;
++            } else if (root["type"].string() == "completion" && root["output"].count() == 410) completion = true;
++        }
++    }
++    close(input[1]);
++    int status = 0;
++    bool exited = false;
++    for (int i = 0; i < 50; ++i) {
++        if (waitpid(pid, &status, WNOHANG) == pid) { exited = true; break; }
++        usleep(100000);
++    }
++    if (!exited) { kill(pid, SIGKILL); waitpid(pid, &status, 0); }
++    close(output[0]);
++    std::filesystem::remove_all(home);
++    EXPECT_TRUE(initial);
++    EXPECT_TRUE(completion);
++    EXPECT_TRUE(changed);
++    EXPECT_TRUE(exited);
++    if (exited) EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
++    EXPECT_EQ(data.find("private-prompt-marker"), std::string::npos);
++    EXPECT_EQ(data.find("private-project"), std::string::npos);
++    EXPECT_EQ(data.find("private-id"), std::string::npos);
++}
++
++TEST(CollectorIntegration, EofInterruptsBlockedOutput) {
++    char home[] = "/tmp/agentspeed-collector-full-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    int input[2], output[2];
++    ASSERT_EQ(pipe(input), 0);
++    ASSERT_EQ(pipe(output), 0);
++    ASSERT_GE(fcntl(output[1], F_SETFL, O_NONBLOCK), 0);
++    char buffer[4096]{};
++    while (write(output[1], buffer, sizeof(buffer)) > 0) {}
++    ASSERT_EQ(errno, EAGAIN);
++    const auto pid = fork();
++    ASSERT_GE(pid, 0);
++    if (pid == 0) {
++        dup2(input[0], STDIN_FILENO);
++        dup2(output[1], STDOUT_FILENO);
++        close(input[0]); close(input[1]); close(output[0]); close(output[1]);
++        setenv("HOME", home, 1);
++        unsetenv("PI_CODING_AGENT_DIR"); unsetenv("PI_CONFIG_DIR");
++        execl(AGENTSPEED_COLLECTOR_PATH, AGENTSPEED_COLLECTOR_PATH, nullptr);
++        _exit(127);
++    }
++    close(input[0]); close(output[1]);
++    usleep(500000);
++    close(input[1]);
++    int status = 0;
++    bool exited = false;
++    for (int i = 0; i < 100; ++i) {
++        if (waitpid(pid, &status, WNOHANG) == pid) { exited = true; break; }
++        usleep(100000);
++    }
++    if (!exited) { kill(pid, SIGKILL); waitpid(pid, &status, 0); }
++    close(output[0]);
++    std::filesystem::remove_all(home);
++    EXPECT_TRUE(exited);
++    if (exited) EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
++}
+diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
+new file mode 100644
+index 00000000..479b9263
+--- /dev/null
++++ b/linux/tests/collector_test.cpp
+@@ -0,0 +1,152 @@
++#include <gtest/gtest.h>
++
++#include "protocol.hpp"
++#include "history_cache.hpp"
++#include <filesystem>
++#include <sys/stat.h>
++#include <unistd.h>
++#include "agentspeed/json.hpp"
++#include "agentspeed/history_analyzer.hpp"
++#include "agentspeed/engine.hpp"
++#include "agentspeed/locations.hpp"
++#include "agentspeed/tz.hpp"
++
++TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
++    collector::Protocol protocol;
++    agentspeed::Snapshot snapshot;
++    snapshot.nowMs = 123;
++    snapshot.estimatedShare = 0.75;
++    agentspeed::AgentRow row;
++    row.id = "/secret/session";
++    row.project = "/secret/project";
++    row.parentId = "/secret/parent";
++    row.model = "model\"name";
++    row.phase = agentspeed::Phase::Generating;
++    snapshot.agents.push_back(row);
++    auto wire = protocol.snapshot(snapshot);
++    EXPECT_EQ(wire.find("/secret"), std::string::npos);
++    EXPECT_EQ(wire.find('\n'), std::string::npos);
++    agentspeed::json::Document doc;
++    ASSERT_TRUE(doc.parse(wire));
++    const auto root = doc.root();
++    EXPECT_EQ(root["type"].string(), "snapshot");
++    EXPECT_TRUE(root["today_average"].isNull());
++    EXPECT_EQ(root["agents"].at(0)["model"].string(), "model\"name");
++    EXPECT_EQ(root["agents"].at(0)["phase"].string(), "generating");
++    EXPECT_FALSE(root["agents"].at(0)["project"].valid());
++    EXPECT_EQ(protocol.snapshot(snapshot), wire);
++}
++
++TEST(CollectorProtocol, HistoryAndCompletionPreserveUnknowns) {
++    agentspeed::history::DailyUsage day;
++    day.key.day = "2026-11-05";
++    day.totals.measuredOutput = 15;
++    day.totals.measuredMs = 2000;
++    agentspeed::json::Document history;
++    agentspeed::history::Report report;
++    const auto historyWire = collector::Protocol::history({day}, report);
++    ASSERT_TRUE(history.parse(historyWire));
++    EXPECT_EQ(history.root()["partial"].raw(), "false");
++    agentspeed::json::Document partial;
++    report.filesUnreadable = 1;
++    const auto partialWire = collector::Protocol::history({}, report);
++    ASSERT_TRUE(partial.parse(partialWire));
++    EXPECT_EQ(partial.root()["partial"].raw(), "true");
++    auto row = history.root()["days"].at(0);
++    EXPECT_EQ(row["day"].string(), "2026-11-05");
++    EXPECT_EQ(row["measured_output"].raw(), "15");
++    EXPECT_EQ(row["measured_ms"].raw(), "2000");
++    EXPECT_TRUE(row["peak"].isNull());
++    agentspeed::Completion event;
++    event.output = 10;
++    agentspeed::json::Document completion;
++    const auto completionWire = collector::Protocol::completion(event);
++    ASSERT_TRUE(completion.parse(completionWire));
++    EXPECT_EQ(completion.root()["type"].string(), "completion");
++    EXPECT_TRUE(completion.root()["speed"].isNull());
++}
++
++TEST(CollectorProtocol, UnknownGeneratingRateIsNull) {
++    agentspeed::engine::Agent generating;
++    generating.phase = agentspeed::Phase::Generating;
++    generating.inFlightStartMs = 1000;
++    generating.lastLineMs = 2000;
++    const auto rate = agentspeed::engine::liveRate({}, {generating}, 2000);
++    EXPECT_FALSE(rate.complete);
++    EXPECT_TRUE(agentspeed::engine::liveRate({}, {}, 2000).complete);
++    agentspeed::Snapshot snapshot;
++    snapshot.liveRateComplete = rate.complete;
++    agentspeed::AgentRow row;
++    row.phase = agentspeed::Phase::Generating;
++    row.liveRateComplete = rate.complete;
++    snapshot.agents.push_back(row);
++    collector::Protocol protocol;
++    const auto wire = protocol.snapshot(snapshot);
++    agentspeed::json::Document doc;
++    ASSERT_TRUE(doc.parse(wire));
++    EXPECT_TRUE(doc.root()["live_output"].isNull());
++    EXPECT_TRUE(doc.root()["live_total"].isNull());
++    EXPECT_TRUE(doc.root()["agents"].at(0)["live_output"].isNull());
++    EXPECT_TRUE(doc.root()["agents"].at(0)["live_total"].isNull());
++}
++
++TEST(CollectorProtocol, HistoryTimezoneFollowsEnvironment) {
++    const agentspeed::Environment environment = [](const std::string& name) -> std::optional<std::string> {
++        if (name == "TZ") return "Etc/GMT+10";
++        return std::nullopt;
++    };
++    agentspeed::history::DayLabeler labeler(agentspeed::localZone(environment));
++    EXPECT_EQ(labeler.label(1704067200000LL), "2023-12-31");
++}
++
++TEST(CollectorHistoryCache, PersistsPrivatelyAndIsolatesConcurrentAndDifferentConfigurations) {
++    char home[] = "/tmp/agentspeed-cache-test-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    const auto dir = std::filesystem::path(home) / ".cache/agentspeed-collector";
++    {
++        collector::HistoryCache first(home);
++        auto store = first.open("configuration-a");
++        store->setMeta("test", "persisted");
++        struct stat st{};
++        ASSERT_EQ(stat(dir.c_str(), &st), 0);
++        EXPECT_EQ(st.st_mode & 0077, 0);
++        ASSERT_EQ(stat((dir / "history.sqlite3").c_str(), &st), 0);
++        EXPECT_EQ(st.st_mode & 0077, 0);
++        collector::HistoryCache second(home);
++        auto isolated = second.open("configuration-a");
++        EXPECT_FALSE(isolated->meta("test"));
++        isolated->setMeta("test", "isolated");
++    }
++    {
++        collector::HistoryCache cache(home);
++        auto store = cache.open("configuration-a");
++        EXPECT_EQ(store->meta("test"), "persisted");
++    }
++    {
++        collector::HistoryCache cache(home);
++        auto store = cache.open("configuration-b");
++        EXPECT_FALSE(store->meta("test"));
++        store->setMeta("test", "new configuration");
++    }
++    {
++        collector::HistoryCache cache(home);
++        auto store = cache.open("configuration-b");
++        EXPECT_EQ(store->meta("test"), "new configuration");
++    }
++    std::filesystem::remove_all(home);
++}
++
++TEST(CollectorHistoryCache, RejectsSymlinkedCacheDirectory) {
++    char home[] = "/tmp/agentspeed-cache-test-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    const auto root = std::filesystem::path(home);
++    std::filesystem::create_directory(root / "target");
++    std::filesystem::create_directory_symlink(root / "target", root / ".cache");
++    {
++        collector::HistoryCache cache(home);
++        auto store = cache.open("configuration");
++        store->setMeta("test", "memory");
++        EXPECT_TRUE(std::filesystem::is_empty(root / "target"));
++    }
++    std::filesystem::remove_all(root);
++}
+diff --git a/linux/tests/engine_fixture_test.cpp b/linux/tests/engine_fixture_test.cpp
+index a0bfe980..ceae3844 100644
+--- a/linux/tests/engine_fixture_test.cpp
++++ b/linux/tests/engine_fixture_test.cpp
+@@ -138,3 +138,30 @@ TEST(EngineFixtures, MatchTheReference) {
+     EXPECT_EQ(queries, 31);
+     EXPECT_GT(setPeaks, 0);
+ }
++
++TEST(EngineRate, MissingGenerationTimingMakesOnlyActiveRatesIncomplete) {
++    Response measured;
++    measured.agentId = "a";
++    measured.startMs = 999000;
++    measured.endMs = 1000000;
++    measured.output = 60;
++    measured.input = 30;
++    Agent agent;
++    agent.id = "a";
++    agent.phase = Phase::Generating;
++    agent.lastLineMs = 1000000;
++
++    const auto missingStart = liveRate({measured}, {agent}, 1000000);
++    EXPECT_FALSE(missingStart.complete);
++    EXPECT_DOUBLE_EQ(missingStart.output, 20.0);
++    EXPECT_DOUBLE_EQ(missingStart.total, 30.0);
++    agent.inFlightStartMs = 999500;
++    EXPECT_TRUE(liveRate({measured}, {agent}, 1000000).complete);
++    agent.lastLineMs.reset();
++    EXPECT_FALSE(liveRate({measured}, {agent}, 1000000).complete);
++    agent.lastLineMs = 1;
++    EXPECT_TRUE(liveRate({measured}, {agent}, 1000000).complete);
++    agent.phase = Phase::Idle;
++    agent.lastLineMs = 1000000;
++    EXPECT_TRUE(liveRate({measured}, {agent}, 1000000).complete);
++}
+diff --git a/linux/tests/history_test.cpp b/linux/tests/history_test.cpp
+index 93a12162..178a2af3 100644
+--- a/linux/tests/history_test.cpp
++++ b/linux/tests/history_test.cpp
+@@ -7,6 +7,7 @@
+ #include <fstream>
+ 
+ #include "agentspeed/fs_util.hpp"
++#include "protocol.hpp"
+ #include "agentspeed/history_analyzer.hpp"
+ #include "agentspeed/price_book.hpp"
+ #include "agentspeed/tz.hpp"
+@@ -210,6 +211,9 @@ TEST(History, OverAllFixturesMatchesTheExpectation) {
+     store.reset();
+     auto reopened = Store::open((temp / "store" / "history.sqlite").string());
+     Analyzer second(*reopened, std::make_shared<pricing::PriceBook>(tables, bindings), hermesZone);
++    const auto resumed = second.run(locationsIn(copy), enabled, TimeZone::utc(), "UTC");
++    EXPECT_EQ(resumed.filesPlanned, 0);
++    EXPECT_EQ(resumed.filesUnreadable, 0);
+     const auto reread = second.days();
+     ASSERT_EQ(reread.size(), days.size());
+     for (std::size_t i = 0; i < days.size(); ++i) {
+@@ -221,3 +225,43 @@ TEST(History, OverAllFixturesMatchesTheExpectation) {
+     for (std::size_t i = 0; i < days.size(); ++i) EXPECT_EQ(reread[i].totals.modes.size(), days[i].totals.modes.size()) << days[i].key.day;
+     fs::remove_all(temp);
+ }
++
++TEST(History, UnreadableSourceDoesNotCommitTimezoneInvalidation) {
++    const auto temp = makeTemp();
++    const auto copy = copyFixtures(temp / "fixtures");
++    auto locations = locationsIn(copy);
++    auto store = Store::open((temp / "history.sqlite").string());
++    Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>());
++    const std::set<SourceKind> enabled{SourceKind::Codex, SourceKind::OpenCode};
++    locations.openCodeRoot.clear();
++    const auto initial = analyzer.run(locations, enabled, TimeZone::utc(), "zone-a");
++    ASSERT_EQ(initial.filesUnreadable, 0);
++    ASSERT_GT(initial.filesAnalyzed, 0);
++    ASSERT_EQ(store->meta("timeZone"), "zone-a");
++    const auto available = analyzer.days();
++    ASSERT_FALSE(available.empty());
++
++    const auto bad = temp / "bad.sqlite";
++    { std::ofstream out(bad); out << "not a sqlite database"; }
++    locations.openCodeRoot = bad.string();
++    const auto partial = analyzer.run(locations, enabled, TimeZone::utc(), "zone-b");
++    EXPECT_GT(partial.filesUnreadable, 0);
++    EXPECT_EQ(store->meta("timeZone"), "zone-a");
++    EXPECT_FALSE(analyzer.days().empty());
++    json::Document wire;
++    const auto wireText = collector::Protocol::history(analyzer.days(), partial);
++    ASSERT_TRUE(wire.parse(wireText));
++    EXPECT_EQ(wire.root()["type"].string(), "history");
++    EXPECT_EQ(wire.root()["partial"].raw(), "true");
++    EXPECT_FALSE(wire.root()["days"].elements().empty());
++    EXPECT_EQ(wire.root()["days"].elements().size(), available.size());
++    EXPECT_EQ(wire.root()["days"].at(0)["day"].string(), available[0].key.day);
++    EXPECT_EQ(wire.root()["days"].at(0)["output"].truncated(), available[0].totals.output);
++
++    fs::remove(bad);
++    const auto retried = analyzer.run(locations, enabled, TimeZone::utc(), "zone-b");
++    EXPECT_EQ(retried.filesUnreadable, 0);
++    EXPECT_GT(retried.filesAnalyzed, 0);
++    EXPECT_EQ(store->meta("timeZone"), "zone-b");
++    fs::remove_all(temp);
++}
+diff --git a/linux/tests/parser_fixture_test.cpp b/linux/tests/parser_fixture_test.cpp
+index 18792ced..8118362f 100644
+--- a/linux/tests/parser_fixture_test.cpp
++++ b/linux/tests/parser_fixture_test.cpp
+@@ -122,6 +122,55 @@ std::unique_ptr<TranscriptParser> parserFor(const std::string& relative, const s
+ 
+ }  // namespace
+ 
++TEST(OmpParserObserver, FeedObservesParsedObjectsAfterApplyingThem) {
++    struct Observer : LineObserver {
++        std::vector<std::string> types, rawLines;
++        std::vector<bool> headerSeen;
++        void onLine(const TranscriptParser& parser, const json::Value& line, std::string_view raw) override {
++            types.push_back(line["type"].string().value_or(""));
++            rawLines.emplace_back(raw);
++            headerSeen.push_back(static_cast<const OmpParser&>(parser).headerSeen());
++        }
++    } observer;
++    Deduper deduper;
++    OmpParser parser("/session.jsonl", deduper, "/");
++    Collector sink;
++    parser.setLineObserver(&observer);
++    parser.feed("  ", sink);
++    parser.feed("not json", sink);
++    parser.feed("[]", sink);
++    const std::string header = R"({"type":"session","timestamp":"2026-10-20T10:50:00.000Z"})";
++    parser.feed(header, sink);
++    parser.feed(R"({"type":"title"})", sink);
++    EXPECT_EQ(parser.malformedLines(), 2);
++    EXPECT_EQ(observer.types, (std::vector<std::string>{"session", "title"}));
++    ASSERT_EQ(observer.rawLines.size(), 2u);
++    EXPECT_EQ(observer.rawLines[0], header);
++    EXPECT_EQ(observer.headerSeen, (std::vector<bool>{true, true}));
++}
++
++TEST(OmpParserObserver, HeaderProbeObservesOnlyAppliedHeaderOnce) {
++    struct Observer : LineObserver {
++        int calls = 0;
++        void onLine(const TranscriptParser& parser, const json::Value& line, std::string_view raw) override {
++            ++calls;
++            EXPECT_TRUE(static_cast<const OmpParser&>(parser).headerSeen());
++            EXPECT_TRUE(line["type"].equals("session"));
++            EXPECT_FALSE(raw.empty());
++        }
++    } observer;
++    const auto path = (fixtures::fixtureDir() / "omp/agent/sessions/stray.jsonl").string();
++    Deduper deduper;
++    OmpParser parser(path, deduper, "/");
++    Collector sink;
++    parser.setLineObserver(&observer);
++    parser.probeHeader(sink);
++    parser.probeHeader(sink);
++    EXPECT_TRUE(parser.headerSeen());
++    EXPECT_EQ(observer.calls, 1);
++    EXPECT_EQ(parser.malformedLines(), 0);
++}
++
+ // spec/fixtures/parser-expected.json, for the sources ported so far (files in `order`, one shared dedupe set).
+ TEST(ParserFixtures, ClaudeAndCodexMatchTheReference) {
+     fixtures::JsonFile expected(fixtures::fixtureDir() / "parser-expected.json");
+diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
+index d60943bb..90c5f171 100644
+--- a/macos/Sources/AgentSpeed/App/AppModel.swift
++++ b/macos/Sources/AgentSpeed/App/AppModel.swift
+@@ -62,6 +62,7 @@ final class AppModel {
+     let traffic: TrafficStore
+     /// Live reporting (DESIGN 11): off until the user confirms a service.
+     let report: ReportController
++    let remoteHosts: RemoteHosts
+     /// The menu bar intelligence block's thinking line, hidden after its rate has read 0 for 3 s (DESIGN 10).
+     let barThinking = StatusItemThinkingHold()
+ 
+@@ -92,6 +93,7 @@ final class AppModel {
+         self.store = store
+         self.history = history
+         self.settings = settings
++        remoteHosts = RemoteHosts(defaults: settings.storage)
+         self.updates = updates ?? UpdateController()
+         l10n = Localizer(preference: settings.language)
+         gauge = LiveGauge()
+@@ -182,6 +184,7 @@ final class AppModel {
+         boards.activate(model: self)
+         titles.activate(model: self)
+         guard live else { return }
++        remoteHosts.start()
+         // Stored day bindings first, so the engine never re-binds a day that was priced before (METRICS 9.7).
+         HistoryService.restorePricing(into: priceBook)
+         activateNetwork()
+diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+new file mode 100644
+index 00000000..242462d6
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+@@ -0,0 +1,243 @@
++import Foundation
++import Observation
++
++struct RemoteHost: Codable, Identifiable, Equatable {
++    var id: UUID = UUID()
++    var label: String
++    var destination: String
++    var enabled: Bool = false
++
++    // A destination is passed as one ssh argument, never interpolated into a shell command.
++    var validDestination: Bool {
++        !destination.isEmpty && !destination.hasPrefix("-") &&
++            destination.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-@:")).contains($0) }
++    }
++}
++
++struct RemoteAgent: Decodable, Identifiable, Sendable {
++    let id: String
++    let source: String
++    let model: String?
++    let phase: String
++    let liveOutput: Double?
++    let liveTotal: Double?
++    let subagent: Bool
++    let parentId: String?
++    let lastLineMs: Double?
++}
++
++struct RemoteDay: Decodable, Identifiable, Sendable {
++    var id: String { "\(day)/\(source)" }
++    let day: String
++    let source: String
++    let requests: Int
++    let input: Int
++    let cachedInput: Int
++    let cacheWriteInput: Int
++    let output: Int
++    let reasoning: Int
++    let measuredOutput: Int
++    let measuredMs: Double
++    let peak: Double?
++}
++
++struct RemoteMessage: Decodable, Sendable {
++    let version: Int
++    let type: String
++    let nowMs: Double?
++    let todayOutput: Int?
++    let todayInput: Int?
++    let todayRequests: Int?
++    let todayAverage: Double?
++    let liveOutput: Double?
++    let liveTotal: Double?
++    let estimatedShare: Double?
++    let generating: Int?
++    let tools: Int?
++    let agents: [RemoteAgent]?
++    let days: [RemoteDay]?
++    let partial: Bool?
++    let source: String?
++    let output: Int?
++    let speed: Double?
++
++    static func decode(_ data: Data) -> RemoteMessage? {
++        let decoder = JSONDecoder()
++        decoder.keyDecodingStrategy = .convertFromSnakeCase
++        guard let message = try? decoder.decode(RemoteMessage.self, from: data), message.version == 1 else { return nil }
++        return message
++    }
++}
++
++struct RemoteCompletion: Identifiable {
++    let id = UUID()
++    let source: String
++    let output: Int
++    let speed: Double?
++}
++
++struct RemoteHostState {
++    var online = false
++    var snapshot: RemoteMessage?
++    var days: [RemoteDay] = []
++    var historyPartial: Bool?
++    var completions: [RemoteCompletion] = []
++    var error: String?
++
++    mutating func apply(_ message: RemoteMessage) {
++        if message.type == "snapshot" {
++            snapshot = message
++            online = true
++            error = nil
++        } else if message.type == "history", let replacement = message.days {
++            days = replacement
++            historyPartial = message.partial
++        } else if message.type == "completion", let source = message.source, let output = message.output {
++            completions.insert(RemoteCompletion(source: source, output: output, speed: message.speed), at: 0)
++            if completions.count > 10 { completions.removeLast() }
++        }
++    }
++}
++
++/// Each connection replaces its own snapshot and history; no remote values enter local accounting.
++@MainActor @Observable
++final class RemoteHosts {
++    private(set) var hosts: [RemoteHost]
++    private(set) var states: [UUID: RemoteHostState] = [:]
++    @ObservationIgnored private let defaults: UserDefaults
++    @ObservationIgnored private var workers: [UUID: RemoteSSHWorker] = [:]
++    @ObservationIgnored private var reconnects: [UUID: Task<Void, Never>] = [:]
++    private static let key = "remoteHosts.v1"
++
++    init(defaults: UserDefaults) {
++        self.defaults = defaults
++        hosts = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([RemoteHost].self, from: $0) } ?? []
++    }
++
++    func start() { for host in hosts where host.enabled { connect(host) } }
++
++    func save(_ host: RemoteHost) {
++        guard host.validDestination else { return }
++        if let index = hosts.firstIndex(where: { $0.id == host.id }) { hosts[index] = host }
++        else { hosts.append(host) }
++        persist()
++        disconnect(host.id)
++        if host.enabled { connect(host) }
++    }
++
++    func remove(_ id: UUID) {
++        disconnect(id)
++        hosts.removeAll { $0.id == id }
++        states.removeValue(forKey: id)
++        persist()
++    }
++
++    private func persist() { defaults.set(try? JSONEncoder().encode(hosts), forKey: Self.key) }
++
++    private func disconnect(_ id: UUID) {
++        reconnects.removeValue(forKey: id)?.cancel()
++        workers.removeValue(forKey: id)?.stop()
++        states[id, default: RemoteHostState()].online = false
++    }
++
++    private func connect(_ host: RemoteHost) {
++        guard host.validDestination, workers[host.id] == nil else { return }
++        let worker = RemoteSSHWorker(destination: host.destination) { [weak self] event in
++            Task { @MainActor [weak self] in self?.receive(event, host: host) }
++        }
++        workers[host.id] = worker
++        states[host.id, default: RemoteHostState()].error = nil
++        worker.start()
++    }
++
++    private func receive(_ event: RemoteSSHWorker.Event, host: RemoteHost) {
++        guard let worker = workers[host.id], worker.token == event.token else { return }
++        switch event.payload {
++        case .message(let message):
++            states[host.id, default: RemoteHostState()].apply(message)
++        case .ended(let reason):
++            workers.removeValue(forKey: host.id)
++            states[host.id, default: RemoteHostState()].online = false
++            states[host.id, default: RemoteHostState()].error = reason
++            reconnects[host.id] = Task { [weak self] in
++                try? await Task.sleep(for: .seconds(10))
++                guard !Task.isCancelled, let self, let current = self.hosts.first(where: { $0.id == host.id }), current.enabled else { return }
++                self.reconnects.removeValue(forKey: host.id)
++                self.connect(current)
++            }
++        }
++    }
++}
++
++/// All commands are fixed strings. Authentication and host-key policy belong to the user's ssh configuration.
++final class RemoteSSHWorker: @unchecked Sendable {
++    enum Payload: Sendable { case message(RemoteMessage), ended(String) }
++    struct Event: Sendable { let token: UUID; let payload: Payload }
++    let token = UUID()
++    private let destination: String
++    private let callback: @Sendable (Event) -> Void
++    private let lock = NSLock()
++    private var process: Process?
++    private var stopped = false
++
++    init(destination: String, callback: @escaping @Sendable (Event) -> Void) {
++        self.destination = destination
++        self.callback = callback
++    }
++    func start() { Thread.detachNewThread { [self] in run() } }
++    func stop() {
++        lock.lock(); stopped = true; let running = process; lock.unlock()
++        if running?.isRunning == true { running?.terminate() }
++    }
++    static func arguments(destination: String, command: String) -> [String] {
++        ["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", destination, command]
++    }
++    private func launch(_ command: String, input: Data? = nil) throws -> (Process, Pipe) {
++        let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
++        p.arguments = Self.arguments(destination: destination, command: command)
++        let output = Pipe(); p.standardOutput = output
++        p.standardError = FileHandle.nullDevice
++        let stdin = Pipe(); p.standardInput = stdin
++        lock.lock()
++        if stopped { lock.unlock(); throw CocoaError(.userCancelled) }
++        process = p
++        do { try p.run() } catch { lock.unlock(); throw error }
++        lock.unlock()
++        if let input { try stdin.fileHandleForWriting.write(contentsOf: input); try stdin.fileHandleForWriting.close() }
++        return (p, output)
++    }
++    private func run() {
++        defer {
++            lock.lock(); let running = process; process = nil; lock.unlock()
++            if running?.isRunning == true { running?.terminate() }
++        }
++        do {
++            let (probe, probeOutput) = try launch("uname -m")
++            let archData = probeOutput.fileHandleForReading.readDataToEndOfFile(); probe.waitUntilExit()
++            guard probe.terminationStatus == 0, let name = String(data: archData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) else { throw Failure("SSH connection failed; check host key and authentication") }
++            let arch: String
++            switch name { case "x86_64": arch = "x86_64"; case "aarch64", "arm64": arch = "aarch64"; default: throw Failure("Unsupported remote architecture") }
++            guard let resource = Bundle.main.resourceURL?.appendingPathComponent("collectors/linux-\(arch)/agent-speed-collector"), let binary = try? Data(contentsOf: resource) else { throw Failure("Linux collector for \(arch) is missing from this application") }
++            let (upload, uploadOutput) = try launch("umask 077; mkdir -p ~/.cache/agent-speed && f=~/.cache/agent-speed/collector-$$ && cat > \"$f\" && chmod 700 \"$f\" && mv -f \"$f\" ~/.cache/agent-speed/collector", input: binary)
++            _ = uploadOutput.fileHandleForReading.readDataToEndOfFile(); upload.waitUntilExit()
++            guard upload.terminationStatus == 0 else { throw Failure("Collector upload failed") }
++            let (collector, output) = try launch("exec ~/.cache/agent-speed/collector")
++            var buffer = Data()
++            while true {
++                let chunk = output.fileHandleForReading.availableData
++                if chunk.isEmpty { break }
++                buffer.append(chunk)
++                while let newline = buffer.firstIndex(of: 10) {
++                    let line = Data(buffer[..<newline]); buffer.removeSubrange(...newline)
++                    if let message = RemoteMessage.decode(line) { callback(Event(token: token, payload: .message(message))) }
++                }
++                if buffer.count > 4_194_304 { throw Failure("Collector sent an oversized message") }
++            }
++            collector.waitUntilExit()
++            throw Failure("Disconnected; retrying")
++        } catch {
++            callback(Event(token: token, payload: .ended((error as? Failure)?.message ?? "SSH connection failed")))
++        }
++    }
++    private struct Failure: Error { let message: String; init(_ message: String) { self.message = message } }
++}
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+index 9a2da884..af677edc 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+@@ -61,11 +61,23 @@ private struct DashboardContent: View {
+         Group {
+             switch model.snapshot.state {
+             case .starting(let progress):
+-                LoadingState(model: model, progress: progress)
+-                    .transition(.opacity)
++                if model.remoteHosts.hosts.isEmpty {
++                    LoadingState(model: model, progress: progress).transition(.opacity)
++                } else {
++                    ScrollView {
++                        LoadingState(model: model, progress: progress)
++                        RemoteHostsView(remote: model.remoteHosts)
++                    }
++                }
+             case .noSources:
+-                NoSourcesState(model: model)
+-                    .transition(.opacity)
++                if model.remoteHosts.hosts.isEmpty {
++                    NoSourcesState(model: model).transition(.opacity)
++                } else {
++                    ScrollView {
++                        NoSourcesState(model: model)
++                        RemoteHostsView(remote: model.remoteHosts)
++                    }
++                }
+             case .running:
+                 DashboardSections(model: model)
+                     .transition(.opacity)
+@@ -140,6 +152,10 @@ private struct DashboardDetails: View {
+                 TrafficSection(model: model)
+                     .transition(.opacity)
+             }
++            if !model.remoteHosts.hosts.isEmpty {
++                SectionDivider()
++                RemoteHostsView(remote: model.remoteHosts)
++            }
+             if !warnings.isEmpty {
+                 WarningsFootnote(model: model, warnings: warnings)
+                     .padding(.top, DashboardLayout.sectionSpacing)
+diff --git a/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
+new file mode 100644
+index 00000000..7cfa4c63
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
+@@ -0,0 +1,129 @@
++import SwiftUI
++
++/// Remote data is deliberately presented separately from the local dashboard and its history.
++struct RemoteHostsView: View {
++    let remote: RemoteHosts
++    var body: some View {
++        if !remote.hosts.isEmpty {
++            VStack(alignment: .leading, spacing: 8) {
++                Text("REMOTE HOSTS").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
++                ForEach(remote.hosts) { host in
++                    RemoteHostCard(host: host, state: remote.states[host.id] ?? RemoteHostState())
++                }
++            }
++        }
++    }
++}
++
++private struct RemoteHostCard: View {
++    let host: RemoteHost
++    let state: RemoteHostState
++    var body: some View {
++        VStack(alignment: .leading, spacing: 5) {
++            HStack {
++                Text(host.label.isEmpty ? host.destination : host.label).font(.headline)
++                Spacer()
++                Text(!host.enabled ? "DISABLED" : state.online ? "LIVE" : "OFFLINE · STALE")
++                    .font(.caption2.weight(.bold)).foregroundStyle(state.online ? Color.green : Color.secondary)
++            }
++            if let error = state.error, host.enabled { Text(error).font(.caption).foregroundStyle(.secondary) }
++            if let snapshot = state.snapshot {
++                Text("Today: \(snapshot.todayOutput.map(String.init) ?? "unknown") output · \(snapshot.todayInput.map(String.init) ?? "unknown") input · \(snapshot.todayRequests.map(String.init) ?? "unknown") requests")
++                    .font(.caption)
++                if let average = snapshot.todayAverage {
++                    Text("Today measured average: \(average.formatted(.number.precision(.fractionLength(1)))) tok/s")
++                        .font(.caption).foregroundStyle(.secondary)
++                } else { Text("Today measured average unknown").font(.caption).foregroundStyle(.secondary) }
++                if let now = snapshot.nowMs {
++                    Text("Sample: \(Date(timeIntervalSince1970: now / 1000).formatted())")
++                        .font(.caption2).foregroundStyle(.secondary)
++                }
++                if let rate = snapshot.liveOutput {
++                    Text("Live output: \(rate.formatted(.number.precision(.fractionLength(1)))) tok/s · estimate")
++                        .font(.caption).foregroundStyle(.secondary)
++                } else { Text("Live output speed unknown").font(.caption).foregroundStyle(.secondary) }
++                ForEach(snapshot.agents ?? []) { agent in
++                    HStack {
++                        Text(agent.source + (agent.model.map { " · " + $0 } ?? " · model unknown"))
++                        Spacer()
++                        Text(agent.phase).foregroundStyle(.secondary)
++                    }.font(.caption)
++                    if let rate = agent.liveOutput, agent.phase == "generating" {
++                        Text("\(rate.formatted(.number.precision(.fractionLength(1)))) tok/s · estimate")
++                            .font(.caption2).foregroundStyle(.secondary)
++                    } else if agent.phase == "generating" {
++                        Text("Live speed unknown").font(.caption2).foregroundStyle(.secondary)
++                    }
++                }
++            } else { Text("No remote snapshot yet").font(.caption).foregroundStyle(.secondary) }
++            if !state.completions.isEmpty {
++                DisclosureGroup("Recent completions") {
++                    ForEach(state.completions) { completion in
++                        HStack {
++                            Text("\(completion.source) · \(completion.output) output")
++                            Spacer()
++                            if let speed = completion.speed {
++                                Text("\(speed.formatted(.number.precision(.fractionLength(1)))) tok/s · measured")
++                            } else { Text("Speed unknown") }
++                        }.font(.caption)
++                    }
++                }.font(.caption)
++            }
++            if state.historyPartial == true {
++                Text("History incomplete · some files could not be read")
++                    .font(.caption).foregroundStyle(.secondary)
++            } else if state.historyPartial == nil {
++                Text("History completeness unknown")
++                    .font(.caption).foregroundStyle(.secondary)
++            } else if state.days.isEmpty {
++                Text("No history rows reported").font(.caption).foregroundStyle(.secondary)
++            }
++            if !state.days.isEmpty {
++                DisclosureGroup("History (\(state.days.count) source-days)") {
++                    ForEach(state.days) { day in
++                        VStack(alignment: .leading) {
++                            Text("\(day.day) · \(day.source) · \(day.requests) requests")
++                            Text("\(day.output) output · \(day.input) input · \(day.cachedInput) cached · \(day.cacheWriteInput) cache write · \(day.reasoning) reasoning")
++                            if day.measuredMs > 0 {
++                                Text("Measured: \((Double(day.measuredOutput) * 1000 / day.measuredMs).formatted(.number.precision(.fractionLength(1)))) tok/s")
++                            } else { Text("Measured speed unknown") }
++                        }.font(.caption).frame(maxWidth: .infinity, alignment: .leading)
++                    }
++                }.font(.caption)
++            }
++        }
++        .padding(10)
++        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
++    }
++}
++
++struct RemoteHostSettings: View {
++    let remote: RemoteHosts
++    @State private var label = ""
++    @State private var destination = ""
++    var body: some View {
++        Section("Remote hosts") {
++            ForEach(remote.hosts) { host in
++                HStack {
++                    VStack(alignment: .leading) {
++                        Text(host.label.isEmpty ? host.destination : host.label)
++                        Text(host.destination).font(.caption).foregroundStyle(.secondary)
++                    }
++                    Spacer()
++                    Toggle("Enabled", isOn: Binding(get: { host.enabled }, set: { enabled in
++                        var changed = host; changed.enabled = enabled; remote.save(changed)
++                    })).labelsHidden()
++                    Button("Remove", role: .destructive) { remote.remove(host.id) }
++                }
++            }
++            TextField("Host label", text: $label)
++            TextField("SSH host alias or user@host", text: $destination)
++            Button("Add host") {
++                remote.save(RemoteHost(label: label, destination: destination))
++                label = ""; destination = ""
++            }.disabled(!RemoteHost(label: label, destination: destination).validDestination)
++        } footer: {
++            Text("Remote monitoring is off until enabled. SSH uses your existing configuration, trusted host keys and non-interactive authentication; no passwords are stored. Remote metrics and history remain separate from this Mac.")
++        }
++    }
++}
+diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/SourcesPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/SourcesPane.swift
+index f00d32aa..e7094858 100644
+--- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/SourcesPane.swift
++++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/SourcesPane.swift
+@@ -24,6 +24,7 @@ struct SourcesPane: View {
+                     }
+                 }
+             }
++            RemoteHostSettings(remote: model.remoteHosts)
+             Section {
+                 HStack(spacing: Spacing.xs) {
+                     Button(l10n("history.open")) {
+diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+new file mode 100644
+index 00000000..19d5f0ae
+--- /dev/null
++++ b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+@@ -0,0 +1,92 @@
++import Foundation
++import Testing
++@testable import AgentSpeed
++
++@Suite("Remote hosts")
++struct RemoteHostsTests {
++    private func message(_ text: String) -> RemoteMessage? { RemoteMessage.decode(Data(text.utf8)) }
++
++    @Test func protocolVersionAndUnknownValues() throws {
++        let snapshot = try #require(message(#"{"version":1,"type":"snapshot","now_ms":42,"today_average":null,"live_output":null,"agents":[{"id":"1","source":"pi","model":null,"phase":"generating","live_output":null,"live_total":0,"subagent":false,"parent_id":null,"last_line_ms":null}]}"#))
++        #expect(snapshot.todayAverage == nil)
++        #expect(snapshot.liveOutput == nil)
++        #expect(snapshot.agents?.first?.model == nil)
++        #expect(snapshot.agents?.first?.liveOutput == nil)
++        #expect(message(#"{"version":2,"type":"snapshot"}"#) == nil)
++    }
++
++    @Test func historyReplacementAndIsolation() throws {
++        let first = try #require(message(#"{"version":1,"type":"history","days":[{"day":"2026-01-01","source":"pi","requests":1,"input":10,"cached_input":2,"cache_write_input":0,"output":5,"reasoning":0,"measured_output":5,"measured_ms":1000,"peak":5}]}"#))
++        let empty = try #require(message(#"{"version":1,"type":"history","days":[]}"#))
++        let snapshot = try #require(message(#"{"version":1,"type":"snapshot","today_output":5}"#))
++        var a = RemoteHostState(); var b = RemoteHostState()
++        a.apply(first); b.apply(first); a.apply(first)
++        #expect(a.days.count == 1)
++        a.apply(empty)
++        #expect(a.days.isEmpty)
++        #expect(b.days.count == 1)
++        a.apply(snapshot)
++        #expect(a.online)
++        a.online = false
++        #expect(a.snapshot?.todayOutput == 5)
++        a.apply(snapshot)
++        #expect(a.online)
++        #expect(a.days.isEmpty)
++    }
++
++    @Test func partialHistoryReplacesCompletenessPerHost() throws {
++        let partial = try #require(message(#"{"version":1,"type":"history","days":[],"partial":true}"#))
++        let complete = try #require(message(#"{"version":1,"type":"history","days":[],"partial":false}"#))
++        let unspecified = try #require(message(#"{"version":1,"type":"history","days":[]}"#))
++        var a = RemoteHostState(); var b = RemoteHostState()
++        a.apply(partial); b.apply(complete)
++        #expect(a.historyPartial == true)
++        #expect(b.historyPartial == false)
++        a.apply(complete)
++        #expect(a.historyPartial == false)
++        a.apply(unspecified)
++        #expect(a.historyPartial == nil)
++    }
++
++    @Test func completionsAreMeasuredIsolatedAndBounded() throws {
++        let measured = try #require(message(#"{"version":1,"type":"completion","source":"pi","output":123,"speed":12.5}"#))
++        let unknown = try #require(message(#"{"version":1,"type":"completion","source":"pi","output":7,"speed":null}"#))
++        var first = RemoteHostState(); let second = RemoteHostState()
++        for _ in 0..<12 { first.apply(measured) }
++        first.apply(unknown)
++        #expect(first.completions.count == 10)
++        #expect(first.completions[0].speed == nil)
++        #expect(first.completions[1].speed == 12.5)
++        #expect(first.completions[1].output == 123)
++        #expect(second.completions.isEmpty)
++    }
++
++    @Test func sshUsesBoundedLivenessAndHostPolicy() {
++        let arguments = RemoteSSHWorker.arguments(destination: "server", command: "uname -m")
++        #expect(arguments.contains("ServerAliveInterval=15"))
++        #expect(arguments.contains("ServerAliveCountMax=3"))
++        #expect(!arguments.contains { $0.lowercased().contains("stricthostkeychecking") })
++        #expect(arguments.suffix(2) == ["server", "uname -m"])
++    }
++
++    @Test func destinationsAreSingleSafeArguments() {
++        #expect(RemoteHost(label: "", destination: "user@server.example").validDestination)
++        #expect(!RemoteHost(label: "", destination: "-oProxyCommand=x").validDestination)
++        #expect(!RemoteHost(label: "", destination: "server; touch file").validDestination)
++        #expect(!RemoteHost(label: "", destination: "").validDestination)
++    }
++
++    @MainActor @Test func hostConfigurationPersistsStableIds() throws {
++        let suite = "remote-host-tests-\(UUID())"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let hosts = RemoteHosts(defaults: defaults)
++        let host = RemoteHost(label: "Server", destination: "server")
++        hosts.save(host)
++        let restored = RemoteHosts(defaults: defaults)
++        #expect(restored.hosts == [host])
++        #expect(restored.hosts.first?.enabled == false)
++        restored.remove(host.id)
++        #expect(RemoteHosts(defaults: defaults).hosts.isEmpty)
++    }
++}
+diff --git a/macos/scripts/build-app.sh b/macos/scripts/build-app.sh
+index a9312a05..955a476f 100755
+--- a/macos/scripts/build-app.sh
++++ b/macos/scripts/build-app.sh
+@@ -28,6 +28,11 @@ Options:
+   --output DIR      Output directory (default: <repo>/dist).
+   --binary PATH     Package an existing universal executable instead of
+                     running swift build.
++  --collectors DIR  Directory containing optional linux-x86_64 and/or
++                    linux-aarch64 collector artifacts (default: <repo>/dist/collectors).
++                    Remote monitoring requires the matching artifact. Build
++                    it on target Ubuntu with macos/scripts/build-linux-collector.sh,
++                    then copy its architecture directory to DIR.
+   -h, --help        Show this help.
+ 
+ Outputs:
+@@ -55,6 +60,7 @@ VERSION=""
+ BUILD_NUMBER=""
+ OUTPUT_DIR="$REPO_ROOT/dist"
+ PREBUILT_BINARY=""
++COLLECTORS_DIR="$REPO_ROOT/dist/collectors"
+ 
+ while [[ $# -gt 0 ]]; do
+     case "$1" in
+@@ -66,6 +72,8 @@ while [[ $# -gt 0 ]]; do
+         --output=*) OUTPUT_DIR="${1#*=}"; shift ;;
+         --binary) need_value "$@"; PREBUILT_BINARY="$2"; shift 2 ;;
+         --binary=*) PREBUILT_BINARY="${1#*=}"; shift ;;
++        --collectors) need_value "$@"; COLLECTORS_DIR="$2"; shift 2 ;;
++        --collectors=*) COLLECTORS_DIR="${1#*=}"; shift ;;
+         -h|--help) usage; exit 0 ;;
+         *) die "Unknown argument: $1" "Run with --help for usage." ;;
+     esac
+@@ -89,6 +97,17 @@ for tool in swift lipo vtool xcrun codesign plutil ditto xattr; do
+ done
+ [[ -f "$PLIST_TEMPLATE" ]] || die "Info.plist template not found at $PLIST_TEMPLATE."
+ [[ -f "$ICON_FILE" ]] || die "App icon not found at $ICON_FILE." "Generate it with: assets/icon/generate.sh"
++collector_count=0
++for arch in x86_64 aarch64; do
++    collector="$COLLECTORS_DIR/linux-$arch/agent-speed-collector"
++    if [[ -e "$collector" ]]; then
++        [[ -f "$collector" && -r "$collector" ]] || die "Collector artifact is not a readable file: $collector"
++        collector_count=$((collector_count + 1))
++    fi
++done
++if [[ $collector_count -eq 0 ]]; then
++    printf 'warning: No collector artifacts found in %s; remote monitoring will be unavailable.\n' "$COLLECTORS_DIR" >&2
++fi
+ 
+ mkdir -p "$OUTPUT_DIR"
+ OUTPUT_DIR="$(cd -- "$OUTPUT_DIR" && pwd -P)"
+@@ -160,6 +179,15 @@ plutil -lint -s "$APP_DIR/Contents/Info.plist" || die "The generated Info.plist
+ 
+ printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"
+ cp "$ICON_FILE" "$APP_DIR/Contents/Resources/AgentSpeed.icns"
++for arch in x86_64 aarch64; do
++    collector="$COLLECTORS_DIR/linux-$arch/agent-speed-collector"
++    [[ -f "$collector" ]] || continue
++    collector_dir="$APP_DIR/Contents/Resources/collectors/linux-$arch"
++    mkdir -p "$collector_dir"
++    cp "$collector" "$collector_dir/agent-speed-collector"
++    chmod 755 "$collector_dir/agent-speed-collector"
++    info "Contents/Resources/collectors/linux-$arch/agent-speed-collector"
++done
+ info "Contents/MacOS/$EXECUTABLE, Info.plist, PkgInfo, Resources/AgentSpeed.icns"
+ 
+ step "Signing (ad hoc)"
+diff --git a/macos/scripts/build-linux-collector.sh b/macos/scripts/build-linux-collector.sh
+new file mode 100755
+index 00000000..63f7ec2b
+--- /dev/null
++++ b/macos/scripts/build-linux-collector.sh
+@@ -0,0 +1,39 @@
++#!/usr/bin/env bash
++# Build on a compatible target Ubuntu system, not on the Mac packaging host.
++set -euo pipefail
++
++SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
++REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd -P)"
++
++if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
++    cat <<EOF
++Usage: $(basename "$0") [OUTPUT_DIR]
++
++Build the collector natively on the target Ubuntu architecture and install it
++under OUTPUT_DIR/linux-<architecture>/agent-speed-collector. OUTPUT_DIR defaults
++to <repo>/dist/collectors. Copy the architecture directory to the Mac before
++running build-app.sh; use --collectors there if not using its default location.
++
++Install build dependencies: cmake, g++, pkg-config, libzstd-dev, libbrotli-dev,
++libsqlite3-dev, libicu-dev and libssl-dev. The collector uses system shared
++libraries: build against a compatible target Ubuntu release and ensure the target
++has the corresponding runtime libraries installed.
++EOF
++    exit 0
++fi
++[[ $# -le 1 ]] || { echo "Usage: $(basename "$0") [OUTPUT_DIR]" >&2; exit 1; }
++[[ "$(uname -s)" == Linux ]] || { echo "Build the collector on the target Linux system." >&2; exit 1; }
++case "$(uname -m)" in
++    x86_64) arch=x86_64 ;;
++    aarch64|arm64) arch=aarch64 ;;
++    *) echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;
++esac
++
++output_dir="${1:-$REPO_ROOT/dist/collectors}"
++build_dir="$REPO_ROOT/linux/build/collector-$arch"
++cmake -S "$REPO_ROOT/linux" -B "$build_dir" \
++    -DCMAKE_BUILD_TYPE=Release -DAGENTSPEED_BUILD_TESTS=OFF -DAGENTSPEED_BUILD_APP=OFF
++cmake --build "$build_dir" --config Release --target agentspeed-collector --parallel
++mkdir -p "$output_dir/linux-$arch"
++install -m 755 "$build_dir/collector/agentspeed-collector" "$output_dir/linux-$arch/agent-speed-collector"
++printf 'Collector artifact: %s\n' "$output_dir/linux-$arch/agent-speed-collector"
+diff --git a/spec/DESIGN.md b/spec/DESIGN.md
+index 5bb26510..016d0632 100644
+--- a/spec/DESIGN.md
++++ b/spec/DESIGN.md
+@@ -1815,6 +1815,13 @@ Windows only. macOS has no equivalent: the system places menu bar items and the
+ macOS: popover-style panel under the menu bar item. Windows: flyout above the taskbar with Mica. Width 368 pt/DIP.
+ Follows system light/dark. Corner radius: platform default (macOS 12–16 pt, Windows 8 px). 20 pt padding.
+ 
++macOS also offers explicitly enabled SSH remote hosts in Settings → Sources. Remote data appears in a separate
++per-host dashboard panel and history, not in local totals. A disconnected host retains its last data marked
++offline/stale; unknown values are not displayed as zero, and inferred in-flight speeds are identified as estimates.
++The panel keeps up to ten recent completion events per host in memory, showing their output and measured speed when
++available; an absent speed remains unknown.
++Connection and privacy rules are in NETWORK 7; measurement semantics are in METRICS.
++
+ Sections (top to bottom, 16 pt spacing, hairline separators):
+ 
+ 1. **Hero** — a 112 pt orb (same component, ring effects capped at Soft) on the left, its center carrying the hero
+diff --git a/spec/METRICS.md b/spec/METRICS.md
+index ec159b46..e0834f4e 100644
+--- a/spec/METRICS.md
++++ b/spec/METRICS.md
+@@ -4,6 +4,15 @@ This document is the single source of truth for how Agent Speed reads agent tran
+ tokens-per-second. The macOS (Swift) and Windows (C#) implementations MUST follow it exactly and MUST pass the
+ shared fixtures in `spec/fixtures/`.
+ 
++The Linux native core also supplies the headless remote collector. Remote monitoring does not define a second
++measurement algorithm: completed records use the same parsing, duration, accounting and parent/child deduplication
++rules as local records. Host identity scopes remote agent identity and history; filesystem paths are not transported.
++An in-progress rate inferred from recent completed responses is an estimate, not a per-token measurement. An
++unavailable field is unknown, not zero; a disconnected or stale host is offline, not idle. In particular, omp
++transcripts generally record a complete response after it finishes, and do not establish a measured TTFT. The default
++end-to-end rate includes the wait for the first token. No routing, account cooldown or retry information can be
++inferred when absent from the transcript.
++
+ ## 1. Vocabulary
+ 
+ | Term | Meaning |
+diff --git a/spec/NETWORK.md b/spec/NETWORK.md
+index c9233933..d3e50987 100644
+--- a/spec/NETWORK.md
++++ b/spec/NETWORK.md
+@@ -1,17 +1,17 @@
+ # Agent Speed — Network Specification
+ 
+-Agent Speed reads local logs and works fully offline. It makes exactly three kinds of automatic network requests, all
+-optional, all HTTPS `GET`, none of them carrying anything about the user: the update check (`spec/UPDATES.md`), the
+-daily price-table sync (section 3) and the daily exchange rates (section 4). A fourth kind exists only when the user
+-turns it on: live reporting (section 6, `spec/REPORTING.md`), the one feature that sends data about the user's
+-activity, to a service the user chose. Both platforms implement exactly this behaviour; anything not listed here is
+-never requested.
++Agent Speed reads local logs and works offline. Its three optional automatic HTTPS GET requests are the update check
++(`spec/UPDATES.md`), daily price-table sync (section 3) and daily exchange rates (section 4); none carries activity
++data. Opt-in live reporting (section 6) sends activity data to a user-chosen receiver. On macOS, explicitly enabled
++remote monitoring additionally uses SSH to a user-configured Linux host (section 7). It is separate from reporting.
++Without remote monitoring enabled, monitoring does not open an SSH connection.
+ 
+ ## 1. Common rules
+ 
+-- **Master switch** `networkEnabled` (Settings → About → `settings.network`), default on. Off: no request of any kind
+-  is made — automatic or manual (the manual buttons are disabled and show `settings.network.offHint`). Everything
+-  keeps working with the bundled or last good data. Turning it back on schedules each feature as after a launch.
++- **Network switch** `networkEnabled` (Settings → About → `settings.network`), default on, controls the HTTP
++  features: off disables their automatic and manual requests and uses bundled or last good data. Turning it back on
++  schedules each feature as after a launch. Remote SSH monitoring is independent: disable each remote host in
++  Settings → Sources to stop its connection.
+ - **What is sent** (sections 2–4; live reporting has its own rules, section 6): the request line and these headers
+   only: `User-Agent: AgentSpeed/<version> (<macOS|Windows>)`,
+   `Accept` as stated per feature, and `If-None-Match` with the `ETag` that the same URL returned before (when one is
+@@ -19,7 +19,7 @@ never requested.
+   Every request asks for the same resource for every user (the price table, the USD-based rate list), so a server
+   learns nothing about the user's currency, models, sources or usage. Servers see the IP address and the time of the
+   request, as with any connection.
+-- **Transport**: HTTPS only; redirects are followed only to `https` URLs on the feature's host list; the system proxy
++- **HTTP transport**: HTTPS only; redirects are followed only to `https` URLs on the feature's host list; the system proxy
+   settings apply; the platform HTTP cache is bypassed (`URLRequest.CachePolicy.reloadIgnoringLocalCacheData`,
+   `HttpClient` without a cache handler) because the app does its own `ETag` handling. Timeout 15 s per request.
+ - **Size**: bodies are read with a hard cap (per feature); exceeding it (by `Content-Length` or while streaming)
+@@ -222,3 +222,29 @@ Avatar input stays local until upload: PNG/JPEG up to 10 MiB is re-encoded witho
+ 256×256 PNG up to 512 KiB. Profile JSON responses are bounded to 64 KiB; these separate limits do not raise
+ the existing 16 KiB periodic report limit. Avatar URLs are website metadata; native clients download their
+ own avatar through the signed API endpoint rather than following an arbitrary external image URL.
++
++## 7. Remote monitoring over SSH
++
++The Mac connects to a configured SSH host alias via `/usr/bin/ssh`, using system SSH configuration and normal host-key
++verification. Batch mode requires a pre-trusted host key and noninteractive key or agent authentication; the app does
++not prompt for or store a password. SSH keepalives use `ServerAliveInterval=15` and `ServerAliveCountMax=3` to detect a
++lost connection. The connection transports a bundled native Linux collector over SSH and runs it with stdin/stdout;
++no HTTP endpoint, exposed listener, Python runtime or sudo is required. The collector reads local logs on the server
++and sends versioned
++newline-delimited JSON snapshots, replacement history and completion events. Only whitelisted aggregate metrics and
++labels needed for presentation cross the connection: raw transcripts, prompts, conversation content, tool arguments
++and outputs, and absolute working paths do not. SSH credentials are not embedded in the protocol or stored in logs.
++
++Each configured host has a stable identity and a separate remote view and history. Snapshots and history replace the
++previous state rather than accumulating on reconnect; the client must not combine remote history with local usage as
++if it were local. The collector persists its history cache in `~/.cache/agentspeed-collector/history.sqlite3` on the
++remote host, in an owned mode-0700 directory with a mode-0600 database. A nonblocking exclusive `flock` on `history.lock`
++is held for the collector's lifetime; concurrent collectors and unsafe or unavailable caches fall back to memory.
++Changes to the source configuration reset the cache; analyzer version, time zone and pricing changes also invalidate
++relevant cached analysis. Reconnection refreshes history from the cache and logs. An unreadable file retains its prior
++cached contribution when available. History frames carry `partial: true` for known discovered-file or database errors;
++`partial: false` does not prove exhaustive discovery or filesystem readability: inaccessible directories or failed
++metadata checks may be skipped during discovery, and unchanged cached files are not reopened.
++If the flag is absent, completeness is unknown, including when history is empty. On disconnect, last data is
++stale/offline, not evidence of an idle agent or zero usage. Unavailable measurements remain unknown and in-progress
++rates derived from prior completions are estimates; see `spec/METRICS.md`.

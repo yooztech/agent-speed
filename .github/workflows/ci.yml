@@ -2,14 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -18,47 +19,87 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Test collector zip verifier
+        run: python3 downstream/test-verify-collector-zip.py
+      - name: Prepare downstream tree
+        run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
       - name: Install zstd and brotli
         run: (command -v zstd && command -v brotli) || (sudo apt-get update && sudo apt-get install -y zstd brotli)
-      - name: Check fixtures with the reference implementation
-        run: python3 spec/tools/reference.py --check-fixtures
-      - name: Check reporting and profile contracts
+      - name: Check fixtures and contracts
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: |
+          python3 spec/tools/reference.py --check-fixtures
           python3 spec/tools/report_reference.py
           python3 spec/tools/execution_modes_reference.py
           python3 spec/tools/test_reporting_extensions.py
-      - name: Validate vehicle art
-        run: python3 spec/tools/vehicles.py
-      - name: Lint installer
-        run: shellcheck install.sh
+          python3 spec/tools/vehicles.py
+          shellcheck install.sh
+
+  collector:
+    name: Linux x86_64 collector
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prepare downstream tree
+        run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libzstd-dev libbrotli-dev libsqlite3-dev libicu-dev libssl-dev libgtest-dev
+      - name: Build and test Linux
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
+        run: |
+          test "$(uname -m)" = x86_64
+          cmake -S linux -B build-remote -DCMAKE_BUILD_TYPE=Release -DAGENTSPEED_BUILD_APP=OFF -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest
+          cmake --build build-remote -j2
+          ctest --test-dir build-remote --output-on-failure
+      - name: Package collector
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
+        run: |
+          install -Dm755 build-remote/collector/agentspeed-collector dist/collectors/linux-x86_64/agent-speed-collector
+          tar -C dist/collectors -cf "$RUNNER_TEMP/collectors.tar" linux-x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-x86_64-collector
+          path: ${{ runner.temp }}/collectors.tar
+          if-no-files-found: error
 
   macos:
     name: macOS
+    needs: collector
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
+      - name: Prepare downstream tree
+        run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-x86_64-collector
+          path: ${{ runner.temp }}/collector-artifact
+      - name: Unpack collector
+        run: |
+          mkdir -p "$RUNNER_TEMP/collectors"
+          tar -xf "$RUNNER_TEMP/collector-artifact/collectors.tar" -C "$RUNNER_TEMP/collectors"
+          test -x "$RUNNER_TEMP/collectors/linux-x86_64/agent-speed-collector"
       - name: Select newest Xcode
         run: |
           xcode="$(ls -d /Applications/Xcode*.app | grep -viE 'beta|_rc|release_candidate' | sort -V | tail -1)"
           sudo xcode-select -s "$xcode"
           echo "::notice::$(xcodebuild -version | tr '\n' ' ')"
       - name: Test core
-        working-directory: macos
-        run: |
-          set -o pipefail
-          swift test 2>&1 | tee "$RUNNER_TEMP/test.log" || {
-            grep -E '✘ Test [^ ]+ (recorded|failed)|error:' "$RUNNER_TEMP/test.log" | head -10 | while IFS= read -r line; do echo "::error::$line"; done
-            exit 1
-          }
+        working-directory: ${{ runner.temp }}/agent-speed-prepared/macos
+        run: swift test
       - name: Test update relaunch
         timeout-minutes: 5
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: python3 macos/scripts/test-update-relaunch.py
-      - name: Build app bundle
-        run: macos/scripts/build-app.sh
+      - name: Build and verify app bundle
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
+        run: |
+          macos/scripts/build-app.sh --collectors "$RUNNER_TEMP/collectors"
+          python3 "$GITHUB_WORKSPACE/downstream/verify-collector-zip.py" dist/AgentSpeed-macOS.zip "$RUNNER_TEMP/collectors/linux-x86_64/agent-speed-collector"
       - uses: actions/upload-artifact@v7
         with:
           name: AgentSpeed-macOS
-          path: dist/AgentSpeed-macOS.zip
+          path: ${{ runner.temp }}/agent-speed-prepared/dist/AgentSpeed-macOS.zip
           if-no-files-found: error
 
   windows:
@@ -66,37 +107,27 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Prepare downstream tree
+        shell: pwsh
+        run: python downstream/manage.py prepare "$env:RUNNER_TEMP/agent-speed-prepared"
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
       - name: Test core
-        shell: bash
-        run: |
-          set -o pipefail
-          dotnet test windows/tests/AgentSpeed.Core.Tests -c Release 2>&1 | tee "$RUNNER_TEMP/core.log" || {
-            names="$(grep -oE '^\s*Failed [A-Za-z0-9_.]+' "$RUNNER_TEMP/core.log" | sed -E 's/^\s*Failed //; s/^AgentSpeed\.[A-Za-z]+\.Tests\.//' | sort -u | paste -sd',' -)"
-            echo "::error::Failed tests: ${names:0:3500}"
-            grep -E -A2 '^\s*Failed [A-Za-z]' "$RUNNER_TEMP/core.log" | grep -E 'Error Message' -A1 | grep -vE 'Error Message|^--' | sed -E 's/[0-9a-f]{32}//g' | sort | uniq -c | sort -rn | head -8 | while IFS= read -r line; do echo "::error::${line:0:600}"; done
-            exit 1
-          }
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
+        run: dotnet test windows/tests/AgentSpeed.Core.Tests -c Release
       - name: Test presentation
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          set -o pipefail
-          dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release 2>&1 | tee "$RUNNER_TEMP/presentation.log" || {
-            names="$(grep -oE '^\s*Failed [A-Za-z0-9_.]+' "$RUNNER_TEMP/presentation.log" | sed -E 's/^\s*Failed //; s/^AgentSpeed\.[A-Za-z]+\.Tests\.//' | sort -u | paste -sd',' -)"
-            echo "::error::Failed tests: ${names:0:3500}"
-            grep -E -A2 '^\s*Failed [A-Za-z]' "$RUNNER_TEMP/presentation.log" | grep -E 'Error Message' -A1 | grep -vE 'Error Message|^--' | sed -E 's/[0-9a-f]{32}//g' | sort | uniq -c | sort -rn | head -8 | while IFS= read -r line; do echo "::error::${line:0:600}"; done
-            exit 1
-          }
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
+        run: dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release
       - name: Test traffic helper
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: dotnet test windows/tests/AgentSpeed.TrafficHelper.Tests -c Release
       - name: Publish
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
         shell: pwsh
         run: ./windows/scripts/publish.ps1
       - uses: actions/upload-artifact@v7
         with:
           name: AgentSpeed-Windows
-          path: dist/AgentSpeed-Windows-*.zip
+          path: ${{ runner.temp }}/agent-speed-prepared/dist/AgentSpeed-Windows-*.zip
           if-no-files-found: error

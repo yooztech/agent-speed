@@ -1,21 +1,13 @@
 name: Linux
 
-# The Linux desktop version: core tests on every push and pull request; on a vX.Y.Z tag, the AppImage and the .deb of
-# both architectures are attached to that release with their own checksum files (UPDATES 1, SHA256SUMS-Linux-<arch>.txt).
-# Run it by hand with an existing release tag to build the packages again and attach them to that release.
+# Build and test the prepared downstream tree on branches, pull requests and manual runs.
+# A vX.Y.Z tag push also attaches both architectures' packages to the release.
 on:
   push:
-    branches: [main, linux]
+    branches: ["**"]
     tags: ["v*"]
-    paths: ["linux/**", "spec/**", ".github/workflows/linux.yml"]
   pull_request:
-    paths: ["linux/**", "spec/**", ".github/workflows/linux.yml"]
   workflow_dispatch:
-    inputs:
-      release:
-        description: "Existing release tag (vX.Y.Z) to build for and attach the packages to"
-        required: true
-
 permissions:
   contents: read
 
@@ -24,6 +16,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare downstream tree
+        run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed"
       - name: Dependencies
         run: |
           sudo apt-get update
@@ -33,7 +27,7 @@ jobs:
         env:
           CXX: g++-12
         run: |
-          cmake -S linux -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DAGENTSPEED_BUILD_TESTS=ON
+          cmake -S "$RUNNER_TEMP/agent-speed/linux" -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DAGENTSPEED_BUILD_TESTS=ON
           cmake --build build
           ctest --test-dir build --output-on-failure
 
@@ -46,13 +40,21 @@ jobs:
           - runner: ubuntu-22.04
             qtarch: linux_gcc_64
             host: linux
+            arch: x86_64
+            debarch: amd64
           # Qt's arm64 binaries are built on Ubuntu 24.04 (glibc 2.38+, the GCC 13 runtime), so arm64 packages are too.
           - runner: ubuntu-24.04-arm
             qtarch: linux_gcc_arm64
             host: linux_arm64
+            arch: aarch64
+            debarch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare downstream tree
+        run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed"
       - name: Dependencies
         run: |
           sudo apt-get update
@@ -72,38 +74,40 @@ jobs:
           cache: true
       - name: Version
         id: version
-        env:
-          RELEASE: ${{ github.event.inputs.release }}
         run: |
-          if [[ "$RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "value=${RELEASE#v}" >> "$GITHUB_OUTPUT"
-            echo "tag=$RELEASE" >> "$GITHUB_OUTPUT"
-          elif [[ -n "$RELEASE" ]]; then
-            echo "Not a release tag: $RELEASE" >&2
-            exit 1
-          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
             echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           else
-            echo "value=$(sed -nE 's/^project\(AgentSpeedLinux VERSION ([0-9.]+).*/\1/p' linux/CMakeLists.txt)-dev" >> "$GITHUB_OUTPUT"
+            echo "value=$(sed -nE 's/^project\(AgentSpeedLinux VERSION ([0-9.]+).*/\1/p' "$RUNNER_TEMP/agent-speed/linux/CMakeLists.txt")-dev" >> "$GITHUB_OUTPUT"
           fi
       - name: Build the app
         env:
           CXX: g++-12
         run: |
-          cmake -S linux -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DAGENTSPEED_BUILD_TESTS=OFF -DAGENTSPEED_BUILD_APP=ON \
+          cmake -S "$RUNNER_TEMP/agent-speed/linux" -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DAGENTSPEED_BUILD_TESTS=OFF -DAGENTSPEED_BUILD_APP=ON \
             -DAGENTSPEED_VERSION="${{ steps.version.outputs.value }}" -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
           cmake --build build
       - name: Package
         env:
           QMAKE: ${{ env.QT_ROOT_DIR }}/bin/qmake
-        run: linux/packaging/package.sh build dist "${{ steps.version.outputs.value }}"
+        run: '"$RUNNER_TEMP/agent-speed/linux/packaging/package.sh" build dist "${{ steps.version.outputs.value }}"'
       - uses: actions/upload-artifact@v4
         with:
           name: agent-speed-linux-${{ matrix.host }}
-          path: dist/*
+          path: |
+            dist/AgentSpeed-Linux-${{ matrix.arch }}.AppImage
+            dist/agent-speed_${{ steps.version.outputs.value }}_${{ matrix.debarch }}.deb
+            dist/SHA256SUMS-Linux-${{ matrix.arch }}.txt
+          if-no-files-found: error
+      - name: Verify trusted release tag
+        if: github.repository == 'yooztech/agent-speed' && steps.version.outputs.tag != ''
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD
+          test "$(cat "$RUNNER_TEMP/agent-speed/VERSION")" = "${GITHUB_REF_NAME#v}"
       - name: Attach to the release
-        if: steps.version.outputs.tag != ''
+        if: github.repository == 'yooztech/agent-speed' && steps.version.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -113,6 +117,9 @@ jobs:
             gh release view "$TAG" >/dev/null 2>&1 && break
             sleep 20
           done
-          gh release upload "$TAG" dist/* --clobber
+          gh release upload "$TAG" \
+            "dist/AgentSpeed-Linux-${{ matrix.arch }}.AppImage" \
+            "dist/agent-speed_${{ steps.version.outputs.value }}_${{ matrix.debarch }}.deb" \
+            "dist/SHA256SUMS-Linux-${{ matrix.arch }}.txt" --clobber
     permissions:
       contents: write
