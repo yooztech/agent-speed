@@ -1,0 +1,286 @@
+From 85c6bcad803aad6333c780f2fd6aa0df4b66735f Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 16:04:51 +0800
+Subject: [PATCH] Fix remote history freshness and source rate completeness
+
+---
+ README.md                                     |  1 +
+ linux/collector/protocol.cpp                  |  6 +--
+ linux/core/include/agentspeed/snapshot.hpp    |  1 +
+ linux/core/src/monitor_snapshot.cpp           |  1 +
+ linux/tests/collector_integration_test.cpp    | 20 +++++++++-
+ linux/tests/collector_test.cpp                | 35 ++++++++++++++++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  | 13 +++++-
+ .../AgentSpeed/History/HistoryViewModel.swift |  3 +-
+ .../AgentSpeedAppTests/RemoteHostsTests.swift | 40 +++++++++++++++++++
+ 9 files changed, 113 insertions(+), 7 deletions(-)
+
+diff --git a/README.md b/README.md
+index 16d5d5ba..d1186168 100644
+--- a/README.md
++++ b/README.md
+@@ -119,6 +119,7 @@ over SSH standard streams. There is no HTTP service, listening port, Python runt
+ The Linux collector reuses the native measurement core, including omp parsing and parent/child deduplication. The
+ remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
+ stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
++On macOS, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
+ Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
+ response rates use the logged duration. In particular omp commonly writes a response when it completes, so remote
+ monitoring cannot measure per-token streaming speed or infer an unrecorded time to first token. End-to-end speed includes
+diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
+index d35f7c45..fcd22a9f 100644
+--- a/linux/collector/protocol.cpp
++++ b/linux/collector/protocol.cpp
+@@ -71,9 +71,9 @@ std::string Protocol::snapshot(const agentspeed::Snapshot& v) {
+         o << "{\"source\":"; text(o, agentspeed::sourceId(s.source));
+         o << ",\"enabled\":" << (s.enabled ? "true" : "false") << ",\"available\":" << (s.available ? "true" : "false")
+           << ",\"sessions\":" << s.sessions << ",\"active_agents\":" << s.activeAgents << ",\"live_output\":";
+-        if (v.liveRateComplete) number(o, s.liveOutput); else o << "null";
+-        o << ",\"live_total\":"; if (v.liveRateComplete) number(o, s.liveTotal); else o << "null";
+-        o << ",\"estimated_share\":"; if (v.liveRateComplete) number(o, s.liveEstimatedShare); else o << "null";
++        if (s.liveRateComplete) number(o, s.liveOutput); else o << "null";
++        o << ",\"live_total\":"; if (s.liveRateComplete) number(o, s.liveTotal); else o << "null";
++        o << ",\"estimated_share\":"; if (s.liveRateComplete) number(o, s.liveEstimatedShare); else o << "null";
+         o << ",\"today_input\":" << s.todayInput << ",\"today_output\":" << s.todayOutput
+           << ",\"today_requests\":" << s.todayRequests << ",\"today_cost_micro_usd\":" << s.todayCostMicroUsd
+           << ",\"unpriced_requests\":" << s.unpricedRequests << '}';
+diff --git a/linux/core/include/agentspeed/snapshot.hpp b/linux/core/include/agentspeed/snapshot.hpp
+index 54297547..383702a1 100644
+--- a/linux/core/include/agentspeed/snapshot.hpp
++++ b/linux/core/include/agentspeed/snapshot.hpp
+@@ -75,6 +75,7 @@ struct SourceRow {
+     std::int64_t todayOutput = 0;
+     double liveOutput = 0;
+     double liveTotal = 0;
++    bool liveRateComplete = true;
+     double liveEstimatedShare = 0;
+     bool enabled = true;
+     // METRICS 2: detected (its root exists) and the root shown in settings.
+diff --git a/linux/core/src/monitor_snapshot.cpp b/linux/core/src/monitor_snapshot.cpp
+index b2d08b50..9462bbc1 100644
+--- a/linux/core/src/monitor_snapshot.cpp
++++ b/linux/core/src/monitor_snapshot.cpp
+@@ -284,6 +284,7 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
+             const auto ownRate = engine::liveRate(own, ownAgents, nowMs);
+             row.liveOutput = ownRate.output;
+             row.liveTotal = ownRate.total;
++            row.liveRateComplete = ownRate.complete;
+             row.liveEstimatedShare = ownRate.estimatedShare;
+             const auto ownCost = engine::liveCost(own, ownAgents, nowMs);
+             row.liveCost = ownCost.microUsdPerSecond;
+diff --git a/linux/tests/collector_integration_test.cpp b/linux/tests/collector_integration_test.cpp
+index 7a2293ef..9a072c82 100644
+--- a/linux/tests/collector_integration_test.cpp
++++ b/linux/tests/collector_integration_test.cpp
+@@ -33,7 +33,7 @@ TEST(CollectorIntegration, GrokWithoutInFlightStartHasUnknownLiveRates) {
+     settings.grokBuild = sessions.string();
+     agentspeed::MonitorConfig config;
+     config.locations = agentspeed::SourceLocations::resolve(settings, agentspeed::processEnvironment(), "/nonexistent-home");
+-    config.enabled = {agentspeed::SourceKind::GrokBuild};
++    config.enabled = {agentspeed::SourceKind::GrokBuild, agentspeed::SourceKind::Codex};
+     agentspeed::Monitor monitor(std::move(config));
+     monitor.start(base + 1000, dayStart);
+     std::ofstream(dir / "updates.jsonl", std::ios::app)
+@@ -55,6 +55,24 @@ TEST(CollectorIntegration, GrokWithoutInFlightStartHasUnknownLiveRates) {
+     EXPECT_EQ(root["agents"].at(0)["phase"].string(), "generating");
+     EXPECT_TRUE(root["agents"].at(0)["live_output"].isNull());
+     EXPECT_TRUE(root["agents"].at(0)["live_total"].isNull());
++    bool foundGrok = false, foundCodex = false;
++    const auto sources = root["sources"];
++    for (std::size_t i = 0; i < sources.size(); ++i) {
++        const auto source = sources.at(i);
++        if (source["source"].string() == agentspeed::sourceId(agentspeed::SourceKind::GrokBuild)) {
++            foundGrok = true;
++            EXPECT_TRUE(source["live_output"].isNull());
++            EXPECT_TRUE(source["live_total"].isNull());
++            EXPECT_TRUE(source["estimated_share"].isNull());
++        } else if (source["source"].string() == agentspeed::sourceId(agentspeed::SourceKind::Codex)) {
++            foundCodex = true;
++            EXPECT_EQ(source["live_output"].raw(), "0");
++            EXPECT_EQ(source["live_total"].raw(), "0");
++            EXPECT_EQ(source["estimated_share"].raw(), "0");
++        }
++    }
++    EXPECT_TRUE(foundGrok);
++    EXPECT_TRUE(foundCodex);
+     std::filesystem::remove_all(home);
+ }
+ 
+diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
+index 73b10038..22848da4 100644
+--- a/linux/tests/collector_test.cpp
++++ b/linux/tests/collector_test.cpp
+@@ -143,6 +143,7 @@ TEST(CollectorProtocol, UnknownGeneratingRateIsNull) {
+     row.liveRateComplete = rate.complete;
+     snapshot.agents.push_back(row);
+     snapshot.sources.emplace_back();
++    snapshot.sources.back().liveRateComplete = rate.complete;
+     collector::Protocol protocol;
+     const auto wire = protocol.snapshot(snapshot);
+     agentspeed::json::Document doc;
+@@ -154,6 +155,40 @@ TEST(CollectorProtocol, UnknownGeneratingRateIsNull) {
+     EXPECT_TRUE(doc.root()["agents"].at(0)["live_total"].isNull());
+     EXPECT_TRUE(doc.root()["sources"].at(0)["live_output"].isNull());
+     EXPECT_TRUE(doc.root()["sources"].at(0)["estimated_share"].isNull());
++    EXPECT_TRUE(doc.root()["sources"].at(0)["live_total"].isNull());
++}
++
++TEST(CollectorProtocol, SourceRatesUseTheirOwnCompleteness) {
++    agentspeed::Snapshot snapshot;
++    snapshot.liveRateComplete = false;
++    agentspeed::SourceRow known;
++    known.liveOutput = 4;
++    known.liveTotal = 6;
++    known.liveEstimatedShare = 0.5;
++    agentspeed::SourceRow unknown;
++    unknown.liveRateComplete = false;
++    snapshot.sources = {known, unknown};
++    collector::Protocol protocol;
++    agentspeed::json::Document doc;
++    const auto wire = protocol.snapshot(snapshot);
++    ASSERT_TRUE(doc.parse(wire));
++    const auto root = doc.root();
++    EXPECT_TRUE(root["live_output"].isNull());
++    const auto sources = root["sources"];
++    EXPECT_EQ(sources.at(0)["live_output"].raw(), "4");
++    EXPECT_EQ(sources.at(0)["live_total"].raw(), "6");
++    EXPECT_EQ(sources.at(0)["estimated_share"].raw(), "0.5");
++    EXPECT_TRUE(sources.at(1)["live_output"].isNull());
++    EXPECT_TRUE(sources.at(1)["live_total"].isNull());
++    EXPECT_TRUE(sources.at(1)["estimated_share"].isNull());
++
++    snapshot.liveRateComplete = true;
++    agentspeed::json::Document inverse;
++    const auto inverseWire = protocol.snapshot(snapshot);
++    ASSERT_TRUE(inverse.parse(inverseWire));
++    EXPECT_TRUE(inverse.root()["sources"].at(1)["live_output"].isNull());
++    EXPECT_TRUE(inverse.root()["sources"].at(1)["live_total"].isNull());
++    EXPECT_TRUE(inverse.root()["sources"].at(1)["estimated_share"].isNull());
+ }
+ 
+ TEST(CollectorProtocol, HistoryTimezoneFollowsEnvironment) {
+diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+index 3550b53b..7a0c5215 100644
+--- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
++++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+@@ -148,6 +148,8 @@ struct RemoteHostState {
+     var days: [RemoteDay] = []
+     var historyPartial: Bool?
+     var historyReceivedAt: Date?
++    /// True only after this connection has supplied a history frame.
++    var historyReceivedOnConnection = false
+     var completions: [RemoteCompletion] = []
+     var error: String?
+ 
+@@ -160,11 +162,17 @@ struct RemoteHostState {
+             days = replacement
+             historyPartial = message.partial
+             historyReceivedAt = Date()
++            historyReceivedOnConnection = true
+         } else if message.type == "completion", let source = message.source, let output = message.output {
+             completions.insert(RemoteCompletion(source: source, output: output, speed: message.speed), at: 0)
+             if completions.count > 10 { completions.removeLast() }
+         }
+     }
++
++    mutating func disconnected() {
++        online = false
++        historyReceivedOnConnection = false
++    }
+ }
+ 
+ /// Each connection replaces its own snapshot and history; no remote values enter local accounting.
+@@ -208,7 +216,7 @@ final class RemoteHosts {
+     private func disconnect(_ id: UUID) {
+         reconnects.removeValue(forKey: id)?.cancel()
+         workers.removeValue(forKey: id)?.stop()
+-        states[id, default: RemoteHostState()].online = false
++        states[id, default: RemoteHostState()].disconnected()
+     }
+ 
+     private func connect(_ host: RemoteHost) {
+@@ -217,6 +225,7 @@ final class RemoteHosts {
+             Task { @MainActor [weak self] in self?.receive(event, host: host) }
+         }
+         workers[host.id] = worker
++        states[host.id, default: RemoteHostState()].historyReceivedOnConnection = false
+         states[host.id, default: RemoteHostState()].error = nil
+         worker.start()
+     }
+@@ -228,7 +237,7 @@ final class RemoteHosts {
+             states[host.id, default: RemoteHostState()].apply(message)
+         case .ended(let reason):
+             workers.removeValue(forKey: host.id)
+-            states[host.id, default: RemoteHostState()].online = false
++            states[host.id, default: RemoteHostState()].disconnected()
+             states[host.id, default: RemoteHostState()].error = reason
+             reconnects[host.id] = Task { [weak self] in
+                 try? await Task.sleep(for: .seconds(10))
+diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+index 49e64638..20aaef52 100644
+--- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
++++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+@@ -37,7 +37,8 @@ final class HistoryViewModel {
+     var remoteHistoryStale: Bool {
+         guard let id = appModel?.selectedRemoteHostID else { return false }
+         return appModel?.remoteHosts.hosts.first(where: { $0.id == id })?.enabled != true ||
+-            appModel?.remoteHosts.states[id]?.online != true
++            appModel?.remoteHosts.states[id]?.online != true ||
++            appModel?.remoteHosts.states[id]?.historyReceivedOnConnection != true
+     }
+     var remoteHistoryReceivedAt: Date? {
+         guard let id = appModel?.selectedRemoteHostID else { return nil }
+diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+index 609a0f45..361377c9 100644
+--- a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+@@ -87,6 +87,46 @@ struct RemoteHostsTests {
+         #expect(state.historyUsage == nil)
+     }
+ 
++    @Test @MainActor func historyStaysStaleUntilCurrentConnectionReceivesHistory() throws {
++        let suite = "RemoteHistoryFreshness.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let id = UUID()
++        let host = RemoteHost(id: id, label: "Remote", destination: "remote", enabled: true)
++        defaults.set(try JSONEncoder().encode([host]), forKey: "remoteHosts.v1")
++        let today = DayKey(Date(), calendar: HistoryDates.calendar).description
++        let snapshot = try #require(message(#"{"version":1,"type":"snapshot","today_day":"\#(today)"}"#))
++        let history = try #require(message(#"{"version":1,"type":"history","partial":false,"days":[]}"#))
++        let malformedHistory = try #require(message(#"{"version":1,"type":"history"}"#))
++        var state = RemoteHostState()
++
++        func check(_ state: RemoteHostState, stale: Bool, available: Bool) {
++            let hosts = RemoteHosts(defaults: defaults, states: [id: state])
++            let store = HistoryStore()
++            let app = AppModel(settings: AppSettings(defaults: defaults), history: store, remoteHosts: hosts)
++            app.selectedRemoteHostID = id
++            let view = HistoryViewModel(store: store, l10n: app.l10n, accessibility: app.accessibility,
++                                        cost: app.cost, traffic: app.traffic, model: app)
++            #expect(view.remoteHistoryStale == stale)
++            #expect(view.remoteHistoryAvailable == available)
++        }
++
++        state.apply(snapshot)
++        check(state, stale: true, available: false)
++        state.apply(history)
++        let receivedAt = state.historyReceivedAt
++        check(state, stale: false, available: true)
++        state.disconnected()
++        check(state, stale: true, available: true)
++        state.apply(snapshot)
++        state.apply(snapshot)
++        state.apply(malformedHistory)
++        #expect(state.historyReceivedAt == receivedAt)
++        check(state, stale: true, available: true)
++        state.apply(history)
++        check(state, stale: false, available: true)
++    }
++
+     @Test @MainActor func switchingTargetsKeepsDashboardHistoryAndExportIsolated() async throws {
+         let suite = "RemoteTargetTests.\(UUID().uuidString)"
+         let defaults = try #require(UserDefaults(suiteName: suite))
+-- 
+2.41.0
+

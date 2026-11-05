@@ -12,9 +12,9 @@ the upstream URL, and the relevant platform toolchain are required.
 `patches/series` is the sole application order. Each entry names one numbered
 `git format-patch` mail patch in the same directory. `patches/tests.json` has
 exactly the same keys. The queue contains remote monitoring, its macOS
-settings compilation fix, the fork version patch, and unified per-target
-dashboard and history statistics. Never place credentials in this repository
-or a patch.
+settings compilation fix, the fork version patch, unified per-target
+dashboard and history statistics, and remote freshness and source completeness
+fixes. Never place credentials in this repository or a patch.
 
 ## CI and releases
 
