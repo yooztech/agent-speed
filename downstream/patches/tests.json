@@ -122,5 +122,10 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0018-Fix-remote-snapshot-return-syntax.patch": {
+    "regression": [{"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests"}],
+    "related": [],
+    "reason": ""
   }
 }
