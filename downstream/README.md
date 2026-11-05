@@ -34,7 +34,7 @@ runs on pushes, pull requests and manual dispatch and builds/tests the core;
 its desktop packages use Qt 6.8.3 and target x86_64 and arm64. Manual dispatch
 has no release input and uploads Actions artifacts only. On a
 `vX.Y.Z-fork.N` tag push, Linux waits for the release workflow to create the
-draft and uploads its packages there; other runs use the prepared tree's
+release and uploads its packages there; other runs use the prepared tree's
 CMake version with a `-dev` suffix.
 
 To check a macOS bundle locally against its tested Linux collector, run
