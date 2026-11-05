@@ -8,7 +8,10 @@ the upstream URL, and the relevant platform toolchain are required.
 
 `patches/series` is the sole application order. Each entry names one numbered
 `git format-patch` mail patch in the same directory. `patches/tests.json` has
-exactly the same keys. The current queue contains the remote monitoring patch.
+exactly the same keys. The queue contains the remote monitoring patch and a
+macOS compilation fix for its Remote hosts settings section: the section uses
+explicit content, header and footer closures, matching the existing settings
+forms. The fix registers `cd macos && swift test` as its regression check.
 Never place credentials in this repository or a patch.
 
 ## CI and releases

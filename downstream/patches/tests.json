@@ -6,5 +6,12 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0002-Fix-macOS-remote-hosts-section-initializer.patch": {
+    "regression": [
+      {"platform": "macos", "run": "cd macos && swift test"}
+    ],
+    "related": [],
+    "reason": ""
   }
 }

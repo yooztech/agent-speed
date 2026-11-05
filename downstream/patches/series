@@ -1,1 +1,2 @@
 0001-Add-SSH-remote-agent-monitoring.patch
+0002-Fix-macOS-remote-hosts-section-initializer.patch
