@@ -75,5 +75,12 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0011-Clear-restored-traffic-ledger-before-first-sample.patch": {
+    "regression": [
+      {"platform": "macos", "run": "cd macos && swift test"}
+    ],
+    "related": [],
+    "reason": ""
   }
 }

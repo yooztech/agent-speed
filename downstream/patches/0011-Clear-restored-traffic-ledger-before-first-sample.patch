@@ -1,0 +1,56 @@
+From fb0debe25f3252e1e7e502c22d6885528202bb72 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 18:34:56 +0800
+Subject: [PATCH] Clear restored traffic ledger before first sample
+
+---
+ .../Traffic/Engine/TrafficEngine.swift               |  8 ++++++--
+ .../AgentSpeedCoreTests/TrafficEngineTests.swift     | 12 ++++++++++++
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/macos/Sources/AgentSpeedCore/Traffic/Engine/TrafficEngine.swift b/macos/Sources/AgentSpeedCore/Traffic/Engine/TrafficEngine.swift
+index 0f02edb3..00876008 100644
+--- a/macos/Sources/AgentSpeedCore/Traffic/Engine/TrafficEngine.swift
++++ b/macos/Sources/AgentSpeedCore/Traffic/Engine/TrafficEngine.swift
+@@ -77,9 +77,13 @@ final class TrafficEngine {
+         ledger.restore(day, rows: rows)
+     }
+ 
+-    /// "Clear history": today starts over at zero.
++    /// "Clear history": today starts over at zero, including totals restored before the first tick.
+     func resetToday() {
+-        if let currentDay { ledger.reset(currentDay) }
++        if let currentDay {
++            ledger.reset(currentDay)
++        } else {
++            ledger.drop(except: [])
++        }
+     }
+ 
+     /// Keeps only today in memory once older days are stored.
+diff --git a/macos/Tests/AgentSpeedCoreTests/TrafficEngineTests.swift b/macos/Tests/AgentSpeedCoreTests/TrafficEngineTests.swift
+index bad8093c..fa68e156 100644
+--- a/macos/Tests/AgentSpeedCoreTests/TrafficEngineTests.swift
++++ b/macos/Tests/AgentSpeedCoreTests/TrafficEngineTests.swift
+@@ -56,6 +56,18 @@ struct TrafficEngineTests {
+         var claudeToday: SourceDayTraffic? { engine.today().sources[.claudeCode] }
+     }
+ 
++    @Test func clearBeforeFirstTickDiscardsRestoredTotals() {
++        let harness = Harness()
++        let day = "1970-01-01"
++        harness.engine.restore(day: day, rows: [
++            TrafficDay(day: day, key: TrafficDay.machineKey, rx: 123, tx: 456, sampledMs: 789)
++        ])
++        harness.engine.resetToday()
++        harness.tick(1000)
++        #expect(harness.engine.today().machine == .zero)
++        #expect(harness.engine.today().machineSampledMs == 0)
++    }
++
+     @Test func diffReportsMismatches() {
+         var out: [String] = []
+         TrafficCaseRunner.diff("", want: ["a": 1, "b": [1, 2]] as [String: Any], got: ["a": 2, "b": [1]] as [String: Any], into: &out)
+-- 
+2.41.0
+

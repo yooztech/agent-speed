@@ -8,3 +8,4 @@
 0008-Fix-native-remote-source-availability-and-diagnostic.patch
 0009-Fix-remote-history-test-fixtures.patch
 0010-Make-traffic-clear-test-account-for-elapsed-time.patch
+0011-Clear-restored-traffic-ledger-before-first-sample.patch
