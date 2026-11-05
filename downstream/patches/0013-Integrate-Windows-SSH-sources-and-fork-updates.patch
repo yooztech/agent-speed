@@ -1,0 +1,3064 @@
+From ea8e02b228e6461742aee1730e355f604f010dbf Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 18:43:27 +0800
+Subject: [PATCH 13/14] Integrate Windows SSH sources and fork updates
+
+---
+ linux/app/src/network_service.cpp             |  44 ++--
+ linux/app/src/update_release.hpp              |  71 ++++++
+ linux/tests/CMakeLists.txt                    |   1 +
+ linux/tests/update_release_test.cpp           |  31 +++
+ .../Updates/UpdateConfiguration.swift         |   4 +-
+ .../AgentSpeedCore/Updates/Release.swift      |  27 +-
+ .../ReleaseFeedTests.swift                    |  40 ++-
+ spec/UPDATES.md                               |  32 ++-
+ windows/src/AgentSpeed.Core/History.cs        |   2 +
+ windows/src/AgentSpeed.Core/Models.cs         |  21 +-
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  | 111 +++++++++
+ windows/src/AgentSpeed.Core/SpeedHub.cs       | 148 ++++++++++-
+ .../History/ExecutionModeCsv.cs               |   4 +-
+ .../History/HistoryCsv.cs                     |   9 +-
+ .../Localization/Strings.Windows.json         |  36 +++
+ .../Settings/AppSettings.cs                   |   2 +
+ .../Settings/RemoteHost.cs                    |  18 ++
+ .../Settings/SettingsSerializer.cs            |  30 +++
+ .../Updates/ReleaseFeed.cs                    |   4 +-
+ .../Updates/ReleaseInfo.cs                    |   4 +-
+ .../Updates/SemanticVersion.cs                |  17 ++
+ .../Updates/UpdatePackage.cs                  |  49 +++-
+ .../Updates/UpdateSource.cs                   |   2 +-
+ windows/src/AgentSpeed/App/AppController.cs   |  12 +-
+ windows/src/AgentSpeed/App/AppPaths.cs        |   2 +-
+ .../Dashboard/DashboardViewModel.cs           |  40 +--
+ .../AgentSpeed/History/HistoryController.cs   |   5 +-
+ .../src/AgentSpeed/History/HistoryItems.cs    |   6 +
+ .../History/HistoryViewModel.Perf.cs          |   2 +-
+ .../History/HistoryViewModel.Traffic.cs       |   6 +-
+ .../AgentSpeed/History/HistoryViewModel.cs    | 162 +++++++++++-
+ .../src/AgentSpeed/History/HistoryWindow.xaml |   4 +
+ windows/src/AgentSpeed/Orb/OrbManager.cs      |   4 +-
+ .../Services/RemoteConnectionManager.cs       | 231 ++++++++++++++++++
+ .../AgentSpeed/Services/RemoteSshWorker.cs    | 153 ++++++++++++
+ .../Settings/Pages/SourcesPage.xaml           |  26 ++
+ .../AgentSpeed/Settings/SettingsViewModel.cs  | 154 ++++++++++++
+ .../src/AgentSpeed/Updates/ExecutableSwap.cs  |  49 +++-
+ .../RemoteConsumerTests.cs                    | 189 ++++++++++++++
+ .../ReleaseFeedTests.cs                       |  53 ++--
+ .../RemoteHistoryCsvTests.cs                  |  37 +++
+ .../RemoteHostSettingsTests.cs                |  42 ++++
+ .../UpdatePackageTests.cs                     |  30 +++
+ .../UpdateScheduleTests.cs                    |  44 ++--
+ .../UpdateSourceTests.cs                      |   2 +-
+ 45 files changed, 1797 insertions(+), 163 deletions(-)
+ create mode 100644 linux/app/src/update_release.hpp
+ create mode 100644 linux/tests/update_release_test.cpp
+ create mode 100644 windows/src/AgentSpeed.Core/RemoteAggregation.cs
+ create mode 100644 windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
+ create mode 100644 windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
+ create mode 100644 windows/src/AgentSpeed/Services/RemoteSshWorker.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs
+
+diff --git a/linux/app/src/network_service.cpp b/linux/app/src/network_service.cpp
+index f0dec53e..666001ad 100644
+--- a/linux/app/src/network_service.cpp
++++ b/linux/app/src/network_service.cpp
+@@ -27,6 +27,7 @@
+ #include "catalog.hpp"
+ #include "preferences.hpp"
+ #include "strings.hpp"
++#include "update_release.hpp"
+ 
+ namespace {
+ 
+@@ -67,23 +68,6 @@ public:
+ 
+ QByteArray userAgent() { return "AgentSpeed/" + QCoreApplication::applicationVersion().toUtf8() + " (Linux)"; }
+ 
+-struct Version {
+-    int major = 0, minor = 0, patch = 0;
+-    bool prerelease = false;
+-    bool operator<(const Version& o) const {
+-        if (major != o.major) return major < o.major;
+-        if (minor != o.minor) return minor < o.minor;
+-        if (patch != o.patch) return patch < o.patch;
+-        return prerelease && !o.prerelease;
+-    }
+-};
+-
+-std::optional<Version> parseVersion(const QString& text) {
+-    static const QRegularExpression pattern(QStringLiteral("^v?(\\d+)\\.(\\d+)\\.(\\d+)(-[0-9A-Za-z.-]+)?$"));
+-    const auto m = pattern.match(text.trimmed());
+-    if (!m.hasMatch()) return std::nullopt;
+-    return Version{m.captured(1).toInt(), m.captured(2).toInt(), m.captured(3).toInt(), !m.captured(4).isEmpty()};
+-}
+ 
+ 
+ QString shortDate(qint64 ms) { return QDateTime::fromMSecsSinceEpoch(ms).toString(QStringLiteral("yyyy/MM/dd HH:mm")); }
+@@ -425,7 +409,7 @@ void NetworkService::runUpdateCheck(bool manual) {
+     if (!manual && (!prefs_.autoCheckUpdates() || QCoreApplication::applicationVersion() == QLatin1String("0.0.0"))) return;
+     updateState_ = QStringLiteral("checking");
+     emit updateChanged();
+-    fetch(QUrl(QStringLiteral("https://api.github.com/repos/zoefix/agent-speed/releases/latest")), "application/vnd.github+json", kReleaseCap,
++    fetch(QUrl(QString::fromLatin1(agentspeed::updates::kReleaseFeed)), "application/vnd.github+json", kReleaseCap,
+           kUpdateHosts, {}, [this, manual](const Fetched& f) {
+               if (!f.error.isEmpty()) {
+                   updateState_ = manual ? QStringLiteral("failed") : QStringLiteral("idle");
+@@ -434,11 +418,19 @@ void NetworkService::runUpdateCheck(bool manual) {
+                   return;
+               }
+               QSettings().setValue(QStringLiteral("update/lastCheckMs"), QDateTime::currentMSecsSinceEpoch());
+-              const auto o = QJsonDocument::fromJson(f.body).object();
+-              if (o.value(QStringLiteral("draft")).toBool() || o.value(QStringLiteral("prerelease")).toBool()) {
+-                  updateState_ = QStringLiteral("upToDate");
+-                  emit updateChanged();
+-                  return;
++              QJsonObject o;
++              std::optional<agentspeed::updates::Version> best;
++              const auto current = QCoreApplication::applicationVersion().toStdString();
++              for (const auto& entry : QJsonDocument::fromJson(f.body).array()) {
++                  const auto candidate = entry.toObject();
++                  const auto tag = candidate.value(QStringLiteral("tag_name")).toString().toStdString();
++                  if (!agentspeed::updates::isNewForkRelease(current, tag, candidate.value(QStringLiteral("draft")).toBool(),
++                                                             candidate.value(QStringLiteral("prerelease")).toBool())) continue;
++                  const auto version = agentspeed::updates::parseVersion(tag);
++                  if (!best || agentspeed::updates::less(*best, *version)) {
++                      best = version;
++                      o = candidate;
++                  }
+               }
+               Release r;
+               r.tag = o.value(QStringLiteral("tag_name")).toString();
+@@ -457,10 +449,8 @@ void NetworkService::runUpdateCheck(bool manual) {
+                       r.sumsUrl = asset.value(QStringLiteral("browser_download_url")).toString();
+                   }
+               }
+-              const auto current = parseVersion(QCoreApplication::applicationVersion());
+-              const auto offered = parseVersion(r.tag);
+               const bool skipped = !manual && QSettings().value(QStringLiteral("update/skipped")).toString() == r.tag;
+-              if (current && offered && *current < *offered && !skipped) {
++              if (best && !skipped) {
+                   const bool fresh = release_.tag != r.tag;
+                   release_ = r;
+                   updateState_ = QStringLiteral("available");
+@@ -484,7 +474,7 @@ void NetworkService::skipUpdate() {
+ }
+ 
+ void NetworkService::openRelease() {
+-    QDesktopServices::openUrl(QUrl(release_.page.isEmpty() ? QStringLiteral("https://github.com/zoefix/agent-speed/releases") : release_.page));
++    QDesktopServices::openUrl(QUrl(release_.page.isEmpty() ? QString::fromLatin1(agentspeed::updates::kReleasePage) : release_.page));
+ }
+ 
+ void NetworkService::download(const QUrl& url, const QString& path, qint64 cap, std::function<void(bool, const QString&)> done) {
+diff --git a/linux/app/src/update_release.hpp b/linux/app/src/update_release.hpp
+new file mode 100644
+index 00000000..adda87e6
+--- /dev/null
++++ b/linux/app/src/update_release.hpp
+@@ -0,0 +1,71 @@
++#pragma once
++
++#include <algorithm>
++#include <optional>
++#include <regex>
++#include <string>
++#include <string_view>
++#include <vector>
++#include <utility>
++
++namespace agentspeed::updates {
++
++inline constexpr auto kReleaseFeed = "https://api.github.com/repos/yooztech/agent-speed/releases?per_page=100";
++inline constexpr auto kReleasePage = "https://github.com/yooztech/agent-speed/releases";
++
++struct Version {
++    std::string major, minor, patch;
++    std::vector<std::string> prerelease;
++};
++
++inline std::optional<Version> parseVersion(const std::string& text) {
++    static const std::regex pattern(R"(^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$)");
++    std::smatch match;
++    if (!std::regex_match(text, match, pattern)) return std::nullopt;
++    Version version{match[1], match[2], match[3], {}};
++    const std::string suffix = match[4];
++    for (std::size_t start = 0; start < suffix.size();) {
++        const auto end = suffix.find('.', start);
++        auto id = suffix.substr(start, end == std::string::npos ? end : end - start);
++        const bool numeric = std::all_of(id.begin(), id.end(), [](char c) { return c >= '0' && c <= '9'; });
++        if (numeric && id.size() > 1 && id.front() == '0') return std::nullopt;
++        version.prerelease.push_back(std::move(id));
++        if (end == std::string::npos) break;
++        start = end + 1;
++    }
++    return version;
++}
++
++inline int compareNumber(std::string_view a, std::string_view b) {
++    if (a.size() != b.size()) return a.size() < b.size() ? -1 : 1;
++    return a == b ? 0 : (a < b ? -1 : 1);
++}
++
++inline bool less(const Version& a, const Version& b) {
++    for (const auto& [left, right] : {std::pair{&a.major, &b.major}, std::pair{&a.minor, &b.minor}, std::pair{&a.patch, &b.patch}}) {
++        const int comparison = compareNumber(*left, *right);
++        if (comparison) return comparison < 0;
++    }
++    if (a.prerelease.empty() || b.prerelease.empty()) return !a.prerelease.empty() && b.prerelease.empty();
++    for (std::size_t i = 0; i < std::min(a.prerelease.size(), b.prerelease.size()); ++i) {
++        const auto& left = a.prerelease[i];
++        const auto& right = b.prerelease[i];
++        const auto numeric = [](const std::string& id) { return std::all_of(id.begin(), id.end(), [](char c) { return c >= '0' && c <= '9'; }); };
++        const bool ln = numeric(left), rn = numeric(right);
++        if (ln != rn) return ln;
++        const int comparison = ln ? compareNumber(left, right) : (left == right ? 0 : (left < right ? -1 : 1));
++        if (comparison) return comparison < 0;
++    }
++    return a.prerelease.size() < b.prerelease.size();
++}
++
++inline bool isNewForkRelease(const std::string& current, const std::string& tag, bool draft, bool prerelease) {
++    const auto installed = parseVersion(current);
++    const auto offered = parseVersion(tag);
++    if (draft || prerelease || !installed || !offered || offered->prerelease.size() != 2 || offered->prerelease[0] != "fork") return false;
++    const auto& ordinal = offered->prerelease[1];
++    if (!std::all_of(ordinal.begin(), ordinal.end(), [](char c) { return c >= '0' && c <= '9'; })) return false;
++    return less(*installed, *offered);
++}
++
++}  // namespace agentspeed::updates
+diff --git a/linux/tests/CMakeLists.txt b/linux/tests/CMakeLists.txt
+index 8048ca80..735e3a74 100644
+--- a/linux/tests/CMakeLists.txt
++++ b/linux/tests/CMakeLists.txt
+@@ -33,6 +33,7 @@ add_executable(agentspeed_tests
+     rfc3339_test.cpp
+     traffic_test.cpp
+     unpriced_test.cpp
++    update_release_test.cpp
+     work_signals_test.cpp
+ )
+ target_link_libraries(agentspeed_tests PRIVATE agentspeed_core agentspeed_collector_protocol GTest::gtest_main)
+diff --git a/linux/tests/update_release_test.cpp b/linux/tests/update_release_test.cpp
+new file mode 100644
+index 00000000..c0ae38bb
+--- /dev/null
++++ b/linux/tests/update_release_test.cpp
+@@ -0,0 +1,31 @@
++#include "../app/src/update_release.hpp"
++
++#include <gtest/gtest.h>
++
++using agentspeed::updates::isNewForkRelease;
++using agentspeed::updates::kReleaseFeed;
++using agentspeed::updates::kReleasePage;
++
++TEST(UpdateRelease, UsesForkFeedAndReleasePage) {
++    EXPECT_STREQ(kReleaseFeed, "https://api.github.com/repos/yooztech/agent-speed/releases?per_page=100");
++    EXPECT_STREQ(kReleasePage, "https://github.com/yooztech/agent-speed/releases");
++}
++
++TEST(UpdateRelease, ComparesForkOrdinalsNumerically) {
++    EXPECT_TRUE(isNewForkRelease("1.6.1-fork.1", "v1.6.1-fork.2", false, false));
++    EXPECT_TRUE(isNewForkRelease("1.6.1-fork.2", "v1.6.1-fork.10", false, false));
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.2", "v1.6.1-fork.1", false, false));
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.2", "v1.6.1-fork.2", false, false));
++    EXPECT_TRUE(isNewForkRelease("1.6.1", "v1.6.2-fork.1", false, false));
++}
++
++TEST(UpdateRelease, RejectsUpstreamAndNonForkReleases) {
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.1", "v1.6.1", false, false));
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.1", "v1.6.2", false, false));
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.1", "v1.6.2-rc.1", false, false));
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.1", "v1.6.2-fork.x", false, false));
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.1", "v1.6.2-fork.01", false, false));
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.1", "v1.6.2-fork.1.extra", false, false));
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.1", "v1.6.2-fork.1", true, false));
++    EXPECT_FALSE(isNewForkRelease("1.6.1-fork.1", "v1.6.2-fork.1", false, true));
++}
+diff --git a/macos/Sources/AgentSpeed/Updates/UpdateConfiguration.swift b/macos/Sources/AgentSpeed/Updates/UpdateConfiguration.swift
+index 368e4bfe..90b111e4 100644
+--- a/macos/Sources/AgentSpeed/Updates/UpdateConfiguration.swift
++++ b/macos/Sources/AgentSpeed/Updates/UpdateConfiguration.swift
+@@ -9,8 +9,8 @@ struct UpdateConfiguration: Sendable {
+     static let assetName = "AgentSpeed-macOS.zip"
+     static let checksumAssetName = "SHA256SUMS.txt"
+     static let maxAssetSize: Int64 = 300 << 20
+-    static let releaseFeedURL = URL(string: "https://api.github.com/repos/zoefix/agent-speed/releases/latest")!
+-    static let releasesPageURL = URL(string: "https://github.com/zoefix/agent-speed/releases/latest")!
++    static let releaseFeedURL = URL(string: "https://api.github.com/repos/yooztech/agent-speed/releases?per_page=100")!
++    static let releasesPageURL = URL(string: "https://github.com/yooztech/agent-speed/releases")!
+     /// Development hook: a feed URL that replaces the GitHub API and lifts the host allow-list. Only the local
+     /// user can set it, by launching the executable with this variable.
+     static let feedOverrideVariable = "AGENT_SPEED_UPDATE_FEED"
+diff --git a/macos/Sources/AgentSpeedCore/Updates/Release.swift b/macos/Sources/AgentSpeedCore/Updates/Release.swift
+index 35a9cd5c..313b96ed 100644
+--- a/macos/Sources/AgentSpeedCore/Updates/Release.swift
++++ b/macos/Sources/AgentSpeedCore/Updates/Release.swift
+@@ -58,22 +58,31 @@ public enum ReleaseFeedError: Error, Equatable, Sendable {
+     case notPublished
+ }
+ 
+-/// Decodes `GET /repos/{owner}/{repo}/releases/latest`.
++/// Decodes GitHub releases and selects the newest published fork release.
+ public enum ReleaseFeed {
+-    /// Upper bound for the response body; a release with long notes is a few hundred KiB at most.
+-    public static let maxBytes = 2 << 20
++    /// Bound the release list response, including release notes and assets.
++    public static let maxBytes = 20 << 20
+ 
+     public static func decode(_ data: Data) throws -> Release {
+         guard data.count <= maxBytes else { throw ReleaseFeedError.malformed }
+-        let payload: Payload
+-        do {
+-            payload = try JSONDecoder().decode(Payload.self, from: data)
+-        } catch {
+-            throw ReleaseFeedError.malformed
++        let decoder = JSONDecoder()
++        if let payloads = try? decoder.decode([Payload].self, from: data) {
++            guard let latest = payloads.compactMap({ try? release(from: $0) }).max(by: { $0.version < $1.version }) else {
++                throw ReleaseFeedError.notPublished
++            }
++            return latest
+         }
++        guard let payload = try? decoder.decode(Payload.self, from: data) else { throw ReleaseFeedError.malformed }
++        return try release(from: payload)
++    }
++
++    private static func release(from payload: Payload) throws -> Release {
+         if payload.draft == true || payload.prerelease == true { throw ReleaseFeedError.notPublished }
+         guard let version = SemanticVersion(payload.tagName) else { throw ReleaseFeedError.unsupportedTag }
+-        guard !version.isPrerelease else { throw ReleaseFeedError.notPublished }
++        guard version.prerelease.count == 2, version.prerelease[0] == "fork",
++              !version.prerelease[1].isEmpty,
++              version.prerelease[1].utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
++              !payload.tagName.contains("+") else { throw ReleaseFeedError.notPublished }
+         let assets = (payload.assets ?? []).compactMap { asset -> ReleaseAsset? in
+             guard let url = URL(string: asset.browserDownloadURL), asset.size >= 0 else { return nil }
+             return ReleaseAsset(name: asset.name, downloadURL: url, size: asset.size)
+diff --git a/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift b/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift
+index 630fc76e..d7861f55 100644
+--- a/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift
++++ b/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift
+@@ -8,7 +8,7 @@ struct ReleaseFeedTests {
+ 
+     /// Shaped like a real `GET /repos/{owner}/{repo}/releases/latest` response, including fields updates ignore.
+     static func latestJSON(
+-        tag: String = "v1.2.0",
++        tag: String = "v1.2.0-fork.1",
+         name: String = #""Agent Speed v1.2.0""#,
+         body: String = ###""## What's Changed\r\n* Automatic updates by @zoefix in https://github.com/zoefix/agent-speed/pull/42\r\n\r\n**Full Changelog**: https://github.com/zoefix/agent-speed/compare/v1.1.0...v1.2.0""###,
+         draft: String = "false",
+@@ -68,13 +68,13 @@ struct ReleaseFeedTests {
+ 
+     @Test func decodesRealisticRelease() throws {
+         let release = try ReleaseFeed.decode(Self.latestJSON())
+-        #expect(release.tag == "v1.2.0")
+-        #expect(release.id == "v1.2.0")
+-        #expect(release.version == SemanticVersion(major: 1, minor: 2, patch: 0))
++        #expect(release.tag == "v1.2.0-fork.1")
++        #expect(release.id == "v1.2.0-fork.1")
++        #expect(release.version == SemanticVersion(major: 1, minor: 2, patch: 0, prerelease: ["fork", "1"]))
+         #expect(release.name == "Agent Speed v1.2.0")
+         #expect(release.notes.hasPrefix("## What's Changed\r\n* Automatic updates by @zoefix"))
+         #expect(release.notes.hasSuffix("compare/v1.1.0...v1.2.0"))
+-        #expect(release.pageURL == URL(string: "https://github.com/zoefix/agent-speed/releases/tag/v1.2.0"))
++        #expect(release.pageURL == URL(string: "https://github.com/zoefix/agent-speed/releases/tag/v1.2.0-fork.1"))
+         #expect(release.publishedAt == Date(timeIntervalSince1970: 1_790_843_400))
+         #expect(release.assets.map(\.name) == [
+             "AgentSpeed-macOS.zip", "AgentSpeed-Windows-x64.zip", "AgentSpeed-Windows-arm64.zip", "SHA256SUMS.txt",
+@@ -101,7 +101,7 @@ struct ReleaseFeedTests {
+     @Test func unreadableDateIsIgnored() throws {
+         let release = try ReleaseFeed.decode(Self.latestJSON(publishedAt: #""yesterday""#))
+         #expect(release.publishedAt == nil)
+-        #expect(release.version == SemanticVersion(major: 1, minor: 2, patch: 0))
++        #expect(release.version == SemanticVersion(major: 1, minor: 2, patch: 0, prerelease: ["fork", "1"]))
+     }
+ 
+     @Test func unicodeNotesSurvive() throws {
+@@ -110,22 +110,22 @@ struct ReleaseFeedTests {
+     }
+ 
+     @Test func minimalReleaseUsesDefaults() throws {
+-        let release = try ReleaseFeed.decode(Data(#"{"tag_name":"1.0.1"}"#.utf8))
+-        #expect(release == Release(tag: "1.0.1", version: SemanticVersion(major: 1, minor: 0, patch: 1)))
++        let release = try ReleaseFeed.decode(Data(#"{"tag_name":"1.0.1-fork.1"}"#.utf8))
++        #expect(release == Release(tag: "1.0.1-fork.1", version: SemanticVersion(major: 1, minor: 0, patch: 1, prerelease: ["fork", "1"])))
+         #expect(release.pageURL == nil)
+         #expect(release.assets.isEmpty)
+     }
+ 
+     @Test func nullAssetsAndFlagsAreAccepted() throws {
+-        let json = #"{"tag_name":"v2.0.0","draft":null,"prerelease":null,"assets":null,"html_url":null}"#
++        let json = #"{"tag_name":"v2.0.0-fork.1","draft":null,"prerelease":null,"assets":null,"html_url":null}"#
+         let release = try ReleaseFeed.decode(Data(json.utf8))
+-        #expect(release.version == SemanticVersion(major: 2, minor: 0, patch: 0))
++        #expect(release.version == SemanticVersion(major: 2, minor: 0, patch: 0, prerelease: ["fork", "1"]))
+         #expect(release.assets.isEmpty)
+     }
+ 
+     @Test func dropsAssetsWithoutUsableURLOrSize() throws {
+         let json = """
+-        {"tag_name": "v1.0.0", "assets": [
++        {"tag_name": "v1.0.0-fork.1", "assets": [
+           {"name": "ok.zip", "browser_download_url": "https://github.com/o/r/releases/download/v1.0.0/ok.zip", "size": 10},
+           {"name": "negative.zip", "browser_download_url": "https://github.com/o/r/negative.zip", "size": -1},
+           {"name": "empty-url.zip", "browser_download_url": "", "size": 10},
+@@ -145,7 +145,7 @@ struct ReleaseFeedTests {
+         }
+     }
+ 
+-    @Test(arguments: ["v1.3.0-beta.1", "1.3.0-rc.1", "v2.0.0-0+build"])
++    @Test(arguments: ["v1.6.1", "v1.3.0-beta.1", "1.3.0-rc.1", "v2.0.0-0+build", "v1.6.1-fork.x", "v1.6.1-fork.1+build"])
+     func prereleaseTagsAreNotOffered(tag: String) {
+         #expect(throws: ReleaseFeedError.notPublished) {
+             try ReleaseFeed.decode(Self.latestJSON(tag: tag))
+@@ -159,8 +159,22 @@ struct ReleaseFeedTests {
+         }
+     }
+ 
++    @Test func selectsNewestPublishedForkFromMixedReleases() throws {
++        let json = #"[{"tag_name":"v1.6.1"},{"tag_name":"v1.6.1-fork.1"},{"tag_name":"v1.6.1-fork.2"},{"tag_name":"v1.7.0-fork.1","prerelease":true}]"#
++        let release = try ReleaseFeed.decode(Data(json.utf8))
++        #expect(release.tag == "v1.6.1-fork.2")
++        #expect(UpdateDecision.evaluate(currentVersion: "1.6.1-fork.1", latest: release, skippedTag: nil, manual: false) == .available)
++        #expect(UpdateDecision.evaluate(currentVersion: "1.6.1-fork.2", latest: release, skippedTag: nil, manual: false) == .upToDate)
++    }
++
++    @Test func noEligibleForkIsNotPublished() {
++        for json in ["[]", #"[{"tag_name":"v1.6.1"}]"#] {
++            #expect(throws: ReleaseFeedError.notPublished) { try ReleaseFeed.decode(Data(json.utf8)) }
++        }
++    }
++
+     @Test(arguments: [
+-        "", " ", "null", "[]", "{}", "42", #""v1.0.0""#, "not json", "<!DOCTYPE html><html><body>Unicorn!</body></html>",
++        "", " ", "null", "{}", "42", #""v1.0.0""#, "not json", "<!DOCTYPE html><html><body>Unicorn!</body></html>",
+         #"{"tag_name": 5}"#, #"{"tag_name": null}"#, #"{"name": "v1.0.0"}"#,
+         #"{"tag_name": "v1.0.0", "draft": "no"}"#,
+         #"{"tag_name": "v1.0.0", "assets": [{"name": "a.zip"}]}"#,
+diff --git a/spec/UPDATES.md b/spec/UPDATES.md
+index 2d95e99d..bb68e71b 100644
+--- a/spec/UPDATES.md
++++ b/spec/UPDATES.md
+@@ -7,23 +7,26 @@ off are listed in `spec/NETWORK.md`; with that switch off, nothing in this docum
+ 
+ ## 1. Source of truth
+ 
+-- Releases are built and published by GitHub Actions (`.github/workflows/release.yml`) when a `vX.Y.Z` tag is pushed.
+-  Every release contains `AgentSpeed-macOS.zip`, `AgentSpeed-Windows-x64.zip`, `AgentSpeed-Windows-arm64.zip` and
+-  `SHA256SUMS.txt` (`<sha256>  <file name>` per line).
+-- Check: `GET https://api.github.com/repos/zoefix/agent-speed/releases/latest` with headers
++- Releases are built and published by GitHub Actions (`.github/workflows/release.yml`) for fork tags
++  `vX.Y.Z-fork.N`. Each release contains platform packages and `SHA256SUMS.txt` (`<sha256>  <file name>` per line).
++- Check: `GET https://api.github.com/repos/yooztech/agent-speed/releases?per_page=100` with headers
+   `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`,
+-  `User-Agent: AgentSpeed/<current version> (<macOS|Windows>)`. No cookies, no tokens, no other headers. Timeout 15 s.
++  `User-Agent: AgentSpeed/<current version> (<macOS|Windows|Linux>)`. No cookies, no tokens, no other headers.
+ - Fields used: `tag_name`, `name`, `body` (release notes, Markdown), `html_url`, `published_at`, `assets[].name`,
+-  `assets[].browser_download_url`, `assets[].size`. Drafts and pre-releases are never offered.
++  `assets[].browser_download_url`, `assets[].size`. Select the highest eligible version from the first 100 releases;
++  drafts, GitHub pre-releases, upstream tags and non-fork prerelease tags are never offered.
+ - Asset downloads follow redirects, but every URL (initial and after redirects) must be `https` on `github.com`,
+   `api.github.com`, `objects.githubusercontent.com` or `release-assets.githubusercontent.com`. Anything else aborts.
+ - Asset size must be ≤ 300 MiB and must match `assets[].size`.
+ 
+ ## 2. Versions
+ 
+-- Current version: macOS `CFBundleShortVersionString`; Windows the assembly informational version without `+metadata`.
+-- Parse `[v]MAJOR.MINOR.PATCH[-PRERELEASE]`. A release is newer when (major, minor, patch) is greater; a version with
+-  a pre-release suffix is older than the same version without one. Unparseable versions never update.
++- Current version: macOS `CFBundleShortVersionString`; Windows the assembly informational version without `+metadata`;
++  Linux the application version.
++- Parse `[v]MAJOR.MINOR.PATCH[-PRERELEASE]`. Only versions with exactly `fork.N` as their prerelease identifiers,
++  where `N` is a numeric SemVer identifier, are eligible releases. Compare versions using SemVer precedence, so
++  `1.6.1-fork.2` is newer than `1.6.1-fork.1`; `1.6.1` is ineligible, even though SemVer ranks it higher.
++  Unparseable versions never update.
+ - Builds whose version is `0.0.0` (local development) check only when the user asks.
+ 
+ ## 3. Schedule
+@@ -86,10 +89,13 @@ automatic relaunch, including the one-time update notice. It never launches or r
+ Windows:
+ - Payload must contain `AgentSpeed.exe` whose `FileVersionInfo.ProductVersion` (without `+metadata`) equals the
+   release version.
+-- Target = `Environment.ProcessPath`. Rename the running exe to `AgentSpeed.exe.old` (allowed while running), move the
+-  new exe into place, update `DisplayVersion` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSpeed`
+-  when that key exists, start the new exe with `--after-update <old version> --wait-pid <this pid>`, then shut down.
+-  If anything fails after the rename, rename the old exe back.
++- Extract the optional `collectors/linux-x86_64/agent-speed-collector` from the package under that fixed path;
++  reject empty or duplicate collector entries. A package without it leaves any installed collector unchanged.
++- Target = `Environment.ProcessPath`. Stage the new exe and any packaged collector beside their targets, rename the
++  running exe to `AgentSpeed.exe.old` (allowed while running), and replace both files. Update `DisplayVersion` under
++  `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSpeed` when that key exists, start the new exe with
++  `--after-update <old version> --wait-pid <this pid>`, then shut down. If installation or startup fails after the
++  rename, restore the previous exe and collector and undo the registry change.
+ - The new process waits (≤ 10 s) for `--wait-pid` to exit before taking the single-instance mutex, deletes
+   `AgentSpeed.exe.old` best-effort, and shows `update.done`.
+ - The optional traffic helper service is not replaced by this flow; the new app offers its update with one
+diff --git a/windows/src/AgentSpeed.Core/History.cs b/windows/src/AgentSpeed.Core/History.cs
+index 65090c4c..2be48077 100644
+--- a/windows/src/AgentSpeed.Core/History.cs
++++ b/windows/src/AgentSpeed.Core/History.cs
+@@ -30,6 +30,8 @@ public sealed record DailyUsage(
+     double? Peak,
+     IReadOnlyList<ModelUsage> Models)
+ {
++    public Guid? HostId { get; init; }
++
+     public IReadOnlyList<ExecutionModeUsage> Modes { get; init; } = [];
+ 
+     /// <summary>API-equivalent cost (METRICS 9.7); null when the day's logs were gone before costs existed.</summary>
+diff --git a/windows/src/AgentSpeed.Core/Models.cs b/windows/src/AgentSpeed.Core/Models.cs
+index 2d3ed0d4..92eba8a6 100644
+--- a/windows/src/AgentSpeed.Core/Models.cs
++++ b/windows/src/AgentSpeed.Core/Models.cs
+@@ -90,6 +90,9 @@ public sealed record AgentStatus(
+     DateTimeOffset LastActivity,
+     string? ParentId = null)
+ {
++    /// <summary>Remote host identity; null for local agents.</summary>
++    public Guid? HostId { get; init; }
++
+     public ExecutionModes Modes { get; init; } = ExecutionModes.Empty;
+ 
+     /// <summary>A session-current fact (EXECUTION-MODES, Current values): the agent's current value only, never a response's.</summary>
+@@ -130,6 +133,11 @@ public sealed record SourceStatus(
+     int ActiveAgents,
+     Rate LiveEstimated = default)
+ {
++    /// <summary>Remote host identity; null for local sources.</summary>
++    public Guid? HostId { get; init; }
++    public bool LiveAvailable { get; init; } = true;
++    public bool TodayAvailable { get; init; } = true;
++
+     /// <summary>The live cost rate (METRICS 9.5).</summary>
+     public LiveCost LiveCost { get; init; }
+ 
+@@ -159,7 +167,13 @@ public sealed record ResponseSummary(
+     long TotalTokens,
+     TimeSpan? Duration,
+     double? Speed,
+-    DateTimeOffset EndedAt);
++    DateTimeOffset EndedAt)
++{
++    /// <summary>Remote host identity; null for local responses.</summary>
++    public Guid? HostId { get; init; }
++    /// <summary>False when the collector did not provide total tokens.</summary>
++    public bool HasTotalTokens { get; init; } = true;
++}
+ 
+ public enum MonitorStateKind
+ {
+@@ -212,6 +226,11 @@ public sealed record SpeedSnapshot(
+     ResponseSummary? LastResponse,
+     IReadOnlyList<MonitorWarning> Warnings)
+ {
++    public IReadOnlyList<RemoteHostStatus> RemoteHosts { get; init; } = [];
++    /// <summary>False when a configured remote contribution is unknown, not zero.</summary>
++    public bool RemoteLiveComplete { get; init; } = true;
++    public bool RemoteTodayComplete { get; init; } = true;
++
+     /// <summary>
+     /// Today's measured output peak of every source set requested with <see cref="LiveMonitor.SetSubsets"/>
+     /// (METRICS 6.8), keyed by the requested set: the maximum 3-bucket trailing average of the enabled members' summed
+diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
+new file mode 100644
+index 00000000..ffe7a71c
+--- /dev/null
++++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
+@@ -0,0 +1,111 @@
++using System.Text.Json;
++using AgentSpeed.Core.Reporting;
++
++namespace AgentSpeed.Core;
++
++/// <summary>Connection and last received history for one configured remote host.</summary>
++public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string? Error)
++{
++    public IReadOnlyList<DailyUsage> Days { get; init; } = [];
++    public bool? HistoryPartial { get; init; }
++    public DateTimeOffset? HistoryReceivedAt { get; init; }
++    public bool HistoryCurrent { get; init; }
++}
++
++internal sealed record RemoteCompletion(string Id, SourceKind Source, long Output, double? Speed);
++
++internal sealed class RemoteHostData(Guid id, string label)
++{
++    public Guid Id { get; } = id;
++    public string Label { get; set; } = label;
++    public bool Online { get; set; }
++    public string? Error { get; set; }
++    public JsonElement? Snapshot { get; set; }
++    public IReadOnlyList<DailyUsage> Days { get; set; } = [];
++    public string? HistoryTimezone { get; set; }
++    public bool? HistoryPartial { get; set; }
++    public DateTimeOffset? HistoryReceivedAt { get; set; }
++    public bool HistoryCurrent { get; set; }
++
++    public RemoteCompletion? Apply(string json)
++    {
++        try
++        {
++            using var doc = JsonDocument.Parse(json);
++            var root = doc.RootElement;
++            if (root.ValueKind != JsonValueKind.Object || root.Number("version") != 1) return null;
++            switch (root.Text("type"))
++            {
++                case "snapshot":
++                    if (root.Array("sources") is null) return null;
++                    Snapshot = root.Clone(); Online = true; Error = null;
++                    break;
++                case "history":
++                    var timezone = root.Text("timezone");
++                    if (timezone != LocalTimezone() || root.Array("days") is not { } days) return null;
++                    Days = days.EnumerateArray().Select(Day).Where(d => d is not null).Cast<DailyUsage>().ToArray();
++                    HistoryTimezone = timezone; HistoryPartial = root.Boolean("partial");
++                    HistoryReceivedAt = DateTimeOffset.UtcNow; HistoryCurrent = true;
++                    break;
++                case "completion":
++                    var responseId = root.Text("response_id");
++                    var source = Kind(root.Text("source"));
++                    if (string.IsNullOrEmpty(responseId) || source is null || !root.TryGetProperty("output", out var output) ||
++                        output.ValueKind != JsonValueKind.Number || !output.TryGetInt64(out var count) || count < 0) return null;
++                    var speed = root.NullableNumber("speed");
++                    return new RemoteCompletion(responseId, source.Value, count, speed is >= 0 ? speed : null);
++            }
++        }
++        catch (JsonException) { }
++        catch (ArgumentOutOfRangeException) { }
++        return null;
++    }
++
++    private DailyUsage? Day(JsonElement d)
++    {
++        if (d.Text("day") is not { } day || Kind(d.Text("source")) is not { } kind) return null;
++        var models = d.Array("models") is { } array
++            ? array.EnumerateArray().Select(m => new ModelUsage(m.Text("model") ?? "", m.Integer("requests"), m.Integer("output"), m.Integer("measured_output"), m.Integer("measured_ms")) { Cost = Cost(m) }).ToArray()
++            : [];
++        var modes = new List<ExecutionModeUsage>();
++        if (d.Array("modes") is { } modeArray)
++            foreach (var m in modeArray.EnumerateArray())
++                if (Enum.TryParse<ExecutionModeKind>(m.Text("kind"), true, out var modeKind) && m.Text("mode") is { } mode && m.Text("evidence") is { } evidence)
++                    modes.Add(new ExecutionModeUsage(m.Text("model") ?? "", kind, modeKind, mode, evidence, m.Text("provider"),
++                        m.Integer("requests"), m.Integer("output"), m.Integer("measured_output"), m.Integer("measured_ms")));
++        var facts = d.Array("unpriced") is { } unpriced
++            ? unpriced.EnumerateArray().Select(f => new Unpriced.UnpricedCount(
++                Unpriced.UnpricedFact.Of(f.Text("model"), f.Text("provider"), f.Boolean("fast") == true, f.Boolean("no_date") == true), f.Integer("count"))).ToArray()
++            : [];
++        return new DailyUsage(day, kind, Totals(d), d.Integer("measured_output"), d.Integer("measured_ms"), d.Integer("unfinalized"), (int)d.Integer("agents"), d.NullableNumber("peak"), models)
++            { HostId = Id, Cost = Cost(d), Modes = modes, Unpriced = new Unpriced.UnpricedReading(Cost(d) is null ? d.Integer("requests") : 0, 0, facts) };
++    }
++
++    public RemoteHostStatus Status()
++    {
++        bool sameZone = HistoryTimezone == LocalTimezone();
++        return new(Id, Label, Online, Error) { Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
++            HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
++    }
++
++    internal static string LocalTimezone() => TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana) ? iana : TimeZoneInfo.Local.Id;
++    internal static SourceKind? Kind(string? value)
++    {
++        foreach (var kind in Enum.GetValues<SourceKind>())
++            if (string.Equals(ReportBody.SourceId(kind), value, StringComparison.OrdinalIgnoreCase)) return kind;
++        return null;
++    }
++    internal static CostTally? Cost(JsonElement e) => e.NullableNumber("cost_micro_usd") is not null && e.NullableNumber("unpriced_requests") is not null
++        ? new CostTally(e.Integer("cost_micro_usd"), e.Integer("unpriced_requests")) : null;
++    internal static TokenTotals Totals(JsonElement e, string prefix = "") => new(e.Integer(prefix + "requests"), e.Integer(prefix + "input"), e.Integer(prefix + "cached_input"), e.Integer(prefix + "cache_write_input"), e.Integer(prefix + "output"), e.Integer(prefix + "reasoning"));
++}
++
++internal static class RemoteJson
++{
++    internal static JsonElement? Array(this JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Array ? v : null;
++    internal static string? Text(this JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
++    internal static double? NullableNumber(this JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var n) && double.IsFinite(n) ? n : null;
++    internal static double Number(this JsonElement e, string name) => e.NullableNumber(name) ?? 0;
++    internal static long Integer(this JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : 0;
++    internal static bool? Boolean(this JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False) ? v.GetBoolean() : null;
++}
+diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
+index 3a2cd893..4f82a1d6 100644
+--- a/windows/src/AgentSpeed.Core/SpeedHub.cs
++++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
+@@ -9,6 +9,11 @@ public sealed class SpeedHub
+     private readonly SynchronizationContext? _context;
+     private readonly object _gate = new();
+     private SpeedSnapshot _latestLive = SpeedSnapshot.Empty;
++    private readonly Dictionary<Guid, RemoteHostData> _remote = [];
++    private readonly SortedDictionary<long, HistoryPoint> _remoteHistory = [];
++    private readonly HashSet<(string Machine, SourceKind Source, string Id)> _remoteCompletionIds = [];
++    private readonly Queue<(string Machine, SourceKind Source, string Id)> _remoteCompletionOrder = [];
++
+     private Reporting.ReportPerfWatch _perfWatch = Reporting.ReportPerfWatch.Off;
+ 
+     public SpeedHub(SynchronizationContext? context = null)
+@@ -39,6 +44,42 @@ public sealed class SpeedHub
+     /// <summary>Every live snapshot, on the UI context, also while a preview is displayed (live reporting, METRICS 11).</summary>
+     public event EventHandler<SpeedSnapshot>? LivePublished;
+ 
++    /// <summary>Updates a configured host from a collector frame or connection state.</summary>
++    public void UpdateRemoteHost(Guid id, string label, bool online, string? error = null, string? json = null)
++    {
++        SpeedEvent? completionEvent = null;
++        lock (_gate)
++        {
++            if (!_remote.TryGetValue(id, out var host)) { _remote[id] = host = new RemoteHostData(id, label); _remoteHistory.Clear(); }
++            host.Label = label;
++            host.Online = online;
++            host.Error = error;
++            if (!online) host.HistoryCurrent = false;
++            var completion = json is null ? null : host.Apply(json);
++            if (online && completion is not null)
++            {
++                var machine = host.Snapshot is { } snapshot ? snapshot.Text("machine_id") ?? id.ToString() : id.ToString();
++                var key = (machine, completion.Source, completion.Id);
++                if (_remoteCompletionIds.Add(key))
++                {
++                    _remoteCompletionOrder.Enqueue(key);
++                    if (_remoteCompletionOrder.Count > 4096) _remoteCompletionIds.Remove(_remoteCompletionOrder.Dequeue());
++                    var response = new ResponseSummary(completion.Source, label, null, completion.Output, 0, null,
++                        completion.Speed, DateTimeOffset.UtcNow) { HostId = id, HasTotalTokens = false };
++                    completionEvent = new SpeedEvent.ResponseCompleted(response);
++                }
++            }
++        }
++        Post(() => { if (!IsPreviewing) Apply(CurrentCombined(), completionEvent is null ? null : [completionEvent]); });
++    }
++
++    public void RemoveRemoteHost(Guid id)
++    {
++        lock (_gate) { if (_remote.Remove(id)) _remoteHistory.Clear(); }
++        Post(() => { if (!IsPreviewing) Apply(CurrentCombined(), null); });
++    }
++
++
+     /// <summary>Called by <see cref="LiveMonitor"/> from any thread.</summary>
+     public void PublishLive(SpeedSnapshot snapshot, IReadOnlyList<SpeedEvent>? events = null)
+     {
+@@ -55,7 +96,7 @@ public sealed class SpeedHub
+                 return;
+             }
+ 
+-            Apply(snapshot, events);
++            Apply(CurrentCombined(), events);
+         });
+     }
+ 
+@@ -84,13 +125,116 @@ public sealed class SpeedHub
+         SpeedSnapshot live;
+         lock (_gate)
+         {
+-            live = _latestLive;
++            live = Combine(_latestLive);
+         }
+ 
+         PreviewChanged?.Invoke(this, EventArgs.Empty);
+         Apply(live, null);
+     });
+ 
++    private SpeedSnapshot CurrentCombined()
++    {
++        lock (_gate) return Combine(_latestLive);
++    }
++
++    // Called under _gate. Collector snapshots replace, rather than accumulate, a host's contribution.
++    private SpeedSnapshot Combine(SpeedSnapshot local)
++    {
++        if (_remote.Count == 0) return local;
++        var sources = new List<SourceStatus>(local.Sources);
++        var agents = new List<AgentStatus>(local.Agents);
++        var statuses = new List<RemoteHostStatus>(_remote.Count);
++        var seen = new HashSet<string>(StringComparer.Ordinal);
++        var live = local.Live;
++        var today = local.Today;
++        var todayCost = local.TodayCost;
++        double estimated = local.Live.Output * local.LiveEstimatedShare;
++        double remoteEstimatedTotal = 0;
++        int generating = local.GeneratingCount, tools = local.ToolsCount;
++        bool complete = true;
++        bool todayComplete = true;
++        foreach (var host in _remote.Values.OrderByDescending(h => h.Online))
++        {
++            statuses.Add(host.Status());
++            if (host.Snapshot is not { } message || message.Array("sources") is not { } remoteSources)
++            {
++                complete = false;
++                todayComplete = false;
++                continue;
++            }
++            var machine = message.Text("machine_id") ?? host.Id.ToString();
++            var added = new HashSet<SourceKind>();
++            foreach (var source in remoteSources.EnumerateArray())
++            {
++                var kind = RemoteHostData.Kind(source.Text("source"));
++                if (kind is null || source.Boolean("enabled") != true || !seen.Add(machine + ":" + kind)) continue;
++                added.Add(kind.Value);
++                bool available = host.Online && source.Boolean("available") == true;
++                bool todayAvailable = available && message.Text("today_day") == DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
++                var output = source.NullableNumber("live_output");
++                var total = source.NullableNumber("live_total");
++                bool liveAvailable = available && output.HasValue && total.HasValue;
++                var rate = liveAvailable ? new Rate(output!.Value, total!.Value) : Rate.Zero;
++                var share = Math.Clamp(source.Number("estimated_share"), 0, 1);
++                var sourceToday = todayAvailable ? RemoteHostData.Totals(source, "today_") : TokenTotals.Zero;
++                var sourceCost = todayAvailable ? new CostTally(source.Integer("today_cost_micro_usd"), source.Integer("unpriced_requests")) : CostTally.Zero;
++                sources.Add(new SourceStatus(kind.Value, true, "", available, (int)source.Integer("sessions"), rate,
++                    sourceToday, available ? (int)source.Integer("active_agents") : 0, new Rate(rate.Output * share, rate.Total * share))
++                    { HostId = host.Id, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost });
++                todayCost += sourceCost;
++                live = new Rate(live.Output + rate.Output, live.Total + rate.Total);
++                estimated += rate.Output * share;
++                remoteEstimatedTotal += rate.Total * share;
++                today = Add(today, sourceToday);
++                if (!liveAvailable) complete = false;
++                if (!todayAvailable) todayComplete = false;
++            }
++            if (!host.Online) { complete = false; todayComplete = false; continue; }
++            if (message.Array("agents") is { } remoteAgents)
++                foreach (var agent in remoteAgents.EnumerateArray())
++                {
++                    var kind = RemoteHostData.Kind(agent.Text("source"));
++                    var id = agent.Text("id");
++                    if (kind is null || id is null || !added.Contains(kind.Value)) continue;
++                    string prefix = host.Id.ToString("N") + ":";
++                    var phase = agent.Text("phase") switch { "generating" => AgentPhase.Generating, "tools" => AgentPhase.Tools, _ => AgentPhase.Idle };
++                    var lastMs = agent.Number("last_line_ms");
++                    var last = lastMs >= 0 && lastMs <= 253402300799999 ? DateTimeOffset.FromUnixTimeMilliseconds((long)lastMs) : DateTimeOffset.MinValue;
++                    var parent = agent.Text("parent_id");
++                    agents.Add(new AgentStatus(prefix + id, kind.Value, host.Label, agent.Text("model"), phase,
++                        agent.Boolean("subagent") == true, new Rate(agent.Number("live_output"), agent.Number("live_total")), null, last,
++                        parent is null ? null : prefix + parent) { HostId = host.Id });
++                    if (phase == AgentPhase.Generating) generating++;
++                    else if (phase == AgentPhase.Tools) tools++;
++                }
++        }
++        var second = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
++        if (complete)
++        {
++            var remoteOutput = Math.Max(0, live.Output - local.Live.Output);
++            var remoteTotal = Math.Max(0, live.Total - local.Live.Total);
++            var remoteEstimatedOutput = Math.Clamp(estimated - local.Live.Output * local.LiveEstimatedShare, 0, remoteOutput);
++            var estimatedRate = new Rate(remoteEstimatedOutput, Math.Clamp(remoteEstimatedTotal, 0, remoteTotal));
++            _remoteHistory[second] = new HistoryPoint(DateTimeOffset.FromUnixTimeSeconds(second),
++                new Rate(remoteOutput - estimatedRate.Output, remoteTotal - estimatedRate.Total), estimatedRate);
++        }
++        else _remoteHistory.Remove(second);
++        while (_remoteHistory.Count > 0 && _remoteHistory.First().Key < second - 299) _remoteHistory.Remove(_remoteHistory.First().Key);
++        var history = new List<HistoryPoint>();
++        foreach (var point in local.History)
++            if (_remoteHistory.TryGetValue(point.Time.ToUnixTimeSeconds(), out var remote))
++                history.Add(new HistoryPoint(point.Time,
++                    new Rate(point.Measured.Output + remote.Measured.Output, point.Measured.Total + remote.Measured.Total),
++                    new Rate(point.Estimated.Output + remote.Estimated.Output, point.Estimated.Total + remote.Estimated.Total)));
++        return local with { Live = live, LiveEstimatedShare = live.Output > 0 ? estimated / live.Output : 0,
++            Today = today, TodayCost = todayCost, Sources = sources, Agents = agents, GeneratingCount = generating, ToolsCount = tools,
++            RemoteHosts = statuses, RemoteLiveComplete = complete, RemoteTodayComplete = todayComplete, History = history,
++            State = local.State.Kind == MonitorStateKind.NoSources && sources.Any(s => s.HostId is not null) ? MonitorState.Running : local.State };
++    }
++
++    private static TokenTotals Add(TokenTotals a, TokenTotals b) => new(a.Requests + b.Requests, a.Input + b.Input,
++        a.CachedInput + b.CachedInput, a.CacheWriteInput + b.CacheWriteInput, a.Output + b.Output, a.Reasoning + b.Reasoning);
++
+     private void Apply(SpeedSnapshot snapshot, IReadOnlyList<SpeedEvent>? events)
+     {
+         Snapshot = snapshot;
+diff --git a/windows/src/AgentSpeed.Presentation/History/ExecutionModeCsv.cs b/windows/src/AgentSpeed.Presentation/History/ExecutionModeCsv.cs
+index fdbea32c..4b35574c 100644
+--- a/windows/src/AgentSpeed.Presentation/History/ExecutionModeCsv.cs
++++ b/windows/src/AgentSpeed.Presentation/History/ExecutionModeCsv.cs
+@@ -7,9 +7,10 @@ namespace AgentSpeed.Presentation.History;
+ 
+ public static class ExecutionModeCsv
+ {
+-    public static string Build(IEnumerable<DaySummary> days)
++    public static string Build(IEnumerable<DaySummary> days, string? hostId = null)
+     {
+         var builder = new StringBuilder("date,source,model,kind,mode,evidence,provider,requests,output_tokens,measured_output_tokens,measured_ms,avg_speed_tok_s\r\n");
++        if (hostId is not null) builder.Insert(0, "host_id,");
+         foreach (var day in days)
+         foreach (var row in ExecutionModeUsage.Combine(day.Modes))
+         {
+@@ -19,6 +20,7 @@ public static class ExecutionModeCsv
+                 row.Evidence, row.Provider ?? string.Empty, Number(row.Requests), Number(row.Output), Number(row.MeasuredOutput),
+                 Number(row.MeasuredMs), row.AverageSpeed?.ToString("0.0", CultureInfo.InvariantCulture) ?? string.Empty,
+             };
++            if (hostId is { } host) builder.Append(host).Append(',');
+             builder.AppendJoin(',', values.Select(Quote)).Append("\r\n");
+         }
+         return builder.ToString();
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs b/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs
+index a7d12557..73b1bad5 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs
+@@ -66,17 +66,19 @@ public static class HistoryCsv
+     /// traffic bytes (empty before measuring began), and each date with this computer's traffic adds a row of its own,
+     /// <c>source = machine</c>, carrying only <c>traffic_rx_bytes</c> and <c>traffic_tx_bytes</c>.
+     /// </summary>
+-    public static string Build(IEnumerable<DaySummary> rows, SourceKind? source, HistoryMoney? money = null, bool traffic = false)
++    public static string Build(IEnumerable<DaySummary> rows, SourceKind? source, HistoryMoney? money = null, bool traffic = false, string? hostId = null)
+     {
+         ArgumentNullException.ThrowIfNull(rows);
+         var converted = money is { IsUsd: false } ? money : null;
+         var header = Header(converted, traffic);
+         var builder = new StringBuilder();
++        if (hostId is not null) builder.Append("host_id,");
+         builder.AppendJoin(',', header).Append("\r\n");
+         var id = SourceId(source);
+         foreach (var row in rows)
+         {
+-            Field(builder, HistoryRanges.FormatDay(row.Day), first: true);
++            if (hostId is { } host) Field(builder, host, first: true);
++            Field(builder, HistoryRanges.FormatDay(row.Day), first: hostId is null);
+             Field(builder, id);
+             Field(builder, Integer(row.Requests));
+             Field(builder, Integer(row.Input));
+@@ -113,7 +115,8 @@ public static class HistoryCsv
+             builder.Append("\r\n");
+             if (traffic && row.Traffic?.Machine is { } machine)
+             {
+-                Field(builder, HistoryRanges.FormatDay(row.Day), first: true);
++                if (hostId is { } machineHost) Field(builder, machineHost, first: true);
++                Field(builder, HistoryRanges.FormatDay(row.Day), first: hostId is null);
+                 Field(builder, MachineSource);
+                 for (var i = 2; i < header.Count; i++)
+                 {
+diff --git a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
+index 796e101f..9e3d20ca 100644
+--- a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
++++ b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
+@@ -1,5 +1,41 @@
+ {
+   "_comment": "Windows-only UI strings. Same format as spec/strings.json; every key needs zh-Hant, zh-Hans, en and ja.",
++  "win.history.allHosts": {
++    "zh-Hant": "所有主機",
++    "zh-Hans": "所有主机",
++    "en": "All hosts",
++    "ja": "すべてのホスト"
++  },
++  "win.history.host": {
++    "zh-Hant": "主機",
++    "zh-Hans": "主机",
++    "en": "Host",
++    "ja": "ホスト"
++  },
++  "win.history.local": {
++    "zh-Hant": "本機",
++    "zh-Hans": "本机",
++    "en": "Local",
++    "ja": "このコンピューター"
++  },
++  "win.history.offline": {
++    "zh-Hant": "離線",
++    "zh-Hans": "离线",
++    "en": "Offline",
++    "ja": "オフライン"
++  },
++  "win.history.unknown": {
++    "zh-Hant": "歷史未知",
++    "zh-Hans": "历史未知",
++    "en": "History unknown",
++    "ja": "履歴不明"
++  },
++  "win.history.partial": {
++    "zh-Hant": "歷史不完整",
++    "zh-Hans": "历史不完整",
++    "en": "Partial history",
++    "ja": "一部の履歴"
++  },
+   "win.chart.peak": {
+     "zh-Hant": "峰值 %@",
+     "zh-Hans": "峰值 %@",
+diff --git a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
+index b0874889..491527f3 100644
+--- a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
++++ b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
+@@ -73,6 +73,8 @@ public sealed record AppSettings
+ 
+     public static AppSettings Default { get; } = new();
+ 
++    public ImmutableArray<RemoteHost> RemoteHosts { get; init; } = ImmutableArray<RemoteHost>.Empty;
++
+     public AppearanceMode Appearance { get; init; } = AppearanceMode.Auto;
+ 
+     public AppLanguage Language { get; init; } = AppLanguage.System;
+diff --git a/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs b/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
+new file mode 100644
+index 00000000..a7104b4b
+--- /dev/null
++++ b/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
+@@ -0,0 +1,18 @@
++using System.Text;
++
++namespace AgentSpeed.Presentation.Settings;
++
++/// <summary>An SSH destination; authentication and host keys are managed by OpenSSH.</summary>
++public sealed record RemoteHost(Guid Id, string Label, string Destination, bool Enabled)
++{
++    public bool ValidDestination
++    {
++        get
++        {
++            if (string.IsNullOrEmpty(Destination) || Destination[0] == '-') return false;
++            foreach (var rune in Destination.EnumerateRunes())
++                if (!Rune.IsLetterOrDigit(rune) && rune.Value is not ('.' or '_' or '-' or '@' or ':')) return false;
++            return true;
++        }
++    }
++}
+diff --git a/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs b/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
+index 470b53b8..760f5860 100644
+--- a/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
++++ b/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
+@@ -36,6 +36,17 @@ public static class SettingsSerializer
+             w.WriteString("metric", s.Metric.ToString());
+             w.WriteNumber("redlineOutput", s.RedlineOutput);
+             w.WriteNumber("redlineTotal", s.RedlineTotal);
++            w.WriteStartArray("remoteHosts");
++            foreach (var host in s.RemoteHosts.IsDefault ? ImmutableArray<RemoteHost>.Empty : s.RemoteHosts)
++            {
++                w.WriteStartObject();
++                w.WriteString("id", host.Id);
++                w.WriteString("label", host.Label);
++                w.WriteString("destination", host.Destination);
++                w.WriteBoolean("enabled", host.Enabled);
++                w.WriteEndObject();
++            }
++            w.WriteEndArray();
+ 
+             w.WriteStartObject("taskbar");
+             w.WriteBoolean("show", s.ShowOnTaskbar);
+@@ -237,6 +248,7 @@ public static class SettingsSerializer
+ 
+         var settings = new AppSettings
+         {
++            RemoteHosts = ReadRemoteHosts(root),
+             Appearance = ReadEnum(root, "appearance", d.Appearance),
+             Language = ReadEnum(root, "language", d.Language),
+             Metric = ReadEnum<SpeedMetric>(root, "metric", d.Metric),
+@@ -334,6 +346,24 @@ public static class SettingsSerializer
+         };
+     }
+ 
++    private static ImmutableArray<RemoteHost> ReadRemoteHosts(JsonElement root)
++    {
++        if (!root.TryGetProperty("remoteHosts", out var value) || value.ValueKind != JsonValueKind.Array)
++            return ImmutableArray<RemoteHost>.Empty;
++        var hosts = ImmutableArray.CreateBuilder<RemoteHost>();
++        var ids = new HashSet<Guid>();
++        var destinations = new HashSet<string>(StringComparer.Ordinal);
++        foreach (var item in value.EnumerateArray())
++        {
++            if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty("id", out var idValue)
++                || idValue.ValueKind != JsonValueKind.String || !Guid.TryParse(idValue.GetString(), out var id)
++                || id == Guid.Empty) continue;
++            var host = new RemoteHost(id, ReadString(item, "label") ?? "", ReadString(item, "destination") ?? "", ReadBool(item, "enabled", false));
++            if (host.ValidDestination && ids.Add(id) && destinations.Add(host.Destination)) hosts.Add(host);
++        }
++        return hosts.ToImmutable();
++    }
++
+     /// <summary>
+     /// A redline stored as the old default (400 / 200 000 tok/s) counts as never set and moves to the new default; any
+     /// other value is kept. Runs once: files are written as version 2 afterwards.
+diff --git a/windows/src/AgentSpeed.Presentation/Updates/ReleaseFeed.cs b/windows/src/AgentSpeed.Presentation/Updates/ReleaseFeed.cs
+index 746927d2..df7f0dc2 100644
+--- a/windows/src/AgentSpeed.Presentation/Updates/ReleaseFeed.cs
++++ b/windows/src/AgentSpeed.Presentation/Updates/ReleaseFeed.cs
+@@ -6,8 +6,8 @@ using System.Text.Json;
+ namespace AgentSpeed.Presentation.Updates;
+ 
+ /// <summary>
+-/// Parses the GitHub "latest release" response (an object), or a release list (an array, newest offerable wins).
+-/// Malformed JSON throws; a release that must never be offered (draft, pre-release, unparseable tag) yields null.
++/// Parses a release list (newest eligible fork release wins), or a single release object for local testing.
++/// Malformed JSON throws; drafts, GitHub prereleases and non-fork or unparseable tags are not offered.
+ /// </summary>
+ public static class ReleaseFeed
+ {
+diff --git a/windows/src/AgentSpeed.Presentation/Updates/ReleaseInfo.cs b/windows/src/AgentSpeed.Presentation/Updates/ReleaseInfo.cs
+index 63db2ae2..d16a0947 100644
+--- a/windows/src/AgentSpeed.Presentation/Updates/ReleaseInfo.cs
++++ b/windows/src/AgentSpeed.Presentation/Updates/ReleaseInfo.cs
+@@ -16,8 +16,8 @@ public sealed record ReleaseInfo(
+     bool IsDraft = false,
+     bool IsPreRelease = false)
+ {
+-    /// <summary>Drafts and pre-releases (by GitHub flag or by a SemVer pre-release tag) are never offered.</summary>
+-    public bool IsOfferable => !IsDraft && !IsPreRelease && !Version.IsPreRelease;
++    /// <summary>Only published fork releases are eligible, not upstream stable or other prerelease tags.</summary>
++    public bool IsOfferable => !IsDraft && !IsPreRelease && Version.IsForkRelease;
+ 
+     public string DisplayVersion => Version.ToString();
+ 
+diff --git a/windows/src/AgentSpeed.Presentation/Updates/SemanticVersion.cs b/windows/src/AgentSpeed.Presentation/Updates/SemanticVersion.cs
+index 7c362181..ace370a9 100644
+--- a/windows/src/AgentSpeed.Presentation/Updates/SemanticVersion.cs
++++ b/windows/src/AgentSpeed.Presentation/Updates/SemanticVersion.cs
+@@ -40,6 +40,23 @@ public readonly record struct SemanticVersion : IComparable<SemanticVersion>
+ 
+     public bool IsPreRelease => _preRelease is not null;
+ 
++    /// <summary>A fork release has exactly the prerelease identifiers <c>fork.N</c>.</summary>
++    public bool IsForkRelease
++    {
++        get
++        {
++            var prerelease = PreRelease.AsSpan();
++            if (!prerelease.StartsWith("fork.", StringComparison.Ordinal)) return false;
++            var number = prerelease[5..];
++            if (number.IsEmpty || (number.Length > 1 && number[0] == '0')) return false;
++            foreach (var c in number)
++            {
++                if (c is < '0' or > '9') return false;
++            }
++            return true;
++        }
++    }
++
+     /// <summary>0.0.0 marks a local development build (UPDATES section 2).</summary>
+     public bool IsDevelopment => Major == 0 && Minor == 0 && Patch == 0;
+ 
+diff --git a/windows/src/AgentSpeed.Presentation/Updates/UpdatePackage.cs b/windows/src/AgentSpeed.Presentation/Updates/UpdatePackage.cs
+index 65ec0f80..ca0d86d9 100644
+--- a/windows/src/AgentSpeed.Presentation/Updates/UpdatePackage.cs
++++ b/windows/src/AgentSpeed.Presentation/Updates/UpdatePackage.cs
+@@ -14,6 +14,7 @@ public static class UpdatePackage
+ {
+     public const string ExecutableName = "AgentSpeed.exe";
+     public const string ChecksumsName = "SHA256SUMS.txt";
++    public const string CollectorEntryName = "collectors/linux-x86_64/agent-speed-collector";
+ 
+     /// <summary>Largest asset download (UPDATES section 1).</summary>
+     public const long MaxAssetBytes = 300L * 1024 * 1024;
+@@ -62,6 +63,7 @@ public static class UpdatePackage
+         ArgumentNullException.ThrowIfNull(entries);
+         PackageEntry? executable = null;
+         var count = 0;
++        var collectorFound = false;
+         long total = 0;
+         foreach (var entry in entries)
+         {
+@@ -86,6 +88,16 @@ public static class UpdatePackage
+                 throw Invalid("The package is too large.");
+             }
+ 
++            if (string.Equals(entry.FullName.Replace('\\', '/'), CollectorEntryName, StringComparison.OrdinalIgnoreCase))
++            {
++                if (collectorFound || entry.Length == 0)
++                {
++                    throw Invalid("The package contains an empty or duplicate collector.");
++                }
++
++                collectorFound = true;
++            }
++
+             if (string.Equals(entry.FullName, ExecutableName, StringComparison.OrdinalIgnoreCase))
+             {
+                 if (executable is not null)
+@@ -139,8 +151,8 @@ public static class UpdatePackage
+     }
+ 
+     /// <summary>
+-    /// Validates the archive and writes its executable to <paramref name="destinationDirectory"/> under a fixed name,
+-    /// never more bytes than the entry declares. Returns the extracted file's path.
++    /// Validates the archive and extracts the executable and optional Linux collector under fixed names,
++    /// never more bytes than each entry declares. Returns the extracted executable's path.
+     /// </summary>
+     /// <exception cref="UpdateException">The archive is unreadable or not valid.</exception>
+     public static string ExtractExecutable(string zipPath, string destinationDirectory)
+@@ -156,22 +168,42 @@ public static class UpdatePackage
+         }
+ 
+         var created = false;
++        var collectorPath = Path.Combine(root, "collectors", "linux-x86_64", "agent-speed-collector");
++        var collectorCreated = false;
+         try
+         {
+             using var archive = OpenArchive(zipPath);
+             ValidateEntries(archive.Entries.Select(e => new PackageEntry(e.FullName, e.Length)));
+             var entry = archive.Entries.Single(e => string.Equals(e.FullName, ExecutableName, StringComparison.OrdinalIgnoreCase));
+-            using var input = entry.Open();
+-            using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920);
+-            created = true;
+-            CopyAtMost(input, output, entry.Length);
+-            if (output.Length != entry.Length)
++            using (var input = entry.Open())
++            using (var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920))
+             {
+-                throw Invalid("The executable is shorter than declared.");
++                created = true;
++                CopyAtMost(input, output, entry.Length);
++                if (output.Length != entry.Length)
++                {
++                    throw Invalid("The executable is shorter than declared.");
++                }
++            }
++
++            var collector = archive.Entries.SingleOrDefault(e => string.Equals(
++                e.FullName.Replace('\\', '/'), CollectorEntryName, StringComparison.OrdinalIgnoreCase));
++            if (collector is not null)
++            {
++                Directory.CreateDirectory(Path.GetDirectoryName(collectorPath)!);
++                using var input = collector.Open();
++                using var output = new FileStream(collectorPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920);
++                collectorCreated = true;
++                CopyAtMost(input, output, collector.Length);
++                if (output.Length != collector.Length)
++                {
++                    throw Invalid("The collector is shorter than declared.");
++                }
+             }
+         }
+         catch (Exception ex) when (ex is InvalidDataException or IOException or NotSupportedException or UnauthorizedAccessException)
+         {
++            if (collectorCreated) TryDelete(collectorPath);
+             if (created)
+             {
+                 TryDelete(target);
+@@ -181,6 +213,7 @@ public static class UpdatePackage
+         }
+         catch (UpdateException)
+         {
++            if (collectorCreated) TryDelete(collectorPath);
+             if (created)
+             {
+                 TryDelete(target);
+diff --git a/windows/src/AgentSpeed.Presentation/Updates/UpdateSource.cs b/windows/src/AgentSpeed.Presentation/Updates/UpdateSource.cs
+index e0dddfef..016ebf1e 100644
+--- a/windows/src/AgentSpeed.Presentation/Updates/UpdateSource.cs
++++ b/windows/src/AgentSpeed.Presentation/Updates/UpdateSource.cs
+@@ -8,7 +8,7 @@ namespace AgentSpeed.Presentation.Updates;
+ /// </summary>
+ public sealed class UpdateSource
+ {
+-    public const string GitHubFeedUrl = "https://api.github.com/repos/zoefix/agent-speed/releases/latest";
++    public const string GitHubFeedUrl = "https://api.github.com/repos/yooztech/agent-speed/releases?per_page=100";
+     public const string FeedOverrideVariable = "AGENT_SPEED_UPDATE_FEED";
+     public const int MaxRedirects = 5;
+ 
+diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
+index 11e82041..110e03bb 100644
+--- a/windows/src/AgentSpeed/App/AppController.cs
++++ b/windows/src/AgentSpeed/App/AppController.cs
+@@ -64,6 +64,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+     private SpeedModel _speed = null!;
+     private PreviewService _preview = null!;
+     private LiveMonitor? _monitor;
++    private RemoteConnectionManager? _remoteConnections;
+     private ShellMessageWindow? _shell;
+     private TrayIcon? _tray;
+     private TaskbarWidget? _taskbar;
+@@ -135,14 +136,16 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+ 
+         _hub = new SpeedHub(new DispatcherSynchronizationContext(_ui));
+         _historyHub = new HistoryHub(new DispatcherSynchronizationContext(_ui));
+-        _history = new HistoryController(_historyHub, _settings, _theme, _loc, _cost.Display) { Traffic = _traffic.Hub, Prices = _cost.Book };
+-        _hub.SnapshotChanged += (_, snapshot) =>
++        _history = new HistoryController(_historyHub, _settings, _theme, _loc, _cost.Display) { Traffic = _traffic.Hub, Prices = _cost.Book, Speed = _hub };
++        _hub.LivePublished += (_, snapshot) =>
+         {
+             if (!_hub.IsPreviewing)
+             {
+                 _historyService?.ObserveLive(snapshot);
+             }
+         };
++        _remoteConnections = new RemoteConnectionManager(_settings, _hub, _ui);
++        _remoteConnections.Start();
+         CreateReporting();
+         _speed = new SpeedModel(_hub, _ui);
+         _speed.Configure(Settings.Metric, Settings.Redline);
+@@ -471,6 +474,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+ 
+         _disposed = true;
+         Try(() => _historyStartFallback?.Stop());
++        Try(() => _remoteConnections?.Dispose());
+         Try(() => _history?.Dispose());
+         Try(() => _historyService?.Dispose());
+         Try(() => _settingsModel?.Report?.Dispose());
+@@ -599,8 +603,8 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         {
+             case SpeedEvent.ResponseCompleted completed:
+                 var speed = completed.Response.Speed ?? _speed.Value;
+-                var tokens = _speed.Metric == SpeedMetric.Total ? completed.Response.TotalTokens : completed.Response.OutputTokens;
+-                var pulseSpeed = _speed.Metric == SpeedMetric.Total && completed.Response.Duration is { TotalSeconds: > 0 } d
++                var tokens = _speed.Metric == SpeedMetric.Total && completed.Response.HasTotalTokens ? completed.Response.TotalTokens : completed.Response.OutputTokens;
++                var pulseSpeed = _speed.Metric == SpeedMetric.Total && completed.Response.HasTotalTokens && completed.Response.Duration is { TotalSeconds: > 0 } d
+                     ? completed.Response.TotalTokens / d.TotalSeconds
+                     : speed;
+                 if (_dashboard is { IsShown: true } dashboard)
+diff --git a/windows/src/AgentSpeed/App/AppPaths.cs b/windows/src/AgentSpeed/App/AppPaths.cs
+index 8cd79f31..de0737ba 100644
+--- a/windows/src/AgentSpeed/App/AppPaths.cs
++++ b/windows/src/AgentSpeed/App/AppPaths.cs
+@@ -7,7 +7,7 @@ internal static class AppPaths
+     public const string ProductFolder = "AgentSpeed";
+     public const string RepositoryUrl = "https://github.com/zoefix/agent-speed";
+     public const string LicenseUrl = "https://github.com/zoefix/agent-speed/blob/main/LICENSE";
+-    public const string ReleasesUrl = "https://github.com/zoefix/agent-speed/releases/latest";
++    public const string ReleasesUrl = "https://github.com/yooztech/agent-speed/releases";
+ 
+     /// <summary>
+     /// The settings file; the developer variable <c>AGENT_SPEED_SETTINGS_FILE</c> (a fully qualified local path) points a test
+diff --git a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
+index ec9907dd..451b75d5 100644
+--- a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
++++ b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
+@@ -35,13 +35,16 @@ internal sealed class SourceRow : ObservableObject
+     private LiveValueKind _liveKind = LiveValueKind.Dash;
+     private string _liveAccessibleName = string.Empty;
+ 
+-    public SourceRow(SourceKind kind)
++    public SourceRow(SourceKind kind, Guid? hostId = null)
+     {
+         Kind = kind;
++        HostId = hostId;
+         DotBrush = MediaColors.Frozen(HeatPalette.SourceColor(kind).ToColor());
+     }
+ 
+     public SourceKind Kind { get; }
++    public Guid? HostId { get; }
++
+ 
+     public Brush DotBrush { get; }
+ 
+@@ -409,7 +412,7 @@ internal sealed partial class DashboardViewModel : ObservableObject
+         Localizer loc, bool darkTheme)
+     {
+         var unit = loc["unit.tokS"];
+-        ValueText = SpeedFormat.Speed(value);
++        ValueText = snapshot.RemoteLiveComplete ? SpeedFormat.Speed(value) : "—";
+         UnitText = unit;
+         TitleLevelIndex = (int)title;
+         TitleText = TitleTheme.Label(title, loc);
+@@ -447,13 +450,13 @@ internal sealed partial class DashboardViewModel : ObservableObject
+         RefreshAgents();
+ 
+         var today = snapshot.Today;
+-        OutputText = SpeedFormat.Tokens(today.Output);
+-        InputText = SpeedFormat.Tokens(today.Input);
+-        RequestsText = today.Requests.ToString("N0", loc.Culture);
+-        AverageText = snapshot.AverageToday is { } average ? $"{SpeedFormat.Speed(average)} {unit}" : "—";
++        OutputText = snapshot.RemoteTodayComplete ? SpeedFormat.Tokens(today.Output) : "—";
++        InputText = snapshot.RemoteTodayComplete ? SpeedFormat.Tokens(today.Input) : "—";
++        RequestsText = snapshot.RemoteTodayComplete ? today.Requests.ToString("N0", loc.Culture) : "—";
++        AverageText = snapshot.RemoteHosts.Count == 0 && snapshot.AverageToday is { } average ? $"{SpeedFormat.Speed(average)} {unit}" : "—";
+         var peak = snapshot.PeakToday.ValueFor(metric);
+-        PeakText = $"{SpeedFormat.Speed(peak)} {unit}";
+-        PeakTimeText = snapshot.PeakTodayAt is { } at && peak > 0
++        PeakText = snapshot.RemoteHosts.Count == 0 ? $"{SpeedFormat.Speed(peak)} {unit}" : "—";
++        PeakTimeText = snapshot.RemoteHosts.Count == 0 && snapshot.PeakTodayAt is { } at && peak > 0
+             ? at.ToLocalTime().ToString("t", loc.Culture)
+             : string.Empty;
+ 
+@@ -467,10 +470,15 @@ internal sealed partial class DashboardViewModel : ObservableObject
+ 
+     private void UpdateSources(SpeedSnapshot snapshot, SpeedMetric metric, Localizer loc, string unit)
+     {
++        var remoteKeys = snapshot.Sources.Where(s => s.HostId is not null).Select(s => (s.HostId, s.Kind)).ToHashSet();
++        foreach (var row in Sources.Where(r => r.HostId is not null && !remoteKeys.Contains((r.HostId, r.Kind))).ToArray()) Sources.Remove(row);
++        foreach (var key in remoteKeys)
++            if (!Sources.Any(r => r.HostId == key.HostId && r.Kind == key.Kind)) Sources.Add(new SourceRow(key.Kind, key.HostId));
+         foreach (var row in Sources)
+         {
+-            row.Name = loc[DisplayText.SourceKey(row.Kind)];
+-            var status = snapshot.Sources.FirstOrDefault(s => s.Kind == row.Kind);
++            var host = row.HostId is { } id ? snapshot.RemoteHosts.FirstOrDefault(h => h.Id == id) : null;
++            row.Name = loc[DisplayText.SourceKey(row.Kind)] + (host is null ? "" : $" · {host.Label}");
++            var status = snapshot.Sources.FirstOrDefault(s => s.Kind == row.Kind && s.HostId == row.HostId);
+             if (status is null)
+             {
+                 row.LiveKind = LiveValueKind.Dash;
+@@ -484,10 +492,10 @@ internal sealed partial class DashboardViewModel : ObservableObject
+                 continue;
+             }
+ 
+-            row.IsListed = SourceDetection.ProducedToday(status);
++            row.IsListed = row.HostId is not null || SourceDetection.ProducedToday(status);
+ 
+             var live = status.Live.ValueFor(metric);
+-            if (DisplayText.IsNegligibleSpeed(live))
++            if (!status.LiveAvailable || DisplayText.IsNegligibleSpeed(live))
+             {
+                 row.LiveKind = LiveValueKind.Dash;
+                 row.LiveAccessibleName = loc["phase.idle"];
+@@ -501,10 +509,10 @@ internal sealed partial class DashboardViewModel : ObservableObject
+ 
+             var costText = string.Empty;
+             var costSpoken = string.Empty;
+-            if (Cost is { } cost)
++            if (Cost is { } cost && status.TodayAvailable)
+             {
+                 (costText, costSpoken) = SourceCost.Today(status, cost);
+-                if (LiveUnit == LiveUnit.Cost)
++                if (LiveUnit == LiveUnit.Cost && status.HostId is null)
+                 {
+                     if (SourceCost.Live(status, cost) is { } money)
+                     {
+@@ -520,7 +528,7 @@ internal sealed partial class DashboardViewModel : ObservableObject
+                 }
+             }
+ 
+-            row.TodayText = costText.Length > 0
++            row.TodayText = !status.TodayAvailable ? "—" : costText.Length > 0
+                 ? $"{SpeedFormat.Tokens(status.Today.Output)} · {costText}"
+                 : SpeedFormat.Tokens(status.Today.Output);
+             if (!status.Enabled)
+@@ -531,7 +539,7 @@ internal sealed partial class DashboardViewModel : ObservableObject
+             }
+             else if (!status.Available)
+             {
+-                row.Status = loc["source.notFound"];
++                row.Status = row.HostId is not null && host?.Online == false ? "Offline" : loc["source.notFound"];
+                 row.IsDimmed = true;
+                 row.ShowSettingsLink = true;
+             }
+diff --git a/windows/src/AgentSpeed/History/HistoryController.cs b/windows/src/AgentSpeed/History/HistoryController.cs
+index cb2881b1..f72cc493 100644
+--- a/windows/src/AgentSpeed/History/HistoryController.cs
++++ b/windows/src/AgentSpeed/History/HistoryController.cs
+@@ -47,6 +47,9 @@ internal sealed class HistoryController : IDisposable
+     /// <summary>Observed network traffic by day (METRICS 10.9), shown with the traffic metric; set by the app.</summary>
+     public Core.Traffic.TrafficHub? Traffic { get; set; }
+ 
++    /// <summary>Remote host history and connectivity, published alongside live usage.</summary>
++    public SpeedHub? Speed { get; set; }
++
+     /// <summary>The price book shared with the engine and the history: its current table gives unpriced requests their reasons.</summary>
+     public Core.Pricing.PriceBook? Prices { get; set; }
+ 
+@@ -69,7 +72,7 @@ internal sealed class HistoryController : IDisposable
+         {
+             var model = new HistoryViewModel(_hub, _loc, _cost, _dispatcher, SaveIncludeSubscriptions, Traffic,
+                 () => _settings.Current.Traffic.IncludeTools, () => _settings.Current.EnabledSourceSet(),
+-                () => Prices?.Current ?? Core.Pricing.PriceBook.Bundled, AppPaths.Version);
++                () => Prices?.Current ?? Core.Pricing.PriceBook.Bundled, AppPaths.Version, Speed);
+             model.SetSource(source);
+             model.RememberModeKind(_settings.Current.HistoryModeKind, kind => _settings.Update(s => s with { HistoryModeKind = kind }));
+             model.RememberPerfSort(_settings.Current.HistoryPerfSort, sort => _settings.Update(s => s with { HistoryPerfSort = sort }));
+diff --git a/windows/src/AgentSpeed/History/HistoryItems.cs b/windows/src/AgentSpeed/History/HistoryItems.cs
+index 629429ae..a73287b5 100644
+--- a/windows/src/AgentSpeed/History/HistoryItems.cs
++++ b/windows/src/AgentSpeed/History/HistoryItems.cs
+@@ -10,6 +10,12 @@ using AgentSpeed.Theme;
+ 
+ namespace AgentSpeed.History;
+ 
++/// <summary>A computer whose history can be viewed independently.</summary>
++internal sealed record HistoryHostOption(Guid? Id, string Name, bool All = false)
++{
++    public override string ToString() => Name;
++}
++
+ /// <summary>An entry of the source picker: all sources (null) or one source; a subscription source carries its tag (DESIGN 9).</summary>
+ internal sealed class SourceOption(SourceKind? kind) : ObservableObject
+ {
+diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
+index c1d9a1f0..aa900294 100644
+--- a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
++++ b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
+@@ -23,7 +23,7 @@ internal sealed partial class HistoryViewModel
+ 
+     public void SetPerfAppearance(bool dark, bool highContrast, bool reduceMotion) => Performance.SetAppearance(dark, highContrast, reduceMotion);
+ 
+-    private void UpdatePerformance() => Performance.Update(_hub.PerfRecords, Range.Start, Range.End, Today, _source, IsAnalyzing);
++    private void UpdatePerformance() => Performance.Update(_hostId is null && !(_allHosts && HasRemoteHosts) ? _hub.PerfRecords : [], Range.Start, Range.End, Today, _source, IsAnalyzing);
+ 
+     private void RelocalizePerformance() => _performance?.Relocalize(_loc);
+ 
+diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs
+index 5bc5056d..8f95cf96 100644
+--- a/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs
++++ b/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs
+@@ -18,13 +18,13 @@ internal sealed partial class HistoryViewModel
+     private string _trafficSinceText = string.Empty;
+ 
+     /// <summary>The stored traffic days as the window counts them.</summary>
+-    public HistoryTraffic Traffic => _traffic;
++    public HistoryTraffic Traffic => CurrentTraffic();
+ 
+     /// <summary>Each day of the range with its traffic (days before measuring began left out).</summary>
+     public IReadOnlyDictionary<DateOnly, DayTraffic> TrafficDays { get; private set; } = NoTrafficDays;
+ 
+     /// <summary>Traffic was ever measured: the table shows its column and the CSV its bytes.</summary>
+-    public bool ShowsTraffic => _traffic.IsMeasured;
++    public bool ShowsTraffic => CurrentTraffic().IsMeasured;
+ 
+     /// <summary>The range's displayed traffic in the chart header with the traffic metric (<c>traffic.pair</c>).</summary>
+     public string TrafficTotal
+@@ -100,7 +100,7 @@ internal sealed partial class HistoryViewModel
+     /// </summary>
+     private HistoryTraffic CurrentTraffic()
+     {
+-        if (_trafficHub is not { } hub)
++        if (_hostId is not null || (_allHosts && HasRemoteHosts) || _trafficHub is not { } hub)
+         {
+             return HistoryTraffic.None;
+         }
+diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.cs b/windows/src/AgentSpeed/History/HistoryViewModel.cs
+index ca0320ac..395fa292 100644
+--- a/windows/src/AgentSpeed/History/HistoryViewModel.cs
++++ b/windows/src/AgentSpeed/History/HistoryViewModel.cs
+@@ -34,6 +34,11 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+     private static readonly TimeSpan CoalesceInterval = TimeSpan.FromMilliseconds(250);
+ 
+     private readonly HistoryHub _hub;
++    private readonly SpeedHub? _speed;
++    private Guid? _hostId;
++    private bool _allHosts = true;
++    private bool _syncingHosts;
++    private HistoryHostOption? _selectedHost;
+     private readonly CostDisplay _cost;
+     private readonly Action<bool>? _includeChanged;
+     private readonly DispatcherTimer _pending;
+@@ -93,9 +98,14 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+     /// <param name="appVersion">This build's version, for the copied diagnostics.</param>
+     public HistoryViewModel(HistoryHub hub, Localizer loc, CostDisplay cost, Dispatcher dispatcher, Action<bool>? includeChanged = null,
+         Core.Traffic.TrafficHub? traffic = null, Func<bool>? includeTools = null, Func<SourceSet>? enabledSources = null,
+-        Func<PriceTable>? currentTable = null, string? appVersion = null)
++        Func<PriceTable>? currentTable = null, string? appVersion = null, SpeedHub? speed = null)
+     {
+         _hub = hub;
++        _speed = speed;
++        if (_speed is not null)
++        {
++            _speed.SnapshotChanged += OnSpeedChanged;
++        }
+         _currentTable = currentTable ?? (() => PriceBook.Bundled);
+         _app = UnpricedApp.Windows(appVersion ?? "0.0.0");
+         _loc = loc;
+@@ -164,6 +174,31 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+ 
+     public ObservableCollection<SourceOption> SourceOptions { get; } = new();
+ 
++    public ObservableCollection<HistoryHostOption> HostOptions { get; } = new();
++
++    public HistoryHostOption? SelectedHost
++    {
++        get => _selectedHost;
++        set
++        {
++            if (value is null || _syncingHosts || ReferenceEquals(value, _selectedHost))
++            {
++                return;
++            }
++
++            _selectedHost = value;
++            OnPropertyChanged();
++            if (_hostId != value.Id || _allHosts != value.All)
++            {
++                _hostId = value.Id;
++                _allHosts = value.All;
++                Recompute(HistoryUpdate.Filter);
++            }
++        }
++    }
++
++    public bool HasRemoteHosts => HostOptions.Count > 2;
++
+     public IReadOnlyList<SummaryCardView> Cards { get; }
+ 
+     public RelayCommand RetryCommand { get; }
+@@ -326,7 +361,7 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+     /// <summary>Re-reads today's logs quietly when today is shown on its own and the window is on screen.</summary>
+     public void RefreshLiveDay()
+     {
+-        if (_disposed || !_shown || !LiveDay.Shows(Range, Today) || _hub.RefreshHandler is null || !LiveDay.CanRefreshQuietly(_hub.State))
++        if (_disposed || _hostId is not null || !_shown || !LiveDay.Shows(Range, Today) || _hub.RefreshHandler is null || !LiveDay.CanRefreshQuietly(_hub.State))
+         {
+             return;
+         }
+@@ -410,11 +445,57 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+     }
+ 
+     /// <summary>The rows as they are shown, as CSV bytes for Excel, with a suggested file name.</summary>
+-    public (string FileName, byte[] Bytes) ExportCsv() =>
+-        (HistoryCsv.FileName(Range, _source), HistoryCsv.Encode(HistoryCsv.Build(Rows, _source, Money, ShowsTraffic)));
++    public (string FileName, byte[] Bytes) ExportCsv()
++    {
++        var name = HistoryCsv.FileName(Range, _source);
++        if (_hostId is null && (!_allHosts || !HasRemoteHosts))
++        {
++            return (name, HistoryCsv.Encode(HistoryCsv.Build(Rows, _source, Money, ShowsTraffic)));
++        }
+ 
+-    public (string FileName, byte[] Bytes) ExportModesCsv() =>
+-        (ExecutionModeCsv.FileName(Range, _source), HistoryCsv.Encode(ExecutionModeCsv.Build(Rows)));
++        var csv = new System.Text.StringBuilder();
++        foreach (var (id, usage) in ExportHosts())
++        {
++            var sources = _source is { } source ? new[] { source } : HistoryAggregator.SourcesWithHistory(usage);
++            foreach (var kind in sources)
++            {
++                var rows = HistoryTable.Sort(HistoryAggregator.Daily(usage, kind, Range), _sortColumn, _sortDescending);
++                AppendCsv(csv, HistoryCsv.Build(rows, kind, Money, hostId: id));
++            }
++        }
++
++        if (csv.Length == 0) csv.Append(HistoryCsv.Build([], _source, Money, hostId: _hostId?.ToString() ?? "local"));
++        return (_hostId is { } host ? $"{host}-{name}" : name, HistoryCsv.Encode(csv.ToString()));
++    }
++
++    public (string FileName, byte[] Bytes) ExportModesCsv()
++    {
++        var name = ExecutionModeCsv.FileName(Range, _source);
++        if (_hostId is null && (!_allHosts || !HasRemoteHosts))
++        {
++            return (name, HistoryCsv.Encode(ExecutionModeCsv.Build(Rows)));
++        }
++
++        var csv = new System.Text.StringBuilder();
++        foreach (var (id, usage) in ExportHosts())
++        {
++            AppendCsv(csv, ExecutionModeCsv.Build(HistoryAggregator.Daily(usage, _source, Range), id));
++        }
++        if (csv.Length == 0) csv.Append(ExecutionModeCsv.Build([], _hostId?.ToString() ?? "local"));
++        return (_hostId is { } host ? $"{host}-{name}" : name, HistoryCsv.Encode(csv.ToString()));
++    }
++
++    private IEnumerable<(string Id, IReadOnlyList<DailyUsage> Days)> ExportHosts()
++    {
++        if (_allHosts) yield return ("local", _hub.Days);
++        foreach (var host in _speed?.Snapshot.RemoteHosts ?? [])
++        {
++            if (_allHosts || host.Id == _hostId) yield return (host.Id.ToString(), host.Days);
++        }
++    }
++
++    private static void AppendCsv(System.Text.StringBuilder csv, string part) =>
++        csv.Append(csv.Length == 0 ? part : part[(part.IndexOf("\r\n", StringComparison.Ordinal) + 2)..]);
+ 
+     public void ShowMessage(string text)
+     {
+@@ -465,6 +546,10 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+ 
+         _disposed = true;
+         _hub.Changed -= OnHubChanged;
++        if (_speed is not null)
++        {
++            _speed.SnapshotChanged -= OnSpeedChanged;
++        }
+         _cost.Changed -= OnCostChanged;
+         DetachTraffic();
+         _pending.Stop();
+@@ -474,6 +559,14 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+         DisposePerformance();
+     }
+ 
++    private void OnSpeedChanged(object? sender, SpeedSnapshot snapshot)
++    {
++        if (!_disposed)
++        {
++            ScheduleRecompute();
++        }
++    }
++
+     private void OnHubChanged(object? sender, EventArgs e)
+     {
+         if (!_disposed)
+@@ -527,7 +620,10 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+     {
+         _lastRecompute = Environment.TickCount64;
+         Today = DateOnly.FromDateTime(DateTime.Now);
+-        var usage = _hub.Days;
++        UpdateHosts();
++        IReadOnlyList<DailyUsage> usage = _allHosts
++            ? _hub.Days.Concat((_speed?.Snapshot.RemoteHosts ?? []).SelectMany(h => h.Days)).ToArray()
++            : _hostId is { } hostId ? _speed?.Snapshot.RemoteHosts.FirstOrDefault(h => h.Id == hostId)?.Days ?? [] : _hub.Days;
+         var options = new HistoryCostOptions(_cost.Settings.Subscriptions, _includeSubscriptions, _metric);
+         var excluded = options.Excluded(_source);
+         // Recorded agent traffic is history too (DESIGN 10): its days count for the bounds, the rows and the picker.
+@@ -541,7 +637,7 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+         Days = ApplyTraffic(WithTrafficOnlyDays(tokenDays, agentDays));
+         var previous = HistoryAggregator.Daily(usage, _source, HistoryRanges.Previous(Range), excluded);
+         Bars = _metric == HistoryChartMetric.Traffic
+-            ? HistoryBars.Traffic(Days, Range, _source, TrafficDays, _traffic.Since)
++            ? HistoryBars.Traffic(Days, Range, _source, TrafficDays, CurrentTraffic().Since)
+             : HistoryBars.From(Days, Range, _source, _metric, Money);
+         Rows = HistoryTable.Sort(Days, _sortColumn, _sortDescending);
+         IsEmpty = Days.Count == 0;
+@@ -585,6 +681,32 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+         Updated?.Invoke(this, kind);
+     }
+ 
++    private void UpdateHosts()
++    {
++        var hosts = _speed?.Snapshot.RemoteHosts ?? [];
++        var options = new List<HistoryHostOption> { new(null, _loc["win.history.allHosts"], true), new(null, _loc["win.history.local"]) };
++        options.AddRange(hosts.Select(h => new HistoryHostOption(h.Id,
++            h.Label + (!h.Online ? $" ({_loc["win.history.offline"]})" : !h.HistoryCurrent ? $" ({_loc["win.history.unknown"]})" : h.HistoryPartial == true ? $" ({_loc["win.history.partial"]})" : ""))));
++        if (HostOptions.SequenceEqual(options))
++        {
++            return;
++        }
++
++        _syncingHosts = true;
++        HostOptions.Clear();
++        foreach (var option in options)
++        {
++            HostOptions.Add(option);
++        }
++
++        _selectedHost = HostOptions.FirstOrDefault(h => h.Id == _hostId && h.All == _allHosts) ?? HostOptions[0];
++        _hostId = _selectedHost.Id;
++        _allHosts = _selectedHost.All;
++        _syncingHosts = false;
++        OnPropertyChanged(nameof(SelectedHost));
++        OnPropertyChanged(nameof(HasRemoteHosts));
++    }
++
+     /// <summary>
+     /// Updates the breakdown bars in place (matched by source or model) so they grow to new lengths; a new filter or range
+     /// rebuilds them so they grow from nothing.
+@@ -746,6 +868,30 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+     /// <summary>The footer line; a quiet refresh of today keeps the last line instead of showing its progress.</summary>
+     private void UpdateState()
+     {
++        if (_hostId is { } hostId)
++        {
++            var host = _speed?.Snapshot.RemoteHosts.FirstOrDefault(h => h.Id == hostId);
++            IsAnalyzing = false;
++            IsFailed = false;
++            Progress = 0;
++            FilesText = string.Empty;
++            StateText = host is null ? _loc["win.history.unknown"] : !host.Online ? _loc["win.history.offline"]
++                : !host.HistoryCurrent ? _loc["win.history.unknown"] : host.HistoryPartial == true ? _loc["win.history.partial"]
++                : host.HistoryReceivedAt is { } received ? HistoryText.Updated(received, DateTimeOffset.Now, _loc) : _loc["win.history.unknown"];
++            return;
++        }
++
++        if (_allHosts && _speed?.Snapshot.RemoteHosts is { } hosts && hosts.Any(h => !h.HistoryCurrent || h.HistoryPartial == true))
++        {
++            IsAnalyzing = false;
++            IsFailed = false;
++            Progress = 0;
++            FilesText = string.Empty;
++            StateText = string.Join(" · ", hosts.Where(h => !h.HistoryCurrent || h.HistoryPartial == true)
++                .Select(h => $"{h.Label}: {(!h.Online ? _loc["win.history.offline"] : !h.HistoryCurrent ? _loc["win.history.unknown"] : _loc["win.history.partial"])}"));
++            return;
++        }
++
+         var state = _hub.State;
+         if (_quietSince is { } since && LiveDay.EndsQuiet(state, since, DateTimeOffset.Now))
+         {
+diff --git a/windows/src/AgentSpeed/History/HistoryWindow.xaml b/windows/src/AgentSpeed/History/HistoryWindow.xaml
+index f51c86db..94ef5428 100644
+--- a/windows/src/AgentSpeed/History/HistoryWindow.xaml
++++ b/windows/src/AgentSpeed/History/HistoryWindow.xaml
+@@ -481,6 +481,10 @@
+                 <ColumnDefinition Width="Auto" />
+             </Grid.ColumnDefinitions>
+             <StackPanel x:Name="SourceGroup" Orientation="Horizontal" VerticalAlignment="Center">
++                <ComboBox MinWidth="120" MaxWidth="220" Margin="0,0,8,0" VerticalAlignment="Center"
++                          ItemsSource="{Binding HostOptions}" SelectedItem="{Binding SelectedHost, Mode=TwoWay}"
++                          Visibility="{Binding HasRemoteHosts, Converter={StaticResource Visible}}"
++                          AutomationProperties.Name="{loc:Loc win.history.host}" />
+                 <ComboBox x:Name="SourcePicker" MinWidth="{x:Static layout:HistoryToolbar.PickerMinWidth}"
+                           MaxWidth="{x:Static layout:HistoryToolbar.PickerMaxWidth}" VerticalAlignment="Center"
+                           ItemsSource="{Binding SourceOptions}" SelectedItem="{Binding SelectedSource, Mode=TwoWay}"
+diff --git a/windows/src/AgentSpeed/Orb/OrbManager.cs b/windows/src/AgentSpeed/Orb/OrbManager.cs
+index 8fa0e3da..84d2b461 100644
+--- a/windows/src/AgentSpeed/Orb/OrbManager.cs
++++ b/windows/src/AgentSpeed/Orb/OrbManager.cs
+@@ -410,8 +410,8 @@ internal sealed class OrbManager : IDisposable
+                 case SpeedEvent.ResponseCompleted completed:
+                     var response = completed.Response;
+                     var metric = Settings.Metric;
+-                    var tokens = metric == SpeedMetric.Total ? response.TotalTokens : response.OutputTokens;
+-                    var speed = metric == SpeedMetric.Total && response.Duration is { TotalSeconds: > 0 } d
++                    var tokens = metric == SpeedMetric.Total && response.HasTotalTokens ? response.TotalTokens : response.OutputTokens;
++                    var speed = metric == SpeedMetric.Total && response.HasTotalTokens && response.Duration is { TotalSeconds: > 0 } d
+                         ? response.TotalTokens / d.TotalSeconds
+                         : response.Speed ?? entry.Feed.Value;
+                     entry.Window.Surface.Pulse(speed, tokens);
+diff --git a/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
+new file mode 100644
+index 00000000..48e7b2e5
+--- /dev/null
++++ b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
+@@ -0,0 +1,231 @@
++using System.Diagnostics;
++using System.Windows.Threading;
++using AgentSpeed.Core;
++using AgentSpeed.Presentation.Settings;
++
++namespace AgentSpeed.Services;
++
++/// <summary>Owns the configured SSH connections on the UI dispatcher.</summary>
++internal sealed class RemoteConnectionManager : IDisposable
++{
++    private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(10);
++    private readonly SettingsService _settings;
++    private readonly SpeedHub _hub;
++    private readonly Dispatcher _dispatcher;
++    private readonly Dictionary<Guid, Connection> _connections = new();
++    private readonly DispatcherTimer _timezoneTimer;
++    private string _timezone = TimeZoneInfo.Local.Id;
++    private bool _started;
++    private bool _disposed;
++
++    private sealed class Connection(RemoteHost host)
++    {
++        public RemoteHost Host = host;
++        public RemoteSshWorker? Worker;
++        public DispatcherTimer? Reconnect;
++        public long LastReceived;
++        public bool Online;
++        public string? Error;
++    }
++
++    public RemoteConnectionManager(SettingsService settings, SpeedHub hub, Dispatcher dispatcher)
++    {
++        _settings = settings;
++        _hub = hub;
++        _dispatcher = dispatcher;
++        _timezoneTimer = new DispatcherTimer(TimeSpan.FromSeconds(30), DispatcherPriority.Background, OnTimezoneTimer, dispatcher);
++        _timezoneTimer.Stop();
++    }
++
++    public void Start()
++    {
++        _dispatcher.VerifyAccess();
++        if (_disposed || _started) return;
++        _started = true;
++        _settings.Changed += OnSettingsChanged;
++        ApplyHosts(_settings.Current);
++        _timezoneTimer.Start();
++    }
++
++    private void OnSettingsChanged(object? sender, SettingsChangedEventArgs e)
++    {
++        if (!_dispatcher.CheckAccess())
++        {
++            Post(() => ApplyHosts(_settings.Current));
++            return;
++        }
++        ApplyHosts(e.Current);
++    }
++
++    private void ApplyHosts(AppSettings settings)
++    {
++        if (_disposed || !_started) return;
++        var hosts = new Dictionary<Guid, RemoteHost>();
++        foreach (var host in settings.RemoteHosts)
++            hosts[host.Id] = host;
++
++        foreach (var id in _connections.Keys.ToArray())
++        {
++            if (hosts.ContainsKey(id)) continue;
++            var removed = _connections[id];
++            Stop(removed);
++            _connections.Remove(id);
++            _hub.RemoveRemoteHost(id);
++        }
++
++        foreach (var host in hosts.Values)
++        {
++            if (!_connections.TryGetValue(host.Id, out var connection))
++            {
++                connection = new Connection(host);
++                _connections.Add(host.Id, connection);
++                Publish(connection);
++                if (host.Enabled) Connect(connection);
++                continue;
++            }
++
++            var previous = connection.Host;
++            var destinationChanged = previous.Destination != host.Destination;
++            connection.Host = host;
++            if (destinationChanged)
++            {
++                Stop(connection);
++                _hub.RemoveRemoteHost(host.Id);
++                connection.Error = null;
++            }
++            else if (previous.Enabled && !host.Enabled)
++            {
++                Stop(connection);
++                connection.Error = null;
++            }
++            Publish(connection);
++            if (host.Enabled && (destinationChanged || !previous.Enabled)) Connect(connection);
++        }
++    }
++
++    private void Connect(Connection connection)
++    {
++        if (_disposed || !connection.Host.Enabled || connection.Worker is not null) return;
++        if (!connection.Host.ValidDestination)
++        {
++            connection.Error = "Invalid SSH destination";
++            Publish(connection);
++            return;
++        }
++
++        try
++        {
++            var worker = new RemoteSshWorker(connection.Host.Destination);
++            connection.Worker = worker;
++            connection.LastReceived = Stopwatch.GetTimestamp();
++            var id = connection.Host.Id;
++            worker.LineReceived += (token, line) => Post(() => Receive(id, token, line));
++            worker.Ended += (token, reason) => Post(() => Ended(id, token, reason));
++            worker.Start();
++        }
++        catch (Exception ex)
++        {
++            connection.Worker?.Stop();
++            connection.Worker = null;
++            connection.Online = false;
++            connection.Error = ex.Message;
++            Publish(connection);
++            ScheduleReconnect(connection);
++        }
++    }
++
++    private void Receive(Guid id, Guid token, string line)
++    {
++        if (_disposed || !_connections.TryGetValue(id, out var connection) || connection.Worker?.Token != token) return;
++        connection.LastReceived = Stopwatch.GetTimestamp();
++        connection.Online = true;
++        connection.Error = null;
++        _hub.UpdateRemoteHost(id, connection.Host.Label, true, json: line);
++    }
++
++    private void Ended(Guid id, Guid token, string reason)
++    {
++        if (_disposed || !_connections.TryGetValue(id, out var connection) || connection.Worker?.Token != token) return;
++        connection.Worker = null;
++        connection.Online = false;
++        connection.Error = reason;
++        Publish(connection);
++        ScheduleReconnect(connection);
++    }
++
++    private void ScheduleReconnect(Connection connection)
++    {
++        if (_disposed || !connection.Host.Enabled || connection.Reconnect is not null) return;
++        var timer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher) { Interval = ReconnectDelay };
++        connection.Reconnect = timer;
++        timer.Tick += (_, _) =>
++        {
++            timer.Stop();
++            if (connection.Reconnect != timer) return;
++            connection.Reconnect = null;
++            if (!_disposed && _connections.TryGetValue(connection.Host.Id, out var current) && ReferenceEquals(current, connection))
++                Connect(connection);
++        };
++        timer.Start();
++    }
++
++    private void Stop(Connection connection)
++    {
++        connection.Reconnect?.Stop();
++        connection.Reconnect = null;
++        var worker = connection.Worker;
++        connection.Worker = null;
++        connection.Online = false;
++        worker?.Stop();
++    }
++
++    private void Publish(Connection connection)
++    {
++        if (connection.Host.Enabled)
++            _hub.UpdateRemoteHost(connection.Host.Id, connection.Host.Label, connection.Online, connection.Error);
++        else
++            _hub.RemoveRemoteHost(connection.Host.Id);
++    }
++
++    private void OnTimezoneTimer(object? sender, EventArgs e)
++    {
++        TimeZoneInfo.ClearCachedData();
++        var timezone = TimeZoneInfo.Local.Id;
++        if (timezone != _timezone)
++        {
++            _timezone = timezone;
++            foreach (var connection in _connections.Values)
++                connection.Worker?.RequestHistoryTimezone();
++        }
++
++        foreach (var connection in _connections.Values)
++        {
++            if (connection.Worker is null || Stopwatch.GetElapsedTime(connection.LastReceived) < TimeSpan.FromSeconds(90)) continue;
++            Stop(connection);
++            connection.Error = "Collector heartbeat timed out";
++            Publish(connection);
++            ScheduleReconnect(connection);
++        }
++    }
++
++    private void Post(Action action)
++    {
++        if (!_dispatcher.HasShutdownStarted && !_dispatcher.HasShutdownFinished)
++            _dispatcher.BeginInvoke(action);
++    }
++
++    public void Dispose()
++    {
++        if (!_dispatcher.CheckAccess())
++        {
++            _dispatcher.Invoke(Dispose);
++            return;
++        }
++        if (_disposed) return;
++        _disposed = true;
++        _settings.Changed -= OnSettingsChanged;
++        _timezoneTimer.Stop();
++        foreach (var connection in _connections.Values) Stop(connection);
++        _connections.Clear();
++    }
++}
+diff --git a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
+new file mode 100644
+index 00000000..330de59a
+--- /dev/null
++++ b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
+@@ -0,0 +1,153 @@
++using System.Diagnostics;
++using System.Text;
++using System.Text.Json;
++using AgentSpeed.Presentation.Settings;
++
++namespace AgentSpeed.Services;
++
++/// <summary>Runs the bundled Linux collector over the user's OpenSSH configuration.</summary>
++public sealed class RemoteSshWorker
++{
++    private const string UploadCommand = "umask 077; mkdir -p ~/.cache/agent-speed && f=~/.cache/agent-speed/collector-$$ && cat > \"$f\" && chmod 700 \"$f\" && mv -f \"$f\" ~/.cache/agent-speed/collector";
++    private const string CollectorCommand = "exec ~/.cache/agent-speed/collector";
++    private const int MaxLineBytes = 4_194_304;
++    private readonly string destination;
++    private readonly object gate = new();
++    private Process? process;
++    private StreamWriter? collectorInput;
++    private bool stopped;
++    private bool started;
++
++    public RemoteSshWorker(string destination) => this.destination = destination;
++    public Guid Token { get; } = Guid.NewGuid();
++    public event Action<Guid, string>? LineReceived;
++    public event Action<Guid, string>? Ended;
++
++    public void Start()
++    {
++        lock (gate)
++        {
++            if (started || stopped) return;
++            started = true;
++        }
++        _ = Task.Run(RunAsync);
++    }
++
++    public void Stop()
++    {
++        lock (gate)
++        {
++            stopped = true;
++            Kill(process);
++        }
++    }
++
++    public void RequestHistoryTimezone()
++    {
++        var timezone = TimeZoneInfo.Local.Id;
++        if (TimeZoneInfo.TryConvertWindowsIdToIanaId(timezone, out var iana)) timezone = iana;
++        var request = JsonSerializer.Serialize(new { version = 1, type = "history_timezone", timezone });
++        lock (gate)
++        {
++            try { collectorInput?.WriteLine(request); collectorInput?.Flush(); }
++            catch (IOException) { }
++            catch (ObjectDisposedException) { }
++        }
++    }
++
++    private Process Launch(string command)
++    {
++        var info = new ProcessStartInfo("ssh")
++        {
++            UseShellExecute = false, CreateNoWindow = true,
++            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
++        };
++        foreach (var arg in new[] { "-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", destination, command })
++            info.ArgumentList.Add(arg);
++        var child = new Process { StartInfo = info };
++        lock (gate)
++        {
++            if (stopped) throw new OperationCanceledException();
++            if (!child.Start()) throw new IOException("SSH connection failed");
++            process = child;
++        }
++        // Drain diagnostics without retaining private remote output.
++        _ = child.StandardError.BaseStream.CopyToAsync(Stream.Null);
++        return child;
++    }
++
++    private async Task RunAsync()
++    {
++        string reason = "SSH connection failed";
++        try
++        {
++            if (!new RemoteHost(Guid.Empty, "", destination, false).ValidDestination)
++                throw new IOException("Invalid SSH destination");
++            using (var probe = Launch("uname -m"))
++            {
++                probe.StandardInput.Close();
++                var architecture = (await probe.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).Trim();
++                await probe.WaitForExitAsync().ConfigureAwait(false);
++                if (probe.ExitCode != 0) throw new IOException("SSH connection failed; check host key and authentication");
++                var arch = architecture switch { "x86_64" => "x86_64", "aarch64" or "arm64" => "aarch64", _ => throw new IOException("Unsupported remote architecture") };
++                var path = Path.Combine(AppContext.BaseDirectory, "collectors", "linux-" + arch, "agent-speed-collector");
++                if (!File.Exists(path)) throw new IOException($"Linux collector for {arch} is missing from this application");
++                using var upload = Launch(UploadCommand);
++                var drain = upload.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
++                await using (var binary = File.OpenRead(path))
++                    await binary.CopyToAsync(upload.StandardInput.BaseStream).ConfigureAwait(false);
++                upload.StandardInput.Close();
++                await drain.ConfigureAwait(false);
++                await upload.WaitForExitAsync().ConfigureAwait(false);
++                if (upload.ExitCode != 0) throw new IOException("Collector upload failed");
++            }
++            using var collector = Launch(CollectorCommand);
++            lock (gate) { if (!stopped) collectorInput = collector.StandardInput; }
++            RequestHistoryTimezone();
++            var stream = collector.StandardOutput.BaseStream;
++            var chunk = new byte[8192];
++            using var line = new MemoryStream();
++            while (true)
++            {
++                var count = await stream.ReadAsync(chunk).ConfigureAwait(false);
++                if (count == 0) break;
++                for (var i = 0; i < count; i++)
++                {
++                    if (chunk[i] == (byte)'\n')
++                    {
++                        var text = Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length);
++                        line.SetLength(0);
++                        lock (gate) { if (stopped) return; }
++                        LineReceived?.Invoke(Token, text);
++                    }
++                    else
++                    {
++                        if (line.Length >= MaxLineBytes) throw new IOException("Collector sent an oversized message");
++                        line.WriteByte(chunk[i]);
++                    }
++                }
++            }
++            reason = "Disconnected; retrying";
++        }
++        catch (IOException e) { reason = e.Message; }
++        catch (Exception) { reason = "SSH connection failed"; }
++        finally
++        {
++            lock (gate)
++            {
++                collectorInput = null;
++                Kill(process);
++                process = null;
++                if (stopped) reason = "";
++            }
++        }
++        if (reason.Length != 0) Ended?.Invoke(Token, reason);
++    }
++
++    private static void Kill(Process? child)
++    {
++        try { if (child is not null && !child.HasExited) child.Kill(entireProcessTree: true); }
++        catch (InvalidOperationException) { }
++        catch (System.ComponentModel.Win32Exception) { }
++    }
++}
+diff --git a/windows/src/AgentSpeed/Settings/Pages/SourcesPage.xaml b/windows/src/AgentSpeed/Settings/Pages/SourcesPage.xaml
+index faf7aff5..d4488f14 100644
+--- a/windows/src/AgentSpeed/Settings/Pages/SourcesPage.xaml
++++ b/windows/src/AgentSpeed/Settings/Pages/SourcesPage.xaml
+@@ -16,6 +16,32 @@
+             </ItemsControl.ItemTemplate>
+         </ItemsControl>
+ 
++        <TextBlock Text="Remote SSH hosts" Style="{StaticResource SectionHeaderText}" Margin="2,20,0,8" />
++        <TextBlock Text="Use an SSH alias or user@host with noninteractive authentication and a trusted host key." Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="2,0,0,8" />
++        <ItemsControl ItemsSource="{Binding RemoteHosts}">
++            <ItemsControl.ItemTemplate>
++                <DataTemplate>
++                    <controls:SettingsCard Header="{Binding DisplayName}" Description="{Binding Description}" Icon="&#xE774;">
++                        <StackPanel Orientation="Horizontal">
++                            <CheckBox Style="{StaticResource ToggleSwitch}" IsChecked="{Binding Enabled, Mode=TwoWay}" AutomationProperties.Name="{Binding DisplayName}" VerticalAlignment="Center" />
++                            <Button Content="Edit" Command="{Binding DataContext.EditRemoteHostCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Margin="8,0,0,0" />
++                            <Button Content="Remove" Command="{Binding DataContext.RemoveRemoteHostCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}" Margin="8,0,0,0" />
++                        </StackPanel>
++                    </controls:SettingsCard>
++                </DataTemplate>
++            </ItemsControl.ItemTemplate>
++        </ItemsControl>
++        <TextBlock Text="{Binding RemoteHostEditorTitle}" Style="{StaticResource SectionHeaderText}" Margin="2,12,0,8" />
++        <TextBlock Text="Host label (optional)" Style="{StaticResource CaptionText}" Margin="2,0,0,4" />
++        <TextBox Text="{Binding RemoteHostLabel, UpdateSourceTrigger=PropertyChanged}" ToolTip="Optional host label" AutomationProperties.Name="Host label" Margin="0,0,0,8" />
++        <TextBlock Text="SSH host alias or user@host" Style="{StaticResource CaptionText}" Margin="2,0,0,4" />
++        <TextBox Text="{Binding RemoteHostDestination, UpdateSourceTrigger=PropertyChanged}" ToolTip="SSH host alias or user@host" AutomationProperties.Name="SSH host alias or user@host" Margin="0,0,0,8" />
++        <TextBlock Text="{Binding RemoteHostValidation}" Style="{StaticResource CaptionText}" TextWrapping="Wrap" Margin="2,0,0,8" />
++        <StackPanel Orientation="Horizontal">
++            <Button Content="{Binding RemoteHostSaveText}" Command="{Binding SaveRemoteHostCommand}" />
++            <Button Content="Cancel" Command="{Binding CancelRemoteHostCommand}" Margin="8,0,0,0" />
++        </StackPanel>
++
+         <TextBlock Text="{loc:Loc win.settings.sources.folders}" Style="{StaticResource SectionHeaderText}" Margin="2,20,0,8" />
+         <controls:SettingsCard Header="{loc:Loc source.codex}" Icon="&#xE8B7;" Description="{Binding CodexPath}">
+             <StackPanel Orientation="Horizontal">
+diff --git a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
+index caeac5be..d8c5c2d2 100644
+--- a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
++++ b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
+@@ -1,4 +1,5 @@
+ using System.Collections.ObjectModel;
++using System.Collections.Immutable;
+ using System.Diagnostics;
+ using AgentSpeed.App;
+ using AgentSpeed.Controls;
+@@ -46,6 +47,38 @@ internal sealed class SourceSettingsRow(SourceKind kind) : ObservableObject
+     public string Status { get => _status; set => Set(ref _status, value); }
+ }
+ 
++internal sealed class RemoteHostSettingsRow(RemoteHost host, Action<RemoteHost> save) : ObservableObject
++{
++    private RemoteHost _host = host;
++    private string _status = "Waiting for connection";
++
++    public RemoteHost Host => _host;
++    public string DisplayName => string.IsNullOrWhiteSpace(_host.Label) ? _host.Destination : _host.Label;
++    public string Description => $"{_host.Destination} — {(Enabled ? _status : "Disabled")}";
++    public bool Enabled
++    {
++        get => _host.Enabled;
++        set
++        {
++            if (_host.Enabled == value) return;
++            save(_host with { Enabled = value });
++        }
++    }
++
++    public void Update(RemoteHost value)
++    {
++        _host = value;
++        OnPropertyChanged(string.Empty);
++    }
++
++    public void SetStatus(string status)
++    {
++        if (_status == status) return;
++        _status = status;
++        OnPropertyChanged(nameof(Description));
++    }
++}
++
+ /// <summary>One rung of the speed-title list under the redline slider: title, then its threshold at the current redline.</summary>
+ internal sealed class TitleLadderRow(SpeedTitle title, int index) : ObservableObject
+ {
+@@ -101,6 +134,9 @@ internal sealed class SettingsViewModel : ObservableObject
+     private bool _darkTheme;
+     private OrbsPane.OrbsPaneViewModel? _orbs;
+     private TitleThemesService? _titleService;
++    private Guid? _editingRemoteHost;
++    private string _remoteHostLabel = string.Empty;
++    private string _remoteHostDestination = string.Empty;
+ 
+     /// <param name="openHistory">Opens the Usage History window for all sources.</param>
+     /// <param name="confirmClearHistory">Asks the user to confirm clearing the history; true to go ahead.</param>
+@@ -140,6 +176,11 @@ internal sealed class SettingsViewModel : ObservableObject
+             Sources.Add(row);
+         }
+ 
++        EditRemoteHostCommand = new RelayCommand(parameter => EditRemoteHost(parameter as RemoteHostSettingsRow));
++        RemoveRemoteHostCommand = new RelayCommand(parameter => RemoveRemoteHost(parameter as RemoteHostSettingsRow));
++        SaveRemoteHostCommand = new RelayCommand(SaveRemoteHost, () => RemoteHostDraft.ValidDestination);
++        CancelRemoteHostCommand = new RelayCommand(CancelRemoteHost);
++
+         PreviewCommand = new RelayCommand(StartPreview, () => !_preview.IsRunning);
+         ChangeCodexCommand = new RelayCommand(() => ChangeFolder(CodexPath, (s, path) => s with { CodexRoot = path }));
+         ChangeClaudeCommand = new RelayCommand(() => ChangeFolder(ClaudePath, (s, path) => s with { ClaudeRoot = path }));
+@@ -220,6 +261,27 @@ internal sealed class SettingsViewModel : ObservableObject
+     public ObservableCollection<NavItem> Pages { get; } = new();
+ 
+     public ObservableCollection<SourceSettingsRow> Sources { get; } = new();
++    public ObservableCollection<RemoteHostSettingsRow> RemoteHosts { get; } = new();
++    public RelayCommand EditRemoteHostCommand { get; }
++    public RelayCommand RemoveRemoteHostCommand { get; }
++    public RelayCommand SaveRemoteHostCommand { get; }
++    public RelayCommand CancelRemoteHostCommand { get; }
++
++    public string RemoteHostLabel
++    {
++        get => _remoteHostLabel;
++        set { if (Set(ref _remoteHostLabel, value)) RefreshRemoteHostDraft(); }
++    }
++    public string RemoteHostDestination
++    {
++        get => _remoteHostDestination;
++        set { if (Set(ref _remoteHostDestination, value)) RefreshRemoteHostDraft(); }
++    }
++    public string RemoteHostEditorTitle => _editingRemoteHost.HasValue ? "Edit SSH host" : "Add SSH host";
++    public string RemoteHostSaveText => _editingRemoteHost.HasValue ? "Save" : "Add host";
++    public string RemoteHostValidation => RemoteHostDestination.Length > 0 && !RemoteHostDraft.ValidDestination
++        ? "Enter an SSH alias or user@host using letters, numbers, ., _, -, @ or :." : string.Empty;
++    private RemoteHost RemoteHostDraft => new(_editingRemoteHost ?? Guid.Empty, RemoteHostLabel.Trim(), RemoteHostDestination.Trim(), false);
+ 
+     /// <summary>Settings → Cost (DESIGN 9) and the taskbar page's live value unit.</summary>
+     public CostPaneViewModel Cost { get; }
+@@ -767,6 +829,7 @@ internal sealed class SettingsViewModel : ObservableObject
+         {
+             row.Status = StatusFor(row.Kind);
+         }
++        RefreshRemoteHostStatuses();
+ 
+         OnPropertyChanged(nameof(CodexStatus));
+         OnPropertyChanged(nameof(ClaudeStatus));
+@@ -839,6 +902,95 @@ internal sealed class SettingsViewModel : ObservableObject
+         _settings.Update(change);
+     }
+ 
++    private void RefreshRemoteHostDraft()
++    {
++        OnPropertyChanged(nameof(RemoteHostValidation));
++        OnPropertyChanged(nameof(RemoteHostEditorTitle));
++        OnPropertyChanged(nameof(RemoteHostSaveText));
++        System.Windows.Input.CommandManager.InvalidateRequerySuggested();
++    }
++
++    private void EditRemoteHost(RemoteHostSettingsRow? row)
++    {
++        if (row is null) return;
++        _editingRemoteHost = row.Host.Id;
++        RemoteHostLabel = row.Host.Label;
++        RemoteHostDestination = row.Host.Destination;
++        RefreshRemoteHostDraft();
++    }
++
++    private void CancelRemoteHost()
++    {
++        _editingRemoteHost = null;
++        RemoteHostLabel = string.Empty;
++        RemoteHostDestination = string.Empty;
++        RefreshRemoteHostDraft();
++    }
++
++    private void SaveRemoteHost()
++    {
++        var draft = RemoteHostDraft;
++        if (!draft.ValidDestination) return;
++        if (_editingRemoteHost is { } id)
++        {
++            var existing = S.RemoteHosts.FirstOrDefault(host => host.Id == id);
++            if (existing is null) { CancelRemoteHost(); return; }
++            SaveRemoteHost(existing with { Label = draft.Label, Destination = draft.Destination });
++        }
++        else
++        {
++            var host = draft with { Id = Guid.NewGuid() };
++            _settings.Update(s => s with { RemoteHosts = s.RemoteHosts.Add(host) });
++        }
++        CancelRemoteHost();
++    }
++
++    private void SaveRemoteHost(RemoteHost host) => _settings.Update(s => s with
++    {
++        RemoteHosts = s.RemoteHosts.Select(current => current.Id == host.Id ? host : current).ToImmutableArray()
++    });
++
++    private void RemoveRemoteHost(RemoteHostSettingsRow? row)
++    {
++        if (row is null) return;
++        var id = row.Host.Id;
++        _settings.Update(s => s with { RemoteHosts = s.RemoteHosts.Where(host => host.Id != id).ToImmutableArray() });
++        if (_editingRemoteHost == id) CancelRemoteHost();
++    }
++
++    private void SyncRemoteHosts()
++    {
++        for (var index = RemoteHosts.Count - 1; index >= 0; index--)
++            if (!S.RemoteHosts.Any(host => host.Id == RemoteHosts[index].Host.Id)) RemoteHosts.RemoveAt(index);
++        for (var index = 0; index < S.RemoteHosts.Length; index++)
++        {
++            var host = S.RemoteHosts[index];
++            var row = RemoteHosts.FirstOrDefault(item => item.Host.Id == host.Id);
++            if (row is null)
++            {
++                row = new RemoteHostSettingsRow(host, SaveRemoteHost);
++                RemoteHosts.Insert(index, row);
++            }
++            else
++            {
++                var oldIndex = RemoteHosts.IndexOf(row);
++                if (oldIndex != index) RemoteHosts.Move(oldIndex, index);
++                if (row.Host != host) row.Update(host);
++            }
++        }
++        RefreshRemoteHostStatuses();
++    }
++
++    private void RefreshRemoteHostStatuses()
++    {
++        foreach (var row in RemoteHosts)
++        {
++            var status = _snapshot.RemoteHosts.FirstOrDefault(item => item.Id == row.Host.Id);
++            row.SetStatus(status is null ? "Waiting for connection" : status.Online ? "Online" :
++                string.IsNullOrWhiteSpace(status.Error) ? "Offline" : $"Offline: {status.Error}");
++        }
++    }
++
+     private void Sync()
+     {
+         _syncing = true;
+@@ -848,6 +1000,8 @@ internal sealed class SettingsViewModel : ObservableObject
+             {
+                 row.Enabled = S.IsSourceEnabled(row.Kind);
+             }
++            SyncRemoteHosts();
++
+ 
+             RefreshTitleLadder();
+             OnPropertyChanged(string.Empty);
+diff --git a/windows/src/AgentSpeed/Updates/ExecutableSwap.cs b/windows/src/AgentSpeed/Updates/ExecutableSwap.cs
+index a3c3f7bf..87cd940c 100644
+--- a/windows/src/AgentSpeed/Updates/ExecutableSwap.cs
++++ b/windows/src/AgentSpeed/Updates/ExecutableSwap.cs
+@@ -6,10 +6,9 @@ using AgentSpeed.Presentation.Updates;
+ namespace AgentSpeed.Updates;
+ 
+ /// <summary>
+-/// Replaces the running executable and starts the new one (UPDATES section 5, Windows): stage the new file next to
+-/// the target, rename the running exe to <c>.old</c> (allowed while it runs), rename the staged file into place,
+-/// update DisplayVersion, start the new exe with <c>--after-update &lt;old&gt; --wait-pid &lt;pid&gt;</c>. Any failure
+-/// after the rename puts the old executable back.
++/// Replaces the running executable and any packaged collector, then starts the new executable. The executable and
++/// collector are staged beside their targets; the previous files are restored if installation or startup fails.
++/// Packages without a collector leave the installed collector unchanged.
+ /// </summary>
+ internal static class ExecutableSwap
+ {
+@@ -47,6 +46,25 @@ internal static class ExecutableSwap
+         var directory = Path.GetDirectoryName(target) ?? throw new UpdateException(UpdateFailure.Invalid, "The target has no folder.");
+         var staged = target + StagedSuffix;
+         Stage(newExecutable, staged);
++        var collectorSource = Path.Combine(Path.GetDirectoryName(newExecutable)!, "collectors", "linux-x86_64", "agent-speed-collector");
++        var collectorTarget = Path.Combine(directory, "collectors", "linux-x86_64", "agent-speed-collector");
++        var collectorStaged = collectorTarget + "." + Guid.NewGuid().ToString("N") + StagedSuffix;
++        string? collectorOld = null;
++        var collectorMoved = false;
++        var hasCollector = File.Exists(collectorSource);
++        try
++        {
++            if (hasCollector)
++            {
++                Directory.CreateDirectory(Path.GetDirectoryName(collectorTarget)!);
++                Stage(collectorSource, collectorStaged);
++            }
++        }
++        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or UpdateException)
++        {
++            UpdateFiles.TryDelete(staged);
++            throw ex as UpdateException ?? new UpdateException(UpdateFailure.Permission, "The collector could not be staged.", ex);
++        }
+ 
+         var old = FreeOldPath(target);
+         try
+@@ -56,6 +74,7 @@ internal static class ExecutableSwap
+         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+         {
+             UpdateFiles.TryDelete(staged);
++            UpdateFiles.TryDelete(collectorStaged);
+             throw new UpdateException(UpdateFailure.Permission, "The running executable could not be renamed.", ex);
+         }
+ 
+@@ -66,14 +85,36 @@ internal static class ExecutableSwap
+         {
+             Move(staged, target);
+             moved = true;
++            if (hasCollector)
++            {
++                if (File.Exists(collectorTarget))
++                {
++                    collectorOld = collectorTarget + "." + Guid.NewGuid().ToString("N") + OldSuffix;
++                    Move(collectorTarget, collectorOld);
++                }
++
++                Move(collectorStaged, collectorTarget);
++                collectorMoved = true;
++            }
+             registry = UninstallEntry.TrySetDisplayVersion(directory, newVersion.ToString());
+             StartAndProbe(target, directory, currentVersion, processId);
++            if (collectorOld is not null) UpdateFiles.TryDelete(collectorOld);
+         }
+         catch (Exception ex)
+         {
+             // Whatever failed after the rename, the old executable goes back (UPDATES section 5).
+             AppLog.Warn($"Update: installing failed after the rename, rolling back: {UpdateLog.Describe(ex)}");
+             Rollback(target, old, staged, moved, registry);
++            if (collectorMoved) UpdateFiles.TryDelete(collectorTarget);
++            if (collectorOld is not null && File.Exists(collectorOld))
++            {
++                try { Move(collectorOld, collectorTarget); }
++                catch (Exception restoreError) when (restoreError is IOException or UnauthorizedAccessException)
++                {
++                    AppLog.Error($"Update rollback: the previous collector could not be restored. {UpdateLog.Describe(restoreError)}");
++                }
++            }
++            UpdateFiles.TryDelete(collectorStaged);
+             throw ex as UpdateException ?? new UpdateException(
+                 ex is IOException or UnauthorizedAccessException ? UpdateFailure.Permission : UpdateFailure.Invalid,
+                 "The new executable could not be installed.", ex);
+diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+new file mode 100644
+index 00000000..3225b7fb
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+@@ -0,0 +1,189 @@
++using System.Text.Json;
++
++namespace AgentSpeed.Core.Tests;
++
++public sealed class RemoteConsumerTests
++{
++    private static string Snapshot(string machine, long output, string live = "5") => $$"""
++        {"version":1,"type":"snapshot","machine_id":"{{machine}}","today_day":"{{DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}}","sources":[{"source":"pi","enabled":true,"available":true,"today_output":{{output}},"live_output":{{live}},"live_total":{{live}}}],"agents":[]}
++        """;
++
++    private static string History(string timezone, long output) => $$"""
++        {"version":1,"type":"history","timezone":{{JsonSerializer.Serialize(timezone)}},"partial":false,"days":[{"day":"2026-01-01","source":"pi","output":{{output}}}]}
++        """;
++
++    private static string LocalTimezone => TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana)
++        ? iana : TimeZoneInfo.Local.Id;
++
++    [Fact]
++    public async Task HostsKeepIdentityAndDeduplicateSameMachineWithoutMergingDifferentMachines()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var first = Guid.NewGuid();
++        var duplicate = Guid.NewGuid();
++        var other = Guid.NewGuid();
++        hub.UpdateRemoteHost(first, "first", true, json: Snapshot("machine-a", 10));
++        hub.UpdateRemoteHost(duplicate, "duplicate", true, json: Snapshot("machine-a", 10));
++        hub.UpdateRemoteHost(other, "other", true, json: Snapshot("machine-b", 20));
++
++        Assert.Equal(3, hub.Snapshot.RemoteHosts.Count);
++        Assert.Equal(30, hub.Snapshot.Today.Output);
++        var sources = hub.Snapshot.Sources.Where(s => s.HostId.HasValue).ToArray();
++        Assert.Equal(2, sources.Length);
++        Assert.Contains(sources, s => s.HostId == other);
++        Assert.Single(sources.Where(s => s.HostId == first || s.HostId == duplicate));
++
++        hub.RemoveRemoteHost(other);
++        Assert.Equal(10, hub.Snapshot.Today.Output);
++        Assert.DoesNotContain(hub.Snapshot.RemoteHosts, h => h.Id == other);
++    }
++
++    [Fact]
++    public async Task IdenticalRemoteAgentIdsAreScopedToTheirHosts()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var a = Guid.NewGuid();
++        var b = Guid.NewGuid();
++        const string agents = "\"agents\":[{\"id\":\"session\",\"source\":\"pi\",\"phase\":\"generating\",\"parent_id\":\"parent\"}]";
++        hub.UpdateRemoteHost(a, "a", true, json: Snapshot("a", 1).Replace("\"agents\":[]", agents));
++        hub.UpdateRemoteHost(b, "b", true, json: Snapshot("b", 1).Replace("\"agents\":[]", agents));
++
++        var first = Assert.Single(hub.Snapshot.Agents.Where(agent => agent.HostId == a));
++        var second = Assert.Single(hub.Snapshot.Agents.Where(agent => agent.HostId == b));
++        Assert.NotEqual(first.Id, second.Id);
++        Assert.NotEqual(first.ParentId, second.ParentId);
++        Assert.Equal(AgentPhase.Generating, first.Phase);
++    }
++
++    [Fact]
++    public async Task UnknownLiveAndDisconnectedHostsAreNotReportedAsLiveZero()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 42, "null"));
++        var unknown = Assert.Single(hub.Snapshot.Sources.Where(s => s.HostId == id));
++        Assert.False(unknown.LiveAvailable);
++        Assert.True(unknown.TodayAvailable);
++        Assert.Equal(42, unknown.Today.Output);
++
++        hub.UpdateRemoteHost(id, "host", false, error: "offline");
++        var status = Assert.Single(hub.Snapshot.RemoteHosts);
++        Assert.False(status.Online);
++        Assert.Equal("offline", status.Error);
++        var offline = Assert.Single(hub.Snapshot.Sources.Where(s => s.HostId == id));
++        Assert.False(offline.LiveAvailable);
++        Assert.False(offline.Available);
++        Assert.False(offline.TodayAvailable);
++    }
++
++    [Fact]
++    public async Task LocalPublicationRemainsIsolatedFromRemoteData()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        SpeedSnapshot? published = null;
++        hub.LivePublished += (_, snapshot) => published = snapshot;
++        hub.UpdateRemoteHost(Guid.NewGuid(), "remote", true, json: Snapshot("remote-machine", 99));
++        var local = SpeedSnapshot.Empty with { Today = new TokenTotals(Output: 7) };
++        hub.PublishLive(local);
++
++        Assert.Same(local, published);
++        Assert.Equal(7, published!.Today.Output);
++        Assert.Empty(published.RemoteHosts);
++        Assert.Equal(106, hub.Snapshot.Today.Output);
++    }
++
++    [Fact]
++    public async Task UnknownRemoteLiveDoesNotProduceLocalOnlyChartBuckets()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 42, "null"));
++        var point = new HistoryPoint(DateTimeOffset.UtcNow, new Rate(3, 4), Rate.Zero);
++        hub.PublishLive(SpeedSnapshot.Empty with { History = [point] });
++
++        Assert.False(hub.Snapshot.RemoteLiveComplete);
++        Assert.Empty(hub.Snapshot.History);
++        hub.UpdateRemoteHost(id, "host", false);
++        Assert.Empty(hub.Snapshot.History);
++    }
++
++    [Fact]
++    public async Task RemoteTodayFromAnotherDayIsUnknown()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        var frame = Snapshot("machine", 42).Replace(
++            DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), "2000-01-01");
++        hub.UpdateRemoteHost(id, "host", true, json: frame);
++        var source = Assert.Single(hub.Snapshot.Sources.Where(s => s.HostId == id));
++        Assert.False(source.TodayAvailable);
++        Assert.Equal(0, hub.Snapshot.Today.Output);
++        Assert.False(hub.Snapshot.RemoteTodayComplete);
++    }
++
++    [Fact]
++    public async Task HistoryIsPerHostReplacedAndRejectsOtherTimezones()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var a = Guid.NewGuid();
++        var b = Guid.NewGuid();
++        hub.UpdateRemoteHost(a, "a", true, json: History(LocalTimezone, 10));
++        hub.UpdateRemoteHost(b, "b", true, json: History(LocalTimezone, 20));
++        var wrongZone = LocalTimezone == "UTC" ? "America/New_York" : "UTC";
++        hub.UpdateRemoteHost(a, "a", true, json: History(wrongZone, 999));
++        var stateA = hub.Snapshot.RemoteHosts.Single(h => h.Id == a);
++        var stateB = hub.Snapshot.RemoteHosts.Single(h => h.Id == b);
++        Assert.True(stateA.HistoryCurrent);
++        Assert.Equal(10, Assert.Single(stateA.Days).Totals.Output);
++        Assert.Equal(a, Assert.Single(stateA.Days).HostId);
++        Assert.Equal(20, Assert.Single(stateB.Days).Totals.Output);
++
++        hub.UpdateRemoteHost(a, "a", true, json: $$"""{"version":1,"type":"history","timezone":{{JsonSerializer.Serialize(LocalTimezone)}},"partial":true,"days":[]} """);
++        Assert.Empty(hub.Snapshot.RemoteHosts.Single(h => h.Id == a).Days);
++        Assert.Single(hub.Snapshot.RemoteHosts.Single(h => h.Id == b).Days);
++        hub.UpdateRemoteHost(b, "b", false);
++        stateB = hub.Snapshot.RemoteHosts.Single(h => h.Id == b);
++        Assert.False(stateB.HistoryCurrent);
++        Assert.Equal(20, Assert.Single(stateB.Days).Totals.Output);
++    }
++
++    [Fact]
++    public async Task CompletionEventsAreScopedDeduplicatedAndSuppressedDuringPreview()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var a = Guid.NewGuid();
++        var b = Guid.NewGuid();
++        var events = new List<SpeedEvent>();
++        hub.EventRaised += (_, e) => events.Add(e);
++        hub.UpdateRemoteHost(a, "a", true, json: Snapshot("shared", 1));
++        hub.UpdateRemoteHost(b, "b", true, json: Snapshot("shared", 1));
++        const string completion = "{\"version\":1,\"type\":\"completion\",\"source\":\"pi\",\"response_id\":\"r1\",\"output\":9,\"speed\":null}";
++        hub.UpdateRemoteHost(a, "a", true, json: completion);
++        hub.UpdateRemoteHost(a, "a", false);
++        hub.UpdateRemoteHost(a, "a", true, json: completion);
++        hub.UpdateRemoteHost(b, "b", true, json: completion);
++        var response = Assert.IsType<SpeedEvent.ResponseCompleted>(Assert.Single(events)).Response;
++        Assert.Equal(a, response.HostId);
++        Assert.Equal(9, response.OutputTokens);
++        Assert.False(response.HasTotalTokens);
++        Assert.Null(response.Speed);
++
++        hub.UpdateRemoteHost(a, "a", true, json: "{\"version\":1,\"type\":\"completion\",\"source\":\"pi\",\"output\":3}");
++        hub.UpdateRemoteHost(a, "a", true, json: "{\"version\":1,\"type\":\"completion\",\"source\":\"pi\",\"response_id\":\"\",\"output\":3}");
++        hub.BeginPreview();
++        hub.UpdateRemoteHost(a, "a", true, json: completion.Replace("r1", "r2"));
++        hub.EndPreview();
++        Assert.Single(events);
++    }
++
++    [Fact]
++    public async Task InvalidAndFutureProtocolFramesDoNotReplaceLastValidSnapshot()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 42));
++        hub.UpdateRemoteHost(id, "host", true, json: "{not json");
++        hub.UpdateRemoteHost(id, "host", true, json: "{\"version\":2,\"type\":\"snapshot\",\"sources\":[]}");
++        Assert.Equal(42, hub.Snapshot.Today.Output);
++    }
++}
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/ReleaseFeedTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/ReleaseFeedTests.cs
+index 6267d0cc..aeb64c32 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/ReleaseFeedTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/ReleaseFeedTests.cs
+@@ -23,7 +23,7 @@ public class ReleaseFeedTests
+             "site_admin": false
+           },
+           "node_id": "RE_kwDOMZ7nT84Kzz0H",
+-          "tag_name": "v1.2.0",
++          "tag_name": "v1.2.0-fork.1",
+           "target_commitish": "main",
+           "name": "Agent Speed v1.2.0",
+           "draft": false,
+@@ -116,9 +116,9 @@ public class ReleaseFeedTests
+         var release = ReleaseFeed.Parse(LatestJson);
+ 
+         Assert.NotNull(release);
+-        Assert.Equal("v1.2.0", release.Tag);
+-        Assert.Equal(new SemanticVersion(1, 2, 0), release.Version);
+-        Assert.Equal("1.2.0", release.DisplayVersion);
++        Assert.Equal("v1.2.0-fork.1", release.Tag);
++        Assert.Equal(new SemanticVersion(1, 2, 0, "fork.1"), release.Version);
++        Assert.Equal("1.2.0-fork.1", release.DisplayVersion);
+         Assert.Equal("Agent Speed v1.2.0", release.Name);
+         Assert.StartsWith("## What's Changed\r\n* Faster gauge", release.Notes, StringComparison.Ordinal);
+         Assert.EndsWith("compare/v1.1.0...v1.2.0", release.Notes, StringComparison.Ordinal);
+@@ -173,6 +173,18 @@ public class ReleaseFeedTests
+         Assert.Null(Parse(json));
+     }
+ 
++    [Theory]
++    [InlineData("v1.6.1")]
++    [InlineData("v1.6.1-fork")]
++    [InlineData("v1.6.1-fork.x")]
++    [InlineData("v1.6.1-fork.1.rc")]
++    public void OnlyForkTagsAreOffered(string tag)
++    {
++        var json = Latest();
++        json["tag_name"] = tag;
++        Assert.Null(Parse(json));
++    }
++
+     [Theory]
+     [InlineData("nightly")]
+     [InlineData("v1.2")]
+@@ -202,8 +214,8 @@ public class ReleaseFeedTests
+     public void TagIsTrimmed()
+     {
+         var json = Latest();
+-        json["tag_name"] = "  v1.2.0 ";
+-        Assert.Equal("v1.2.0", Parse(json)!.Tag);
++        json["tag_name"] = "  v1.2.0-fork.1 ";
++        Assert.Equal("v1.2.0-fork.1", Parse(json)!.Tag);
+     }
+ 
+     [Theory]
+@@ -214,10 +226,10 @@ public class ReleaseFeedTests
+     {
+         var json = Latest();
+         json["name"] = name;
+-        Assert.Equal("v1.2.0", Parse(json)!.Name);
++        Assert.Equal("v1.2.0-fork.1", Parse(json)!.Name);
+ 
+         json.Remove("name");
+-        Assert.Equal("v1.2.0", Parse(json)!.Name);
++        Assert.Equal("v1.2.0-fork.1", Parse(json)!.Name);
+     }
+ 
+     [Fact]
+@@ -338,16 +350,17 @@ public class ReleaseFeedTests
+             Release("nightly"),
+             Release("v9.0.0", draft: true),
+             Release("v8.0.0", prerelease: true),
+-            Release("v1.1.0"),
+-            Release("v1.3.0", name: "first 1.3.0"),
+-            Release("1.3.0", name: "second 1.3.0"),
++            Release("v1.1.0-fork.1"),
++            Release("v1.3.0-fork.2", name: "first 1.3.0"),
++            Release("1.3.0-fork.2", name: "second 1.3.0"),
+             Release("v1.3.0-rc.1"),
+-            Release("v1.2.0"));
++            Release("v1.3.0"),
++            Release("v1.3.0-fork.1"));
+ 
+         var release = Parse(json);
+ 
+         Assert.NotNull(release);
+-        Assert.Equal("v1.3.0", release.Tag);
++        Assert.Equal("v1.3.0-fork.2", release.Tag);
+         Assert.Equal("first 1.3.0", release.Name);
+     }
+ 
+@@ -364,12 +377,12 @@ public class ReleaseFeedTests
+         var json = new JsonArray();
+         for (var i = 0; i < ReleaseFeed.MaxReleases; i++)
+         {
+-            json.Add(Release("v1.0.0"));
++            json.Add(Release("v1.0.0-fork.1"));
+         }
+ 
+-        json.Add(Release("v9.9.9"));
++        json.Add(Release("v9.9.9-fork.1"));
+ 
+-        Assert.Equal("v1.0.0", Parse(json)!.Tag);
++        Assert.Equal("v1.0.0-fork.1", Parse(json)!.Tag);
+     }
+ 
+     [Theory]
+@@ -421,17 +434,17 @@ public class ReleaseFeedTests
+     [Fact]
+     public void InvalidUtf8InIgnoredFieldsIsHarmless()
+     {
+-        byte[] json = [.. "{\"tag_name\": \"v1.2.0\", \"label\": \"x"u8, 0xC3, 0x28, .. "\"}"u8];
+-        Assert.Equal("v1.2.0", ReleaseFeed.Parse(json)!.Tag);
++        byte[] json = [.. "{\"tag_name\": \"v1.2.0-fork.1\", \"label\": \"x"u8, 0xC3, 0x28, .. "\"}"u8];
++        Assert.Equal("v1.2.0-fork.1", ReleaseFeed.Parse(json)!.Tag);
+     }
+ 
+     [Fact]
+     public void OversizeFeedThrows()
+     {
+-        const string head = "{\"tag_name\": \"v1.2.0\"}";
++        const string head = "{\"tag_name\": \"v1.2.0-fork.1\"}";
+         var atLimit = Encoding.UTF8.GetBytes(head + new string(' ', ReleaseFeed.MaxFeedBytes - head.Length));
+         Assert.Equal(ReleaseFeed.MaxFeedBytes, atLimit.Length);
+-        Assert.Equal("v1.2.0", ReleaseFeed.Parse(atLimit)!.Tag);
++        Assert.Equal("v1.2.0-fork.1", ReleaseFeed.Parse(atLimit)!.Tag);
+ 
+         var overLimit = Encoding.UTF8.GetBytes(head + new string(' ', ReleaseFeed.MaxFeedBytes - head.Length + 1));
+         AssertInvalid(() => ReleaseFeed.Parse(overLimit));
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
+new file mode 100644
+index 00000000..b80075a0
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
+@@ -0,0 +1,37 @@
++using AgentSpeed.Core;
++using AgentSpeed.Presentation.History;
++
++namespace AgentSpeed.Presentation.Tests;
++
++public sealed class RemoteHistoryCsvTests
++{
++    [Fact]
++    public void HistoryCsvAddsHostIdentityWithoutChangingLegacyExport()
++    {
++        var day = new DaySummary(new(2026, 10, 24), 1, 0, 0, 0, 10, 0, 10, 1000, 0, 1, null, [], []);
++        var host = Guid.NewGuid().ToString();
++        var local = HistoryCsv.Build([day], SourceKind.Pi);
++        var remote = HistoryCsv.Build([day], SourceKind.Pi, hostId: host);
++        var localLines = local.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
++        var remoteLines = remote.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
++
++        Assert.Equal("host_id," + localLines[0], remoteLines[0]);
++        Assert.Equal(host + "," + localLines[1], remoteLines[1]);
++        Assert.Contains(",pi,", remoteLines[1], StringComparison.Ordinal);
++    }
++
++    [Fact]
++    public void ModeCsvAddsHostIdentityWithoutChangingModeColumns()
++    {
++        var day = new DaySummary(new(2026, 10, 24), 1, 0, 0, 0, 10, 0, 10, 1000, 0, 1, null, [], [])
++        {
++            Modes = [new("model", SourceKind.Pi, ExecutionModeKind.Effort, "high", "recorded", null, 1, 10, 10, 1000)],
++        };
++        var host = Guid.NewGuid().ToString();
++        var localLines = ExecutionModeCsv.Build([day]).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
++        var remoteLines = ExecutionModeCsv.Build([day], host).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
++
++        Assert.Equal("host_id," + localLines[0], remoteLines[0]);
++        Assert.Equal(host + "," + localLines[1], remoteLines[1]);
++    }
++}
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs
+new file mode 100644
+index 00000000..010e28f6
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs
+@@ -0,0 +1,42 @@
++using System.Collections.Immutable;
++using AgentSpeed.Presentation.Settings;
++
++namespace AgentSpeed.Presentation.Tests;
++
++public sealed class RemoteHostSettingsTests
++{
++    [Theory]
++    [InlineData("server")]
++    [InlineData("alice@example.org")]
++    [InlineData("host-name_1:22")]
++    [InlineData("用户@主机")]
++    public void DestinationAcceptsSshNames(string destination)
++    {
++        Assert.True(new RemoteHost(Guid.NewGuid(), "Host", destination, true).ValidDestination);
++    }
++
++    [Theory]
++    [InlineData("")]
++    [InlineData("-oProxyCommand=x")]
++    [InlineData("host name")]
++    [InlineData("host;touch")]
++    [InlineData("host\nother")]
++    [InlineData("host$(command)")]
++    public void DestinationRejectsOptionsAndShellMetacharacters(string destination)
++    {
++        Assert.False(new RemoteHost(Guid.NewGuid(), "Host", destination, true).ValidDestination);
++    }
++
++    [Fact]
++    public void RemoteHostsRoundTripWithStableIdentityAndEnabledState()
++    {
++        var first = new RemoteHost(Guid.NewGuid(), "Work \"server\"", "alice@example.org", true);
++        var second = new RemoteHost(Guid.NewGuid(), "Offline", "backup", false);
++        var settings = AppSettings.Default with { RemoteHosts = ImmutableArray.Create(first, second) };
++
++        var restored = SettingsSerializer.Deserialize(SettingsSerializer.Serialize(settings));
++
++        Assert.Equal(new[] { first, second }, restored.RemoteHosts.ToArray());
++        Assert.Empty(AppSettings.Default.RemoteHosts);
++    }
++}
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs
+index 7710ce2d..ad60f201 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs
+@@ -327,6 +327,36 @@ public class UpdatePackageTests
+         Assert.Throws<ArgumentNullException>(() => UpdatePackage.ValidateEntries(null!));
+     }
+ 
++    [Fact]
++    public void ExtractsCollectorAlongsideExecutable()
++    {
++        using var temp = new TempDirectory();
++        var collector = "collector payload"u8.ToArray();
++        var zip = CreateZip(temp, ("AgentSpeed.exe", "MZ"u8.ToArray()),
++            ("collectors/linux-x86_64/agent-speed-collector", collector));
++        var output = CreateOutput(temp);
++
++        UpdatePackage.ExtractExecutable(zip, output);
++
++        Assert.Equal(collector, File.ReadAllBytes(Path.Combine(output, "collectors", "linux-x86_64", "agent-speed-collector")));
++    }
++
++    [Fact]
++    public void RejectsDuplicateOrEmptyCollectorBeforeExtracting()
++    {
++        using var temp = new TempDirectory();
++        var output = CreateOutput(temp);
++        var zip = CreateZip(temp, ("AgentSpeed.exe", "MZ"u8.ToArray()),
++            ("collectors/linux-x86_64/agent-speed-collector", "one"u8.ToArray()),
++            ("COLLECTORS\\LINUX-X86_64\\AGENT-SPEED-COLLECTOR", "two"u8.ToArray()));
++        AssertInvalid(() => UpdatePackage.ExtractExecutable(zip, output));
++        File.Delete(zip);
++        zip = CreateZip(temp, ("AgentSpeed.exe", "MZ"u8.ToArray()),
++            ("collectors/linux-x86_64/agent-speed-collector", Array.Empty<byte>()));
++        AssertInvalid(() => UpdatePackage.ExtractExecutable(zip, output));
++        Assert.Empty(Directory.GetFileSystemEntries(output));
++    }
++
+     [Fact]
+     public void ExtractsOnlyTheExecutable()
+     {
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs
+index 24d6fe7a..ed19dc3b 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs
+@@ -117,11 +117,11 @@ public class UpdateScheduleTests
+     }
+ 
+     [Theory]
+-    [InlineData("1.2.0", "v1.2.0")]
+-    [InlineData("1.3.0", "v1.2.0")]
+-    [InlineData("2.0.0", "v1.9.9")]
+-    [InlineData("1.2.0", "v1.2.0-rc.1")]
+-    [InlineData("1.2.0", "1.2.0+build.7")]
++    [InlineData("1.2.0-fork.1", "v1.2.0-fork.1")]
++    [InlineData("1.3.0-fork.1", "v1.2.0-fork.1")]
++    [InlineData("2.0.0-fork.1", "v1.9.9-fork.1")]
++    [InlineData("1.2.0-fork.2", "v1.2.0-fork.1")]
++    [InlineData("1.2.0-fork.1", "1.2.0-fork.1+build.7")]
+     public void ReleaseThatIsNotNewerIsUpToDate(string current, string latestTag)
+     {
+         var release = TestReleases.Release(latestTag);
+@@ -135,15 +135,15 @@ public class UpdateScheduleTests
+     public void MissingDraftOrPreReleaseIsUpToDate(bool manual)
+     {
+         Assert.Equal(UpdateOffer.UpToDate, UpdateSchedule.Evaluate(Current, null, null, manual));
+-        Assert.Equal(UpdateOffer.UpToDate, UpdateSchedule.Evaluate(Current, TestReleases.Release("v9.0.0", isDraft: true), null, manual));
+-        Assert.Equal(UpdateOffer.UpToDate, UpdateSchedule.Evaluate(Current, TestReleases.Release("v9.0.0", isPreRelease: true), null, manual));
++        Assert.Equal(UpdateOffer.UpToDate, UpdateSchedule.Evaluate(Current, TestReleases.Release("v9.0.0-fork.1", isDraft: true), null, manual));
++        Assert.Equal(UpdateOffer.UpToDate, UpdateSchedule.Evaluate(Current, TestReleases.Release("v9.0.0-fork.1", isPreRelease: true), null, manual));
+     }
+ 
+     [Theory]
+-    [InlineData("1.1.0", "v1.2.0")]
+-    [InlineData("1.2.0-beta.1", "v1.2.0")]
+-    [InlineData("0.0.0", "v0.0.1")]
+-    [InlineData("1.1.9", "1.2.0")]
++    [InlineData("1.1.0", "v1.2.0-fork.1")]
++    [InlineData("1.2.0-fork.1", "v1.2.0-fork.2")]
++    [InlineData("0.0.0", "v0.0.1-fork.1")]
++    [InlineData("1.1.9", "1.2.0-fork.1")]
+     public void NewerReleaseIsAvailable(string current, string latestTag)
+     {
+         var release = TestReleases.Release(latestTag);
+@@ -151,15 +151,23 @@ public class UpdateScheduleTests
+         Assert.Equal(UpdateOffer.Available, UpdateSchedule.Evaluate(TestReleases.Version(current), release, null, manual: true));
+     }
+ 
++    [Fact]
++    public void UpstreamStableDoesNotReplaceFork()
++    {
++        var current = TestReleases.Version("1.6.1-fork.1");
++        Assert.Equal(UpdateOffer.UpToDate, UpdateSchedule.Evaluate(current, TestReleases.Release("v1.6.1"), null, true));
++        Assert.Equal(UpdateOffer.Available, UpdateSchedule.Evaluate(current, TestReleases.Release("v1.6.1-fork.2"), null, true));
++    }
++
+     [Theory]
+-    [InlineData("v1.2.0")]
+-    [InlineData("1.2.0")]
+-    [InlineData("V1.2.0")]
+-    [InlineData(" v1.2.0 ")]
+-    [InlineData("v1.2.0+build.3")]
++    [InlineData("v1.2.0-fork.1")]
++    [InlineData("1.2.0-fork.1")]
++    [InlineData("V1.2.0-fork.1")]
++    [InlineData(" v1.2.0-fork.1 ")]
++    [InlineData("v1.2.0-fork.1+build.3")]
+     public void SkippedVersionBlocksOnlyAutomaticChecks(string skipped)
+     {
+-        var release = TestReleases.Release("v1.2.0");
++        var release = TestReleases.Release("v1.2.0-fork.1");
+ 
+         Assert.Equal(UpdateOffer.Skipped, UpdateSchedule.Evaluate(Current, release, skipped, manual: false));
+         Assert.Equal(UpdateOffer.Available, UpdateSchedule.Evaluate(Current, release, skipped, manual: true));
+@@ -176,7 +184,7 @@ public class UpdateScheduleTests
+     [InlineData(null)]
+     public void OtherSkippedValuesDoNotBlock(string? skipped)
+     {
+-        var release = TestReleases.Release("v1.2.0");
++        var release = TestReleases.Release("v1.2.0-fork.1");
+ 
+         Assert.Equal(UpdateOffer.Available, UpdateSchedule.Evaluate(Current, release, skipped, manual: false));
+         Assert.False(UpdateSchedule.IsSkipped(release, skipped));
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/UpdateSourceTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/UpdateSourceTests.cs
+index b071d18c..ac6dafaa 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/UpdateSourceTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/UpdateSourceTests.cs
+@@ -19,7 +19,7 @@ public class UpdateSourceTests
+     {
+         var source = UpdateSource.GitHub;
+ 
+-        Assert.Equal("https://api.github.com/repos/zoefix/agent-speed/releases/latest", source.FeedUrl.AbsoluteUri);
++        Assert.Equal("https://api.github.com/repos/yooztech/agent-speed/releases?per_page=100", source.FeedUrl.AbsoluteUri);
+         Assert.Equal(UpdateSource.GitHubFeedUrl, source.FeedUrl.OriginalString);
+         Assert.False(source.IsOverride);
+         Assert.True(UpdateSource.IsAllowedGitHubUrl(source.FeedUrl));
+-- 
+2.41.0
+

@@ -1,0 +1,914 @@
+From 8b6b83a03ecef62bd009bbcd7c258e4114bf5b92 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 18:36:25 +0800
+Subject: [PATCH 12/14] Add per-user Windows installer
+
+---
+ README.ja.md                                  |  14 +-
+ README.md                                     |  16 ++-
+ README.zh-CN.md                               |  14 +-
+ README.zh-TW.md                               |  14 +-
+ install.ps1                                   | 105 +++++++++-----
+ install.sh                                    |   4 +-
+ windows/scripts/installer.iss                 | 132 ++++++++++++++++++
+ windows/scripts/publish.ps1                   |  28 +++-
+ windows/scripts/publish.sh                    |  40 +++++-
+ windows/scripts/test-installer.ps1            |  70 ++++++++++
+ .../src/AgentSpeed/Updates/UninstallEntry.cs  |  47 +++++--
+ .../UninstallEntryTests.cs                    |  80 +++++++++++
+ 12 files changed, 484 insertions(+), 80 deletions(-)
+ create mode 100644 windows/scripts/installer.iss
+ create mode 100644 windows/scripts/test-installer.ps1
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/UninstallEntryTests.cs
+
+diff --git a/README.ja.md b/README.ja.md
+index 5f0f311b..b5d2a762 100644
+--- a/README.ja.md
++++ b/README.ja.md
+@@ -17,31 +17,33 @@
+ **macOS 14 以降**（Apple Silicon・Intel）**と Linux**（x86_64・arm64）——ターミナルに貼り付け：
+ 
+ ```sh
+-curl -fsSL https://raw.githubusercontent.com/zoefix/agent-speed/main/install.sh | sh
++curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.sh | sh
+ ```
+ 
+ **Windows 10 / 11**（x64・ARM64）——PowerShell に貼り付け：
+ 
+ ```powershell
+-irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1 | iex
++irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1 | iex
+ ```
+ 
+ これだけです。インストーラーが GitHub から最新版をダウンロードし、SHA-256 チェックサムを検証してインストール・起動します。同じコマンドを再実行すると更新できます。
+ 
+-Linux ではスクリプトが AppImage を `~/.local/share/agent-speed` にインストールし（以後はアプリ内から更新できます）、アプリケーションメニューに追加します。x86_64 は glibc 2.35 以降（Ubuntu 22.04、Debian 12 以降）、arm64 は 2.39 以降（Ubuntu 24.04、Debian 13 以降）が必要です。トレイアイコンには StatusNotifierItem が必要です。KDE Plasma は標準対応、GNOME では AppIndicator 拡張を有効にしてください（Ubuntu は標準搭載）。パッケージで入れたい場合は、[最新リリース](https://github.com/zoefix/agent-speed/releases/latest)の `.deb`（`sudo apt install ./agent-speed_*_amd64.deb`）を使い、`SHA256SUMS-Linux-<arch>.txt` で確認してください。
++Windows では、[最新リリース](https://github.com/yooztech/agent-speed/releases/latest)から `AgentSpeed-Windows-x64-Setup.exe` または `AgentSpeed-Windows-arm64-Setup.exe` をダウンロードして実行することもできます。インストーラーは未署名のため、Microsoft Defender SmartScreen の警告が表示される場合があります。同じページで Windows の ZIP 版も提供しています。
++
++Linux ではスクリプトが AppImage を `~/.local/share/agent-speed` にインストールし（以後はアプリ内から更新できます）、アプリケーションメニューに追加します。x86_64 は glibc 2.35 以降（Ubuntu 22.04、Debian 12 以降）、arm64 は 2.39 以降（Ubuntu 24.04、Debian 13 以降）が必要です。トレイアイコンには StatusNotifierItem が必要です。KDE Plasma は標準対応、GNOME では AppIndicator 拡張を有効にしてください（Ubuntu は標準搭載）。パッケージで入れたい場合は、[最新リリース](https://github.com/yooztech/agent-speed/releases/latest)の `.deb`（`sudo apt install ./agent-speed_*_amd64.deb`）を使い、`SHA256SUMS-Linux-<arch>.txt` で確認してください。
+ 
+ <details>
+ <summary>アンインストール</summary>
+ 
+ ```sh
+-curl -fsSL https://raw.githubusercontent.com/zoefix/agent-speed/main/install.sh | sh -s -- --uninstall
++curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.sh | sh -s -- --uninstall
+ ```
+ 
+ ```powershell
+-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1))) -Uninstall
++& ([scriptblock]::Create((irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1))) -Uninstall
+ ```
+ 
+-`--purge` / `-Purge` を付けると設定も削除します。Windows では「設定 → アプリ」からも削除できます。
++`--purge` / `-Purge` を付けると設定も削除します。Windows では「設定 → アプリ」からも削除できます。Windows セットアップのアンインストールでは設定と SSH 鍵は保持されます。
+ </details>
+ 
+ ## 特長
+diff --git a/README.md b/README.md
+index 021305e2..cf9664f4 100644
+--- a/README.md
++++ b/README.md
+@@ -8,7 +8,7 @@
+ 
+ [English](README.md) · [繁體中文](README.zh-TW.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
+ 
+-[![Release](https://img.shields.io/github/v/release/zoefix/agent-speed?style=flat-square)](https://github.com/zoefix/agent-speed/releases/latest)
++[![Release](https://img.shields.io/github/v/release/yooztech/agent-speed?style=flat-square)](https://github.com/yooztech/agent-speed/releases/latest)
+ ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?style=flat-square&logo=apple)
+ ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows)
+ [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+@@ -22,31 +22,33 @@
+ **macOS 14 or later** (Apple Silicon and Intel) **and Linux** (x86_64 and arm64) — paste into Terminal:
+ 
+ ```sh
+-curl -fsSL https://raw.githubusercontent.com/zoefix/agent-speed/main/install.sh | sh
++curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.sh | sh
+ ```
+ 
+ **Windows 10 / 11** (x64 and ARM64) — paste into PowerShell:
+ 
+ ```powershell
+-irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1 | iex
++irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1 | iex
+ ```
+ 
+ That's it. The installer downloads the latest release from GitHub, verifies its SHA-256 checksum, installs it and starts it. Run the same command again to update.
+ 
+-On Linux the script installs the AppImage into `~/.local/share/agent-speed`, where it updates itself from inside the app, and adds Agent Speed to the application menu. It needs glibc 2.35 or later on x86_64 (Ubuntu 22.04, Debian 12 and newer) and 2.39 on arm64 (Ubuntu 24.04, Debian 13 and newer). The tray icon needs a StatusNotifierItem host: KDE Plasma has one; on GNOME, enable the AppIndicator extension (built into Ubuntu). Prefer a package? The [latest release](https://github.com/zoefix/agent-speed/releases/latest) also has a `.deb` (`sudo apt install ./agent-speed_*_amd64.deb`), checked with `SHA256SUMS-Linux-<arch>.txt`.
++Alternatively, on Windows download and run `AgentSpeed-Windows-x64-Setup.exe` or `AgentSpeed-Windows-arm64-Setup.exe` from the [latest release](https://github.com/yooztech/agent-speed/releases/latest). The installer is unsigned, so Microsoft Defender SmartScreen may warn before you can run it. Windows ZIP packages remain available on the same release page.
++
++On Linux the script installs the AppImage into `~/.local/share/agent-speed`, where it updates itself from inside the app, and adds Agent Speed to the application menu. It needs glibc 2.35 or later on x86_64 (Ubuntu 22.04, Debian 12 and newer) and 2.39 on arm64 (Ubuntu 24.04, Debian 13 and newer). The tray icon needs a StatusNotifierItem host: KDE Plasma has one; on GNOME, enable the AppIndicator extension (built into Ubuntu). Prefer a package? The [latest release](https://github.com/yooztech/agent-speed/releases/latest) also has a `.deb` (`sudo apt install ./agent-speed_*_amd64.deb`), checked with `SHA256SUMS-Linux-<arch>.txt`.
+ 
+ <details>
+ <summary>Uninstall</summary>
+ 
+ ```sh
+-curl -fsSL https://raw.githubusercontent.com/zoefix/agent-speed/main/install.sh | sh -s -- --uninstall
++curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.sh | sh -s -- --uninstall
+ ```
+ 
+ ```powershell
+-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1))) -Uninstall
++& ([scriptblock]::Create((irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1))) -Uninstall
+ ```
+ 
+-Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uninstall from *Settings → Apps*.
++Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uninstall from *Settings → Apps*; the Windows setup uninstaller preserves settings and SSH keys.
+ </details>
+ 
+ ## What you get
+diff --git a/README.zh-CN.md b/README.zh-CN.md
+index ca9b919d..430f9dac 100644
+--- a/README.zh-CN.md
++++ b/README.zh-CN.md
+@@ -17,31 +17,33 @@
+ **macOS 14 及以上**（Apple Silicon 与 Intel）**与 Linux**（x86_64 与 arm64）——粘贴到终端：
+ 
+ ```sh
+-curl -fsSL https://raw.githubusercontent.com/zoefix/agent-speed/main/install.sh | sh
++curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.sh | sh
+ ```
+ 
+ **Windows 10 / 11**（x64 与 ARM64）——粘贴到 PowerShell：
+ 
+ ```powershell
+-irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1 | iex
++irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1 | iex
+ ```
+ 
+ 就这样。安装程序会从 GitHub 下载最新版本、验证 SHA-256 校验码、安装并启动。之后重新运行同一行命令即可更新。
+ 
+-在 Linux 上，脚本会把 AppImage 装到 `~/.local/share/agent-speed`（之后可在 App 内更新），并加入应用程序菜单。x86_64 需要 glibc 2.35 以上（Ubuntu 22.04、Debian 12 起），arm64 需要 2.39 以上（Ubuntu 24.04、Debian 13 起）。托盘图标需要 StatusNotifierItem：KDE Plasma 已内置；GNOME 请启用 AppIndicator 扩展（Ubuntu 已内置）。偏好软件包安装的话，[最新版本](https://github.com/zoefix/agent-speed/releases/latest)也有 `.deb`（`sudo apt install ./agent-speed_*_amd64.deb`），可用 `SHA256SUMS-Linux-<arch>.txt` 核对。
++Windows 用户也可以从[最新版本](https://github.com/yooztech/agent-speed/releases/latest)下载并运行 `AgentSpeed-Windows-x64-Setup.exe` 或 `AgentSpeed-Windows-arm64-Setup.exe`。安装程序未签名，Microsoft Defender SmartScreen 可能会发出警告。同一页面也提供 Windows ZIP 压缩包。
++
++在 Linux 上，脚本会把 AppImage 装到 `~/.local/share/agent-speed`（之后可在 App 内更新），并加入应用程序菜单。x86_64 需要 glibc 2.35 以上（Ubuntu 22.04、Debian 12 起），arm64 需要 2.39 以上（Ubuntu 24.04、Debian 13 起）。托盘图标需要 StatusNotifierItem：KDE Plasma 已内置；GNOME 请启用 AppIndicator 扩展（Ubuntu 已内置）。偏好软件包安装的话，[最新版本](https://github.com/yooztech/agent-speed/releases/latest)也有 `.deb`（`sudo apt install ./agent-speed_*_amd64.deb`），可用 `SHA256SUMS-Linux-<arch>.txt` 核对。
+ 
+ <details>
+ <summary>卸载</summary>
+ 
+ ```sh
+-curl -fsSL https://raw.githubusercontent.com/zoefix/agent-speed/main/install.sh | sh -s -- --uninstall
++curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.sh | sh -s -- --uninstall
+ ```
+ 
+ ```powershell
+-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1))) -Uninstall
++& ([scriptblock]::Create((irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1))) -Uninstall
+ ```
+ 
+-加上 `--purge` / `-Purge` 会同时删除设置。Windows 也可以在「设置 → 应用」中卸载。
++加上 `--purge` / `-Purge` 会同时删除设置。Windows 也可以在「设置 → 应用」中卸载；Windows 安装程序的卸载会保留设置和 SSH 密钥。
+ </details>
+ 
+ ## 功能
+diff --git a/README.zh-TW.md b/README.zh-TW.md
+index b9eaf604..d6113bd8 100644
+--- a/README.zh-TW.md
++++ b/README.zh-TW.md
+@@ -17,31 +17,33 @@
+ **macOS 14 以上**（Apple Silicon 與 Intel）**與 Linux**（x86_64 與 arm64）——貼到終端機：
+ 
+ ```sh
+-curl -fsSL https://raw.githubusercontent.com/zoefix/agent-speed/main/install.sh | sh
++curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.sh | sh
+ ```
+ 
+ **Windows 10 / 11**（x64 與 ARM64）——貼到 PowerShell：
+ 
+ ```powershell
+-irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1 | iex
++irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1 | iex
+ ```
+ 
+ 就這樣。安裝程式會從 GitHub 下載最新版本、驗證 SHA-256 校驗碼、安裝並啟動。之後重新執行同一行指令即可更新。
+ 
+-在 Linux 上，腳本會把 AppImage 裝到 `~/.local/share/agent-speed`（之後可在 App 內更新），並加進應用程式選單。x86_64 需要 glibc 2.35 以上（Ubuntu 22.04、Debian 12 起），arm64 需要 2.39 以上（Ubuntu 24.04、Debian 13 起）。托盤圖示需要 StatusNotifierItem：KDE Plasma 已內建；GNOME 請開啟 AppIndicator 擴充（Ubuntu 已內建）。偏好套件安裝的話，[最新版本](https://github.com/zoefix/agent-speed/releases/latest)也有 `.deb`（`sudo apt install ./agent-speed_*_amd64.deb`），可用 `SHA256SUMS-Linux-<arch>.txt` 核對。
++Windows 使用者也可以從[最新版本](https://github.com/yooztech/agent-speed/releases/latest)下載並執行 `AgentSpeed-Windows-x64-Setup.exe` 或 `AgentSpeed-Windows-arm64-Setup.exe`。安裝程式未簽署，Microsoft Defender SmartScreen 可能會顯示警告。同一頁面也提供 Windows ZIP 壓縮檔。
++
++在 Linux 上，腳本會把 AppImage 裝到 `~/.local/share/agent-speed`（之後可在 App 內更新），並加進應用程式選單。x86_64 需要 glibc 2.35 以上（Ubuntu 22.04、Debian 12 起），arm64 需要 2.39 以上（Ubuntu 24.04、Debian 13 起）。托盤圖示需要 StatusNotifierItem：KDE Plasma 已內建；GNOME 請開啟 AppIndicator 擴充（Ubuntu 已內建）。偏好套件安裝的話，[最新版本](https://github.com/yooztech/agent-speed/releases/latest)也有 `.deb`（`sudo apt install ./agent-speed_*_amd64.deb`），可用 `SHA256SUMS-Linux-<arch>.txt` 核對。
+ 
+ <details>
+ <summary>解除安裝</summary>
+ 
+ ```sh
+-curl -fsSL https://raw.githubusercontent.com/zoefix/agent-speed/main/install.sh | sh -s -- --uninstall
++curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.sh | sh -s -- --uninstall
+ ```
+ 
+ ```powershell
+-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1))) -Uninstall
++& ([scriptblock]::Create((irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1))) -Uninstall
+ ```
+ 
+-加上 `--purge` / `-Purge` 會一併刪除設定。Windows 也可以從「設定 → 應用程式」移除。
++加上 `--purge` / `-Purge` 會一併刪除設定。Windows 也可以從「設定 → 應用程式」移除；Windows 安裝程式的解除安裝會保留設定與 SSH 金鑰。
+ </details>
+ 
+ ## 功能
+diff --git a/install.ps1 b/install.ps1
+index 491a2b59..ec79cc78 100644
+--- a/install.ps1
++++ b/install.ps1
+@@ -1,11 +1,11 @@
+ <#
+ Agent Speed installer for Windows.
+ 
+-    irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1 | iex
++    irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1 | iex
+ 
+ With options:
+ 
+-    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/zoefix/agent-speed/main/install.ps1))) -Uninstall
++    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/yooztech/agent-speed/main/install.ps1))) -Uninstall
+ 
+ Options: -Version vX.Y.Z, -NoLaunch, -NoAutostart, -TrafficHelper, -Uninstall, -Purge
+ 
+@@ -30,16 +30,38 @@ param(
+     $ErrorActionPreference = 'Stop'
+     $ProgressPreference = 'SilentlyContinue'
+ 
+-    $Repo = 'zoefix/agent-speed'
++    $Repo = 'yooztech/agent-speed'
+     $AppName = 'Agent Speed'
+     $ExeName = 'AgentSpeed.exe'
+     $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\AgentSpeed'
+     $StartMenuLink = Join-Path ([Environment]::GetFolderPath('Programs')) "$AppName.lnk"
+     $UninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSpeed'
++    $InnoUninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B891159D-356B-4CCB-BB2F-69C3445B30E8}_is1'
+     $RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+     $SettingsDir = Join-Path $env:APPDATA 'AgentSpeed'
+     $LogsDir = Join-Path $env:LOCALAPPDATA 'AgentSpeed'
+ 
++    # Inno owns both its installation directory and uninstall registration, including custom /DIR installs.
++    $innoUninstaller = $null
++    if (Test-Path -LiteralPath $InnoUninstallKey) {
++        $inno = Get-Item -LiteralPath $InnoUninstallKey
++        $location = [string]$inno.GetValue('InstallLocation', '')
++        $command = [string]$inno.GetValue('UninstallString', '')
++        if (-not [IO.Path]::IsPathRooted($location) -or $command -notmatch '^"([^"]+)"\s*$') {
++            throw 'The Agent Speed Inno uninstall registration is invalid; repair or uninstall it using its installer.'
++        }
++        $registeredUninstaller = $Matches[1]
++        $location = [IO.Path]::GetFullPath($location).TrimEnd('\')
++        $registeredUninstaller = [IO.Path]::GetFullPath($registeredUninstaller)
++        if ([IO.Path]::GetDirectoryName($registeredUninstaller) -ine $location -or
++            [IO.Path]::GetFileName($registeredUninstaller) -notmatch '^unins\d+\.exe$' -or
++            -not (Test-Path -LiteralPath $registeredUninstaller -PathType Leaf)) {
++            throw 'The Agent Speed Inno uninstaller is missing or does not match its installation directory.'
++        }
++        $InstallDir = $location
++        $innoUninstaller = $registeredUninstaller
++    }
++
+     function Get-Text {
+         $culture = [System.Globalization.CultureInfo]::CurrentUICulture.Name
+         $t = @{
+@@ -405,14 +427,22 @@ function Remove-AgentSpeedTrafficHelper([hashtable]$Text, [string]$AppExe) {
+     function Remove-AgentSpeed {
+         Write-Title
+         Write-Step $T.Uninstalling
+-        Stop-AgentSpeed
+-        Remove-AgentSpeedTrafficHelper $T (Join-Path $InstallDir $ExeName)
+-        $found = Test-Path $InstallDir
+-        Remove-ItemProperty -Path $RunKey -Name 'AgentSpeed' -ErrorAction SilentlyContinue
+-        Remove-Item -Path $StartMenuLink -Force -ErrorAction SilentlyContinue
+-        Remove-Item -Path $UninstallKey -Recurse -Force -ErrorAction SilentlyContinue
+-        if ($found) {
+-            Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
++        if ($innoUninstaller) {
++            $process = Start-Process -FilePath $innoUninstaller -ArgumentList '/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -WorkingDirectory $env:TEMP -Wait -PassThru
++            if ($process.ExitCode -ne 0) { throw "Inno uninstall failed (exit code $($process.ExitCode))." }
++            $found = $true
++            Remove-Item -Path $UninstallKey -Recurse -Force -ErrorAction SilentlyContinue
++        }
++        else {
++            Stop-AgentSpeed
++            Remove-AgentSpeedTrafficHelper $T (Join-Path $InstallDir $ExeName)
++            $found = Test-Path $InstallDir
++            Remove-ItemProperty -Path $RunKey -Name 'AgentSpeed' -ErrorAction SilentlyContinue
++            Remove-Item -Path $StartMenuLink -Force -ErrorAction SilentlyContinue
++            Remove-Item -Path $UninstallKey -Recurse -Force -ErrorAction SilentlyContinue
++            if ($found) {
++                Remove-Item -Path $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
++            }
+         }
+         if ($Purge) {
+             Remove-Item -Path $SettingsDir -Recurse -Force -ErrorAction SilentlyContinue
+@@ -480,11 +510,12 @@ function Remove-AgentSpeedTrafficHelper([hashtable]$Text, [string]$AppExe) {
+             $target = Join-Path $InstallDir $ExeName
+             Get-ChildItem -Path $InstallDir -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
+ 
+-            $uninstaller = Join-Path $InstallDir 'uninstall.ps1'
+-            $helperText = @(foreach ($name in 'HelperRemoving', 'HelperRemoveApprove', 'HelperRemoved', 'HelperRemoveCancelled', 'HelperRemoveFailed') {
+-                    "$name = $(ConvertTo-Literal $T[$name])"
+-                }) -join '; '
+-            $uninstallBody = @"
++            if (-not $innoUninstaller) {
++                $uninstaller = Join-Path $InstallDir 'uninstall.ps1'
++                $helperText = @(foreach ($name in 'HelperRemoving', 'HelperRemoveApprove', 'HelperRemoved', 'HelperRemoveCancelled', 'HelperRemoveFailed') {
++                        "$name = $(ConvertTo-Literal $T[$name])"
++                    }) -join '; '
++                $uninstallBody = @"
+ `$ErrorActionPreference = 'SilentlyContinue'
+ Get-Process -Name 'AgentSpeed' | Stop-Process -Force
+ Start-Sleep -Milliseconds 500
+@@ -496,9 +527,10 @@ Remove-Item -Path '$UninstallKey' -Recurse -Force
+ Set-Location `$env:TEMP
+ Remove-Item -Path '$InstallDir' -Recurse -Force
+ "@
+-            # With a BOM even under PowerShell 7: the uninstall entry runs Windows PowerShell 5.1, which reads BOM-less
+-            # files in the ANSI code page and would garble the localized texts.
+-            [IO.File]::WriteAllText($uninstaller, $uninstallBody, (New-Object System.Text.UTF8Encoding $true))
++                # With a BOM even under PowerShell 7: the uninstall entry runs Windows PowerShell 5.1, which reads BOM-less
++                # files in the ANSI code page and would garble the localized texts.
++                [IO.File]::WriteAllText($uninstaller, $uninstallBody, (New-Object System.Text.UTF8Encoding $true))
++            }
+ 
+             $shell = New-Object -ComObject WScript.Shell
+             $link = $shell.CreateShortcut($StartMenuLink)
+@@ -511,21 +543,28 @@ Remove-Item -Path '$InstallDir' -Recurse -Force
+             $fileVersion = (Get-Item $target).VersionInfo.ProductVersion
+             if (-not $fileVersion) { $fileVersion = '1.0.0' }
+             $fileVersion = ($fileVersion -split '\+')[0]
+-            New-Item -Path $UninstallKey -Force | Out-Null
+-            $props = @{
+-                DisplayName = $AppName
+-                DisplayVersion = $fileVersion
+-                Publisher = 'zoefix'
+-                DisplayIcon = "$target,0"
+-                InstallLocation = $InstallDir
+-                URLInfoAbout = "https://github.com/$Repo"
+-                UninstallString = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$uninstaller`""
+-                NoModify = 1
+-                NoRepair = 1
++            if ($innoUninstaller) {
++                New-ItemProperty -Path $InnoUninstallKey -Name DisplayVersion -Value $fileVersion -PropertyType String -Force | Out-Null
++                Remove-Item -Path $UninstallKey -Recurse -Force -ErrorAction SilentlyContinue
++                Remove-Item -LiteralPath (Join-Path $InstallDir 'uninstall.ps1') -Force -ErrorAction SilentlyContinue
+             }
+-            foreach ($key in $props.Keys) {
+-                $type = if ($props[$key] -is [int]) { 'DWord' } else { 'String' }
+-                New-ItemProperty -Path $UninstallKey -Name $key -Value $props[$key] -PropertyType $type -Force | Out-Null
++            else {
++                New-Item -Path $UninstallKey -Force | Out-Null
++                $props = @{
++                    DisplayName = $AppName
++                    DisplayVersion = $fileVersion
++                    Publisher = 'zoefix'
++                    DisplayIcon = "$target,0"
++                    InstallLocation = $InstallDir
++                    URLInfoAbout = "https://github.com/$Repo"
++                    UninstallString = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$uninstaller`""
++                    NoModify = 1
++                    NoRepair = 1
++                }
++                foreach ($key in $props.Keys) {
++                    $type = if ($props[$key] -is [int]) { 'DWord' } else { 'String' }
++                    New-ItemProperty -Path $UninstallKey -Name $key -Value $props[$key] -PropertyType $type -Force | Out-Null
++                }
+             }
+ 
+             if (-not $NoAutostart) {
+diff --git a/install.sh b/install.sh
+index 12708283..3a87ec34 100644
+--- a/install.sh
++++ b/install.sh
+@@ -1,7 +1,7 @@
+ #!/bin/sh
+ # Agent Speed installer for macOS and Linux.
+ #
+-#   curl -fsSL https://raw.githubusercontent.com/zoefix/agent-speed/main/install.sh | sh
++#   curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.sh | sh
+ #
+ # Options (pass after `sh -s --`):
+ #   --version vX.Y.Z   install a specific release instead of the latest
+@@ -16,7 +16,7 @@
+ 
+ set -eu
+ 
+-REPO="zoefix/agent-speed"
++REPO="yooztech/agent-speed"
+ APP_NAME="Agent Speed"
+ BUNDLE_ID="io.github.zoefix.agentspeed"
+ ASSET="AgentSpeed-macOS.zip"
+diff --git a/windows/scripts/installer.iss b/windows/scripts/installer.iss
+new file mode 100644
+index 00000000..055c2fe8
+--- /dev/null
++++ b/windows/scripts/installer.iss
+@@ -0,0 +1,132 @@
++#ifndef AppVersion
++  #error AppVersion is required
++#endif
++#ifndef PayloadDir
++  #error PayloadDir is required
++#endif
++#ifndef OutputDir
++  #error OutputDir is required
++#endif
++#ifndef Arch
++  #error Arch is required
++#endif
++
++[Setup]
++AppId={{B891159D-356B-4CCB-BB2F-69C3445B30E8}
++AppName=Agent Speed
++AppVersion={#AppVersion}
++AppPublisher=zoefix
++AppPublisherURL=https://github.com/zoefix/agent-speed
++DefaultDirName={localappdata}\Programs\AgentSpeed
++DisableDirPage=yes
++PrivilegesRequired=lowest
++#if Arch == "arm64"
++ArchitecturesAllowed=arm64
++ArchitecturesInstallIn64BitMode=arm64
++#else
++ArchitecturesAllowed=x64compatible and not arm64
++ArchitecturesInstallIn64BitMode=x64compatible
++#endif
++OutputDir={#OutputDir}
++OutputBaseFilename=AgentSpeed-Windows-{#Arch}-Setup
++Compression=lzma2
++SolidCompression=yes
++UninstallDisplayIcon={app}\AgentSpeed.exe
++CloseApplications=yes
++CloseApplicationsFilter=AgentSpeed.exe
++RestartApplications=no
++UsePreviousTasks=no
++
++[Tasks]
++Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
++Name: startup; Description: "Start Agent Speed when I sign in"; Flags: unchecked
++
++[Files]
++Source: "{#PayloadDir}\AgentSpeed.exe"; DestDir: "{app}"; Flags: ignoreversion
++Source: "{#PayloadDir}\collectors\linux-x86_64\agent-speed-collector"; DestDir: "{app}\collectors\linux-x86_64"; Flags: ignoreversion
++
++[Icons]
++Name: "{userprograms}\Agent Speed"; Filename: "{app}\AgentSpeed.exe"; WorkingDir: "{app}"
++Name: "{userdesktop}\Agent Speed"; Filename: "{app}\AgentSpeed.exe"; WorkingDir: "{app}"; Tasks: desktopicon
++
++[Code]
++const
++  RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
++
++procedure InitializeWizard;
++var
++  RunValue: String;
++begin
++  if (RegQueryStringValue(HKCU, RunKey, 'AgentSpeed', RunValue) and (Trim(RunValue) <> '')) or
++     FileExists(ExpandConstant('{userstartup}\Agent Speed.lnk')) then
++    WizardSelectTasks('startup');
++end;
++
++procedure CurStepChanged(CurStep: TSetupStep);
++var
++  Location: String;
++begin
++  if CurStep = ssPostInstall then
++  begin
++    DeleteFile(ExpandConstant('{userstartup}\Agent Speed.lnk'));
++    if WizardIsTaskSelected('startup') then
++      RegWriteStringValue(HKCU, RunKey, 'AgentSpeed', '"' + ExpandConstant('{app}\AgentSpeed.exe') + '"')
++    else
++      RegDeleteValue(HKCU, RunKey, 'AgentSpeed');
++  end;
++  if (CurStep = ssPostInstall) and
++     RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSpeed', 'InstallLocation', Location) and
++     (CompareText(RemoveBackslashUnlessRoot(Location), RemoveBackslashUnlessRoot(ExpandConstant('{app}'))) = 0) then
++  begin
++    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSpeed');
++    DeleteFile(ExpandConstant('{app}\uninstall.ps1'));
++  end;
++end;
++
++procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
++var
++  Script, Params: String;
++  ResultCode: Integer;
++begin
++  if CurUninstallStep = usUninstall then
++  begin
++    RegDeleteValue(HKCU, RunKey, 'AgentSpeed');
++    DeleteFile(ExpandConstant('{userstartup}\Agent Speed.lnk'));
++    { Stage a private, locked copy so the helper can remove its installed executable. }
++    Script := '$ErrorActionPreference = ''Stop''; ' +
++      '$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; ' +
++      '$key = [Microsoft.Win32.RegistryKey]::OpenBaseKey(' +
++      '[Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64); ' +
++      'try { $helperKey = $key.OpenSubKey(''SOFTWARE\AgentSpeed\TrafficHelper''); ' +
++      'if (-not $helperKey) { exit 0 }; ' +
++      'try { $allowed = $helperKey.GetValue(''AllowedUsers'') } finally { $helperKey.Dispose() } ' +
++      '} finally { $key.Dispose() }; ' +
++      'if (@($allowed) -notcontains $sid) { exit 0 }; ' +
++      '$programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }; ' +
++      '$helper = Join-Path $programFiles ''Agent Speed\Traffic Helper\AgentSpeedTrafficHelper.exe''; ' +
++      'if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) { exit 1 }; ' +
++      '$parent = Join-Path ([Environment]::GetFolderPath(''LocalApplicationData'')) ''AgentSpeed\helper-staging''; ' +
++      '[void][IO.Directory]::CreateDirectory($parent); ' +
++      '$folder = Join-Path $parent ([Guid]::NewGuid().ToString(''N'')); ' +
++      '$acl = New-Object Security.AccessControl.DirectorySecurity; ' +
++      '$acl.SetSecurityDescriptorSddlForm((''O:{0}D:P(A;OICI;FA;;;{0})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)'' -f $sid)); ' +
++      '[void][IO.Directory]::CreateDirectory($folder, $acl); ' +
++      'try { $copy = Join-Path $folder ''AgentSpeedTrafficHelper.exe''; ' +
++      '[IO.File]::Copy($helper, $copy); ' +
++      '$hold = [IO.File]::Open($copy, ''Open'', ''Read'', ''Read''); ' +
++      'try { $p = Start-Process -FilePath $copy -ArgumentList @(''remove'', ''--user'', $sid) -Verb RunAs -Wait -PassThru; ' +
++      '$code = $p.ExitCode } finally { $hold.Dispose() } ' +
++      '} finally { Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue }; ' +
++      'exit $code';
++    Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Script + '"';
++    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE,
++      ewWaitUntilTerminated, ResultCode) then
++      ResultCode := -1;
++    if ResultCode <> 0 then
++    begin
++      Log('Could not remove the current user from the Agent Speed traffic helper: ' + IntToStr(ResultCode));
++      if not UninstallSilent then
++        MsgBox('Could not remove the Agent Speed traffic helper authorization. You can remove it from Agent Speed settings before uninstalling.', mbError, MB_OK);
++    end;
++  end;
++end;
+diff --git a/windows/scripts/publish.ps1 b/windows/scripts/publish.ps1
+index 17737fc5..49a28ddb 100644
+--- a/windows/scripts/publish.ps1
++++ b/windows/scripts/publish.ps1
+@@ -2,16 +2,19 @@
+ .SYNOPSIS
+   Builds self-contained single-file Agent Speed for Windows (x64 and ARM64).
+ .DESCRIPTION
+-  Output: dist\AgentSpeed-Windows-x64.zip and dist\AgentSpeed-Windows-arm64.zip, each containing AgentSpeed.exe.
++  Output: dist\AgentSpeed-Windows-{x64,arm64}.zip; -Installer also produces Setup.exe files.
+   The traffic helper (spec/WINDOWS-SERVICE.md) is published first with NativeAOT for each architecture and embedded in
+   AgentSpeed.exe; this needs the Visual Studio C++ build tools including the ARM64 tools. AGENT_SPEED_NO_HELPER=1
+   builds without it (per-process traffic is then unavailable in that build).
+ .PARAMETER Version
+   Version to stamp (defaults to the repository VERSION file, then 1.0.0).
++.PARAMETER Installer
++  Build installers using ISCC (set ISCC to its path or install Inno Setup 6).
+ #>
+ [CmdletBinding()]
+ param(
+-    [string] $Version
++    [string] $Version,
++    [switch] $Installer
+ )
+ 
+ $ErrorActionPreference = 'Stop'
+@@ -33,6 +36,18 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$') { throw
+ $fileVersion = ($Version -split '[-+]')[0]
+ 
+ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw 'The .NET 10 SDK (dotnet) is required.' }
++$collector = Join-Path $dist 'collectors\linux-x86_64\agent-speed-collector'
++if (-not (Test-Path -LiteralPath $collector -PathType Leaf)) { throw "Linux collector not found: $collector" }
++$iscc = $null
++if ($Installer) {
++    if ($env:ISCC) { $iscc = $env:ISCC }
++    else {
++        $command = Get-Command ISCC.exe -ErrorAction SilentlyContinue
++        if ($command) { $iscc = $command.Source }
++        elseif (${env:ProgramFiles(x86)}) { $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe' }
++    }
++    if (-not $iscc -or -not (Get-Command $iscc -ErrorAction SilentlyContinue)) { throw 'Installer requested, but ISCC was not found. Install Inno Setup 6 or set ISCC.' }
++}
+ 
+ # Uncompressed single-file starts ~600 ms faster and uses about half the private memory (no in-memory
+ # decompression); the zip is ~60 MB either way. AGENT_SPEED_COMPRESS=1 shrinks the exe to ~65 MB instead of ~150 MB.
+@@ -104,9 +119,16 @@ try {
+         $exe = Join-Path $out 'AgentSpeed.exe'
+         if (-not (Test-Path $exe)) { throw "$exe was not produced" }
+ 
++        $collectorDir = Join-Path $out 'collectors\linux-x86_64'
++        New-Item -ItemType Directory -Path $collectorDir -Force | Out-Null
++        Copy-Item -LiteralPath $collector -Destination $collectorDir
+         $zip = Join-Path $dist "AgentSpeed-Windows-$arch.zip"
+         if (Test-Path $zip) { Remove-Item $zip -Force }
+-        Compress-Archive -Path $exe -DestinationPath $zip -CompressionLevel Optimal
++        Compress-Archive -Path $exe, (Join-Path $out 'collectors') -DestinationPath $zip -CompressionLevel Optimal
++        if ($Installer) {
++            & $iscc "/DAppVersion=$Version" "/DPayloadDir=$out" "/DOutputDir=$dist" "/DArch=$arch" (Join-Path $PSScriptRoot 'installer.iss')
++            if ($LASTEXITCODE -ne 0) { throw "ISCC failed for $rid" }
++        }
+         $size = (Get-Item $exe).Length
+         Write-Host ("    AgentSpeed.exe: {0:N1} MiB -> {1}" -f ($size / 1MB), $zip)
+     }
+diff --git a/windows/scripts/publish.sh b/windows/scripts/publish.sh
+index 251dcaff..6318f6fe 100755
+--- a/windows/scripts/publish.sh
++++ b/windows/scripts/publish.sh
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env bash
+ # Builds self-contained single-file Agent Speed for Windows (x64 and ARM64) from macOS, Linux or WSL.
+-# Output: dist/AgentSpeed-Windows-x64.zip and dist/AgentSpeed-Windows-arm64.zip, each containing AgentSpeed.exe.
++# Output: dist/AgentSpeed-Windows-{x64,arm64}.zip; --installer also produces Setup.exe files.
+ # The traffic helper (spec/WINDOWS-SERVICE.md) is NativeAOT and can only be compiled on Windows (publish.ps1), so these
+ # builds carry no helper unless TRAFFIC_HELPER_DIR points at prebuilt win-x64/ and win-arm64/AgentSpeedTrafficHelper.exe.
+ set -euo pipefail
+@@ -9,7 +9,16 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ PROJECT="$ROOT/windows/src/AgentSpeed/AgentSpeed.csproj"
+ DIST="$ROOT/dist"
+ 
+-VERSION="${1:-${AGENT_SPEED_VERSION:-}}"
++INSTALLER=false
++VERSION=""
++for ARG in "$@"; do
++  case "$ARG" in
++    --installer) INSTALLER=true ;;
++    -*) echo "error: unknown option $ARG" >&2; exit 1 ;;
++    *) [[ -z "$VERSION" ]] || { echo "error: only one version may be specified" >&2; exit 1; }; VERSION="$ARG" ;;
++  esac
++done
++VERSION="${VERSION:-${AGENT_SPEED_VERSION:-}}"
+ if [[ -z "$VERSION" && -f "$ROOT/VERSION" ]]; then
+   VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION")"
+ fi
+@@ -27,6 +36,13 @@ if ! command -v dotnet >/dev/null 2>&1 && [[ -x "$HOME/.dotnet/dotnet" ]]; then
+ fi
+ command -v dotnet >/dev/null 2>&1 || { echo "error: the .NET 10 SDK (dotnet) is required" >&2; exit 1; }
+ command -v zip >/dev/null 2>&1 || { echo "error: zip is required" >&2; exit 1; }
++COLLECTOR="$DIST/collectors/linux-x86_64/agent-speed-collector"
++[[ -f "$COLLECTOR" ]] || { echo "error: Linux collector not found: $COLLECTOR" >&2; exit 1; }
++if $INSTALLER; then
++  ISCC="${ISCC:-}"
++  if [[ -z "$ISCC" ]]; then ISCC="$(command -v ISCC || command -v ISCC.exe || true)"; fi
++  [[ -n "$ISCC" ]] && command -v "$ISCC" >/dev/null 2>&1 || { echo "error: --installer requires ISCC (set ISCC to its executable)" >&2; exit 1; }
++fi
+ 
+ WORK="$(mktemp -d "${TMPDIR:-/tmp}/agentspeed-publish.XXXXXX")"
+ cleanup() { rm -rf "$WORK"; }
+@@ -89,7 +105,25 @@ for ARCH in x64 arm64; do
+ 
+   ZIP="$DIST/AgentSpeed-Windows-$ARCH.zip"
+   rm -f "$ZIP"
+-  (cd "$OUT" && zip -q -X -9 "$ZIP" AgentSpeed.exe)
++  mkdir -p "$OUT/collectors/linux-x86_64"
++  cp "$COLLECTOR" "$OUT/collectors/linux-x86_64/agent-speed-collector"
++  (cd "$OUT" && zip -q -X -9 "$ZIP" AgentSpeed.exe collectors/linux-x86_64/agent-speed-collector)
++  if $INSTALLER; then
++    PAYLOAD_PATH="$OUT"; OUTPUT_PATH="$DIST"; SCRIPT_PATH="$ROOT/windows/scripts/installer.iss"
++    ISCC_WINDOWS=false
++    case "$ISCC" in *.[eE][xX][eE]) ISCC_WINDOWS=true ;; esac
++    if $ISCC_WINDOWS && command -v wslpath >/dev/null 2>&1; then
++      PAYLOAD_PATH="$(wslpath -w "$OUT")"; OUTPUT_PATH="$(wslpath -w "$DIST")"; SCRIPT_PATH="$(wslpath -w "$SCRIPT_PATH")"
++    elif $ISCC_WINDOWS && command -v winepath >/dev/null 2>&1; then
++      PAYLOAD_PATH="$(winepath -w "$OUT")"; OUTPUT_PATH="$(winepath -w "$DIST")"; SCRIPT_PATH="$(winepath -w "$SCRIPT_PATH")"
++    fi
++    if $ISCC_WINDOWS && ! command -v wslpath >/dev/null 2>&1; then
++      command -v wine >/dev/null 2>&1 && command -v winepath >/dev/null 2>&1 || { echo "error: Wine and winepath are required to run ISCC.exe" >&2; exit 1; }
++      wine "$ISCC" "/DAppVersion=$VERSION" "/DPayloadDir=$PAYLOAD_PATH" "/DOutputDir=$OUTPUT_PATH" "/DArch=$ARCH" "$SCRIPT_PATH"
++    else
++      "$ISCC" "/DAppVersion=$VERSION" "/DPayloadDir=$PAYLOAD_PATH" "/DOutputDir=$OUTPUT_PATH" "/DArch=$ARCH" "$SCRIPT_PATH"
++    fi
++  fi
+   SIZE=$(wc -c < "$EXE" | tr -d ' ')
+   echo "    AgentSpeed.exe: $((SIZE / 1024 / 1024)) MiB ($SIZE bytes) -> ${ZIP#"$ROOT"/}"
+ done
+diff --git a/windows/scripts/test-installer.ps1 b/windows/scripts/test-installer.ps1
+new file mode 100644
+index 00000000..a7c1802f
+--- /dev/null
++++ b/windows/scripts/test-installer.ps1
+@@ -0,0 +1,70 @@
++param([ValidateSet('x64', 'arm64')][string] $Architecture = 'x64')
++
++$ErrorActionPreference = 'Stop'
++Set-StrictMode -Version Latest
++
++$root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
++$setup = Join-Path $root "dist\AgentSpeed-Windows-$Architecture-Setup.exe"
++$collector = Join-Path $root 'dist\collectors\linux-x86_64\agent-speed-collector'
++$temp = Join-Path ([IO.Path]::GetTempPath()) ('agentspeed-installer-test-' + [Guid]::NewGuid().ToString('N'))
++$installDir = Join-Path $temp 'install'
++$settingsDir = Join-Path $env:APPDATA 'AgentSpeed'
++$settings = Join-Path $settingsDir 'settings.json'
++$key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{B891159D-356B-4CCB-BB2F-69C3445B30E8}_is1'
++$legacyKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSpeed'
++$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
++$expectedRun = '"' + (Join-Path $installDir 'AgentSpeed.exe') + '"'
++$server = $null
++$oldDownloadBase = $env:AGENT_SPEED_DOWNLOAD_BASE
++if (Test-Path $settings) { throw "Refusing to overwrite existing settings: $settings" }
++if (Test-Path $key) { throw "Refusing to overwrite existing installation: $key" }
++if (Test-Path $legacyKey) { throw "Refusing to overwrite existing legacy installation: $legacyKey" }
++if ((Get-Item $runKey).GetValue('AgentSpeed')) { throw 'Refusing to overwrite existing startup entry' }
++New-Item -ItemType Directory -Path $temp, $settingsDir -Force | Out-Null
++Set-Content -LiteralPath $settings -Value 'installer retention sentinel'
++New-Item -Path $legacyKey -Force | Out-Null
++New-ItemProperty -Path $legacyKey -Name InstallLocation -Value $installDir -PropertyType String -Force | Out-Null
++New-ItemProperty -Path $runKey -Name AgentSpeed -Value $expectedRun -PropertyType String -Force | Out-Null
++try {
++    $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installDir`"") -Wait -PassThru
++    if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
++    if (-not (Test-Path (Join-Path $installDir 'AgentSpeed.exe') -PathType Leaf)) { throw 'Installed executable missing' }
++    $installedCollector = Join-Path $installDir 'collectors\linux-x86_64\agent-speed-collector'
++    if (-not (Test-Path $installedCollector -PathType Leaf)) { throw 'Installed collector missing' }
++    if ((Get-FileHash $installedCollector).Hash -ne (Get-FileHash $collector).Hash) { throw 'Installed collector differs from build artifact' }
++    if (-not (Test-Path $key)) { throw 'Uninstall registration missing' }
++    if (Test-Path $legacyKey) { throw 'Legacy uninstall registration remains' }
++    if ((Get-Item $runKey).GetValue('AgentSpeed') -ne $expectedRun) { throw 'Legacy startup choice was not preserved' }
++    $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installDir`"") -Wait -PassThru
++    if ($process.ExitCode -ne 0) { throw "Installer upgrade failed: $($process.ExitCode)" }
++    if ((Get-Item $runKey).GetValue('AgentSpeed') -ne $expectedRun) { throw 'Startup choice was not preserved on upgrade' }
++    $asset = "AgentSpeed-Windows-$Architecture.zip"
++    $hash = (Get-FileHash (Join-Path $root "dist/$asset") -Algorithm SHA256).Hash.ToLowerInvariant()
++    Set-Content -Path (Join-Path $root 'dist/SHA256SUMS.txt') -Value "$hash  $asset" -Encoding ascii
++    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
++    $listener.Start(); $port = $listener.LocalEndpoint.Port; $listener.Stop()
++    $server = Start-Process -FilePath (Get-Command python).Source -ArgumentList @('-m', 'http.server', "$port", '--bind', '127.0.0.1', '--directory', "`"$(Join-Path $root 'dist')`"") -PassThru
++    $env:AGENT_SPEED_DOWNLOAD_BASE = "http://127.0.0.1:$port"
++    $ready = $false
++    for ($attempt = 0; $attempt -lt 50; $attempt++) {
++        try { $response = Invoke-WebRequest -Uri "$env:AGENT_SPEED_DOWNLOAD_BASE/SHA256SUMS.txt" -UseBasicParsing; $ready = $true; break }
++        catch { Start-Sleep -Milliseconds 200 }
++    }
++    if (-not $ready) { throw 'Local release server did not start' }
++    & (Join-Path $root 'install.ps1') -NoLaunch
++    if (-not (Test-Path $key) -or (Test-Path $legacyKey)) { throw 'Script upgrade did not retain the Inno registration' }
++    if ((Get-Item $runKey).GetValue('AgentSpeed') -ne $expectedRun) { throw 'Script upgrade lost startup entry' }
++    if ((Get-FileHash $installedCollector).Hash -ne (Get-FileHash $collector).Hash) { throw 'Script upgrade changed collector' }
++    & (Join-Path $root 'install.ps1') -Uninstall
++    if (Test-Path $key) { throw 'Uninstall registration remains' }
++    if ((Get-Item $runKey).GetValue('AgentSpeed')) { throw 'Startup entry remains after uninstall' }
++    if (-not (Test-Path $settings) -or (Get-Content -Raw $settings).Trim() -ne 'installer retention sentinel') { throw 'Settings were not retained' }
++}
++finally {
++    if ($server) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
++    $env:AGENT_SPEED_DOWNLOAD_BASE = $oldDownloadBase
++    Remove-Item -LiteralPath $legacyKey -Recurse -Force -ErrorAction SilentlyContinue
++    Remove-ItemProperty -Path $runKey -Name AgentSpeed -ErrorAction SilentlyContinue
++    Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
++    Remove-Item -LiteralPath $settings -Force -ErrorAction SilentlyContinue
++}
+diff --git a/windows/src/AgentSpeed/Updates/UninstallEntry.cs b/windows/src/AgentSpeed/Updates/UninstallEntry.cs
+index ca935a92..35e1631c 100644
+--- a/windows/src/AgentSpeed/Updates/UninstallEntry.cs
++++ b/windows/src/AgentSpeed/Updates/UninstallEntry.cs
+@@ -8,29 +8,43 @@ namespace AgentSpeed.Updates;
+ /// </summary>
+ internal static class UninstallEntry
+ {
+-    private const string KeyPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentSpeed";
++    private const string UninstallPath = @"Software\Microsoft\Windows\CurrentVersion\Uninstall";
++    internal const string InnoKeyName = "{B891159D-356B-4CCB-BB2F-69C3445B30E8}_is1";
++    internal const string LegacyKeyName = "AgentSpeed";
+     private const string VersionValue = "DisplayVersion";
++    private static readonly string[] KeyNames = [InnoKeyName, LegacyKeyName];
+ 
+     /// <summary>Sets DisplayVersion; returns what to restore on rollback, or null when nothing was changed.</summary>
+     public static RegistryRestore? TrySetDisplayVersion(string installDirectory, string version)
++    {
++        return TrySetDisplayVersion(Registry.CurrentUser, UninstallPath, installDirectory, version);
++    }
++
++    internal static RegistryRestore? TrySetDisplayVersion(RegistryKey root, string uninstallPath, string installDirectory, string version)
+     {
+         try
+         {
+-            using var key = Registry.CurrentUser.OpenSubKey(KeyPath, writable: true);
+-            if (key is null)
++            foreach (var name in KeyNames)
+             {
+-                return null;
+-            }
++                var path = $@"{uninstallPath}\{name}";
++                using var key = root.OpenSubKey(path, writable: true);
++                if (key is null)
++                {
++                    continue;
++                }
+ 
+-            if (key.GetValue("InstallLocation") is string location && !string.IsNullOrWhiteSpace(location)
+-                && !SameDirectory(location, installDirectory))
+-            {
+-                return null;
++                if (key.GetValue("InstallLocation") is string location && !string.IsNullOrWhiteSpace(location)
++                    && !SameDirectory(location, installDirectory))
++                {
++                    continue;
++                }
++
++                var previous = key.GetValue(VersionValue) as string;
++                key.SetValue(VersionValue, version, RegistryValueKind.String);
++                return new RegistryRestore(path, previous);
+             }
+ 
+-            var previous = key.GetValue(VersionValue) as string;
+-            key.SetValue(VersionValue, version, RegistryValueKind.String);
+-            return new RegistryRestore(previous);
++            return null;
+         }
+         catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+         {
+@@ -40,10 +54,15 @@ internal static class UninstallEntry
+     }
+ 
+     public static void Restore(RegistryRestore restore)
++    {
++        Restore(Registry.CurrentUser, restore);
++    }
++
++    internal static void Restore(RegistryKey root, RegistryRestore restore)
+     {
+         try
+         {
+-            using var key = Registry.CurrentUser.OpenSubKey(KeyPath, writable: true);
++            using var key = root.OpenSubKey(restore.KeyPath, writable: true);
+             if (key is null)
+             {
+                 return;
+@@ -80,4 +99,4 @@ internal static class UninstallEntry
+     }
+ }
+ 
+-internal sealed record RegistryRestore(string? PreviousVersion);
++internal sealed record RegistryRestore(string KeyPath, string? PreviousVersion);
+diff --git a/windows/tests/AgentSpeed.Windows.Tests/UninstallEntryTests.cs b/windows/tests/AgentSpeed.Windows.Tests/UninstallEntryTests.cs
+new file mode 100644
+index 00000000..7b5a88d9
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Windows.Tests/UninstallEntryTests.cs
+@@ -0,0 +1,80 @@
++using AgentSpeed.Updates;
++using Microsoft.Win32;
++
++namespace AgentSpeed.Windows.Tests;
++
++public class UninstallEntryTests
++{
++    [Theory]
++    [InlineData(UninstallEntry.InnoKeyName)]
++    [InlineData(UninstallEntry.LegacyKeyName)]
++    public void UpdatesAndRestoresInstalledVersion(string keyName)
++    {
++        using var registry = new TestRegistry();
++        using var key = registry.CreateEntry(keyName, @"C:\Users\Example\AgentSpeed\", "1.0.0");
++
++        var restore = UninstallEntry.TrySetDisplayVersion(Registry.CurrentUser, registry.Path, @"C:\Users\Example\AgentSpeed", "2.0.0");
++
++        Assert.NotNull(restore);
++        Assert.Equal("2.0.0", key.GetValue("DisplayVersion"));
++        UninstallEntry.Restore(Registry.CurrentUser, restore);
++        Assert.Equal("1.0.0", key.GetValue("DisplayVersion"));
++    }
++
++    [Fact]
++    public void RestoringAnAbsentVersionDeletesTheNewValue()
++    {
++        using var registry = new TestRegistry();
++        using var key = registry.CreateEntry(UninstallEntry.InnoKeyName, @"C:\AgentSpeed", null);
++
++        var restore = UninstallEntry.TrySetDisplayVersion(Registry.CurrentUser, registry.Path, @"C:\AgentSpeed", "2.0.0");
++
++        Assert.NotNull(restore);
++        Assert.Equal("2.0.0", key.GetValue("DisplayVersion"));
++        UninstallEntry.Restore(Registry.CurrentUser, restore);
++        Assert.Null(key.GetValue("DisplayVersion"));
++    }
++
++    [Fact]
++    public void IgnoresOtherInstallAndFallsBackToLegacyEntry()
++    {
++        using var registry = new TestRegistry();
++        using var inno = registry.CreateEntry(UninstallEntry.InnoKeyName, @"C:\Other", "1.0.0");
++        using var legacy = registry.CreateEntry(UninstallEntry.LegacyKeyName, @"C:\AgentSpeed", "1.1.0");
++
++        var restore = UninstallEntry.TrySetDisplayVersion(Registry.CurrentUser, registry.Path, @"C:\AgentSpeed", "2.0.0");
++
++        Assert.NotNull(restore);
++        Assert.Equal("1.0.0", inno.GetValue("DisplayVersion"));
++        Assert.Equal("2.0.0", legacy.GetValue("DisplayVersion"));
++        UninstallEntry.Restore(Registry.CurrentUser, restore);
++        Assert.Equal("1.1.0", legacy.GetValue("DisplayVersion"));
++    }
++
++    [Fact]
++    public void DoesNotCreateAnUninstallEntryForPortableInstall()
++    {
++        using var registry = new TestRegistry();
++
++        Assert.Null(UninstallEntry.TrySetDisplayVersion(Registry.CurrentUser, registry.Path, @"C:\AgentSpeed", "2.0.0"));
++        Assert.Null(Registry.CurrentUser.OpenSubKey(registry.Path));
++    }
++
++    private sealed class TestRegistry : IDisposable
++    {
++        public string Path { get; } = $@"Software\AgentSpeed.Tests\{Guid.NewGuid():N}";
++
++        public RegistryKey CreateEntry(string name, string location, string? version)
++        {
++            var key = Registry.CurrentUser.CreateSubKey($@"{Path}\{name}");
++            key.SetValue("InstallLocation", location);
++            if (version is not null)
++            {
++                key.SetValue("DisplayVersion", version);
++            }
++            return key;
++        }
++
++        public void Dispose() => Registry.CurrentUser.DeleteSubKeyTree(Path, throwOnMissingSubKey: false);
++    }
++}
+-- 
+2.41.0
+

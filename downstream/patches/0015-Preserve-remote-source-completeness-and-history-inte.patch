@@ -1,0 +1,732 @@
+From 91b065e6d64265847d4d668ef72cbcf7975fd8ae Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 18:54:46 +0800
+Subject: [PATCH] Preserve remote source completeness and history integrity
+
+---
+ windows/src/AgentSpeed.Core/Models.cs         |  6 +-
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  |  3 +-
+ windows/src/AgentSpeed.Core/SpeedHub.cs       | 16 ++--
+ .../History/DaySummary.cs                     |  2 +-
+ .../History/HistoryAggregator.cs              | 15 ++++
+ .../History/HistoryCsv.cs                     |  8 +-
+ windows/src/AgentSpeed/App/AppController.cs   |  8 +-
+ .../Dashboard/DashboardViewModel.cs           | 22 ++---
+ windows/src/AgentSpeed/Dashboard/LiveChart.cs | 70 +++++++++++----
+ .../AgentSpeed/History/HistoryViewModel.cs    | 17 ++--
+ .../AgentSpeed/Services/RemoteSshWorker.cs    | 86 ++++++++++++-------
+ .../RemoteConsumerTests.cs                    | 52 ++++++++++-
+ .../HistoryCostTests.cs                       | 38 ++++++++
+ .../DashboardRemoteCompletenessTests.cs       | 60 +++++++++++++
+ 14 files changed, 318 insertions(+), 85 deletions(-)
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/DashboardRemoteCompletenessTests.cs
+
+diff --git a/windows/src/AgentSpeed.Core/Models.cs b/windows/src/AgentSpeed.Core/Models.cs
+index 92eba8a6..3a10726f 100644
+--- a/windows/src/AgentSpeed.Core/Models.cs
++++ b/windows/src/AgentSpeed.Core/Models.cs
+@@ -73,7 +73,11 @@ public readonly record struct Rate(double Output = 0, double Total = 0)
+ }
+ 
+ /// <param name="Time">Start of the one-second bucket.</param>
+-public sealed record HistoryPoint(DateTimeOffset Time, Rate Measured, Rate Estimated);
++public sealed record HistoryPoint(DateTimeOffset Time, Rate Measured, Rate Estimated)
++{
++    /// <summary>False when the aggregate for this time bucket is unknown.</summary>
++    public bool IsAvailable { get; init; } = true;
++}
+ 
+ /// <param name="Id">Absolute transcript path.</param>
+ /// <param name="RecentSpeed">Output tok/s of the agent's recent responses (METRICS 6.2).</param>
+diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
+index ffe7a71c..9acd94df 100644
+--- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
++++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
+@@ -6,6 +6,7 @@ namespace AgentSpeed.Core;
+ /// <summary>Connection and last received history for one configured remote host.</summary>
+ public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string? Error)
+ {
++    public string MachineId { get; init; } = Id.ToString();
+     public IReadOnlyList<DailyUsage> Days { get; init; } = [];
+     public bool? HistoryPartial { get; init; }
+     public DateTimeOffset? HistoryReceivedAt { get; init; }
+@@ -84,7 +85,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+     public RemoteHostStatus Status()
+     {
+         bool sameZone = HistoryTimezone == LocalTimezone();
+-        return new(Id, Label, Online, Error) { Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
++        return new(Id, Label, Online, Error) { MachineId = Snapshot?.Text("machine_id") ?? Id.ToString(), Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
+             HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
+     }
+ 
+diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
+index 4f82a1d6..9495d75d 100644
+--- a/windows/src/AgentSpeed.Core/SpeedHub.cs
++++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
+@@ -170,7 +170,8 @@ public sealed class SpeedHub
+                 if (kind is null || source.Boolean("enabled") != true || !seen.Add(machine + ":" + kind)) continue;
+                 added.Add(kind.Value);
+                 bool available = host.Online && source.Boolean("available") == true;
+-                bool todayAvailable = available && message.Text("today_day") == DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
++                bool todayAvailable = available && message.Text("timezone") == RemoteHostData.LocalTimezone()
++                    && message.Text("today_day") == DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+                 var output = source.NullableNumber("live_output");
+                 var total = source.NullableNumber("live_total");
+                 bool liveAvailable = available && output.HasValue && total.HasValue;
+@@ -189,7 +190,7 @@ public sealed class SpeedHub
+                 if (!liveAvailable) complete = false;
+                 if (!todayAvailable) todayComplete = false;
+             }
+-            if (!host.Online) { complete = false; todayComplete = false; continue; }
++            if (!host.Online) continue;
+             if (message.Array("agents") is { } remoteAgents)
+                 foreach (var agent in remoteAgents.EnumerateArray())
+                 {
+@@ -209,7 +210,7 @@ public sealed class SpeedHub
+                 }
+         }
+         var second = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+-        if (complete)
++        if (complete && (!_remoteHistory.TryGetValue(second, out var previous) || previous.IsAvailable))
+         {
+             var remoteOutput = Math.Max(0, live.Output - local.Live.Output);
+             var remoteTotal = Math.Max(0, live.Total - local.Live.Total);
+@@ -218,15 +219,18 @@ public sealed class SpeedHub
+             _remoteHistory[second] = new HistoryPoint(DateTimeOffset.FromUnixTimeSeconds(second),
+                 new Rate(remoteOutput - estimatedRate.Output, remoteTotal - estimatedRate.Total), estimatedRate);
+         }
+-        else _remoteHistory.Remove(second);
++        else if (!complete) _remoteHistory[second] = new HistoryPoint(DateTimeOffset.FromUnixTimeSeconds(second), Rate.Zero, Rate.Zero) { IsAvailable = false };
+         while (_remoteHistory.Count > 0 && _remoteHistory.First().Key < second - 299) _remoteHistory.Remove(_remoteHistory.First().Key);
+         var history = new List<HistoryPoint>();
+         foreach (var point in local.History)
+-            if (_remoteHistory.TryGetValue(point.Time.ToUnixTimeSeconds(), out var remote))
++        {
++            if (_remoteHistory.TryGetValue(point.Time.ToUnixTimeSeconds(), out var remote) && remote.IsAvailable && point.IsAvailable)
+                 history.Add(new HistoryPoint(point.Time,
+                     new Rate(point.Measured.Output + remote.Measured.Output, point.Measured.Total + remote.Measured.Total),
+                     new Rate(point.Estimated.Output + remote.Estimated.Output, point.Estimated.Total + remote.Estimated.Total)));
+-        return local with { Live = live, LiveEstimatedShare = live.Output > 0 ? estimated / live.Output : 0,
++            else
++                history.Add(point with { IsAvailable = false });
++        }
+             Today = today, TodayCost = todayCost, Sources = sources, Agents = agents, GeneratingCount = generating, ToolsCount = tools,
+             RemoteHosts = statuses, RemoteLiveComplete = complete, RemoteTodayComplete = todayComplete, History = history,
+             State = local.State.Kind == MonitorStateKind.NoSources && sources.Any(s => s.HostId is not null) ? MonitorState.Running : local.State };
+diff --git a/windows/src/AgentSpeed.Presentation/History/DaySummary.cs b/windows/src/AgentSpeed.Presentation/History/DaySummary.cs
+index 1cf90aba..0821b968 100644
+--- a/windows/src/AgentSpeed.Presentation/History/DaySummary.cs
++++ b/windows/src/AgentSpeed.Presentation/History/DaySummary.cs
+@@ -34,7 +34,7 @@ public sealed record DaySummary(
+     /// <summary>The day's cost over the counted sources (DESIGN 9: subscriptions left out unless included).</summary>
+     public HistoryCost Cost { get; init; }
+ 
+-    /// <summary>Every source's cost, for the CSV (subscription exclusion does not apply there); null without cost data.</summary>
++    /// <summary>Every source's cost, for unfiltered CSV export; null without cost data. Host exports can use <see cref="Cost"/> instead.</summary>
+     public CostTally? TotalCost { get; init; }
+ 
+     /// <summary>The price table version bound to the day (METRICS 9.7); null without cost data.</summary>
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs b/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
+index f9c9d06b..4ed3a90f 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
+@@ -5,6 +5,21 @@ namespace AgentSpeed.Presentation.History;
+ /// <summary>Turns stored per-source days (<see cref="DailyUsage"/>) into what the Usage History window shows.</summary>
+ public static class HistoryAggregator
+ {
++    /// <summary>Choose one host's complete history per remote machine and source, retaining host attribution for export.</summary>
++    public static IEnumerable<(string Id, IReadOnlyList<DailyUsage> Days)> Hosts(
++        IReadOnlyList<DailyUsage> local, IEnumerable<RemoteHostStatus> hosts)
++    {
++        yield return ("local", local);
++        var seen = new HashSet<(string Machine, SourceKind Source)>();
++        foreach (var host in hosts.OrderByDescending(h => h.Online))
++        {
++            var accepted = host.Days.Select(d => d.Source).Distinct()
++                .Where(source => seen.Add((host.MachineId ?? host.Id.ToString(), source))).ToHashSet();
++            var days = host.Days.Where(d => accepted.Contains(d.Source)).ToArray();
++            if (days.Length > 0) yield return (host.Id.ToString(), days);
++        }
++    }
++
+     /// <summary>
+     /// Days with data inside <paramref name="range"/> for one source (or every source when null), oldest first.
+     /// Records with an unreadable day or without any usage are ignored. The costs of <paramref name="excluded"/> sources add
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs b/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs
+index 73b1bad5..e2ab0e10 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs
+@@ -60,13 +60,13 @@ public static class HistoryCsv
+     };
+ 
+     /// <summary>
+-    /// The rows as CSV. Costs are every source's (subscription exclusion does not apply to the CSV): <c>cost_usd</c> exact
+-    /// with 6 decimals, empty for a day without cost data; <c>cost_&lt;code&gt;</c> with the currency's digits + 2 at the rate
++    /// The rows as CSV. Costs are every source's by default; <paramref name="countedCosts"/> exports costs after
++    /// subscription exclusion. <c>cost_usd</c> is exact with 6 decimals, empty for a day without cost data; <c>cost_&lt;code&gt;</c> has the currency's digits + 2 at the rate
+     /// in use (<paramref name="money"/> null or USD: no such column). With <paramref name="traffic"/> every row adds its
+     /// traffic bytes (empty before measuring began), and each date with this computer's traffic adds a row of its own,
+     /// <c>source = machine</c>, carrying only <c>traffic_rx_bytes</c> and <c>traffic_tx_bytes</c>.
+     /// </summary>
+-    public static string Build(IEnumerable<DaySummary> rows, SourceKind? source, HistoryMoney? money = null, bool traffic = false, string? hostId = null)
++    public static string Build(IEnumerable<DaySummary> rows, SourceKind? source, HistoryMoney? money = null, bool traffic = false, string? hostId = null, bool countedCosts = false)
+     {
+         ArgumentNullException.ThrowIfNull(rows);
+         var converted = money is { IsUsd: false } ? money : null;
+@@ -94,7 +94,7 @@ public static class HistoryCsv
+             Field(builder, Integer(row.Agents));
+             Field(builder, Integer(row.Unfinalized));
+             Field(builder, string.Join("; ", row.Models.Select(m => m.Model)));
+-            var cost = row.TotalCost;
++            var cost = countedCosts ? row.Cost.Tally : row.TotalCost;
+             Field(builder, cost is { } usd ? MoneyFormat.CsvUsd(usd.CostMicroUsd) : string.Empty);
+             Field(builder, cost is { } unpriced ? Integer(unpriced.UnpricedRequests) : string.Empty);
+             Field(builder, row.PriceVersion is { } version ? Integer(version) : string.Empty);
+diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
+index 110e03bb..e32cba22 100644
+--- a/windows/src/AgentSpeed/App/AppController.cs
++++ b/windows/src/AgentSpeed/App/AppController.cs
+@@ -652,8 +652,12 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         _dashboardModel.TransparencyEnabled = _theme.TransparencyEnabled;
+         _dashboardModel.LiveUnit = Settings.Cost.LiveUnit;
+         _dashboardModel.Update(snapshot, _speed.Value, _speed.Title, _speed.Redline, _speed.Metric, _loc, _theme.IsDark);
+-        var peak = snapshot.PeakToday.ValueFor(_speed.Metric);
+-        var summary = $"{DisplayText.SpeedLine(_speed.Value, _titles.Text(_speed.Title, _titles.General), _loc)} · {_loc["today.peak"]} {SpeedFormat.Speed(peak)}";
++        var peak = snapshot.RemoteHosts.Count == 0 ? snapshot.PeakToday.ValueFor(_speed.Metric) : 0;
++        var speedSummary = snapshot.RemoteLiveComplete
++            ? DisplayText.SpeedLine(_speed.Value, _titles.Text(_speed.Title, _titles.General), _loc)
++            : "—";
++        var peakSummary = snapshot.RemoteHosts.Count == 0 ? SpeedFormat.Speed(peak) : "—";
++        var summary = $"{speedSummary} · {_loc["today.peak"]} {peakSummary}";
+         dashboard.LiveChart.SetData(snapshot.History, _speed.Metric, _speed.Redline, peak, Settings.ChartSeconds,
+             _loc["win.chart.peak"], _loc["unit.tokS"], summary);
+     }
+diff --git a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
+index 451b75d5..8c47a3b9 100644
+--- a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
++++ b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
+@@ -422,17 +422,17 @@ internal sealed partial class DashboardViewModel : ObservableObject
+             : darkTheme ? HeatPalette.Sample(Math.Max(heat, 0.08)) : OrbTokens.Light.TierLabel(Math.Max(heat, 0.08));
+         TitleBrush = MediaColors.Frozen(titleColor.ToColor());
+         ContextText = DisplayText.AgentContext(snapshot, loc);
+-        HeroAccessibleName = DisplayText.Accessibility(value, TitleTheme.Text(title, loc), loc);
++        HeroAccessibleName = snapshot.RemoteLiveComplete ? DisplayText.Accessibility(value, TitleTheme.Text(title, loc), loc) : "—";
+         var money = LiveUnit == LiveUnit.Cost ? Cost?.Live(snapshot) : null;
+         HeroIsMoney = money is not null;
+-        HeroAtLeast = money?.AtLeast ?? false;
+-        HeroMuted = money?.Unknown ?? false;
++        HeroAtLeast = snapshot.RemoteLiveComplete && (money?.AtLeast ?? false);
++        HeroMuted = !snapshot.RemoteLiveComplete || (money?.Unknown ?? false);
+         if (money is not null)
+         {
+             // The money unit (DESIGN 9): the billable live cost rate; heat and title keep following tokens.
+-            ValueText = money.Number;
++            ValueText = snapshot.RemoteLiveComplete ? money.Number : "—";
+             UnitText = money.Unit;
+-            HeroAccessibleName = Cost!.LiveAccessibility(money, TitleTheme.Text(title, loc));
++            HeroAccessibleName = snapshot.RemoteLiveComplete ? Cost!.LiveAccessibility(money, TitleTheme.Text(title, loc)) : "—";
+         }
+ 
+         UpdateTodayCost(snapshot, loc);
+@@ -441,7 +441,7 @@ internal sealed partial class DashboardViewModel : ObservableObject
+         LoadingProgress = Math.Clamp(snapshot.State.Progress, 0, 1);
+         IsNoSources = snapshot.State.Kind == MonitorStateKind.NoSources;
+         IsRunning = snapshot.State.Kind == MonitorStateKind.Running;
+-        HasEstimate = snapshot.LiveEstimatedShare > 0.001 || snapshot.History.Count > 0 && snapshot.History[^1].Estimated.ValueFor(metric) > 0.05;
++        HasEstimate = snapshot.LiveEstimatedShare > 0.001 || snapshot.History.Count > 0 && snapshot.History[^1].IsAvailable && snapshot.History[^1].Estimated.ValueFor(metric) > 0.05;
+ 
+         UpdateSources(snapshot, metric, loc, unit);
+         _lastAgents = snapshot.Agents;
+@@ -569,9 +569,9 @@ internal sealed partial class DashboardViewModel : ObservableObject
+ 
+         CurrencyCode = cost.Currency.Code;
+         var summary = TodayCostSummary.From(snapshot, cost);
+-        TodayCostText = summary.AmountText;
+-        TodayCostAccessibleName = $"{loc["today.cost"]} ({loc["cost.apiEquivalent"]}) {summary.Spoken}";
+-        var rows = summary.Parts
++        TodayCostText = snapshot.RemoteTodayComplete ? summary.AmountText : "—";
++        TodayCostAccessibleName = $"{loc["today.cost"]} ({loc["cost.apiEquivalent"]}) {(snapshot.RemoteTodayComplete ? summary.Spoken : "—")}";
++        var rows = (snapshot.RemoteTodayComplete ? summary.Parts : [])
+             .Select(p =>
+             {
+                 var name = loc[DisplayText.SourceKey(p.Source)];
+@@ -584,8 +584,8 @@ internal sealed partial class DashboardViewModel : ObservableObject
+             TodayCostRows = rows;
+         }
+ 
+-        TodayCostUnpriced = summary.UnpricedText;
+-        TodayCostExcluded = summary.ExcludedText;
++        TodayCostUnpriced = snapshot.RemoteTodayComplete ? summary.UnpricedText : null;
++        TodayCostExcluded = snapshot.RemoteTodayComplete ? summary.ExcludedText : null;
+         TodayCostRateLine = summary.RateLine;
+     }
+ 
+diff --git a/windows/src/AgentSpeed/Dashboard/LiveChart.cs b/windows/src/AgentSpeed/Dashboard/LiveChart.cs
+index a88f9f4e..9025a8fc 100644
+--- a/windows/src/AgentSpeed/Dashboard/LiveChart.cs
++++ b/windows/src/AgentSpeed/Dashboard/LiveChart.cs
+@@ -111,18 +111,18 @@ internal sealed class LiveChart : FrameworkElement
+         var (start, count) = ChartMath.Window(_history.Count, _range);
+         var measured = new double[Math.Max(count, 2)];
+         var total = new double[Math.Max(count, 2)];
+-        var estimatedFrom = -1;
+         for (var i = 0; i < count; i++)
+         {
+             var point = _history[start + i];
++            if (!point.IsAvailable)
++            {
++                continue;
++            }
++
+             var m = Clean(point.Measured.ValueFor(_metric));
+             var e = Clean(point.Estimated.ValueFor(_metric));
+             measured[i] = m;
+             total[i] = m + e;
+-            if (e > 0.05 && estimatedFrom < 0)
+-            {
+-                estimatedFrom = i;
+-            }
+         }
+ 
+         if (count < 2)
+@@ -145,23 +145,51 @@ internal sealed class LiveChart : FrameworkElement
+         var totalPoints = Offset(ChartMath.Project(total, width, plotHeight, scale.MaxValue), top);
+         var measuredPoints = Offset(ChartMath.Project(measured, width, plotHeight, scale.MaxValue), top);
+ 
+-        if (estimatedFrom >= 0)
++        var dashed = new Pen(gradient, 1.5) { DashStyle = new DashStyle([2, 2], 0), DashCap = PenLineCap.Round };
++        dashed.Freeze();
++        for (var first = 0; first < count;)
+         {
+-            dc.PushOpacity(0.45);
+-            dc.DrawGeometry(fill, null, Area(totalPoints, height));
+-            dc.Pop();
+-        }
++            if (!_history[start + first].IsAvailable)
++            {
++                first++;
++                continue;
++            }
+ 
+-        dc.DrawGeometry(fill, null, Area(measuredPoints, height));
+-        dc.DrawGeometry(null, MediaColors.FrozenPen(gradient, 1.5, PenLineCap.Round), Line(measuredPoints, 0));
++            var end = first + 1;
++            while (end < count && _history[start + end].IsAvailable)
++            {
++                end++;
++            }
+ 
+-        if (estimatedFrom >= 0)
+-        {
+-            var dashed = new Pen(gradient, 1.5) { DashStyle = new DashStyle([2, 2], 0), DashCap = PenLineCap.Round };
+-            dashed.Freeze();
+-            dc.PushOpacity(0.8);
+-            dc.DrawGeometry(null, dashed, Line(totalPoints, Math.Max(0, estimatedFrom - 1)));
+-            dc.Pop();
++            var segmentMeasured = measuredPoints[first..end];
++            var segmentTotal = totalPoints[first..end];
++            var estimatedFrom = -1;
++            for (var i = first; i < end; i++)
++            {
++                if (total[i] - measured[i] > 0.05)
++                {
++                    estimatedFrom = i - first;
++                    break;
++                }
++            }
++
++            if (estimatedFrom >= 0)
++            {
++                dc.PushOpacity(0.45);
++                dc.DrawGeometry(fill, null, Area(segmentTotal, height));
++                dc.Pop();
++            }
++
++            dc.DrawGeometry(fill, null, Area(segmentMeasured, height));
++            dc.DrawGeometry(null, MediaColors.FrozenPen(gradient, 1.5, PenLineCap.Round), Line(segmentMeasured, 0));
++            if (estimatedFrom >= 0)
++            {
++                dc.PushOpacity(0.8);
++                dc.DrawGeometry(null, dashed, Line(segmentTotal, Math.Max(0, estimatedFrom - 1)));
++                dc.Pop();
++            }
++
++            first = end;
+         }
+ 
+         var label = new FormattedText(Format(scale.MaxValue), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, LabelFace, 10,
+@@ -191,6 +219,10 @@ internal sealed class LiveChart : FrameworkElement
+         double width, double height, double ppd)
+     {
+         var index = ChartMath.IndexAt(hover.X, width, count);
++        if (!_history[start + index].IsAvailable)
++        {
++            return;
++        }
+         var point = points[Math.Min(index, points.Length - 1)];
+         var x = Snap(point.X, ppd);
+         dc.DrawLine(MediaColors.FrozenPen(Foreground, 1), new Point(x, 0), new Point(x, height));
+diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.cs b/windows/src/AgentSpeed/History/HistoryViewModel.cs
+index 395fa292..de55ad97 100644
+--- a/windows/src/AgentSpeed/History/HistoryViewModel.cs
++++ b/windows/src/AgentSpeed/History/HistoryViewModel.cs
+@@ -459,8 +459,9 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+             var sources = _source is { } source ? new[] { source } : HistoryAggregator.SourcesWithHistory(usage);
+             foreach (var kind in sources)
+             {
+-                var rows = HistoryTable.Sort(HistoryAggregator.Daily(usage, kind, Range), _sortColumn, _sortDescending);
+-                AppendCsv(csv, HistoryCsv.Build(rows, kind, Money, hostId: id));
++                var excluded = new HistoryCostOptions(_cost.Settings.Subscriptions, _includeSubscriptions, _metric).Excluded(_source);
++                var rows = HistoryTable.Sort(HistoryAggregator.Daily(usage, kind, Range, excluded), _sortColumn, _sortDescending);
++                AppendCsv(csv, HistoryCsv.Build(rows, kind, Money, hostId: id, countedCosts: true));
+             }
+         }
+ 
+@@ -487,10 +488,14 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+ 
+     private IEnumerable<(string Id, IReadOnlyList<DailyUsage> Days)> ExportHosts()
+     {
+-        if (_allHosts) yield return ("local", _hub.Days);
+-        foreach (var host in _speed?.Snapshot.RemoteHosts ?? [])
++        if (_allHosts)
+         {
+-            if (_allHosts || host.Id == _hostId) yield return (host.Id.ToString(), host.Days);
++            foreach (var host in HistoryAggregator.Hosts(_hub.Days, _speed?.Snapshot.RemoteHosts ?? [])) yield return host;
++        }
++        else
++        {
++            foreach (var host in _speed?.Snapshot.RemoteHosts ?? [])
++                if (host.Id == _hostId) yield return (host.Id.ToString(), host.Days);
+         }
+     }
+ 
+@@ -622,7 +627,7 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+         Today = DateOnly.FromDateTime(DateTime.Now);
+         UpdateHosts();
+         IReadOnlyList<DailyUsage> usage = _allHosts
+-            ? _hub.Days.Concat((_speed?.Snapshot.RemoteHosts ?? []).SelectMany(h => h.Days)).ToArray()
++            ? ExportHosts().SelectMany(h => h.Days).ToArray()
+             : _hostId is { } hostId ? _speed?.Snapshot.RemoteHosts.FirstOrDefault(h => h.Id == hostId)?.Days ?? [] : _hub.Days;
+         var options = new HistoryCostOptions(_cost.Settings.Subscriptions, _includeSubscriptions, _metric);
+         var excluded = options.Excluded(_source);
+diff --git a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
+index 330de59a..35e51a72 100644
+--- a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
++++ b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
+@@ -83,7 +83,8 @@ public sealed class RemoteSshWorker
+         {
+             if (!new RemoteHost(Guid.Empty, "", destination, false).ValidDestination)
+                 throw new IOException("Invalid SSH destination");
+-            using (var probe = Launch("uname -m"))
++            var probe = Launch("uname -m");
++            try
+             {
+                 probe.StandardInput.Close();
+                 var architecture = (await probe.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).Trim();
+@@ -92,42 +93,51 @@ public sealed class RemoteSshWorker
+                 var arch = architecture switch { "x86_64" => "x86_64", "aarch64" or "arm64" => "aarch64", _ => throw new IOException("Unsupported remote architecture") };
+                 var path = Path.Combine(AppContext.BaseDirectory, "collectors", "linux-" + arch, "agent-speed-collector");
+                 if (!File.Exists(path)) throw new IOException($"Linux collector for {arch} is missing from this application");
+-                using var upload = Launch(UploadCommand);
+-                var drain = upload.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
+-                await using (var binary = File.OpenRead(path))
+-                    await binary.CopyToAsync(upload.StandardInput.BaseStream).ConfigureAwait(false);
+-                upload.StandardInput.Close();
+-                await drain.ConfigureAwait(false);
+-                await upload.WaitForExitAsync().ConfigureAwait(false);
+-                if (upload.ExitCode != 0) throw new IOException("Collector upload failed");
++                var upload = Launch(UploadCommand);
++                try
++                {
++                    var drain = upload.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
++                    await using (var binary = File.OpenRead(path))
++                        await binary.CopyToAsync(upload.StandardInput.BaseStream).ConfigureAwait(false);
++                    upload.StandardInput.Close();
++                    await drain.ConfigureAwait(false);
++                    await upload.WaitForExitAsync().ConfigureAwait(false);
++                    if (upload.ExitCode != 0) throw new IOException("Collector upload failed");
++                }
++                finally { await CleanupAsync(upload).ConfigureAwait(false); }
+             }
+-            using var collector = Launch(CollectorCommand);
+-            lock (gate) { if (!stopped) collectorInput = collector.StandardInput; }
+-            RequestHistoryTimezone();
+-            var stream = collector.StandardOutput.BaseStream;
+-            var chunk = new byte[8192];
+-            using var line = new MemoryStream();
+-            while (true)
++            finally { await CleanupAsync(probe).ConfigureAwait(false); }
++            var collector = Launch(CollectorCommand);
++            try
+             {
+-                var count = await stream.ReadAsync(chunk).ConfigureAwait(false);
+-                if (count == 0) break;
+-                for (var i = 0; i < count; i++)
++                lock (gate) { if (!stopped) collectorInput = collector.StandardInput; }
++                RequestHistoryTimezone();
++                var stream = collector.StandardOutput.BaseStream;
++                var chunk = new byte[8192];
++                using var line = new MemoryStream();
++                while (true)
+                 {
+-                    if (chunk[i] == (byte)'\n')
+-                    {
+-                        var text = Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length);
+-                        line.SetLength(0);
+-                        lock (gate) { if (stopped) return; }
+-                        LineReceived?.Invoke(Token, text);
+-                    }
+-                    else
++                    var count = await stream.ReadAsync(chunk).ConfigureAwait(false);
++                    if (count == 0) break;
++                    for (var i = 0; i < count; i++)
+                     {
+-                        if (line.Length >= MaxLineBytes) throw new IOException("Collector sent an oversized message");
+-                        line.WriteByte(chunk[i]);
++                        if (chunk[i] == (byte)'\n')
++                        {
++                            var text = Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length);
++                            line.SetLength(0);
++                            lock (gate) { if (stopped) return; }
++                            LineReceived?.Invoke(Token, text);
++                        }
++                        else
++                        {
++                            if (line.Length >= MaxLineBytes) throw new IOException("Collector sent an oversized message");
++                            line.WriteByte(chunk[i]);
++                        }
+                     }
+                 }
++                reason = "Disconnected; retrying";
+             }
+-            reason = "Disconnected; retrying";
++            finally { await CleanupAsync(collector).ConfigureAwait(false); }
+         }
+         catch (IOException e) { reason = e.Message; }
+         catch (Exception) { reason = "SSH connection failed"; }
+@@ -136,7 +146,6 @@ public sealed class RemoteSshWorker
+             lock (gate)
+             {
+                 collectorInput = null;
+-                Kill(process);
+                 process = null;
+                 if (stopped) reason = "";
+             }
+@@ -144,6 +153,21 @@ public sealed class RemoteSshWorker
+         if (reason.Length != 0) Ended?.Invoke(Token, reason);
+     }
+ 
++    private async Task CleanupAsync(Process child)
++    {
++        lock (gate)
++        {
++            if (ReferenceEquals(process, child))
++            {
++                collectorInput = null;
++                process = null;
++            }
++            Kill(child);
++        }
++        try { await child.WaitForExitAsync().ConfigureAwait(false); }
++        finally { child.Dispose(); }
++    }
++
+     private static void Kill(Process? child)
+     {
+         try { if (child is not null && !child.HasExited) child.Kill(entireProcessTree: true); }
+diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+index 3225b7fb..ee507564 100644
+--- a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
++++ b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+@@ -5,7 +5,7 @@ namespace AgentSpeed.Core.Tests;
+ public sealed class RemoteConsumerTests
+ {
+     private static string Snapshot(string machine, long output, string live = "5") => $$"""
+-        {"version":1,"type":"snapshot","machine_id":"{{machine}}","today_day":"{{DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}}","sources":[{"source":"pi","enabled":true,"available":true,"today_output":{{output}},"live_output":{{live}},"live_total":{{live}}}],"agents":[]}
++        {"version":1,"type":"snapshot","machine_id":"{{machine}}","timezone":{{JsonSerializer.Serialize(LocalTimezone)}},"today_day":"{{DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)}}","sources":[{"source":"pi","enabled":true,"available":true,"today_output":{{output}},"live_output":{{live}},"live_total":{{live}}}],"agents":[]}
+         """;
+ 
+     private static string History(string timezone, long output) => $$"""
+@@ -102,9 +102,11 @@ public sealed class RemoteConsumerTests
+         hub.PublishLive(SpeedSnapshot.Empty with { History = [point] });
+ 
+         Assert.False(hub.Snapshot.RemoteLiveComplete);
+-        Assert.Empty(hub.Snapshot.History);
++        Assert.False(Assert.Single(hub.Snapshot.History).IsAvailable);
+         hub.UpdateRemoteHost(id, "host", false);
+-        Assert.Empty(hub.Snapshot.History);
++        Assert.False(Assert.Single(hub.Snapshot.History).IsAvailable);
++        hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 42));
++        Assert.False(Assert.Single(hub.Snapshot.History).IsAvailable);
+     }
+ 
+     [Fact]
+@@ -121,6 +123,50 @@ public sealed class RemoteConsumerTests
+         Assert.False(hub.Snapshot.RemoteTodayComplete);
+     }
+ 
++    [Fact]
++    public async Task RemoteTodayRequiresMatchingTimezoneEvenWhenDayMatches()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        var frame = Snapshot("machine", 42).Replace(JsonSerializer.Serialize(LocalTimezone), "null");
++        hub.UpdateRemoteHost(id, "host", true, json: frame);
++        Assert.False(hub.Snapshot.RemoteTodayComplete);
++        Assert.Equal(0, hub.Snapshot.Today.Output);
++        hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 42));
++        Assert.True(hub.Snapshot.RemoteTodayComplete);
++        Assert.Equal(42, hub.Snapshot.Today.Output);
++    }
++
++    [Fact]
++    public async Task OfflineDuplicateDoesNotMakeOnlineMachineIncomplete()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var first = Guid.NewGuid();
++        var alias = Guid.NewGuid();
++        hub.UpdateRemoteHost(first, "first", true, json: Snapshot("machine", 42));
++        hub.UpdateRemoteHost(alias, "alias", true, json: Snapshot("machine", 42));
++        hub.UpdateRemoteHost(alias, "alias", false);
++        Assert.True(hub.Snapshot.RemoteLiveComplete);
++        Assert.True(hub.Snapshot.RemoteTodayComplete);
++        Assert.Equal(42, hub.Snapshot.Today.Output);
++        hub.UpdateRemoteHost(first, "first", false);
++        Assert.False(hub.Snapshot.RemoteLiveComplete);
++        Assert.False(hub.Snapshot.RemoteTodayComplete);
++    }
++
++    [Fact]
++    public async Task EarlierLocalChartBucketsRemainExplicitGapsAfterRemoteIsAdded()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var now = DateTimeOffset.UtcNow;
++        var old = new HistoryPoint(now.AddSeconds(-5), new Rate(3, 4), Rate.Zero);
++        hub.PublishLive(SpeedSnapshot.Empty with { History = [old] });
++        hub.UpdateRemoteHost(Guid.NewGuid(), "remote", true, json: Snapshot("machine", 42));
++        var gap = Assert.Single(hub.Snapshot.History);
++        Assert.Equal(old.Time, gap.Time);
++        Assert.False(gap.IsAvailable);
++    }
++
+     [Fact]
+     public async Task HistoryIsPerHostReplacedAndRejectsOtherTimezones()
+     {
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/HistoryCostTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/HistoryCostTests.cs
+index a5471848..d9b9bbf8 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/HistoryCostTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/HistoryCostTests.cs
+@@ -12,6 +12,44 @@ public class HistoryCostTests
+ 
+     private static readonly SourceSet Claude = SourceSet.Of(SourceKind.ClaudeCode);
+ 
++    [Fact]
++    public void AllHostsDeduplicatesEachMachineSourceAndKeepsHostAttribution()
++    {
++        var local = new[] { Usage("2026-10-20", SourceKind.Codex, output: 10, requests: 1) };
++        var firstId = Guid.NewGuid();
++        var secondId = Guid.NewGuid();
++        var first = new RemoteHostStatus(firstId, "first", true, null)
++        {
++            MachineId = "machine", Days = [Flipped[0], Flipped[1]],
++        };
++        var second = new RemoteHostStatus(secondId, "second", true, null)
++        {
++            MachineId = "machine", Days = [Flipped[0], Flipped[2]],
++        };
++        var hosts = HistoryAggregator.Hosts(local, [first, second]).ToArray();
++        Assert.Equal(3, hosts.Length);
++        Assert.Equal("local", hosts[0].Id);
++        Assert.Equal(firstId.ToString(), hosts[1].Id);
++        Assert.Equal(secondId.ToString(), hosts[2].Id);
++        Assert.Equal([SourceKind.Gemini], hosts[2].Days.Select(d => d.Source));
++        Assert.Equal(1160, HistoryAggregator.Daily(hosts.SelectMany(h => h.Days), null, Week).Single().Output);
++    }
++
++    [Fact]
++    public void RemoteCsvCanExportTheSameSubscriptionAdjustedCostsAsTheDisplay()
++    {
++        var excluded = new HistoryCostOptions(Claude).Excluded(null);
++        var rows = HistoryAggregator.Daily([Flipped[1]], SourceKind.ClaudeCode, Week, excluded);
++        Assert.Equal(HistoryCostKind.Subscription, rows.Single().Cost.Kind);
++        var counted = HistoryCsv.Build(rows, SourceKind.ClaudeCode, hostId: "remote", countedCosts: true);
++        var raw = HistoryCsv.Build(rows, SourceKind.ClaudeCode, hostId: "remote");
++        Assert.DoesNotContain("5.000000", counted, StringComparison.Ordinal);
++        Assert.Contains("5.000000", raw, StringComparison.Ordinal);
++        var selected = HistoryAggregator.Daily([Flipped[1]], SourceKind.ClaudeCode, Week,
++            new HistoryCostOptions(Claude).Excluded(SourceKind.ClaudeCode));
++        Assert.Contains("5.000000", HistoryCsv.Build(selected, SourceKind.ClaudeCode, hostId: "remote", countedCosts: true), StringComparison.Ordinal);
++    }
++
+     /// <summary>Codex has more output, Claude Code more cost; Gemini has output but no cost data.</summary>
+     private static readonly DailyUsage[] Flipped =
+     [
+diff --git a/windows/tests/AgentSpeed.Windows.Tests/DashboardRemoteCompletenessTests.cs b/windows/tests/AgentSpeed.Windows.Tests/DashboardRemoteCompletenessTests.cs
+new file mode 100644
+index 00000000..c0f2427a
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Windows.Tests/DashboardRemoteCompletenessTests.cs
+@@ -0,0 +1,60 @@
++using AgentSpeed.Core;
++using AgentSpeed.Core.Money;
++using AgentSpeed.Dashboard;
++using AgentSpeed.Presentation.Cost;
++using AgentSpeed.Presentation.Localization;
++using AgentSpeed.Presentation.Settings;
++using AgentSpeed.Presentation.Heat;
++
++namespace AgentSpeed.Windows.Tests;
++
++public class DashboardRemoteCompletenessTests
++{
++    [Fact]
++    public void MoneyTotalsBecomeUnknownWhenRemoteContributionsAreIncompleteAndRecover()
++    {
++        Exception? failure = null;
++        var thread = new Thread(() =>
++        {
++            try
++            {
++                var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
++                var model = new DashboardViewModel
++                {
++                    Cost = new CostDisplay(loc, CurrencyTable.Bundled, null),
++                    LiveUnit = LiveUnit.Cost,
++                };
++                var complete = SpeedSnapshot.Empty;
++                var incomplete = complete with { RemoteLiveComplete = false, RemoteTodayComplete = false };
++                void Update(SpeedSnapshot snapshot) => model.Update(snapshot, 0, SpeedTitle.Idle, 400, SpeedMetric.Output, loc, false);
++
++                Update(complete);
++                var live = model.ValueText;
++                var today = model.TodayCostText;
++                Assert.NotEqual("—", live);
++                Assert.NotEqual("—", today);
++                Update(incomplete);
++                Assert.Equal("—", model.ValueText);
++                Assert.Equal("—", model.HeroAccessibleName);
++                Assert.True(model.HeroMuted);
++                Assert.False(model.HeroAtLeast);
++                Assert.Equal("—", model.TodayCostText);
++                Assert.Empty(model.TodayCostRows);
++                Update(complete);
++                Assert.Equal(live, model.ValueText);
++                Assert.Equal(today, model.TodayCostText);
++            }
++            catch (Exception ex)
++            {
++                failure = ex;
++            }
++        });
++        thread.SetApartmentState(ApartmentState.STA);
++        thread.Start();
++        thread.Join();
++        if (failure is not null)
++        {
++            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
++        }
++    }
++}
+-- 
+2.41.0
+

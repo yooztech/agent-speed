@@ -1,0 +1,1077 @@
+From dcc02dffe68a238f76dce8b9bb3af2d9bbb1d1ae Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 19:00:41 +0800
+Subject: [PATCH] Select orb sources independently by host
+
+---
+ README.md                                     |  2 +-
+ README.zh-CN.md                               |  2 +-
+ macos/Sources/AgentSpeed/App/AppModel.swift   |  4 +-
+ .../AgentSpeed/App/Orbs/OrbRuntime.swift      | 35 ++++++----
+ .../AgentSpeed/App/Orbs/OrbsController.swift  | 24 +++++--
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  4 +-
+ .../AgentSpeed/Localization/StringTable.swift |  1 +
+ .../OrbPane/OrbSourcesSection.swift           | 35 ++++++++++
+ .../AgentSpeedCore/Engine/OrbSubset.swift     | 65 +++++++++++++++++++
+ .../AgentSpeedOrbModel/OrbConfig.swift        |  7 ++
+ .../AgentSpeedOrbModel/OrbEditing.swift       |  4 ++
+ .../OrbHostSelectionTests.swift               | 58 +++++++++++++++++
+ .../OrbHostSourceCodingTests.swift            | 19 ++++++
+ windows/src/AgentSpeed.Core/OrbSubset.cs      | 63 ++++++++++++++++--
+ .../AgentSpeed.Presentation/Orb/OrbFeed.cs    | 36 ++++++----
+ .../Settings/Orbs/OrbDefinition.cs            |  4 ++
+ .../Settings/Orbs/OrbsJson.cs                 | 31 +++++++++
+ windows/src/AgentSpeed/Orb/OrbManager.cs      |  6 +-
+ .../Settings/OrbsPane/OrbsPaneViewModel.cs    | 35 ++++++++++
+ .../AgentSpeed/Settings/Pages/OrbPage.xaml    |  9 +++
+ .../AgentSpeed/Settings/Pages/OrbPage.xaml.cs |  5 ++
+ .../OrbFeedTests.cs                           | 49 +++++++++++++-
+ .../OrbSettingsTests.cs                       | 12 ++++
+ 23 files changed, 468 insertions(+), 42 deletions(-)
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/OrbHostSelectionTests.swift
+ create mode 100644 macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift
+
+diff --git a/README.md b/README.md
+index cf9664f4..cd99b1ea 100644
+--- a/README.md
++++ b/README.md
+@@ -54,7 +54,7 @@ Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uni
+ ## What you get
+ 
+ - **Floating orb** — a smoked-glass instrument with a 36-segment LED gauge. As speed climbs, so does its title — from *Walking* and *Bicycle* through *Bullet Train* and *Fighter Jet* to *Rocket* at the redline — while the gauge sweeps through the heat spectrum, a comet races around the ring, sparks fly, embers rise and every finished response sends out a shockwave. Beat your daily peak and it celebrates.
+-- **Five orb styles, as many orbs as you like** — *LED Gauge*, *Needle Tachometer*, *Liquid Energy*, *Reactor* and *Minimal Ring*. Give each orb its own mix of sources (all of them, one tool, or Claude Code + Codex) and a glass name plate that stays legible on any wallpaper.
++- **Five orb styles, as many orbs as you like** — *LED Gauge*, *Needle Tachometer*, *Liquid Energy*, *Reactor* and *Minimal Ring*. Give each orb its own mix of source types and independently enable or disable each local or SSH host's sources. New sources are enabled by default; choices for disconnected hosts are retained. Per-orb peaks are based on observed selected sources, not the global historical peak. Each orb also has a glass name plate that stays legible on any wallpaper.
+ - **Menu bar / taskbar** — a compact gauge and number that never jitters, right where you look: tok/s, money, or tok/s with the live money rate over today's total, plus optional network speed. On Windows it lives inside the taskbar, next to the clock.
+ - **Dashboard** — a glowing line drawing of your current speed title's vehicle moves inside its orb — a walker, a bicycle pushing off, all the way to a rocket at the redline — plus a live chart, per-source speed, every active agent (including sub-agents) with its phase, and today's totals. Click a source to open its history.
+ - **Performance score** — a benchmark-style number for every agent's live setup, where 1000 is the reference and there is no upper limit: higher is faster. It combines output throughput, time to first content, thinking speed, tool pace, tool time, tool success and cache hits, and compares it with the same model's usual on your computer (the 14 days before today). It shows on the orbs, the leaderboard boards, the menu bar / taskbar and the dashboard (hover for the breakdown), and the usage history charts each model's daily trend.
+diff --git a/README.zh-CN.md b/README.zh-CN.md
+index 430f9dac..f26abf96 100644
+--- a/README.zh-CN.md
++++ b/README.zh-CN.md
+@@ -49,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.s
+ ## 功能
+ 
+ - **悬浮窗**——烟熏玻璃质感的仪表，36 格 LED 表盘。速度一路攀升时，称号也跟着升级——从「步行」「自行车」到「高铁」「战斗机」，冲到红线就是「火箭」；表盘沿着热度光谱点亮、彗星绕圈疾驰、火花四溅、余烬升腾，每完成一次回应就释放一道冲击波；打破今日纪录还会庆祝。
+-- **五种悬浮窗样式，想开几个就开几个**——「LED 仪表」「指针转速表」「能量液球」「反应堆」「极简圆环」。每个悬浮窗都能自由组合来源（全部、单个工具，或 Claude Code＋Codex），下方的玻璃名牌在任何壁纸上都清晰易读。
++- **五种悬浮窗样式，想开几个就开几个**——「LED 仪表」「指针转速表」「能量液球」「反应堆」「极简圆环」。每个悬浮窗都能自由组合来源类型，并分别开关本机和各 SSH 主机上的来源；新来源默认启用，主机断线后仍保留选择。悬浮窗峰值基于已选来源的实际观测，不借用全局历史峰值。下方的玻璃名牌在任何壁纸上都清晰易读。
+ - **菜单栏／任务栏**——精简的仪表与数字，宽度固定不跳动；可显示 tok/s、金额，或 tok/s 加上实时花费与今日总额，也能加上网络速度。Windows 版直接嵌在任务栏里、时钟旁边。
+ - **面板**——圆形仪表里有一台跟着速度称号变化的发光线条载具：从步行、蹬着自行车出发，一路换到红线时的火箭；另有实时曲线、各来源速度、所有正在工作的 agent（含子 agent）及其状态、今日统计。点一下来源就能打开它的用量历史。
+ - **性能分数**——为每个 agent 当下的组合跑分：1000 是参考水平，没有上限，越高越快。综合输出吞吐、首段延迟、思考速度、工具节奏、工具耗时、工具成功率和缓存命中，并和同一个模型在你电脑上前 14 天的表现相比，告诉你现在比平常快还是慢。悬浮窗、排行看板、菜单栏／任务栏和面板都能看到（鼠标移上去就有完整分析），用量历史还有每个模型的每日趋势。
+diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
+index 7d9201a1..a3ee4ecf 100644
+--- a/macos/Sources/AgentSpeed/App/AppModel.swift
++++ b/macos/Sources/AgentSpeed/App/AppModel.swift
+@@ -136,10 +136,10 @@ final class AppModel {
+ 
+     /// Starts reacting to settings and data. `live` starts reading transcripts.
+     func activate(live: Bool) {
+-        remoteHosts.onCompletion = { [weak self] source, output, speed in
++        remoteHosts.onCompletion = { [weak self] hostID, source, output, speed in
+             guard let self, !self.store.isPreviewing else { return }
+             self.mainFeed.emit(.response(output: output, speed: speed))
+-            self.orbs.remoteCompletion(source: source, output: output, speed: speed)
++            self.orbs.remoteCompletion(hostID: hostID, source: source, output: output, speed: speed)
+         }
+         store.displaySnapshot = { [weak self] local in
+             guard let self else { return local }
+diff --git a/macos/Sources/AgentSpeed/App/Orbs/OrbRuntime.swift b/macos/Sources/AgentSpeed/App/Orbs/OrbRuntime.swift
+index 3068eda3..51d49275 100644
+--- a/macos/Sources/AgentSpeed/App/Orbs/OrbRuntime.swift
++++ b/macos/Sources/AgentSpeed/App/Orbs/OrbRuntime.swift
+@@ -29,7 +29,7 @@ final class OrbRuntime {
+ 
+     /// Applies an edited configuration; a new source set recomputes the peak and stays quiet for 60 s.
+     func update(config: OrbConfig) {
+-        let sourcesChanged = config.sources != self.config.sources
++        let sourcesChanged = config.sources != self.config.sources || config.excludedSources != self.config.excludedSources
+         let readoutChanged = config.traffic != self.config.traffic
+         self.config = config
+         if sourcesChanged { trackerArmed = false }
+@@ -40,15 +40,21 @@ final class OrbRuntime {
+     }
+ 
+     /// Feeds one snapshot (every engine tick). While the effects preview runs, every orb shows the demo.
+-    func ingest(_ snapshot: SpeedSnapshot, settings: AppSettings, cost: CostDisplay?, isPreviewing: Bool, now: TimeInterval) {
++    func ingest(_ snapshot: SpeedSnapshot, settings: AppSettings, cost: CostDisplay?, isPreviewing: Bool, now: TimeInterval, unknownHosts: [UUID] = []) {
+         let metric = settings.metric
+         let set = isPreviewing ? nil : sourceSet
+-        let reading = OrbSubset.reading(snapshot, sources: set)
++        let exclusions = isPreviewing ? [] : config.excludedSources
++        var reading = isPreviewing ? OrbSubset.reading(snapshot, sources: nil) : OrbSubset.instanceReading(snapshot, sources: set, excluded: exclusions)
++        let unknown = !isPreviewing && OrbSubset.hasUnknownSources(hosts: unknownHosts, sources: set, excluded: exclusions)
++        if unknown {
++            reading.liveRateAvailable = false
++            reading.todayAvailable = false
++            reading.peakTodayAvailable = false
++        }
+         self.reading = reading
+         feed.liveRateAvailable = isPreviewing || reading.liveRateAvailable
+-        feed.liveCostRateAvailable = isPreviewing || (set.map { selected in
+-            snapshot.sources.allSatisfy { !selected.contains($0.kind) || $0.liveCostRateAvailable }
+-        } ?? snapshot.liveCostRateAvailable)
++        feed.liveCostRateAvailable = isPreviewing || (!unknown && OrbSubset.instances(snapshot, sources: set, excluded: exclusions)
++            .filter { $0.status.enabled }.allSatisfy { $0.status.liveCostRateAvailable })
+         feed.todayAvailable = isPreviewing || reading.todayAvailable
+         updateMoney(snapshot, reading: reading, cost: cost, isPreviewing: isPreviewing)
+         let redline = redline(for: metric, settings: settings)
+@@ -109,7 +115,7 @@ final class OrbRuntime {
+             if feed.money != nil { feed.money = nil }
+             return
+         }
+-        var costReading = OrbSubset.cost(snapshot, sources: isPreviewing ? nil : sourceSet, billable: cost.billable)
++        var costReading = isPreviewing ? OrbSubset.cost(snapshot, sources: nil, billable: cost.billable) : OrbSubset.instanceCost(snapshot, sources: sourceSet, excluded: config.excludedSources, billable: cost.billable)
+         if isPreviewing {
+             costReading = CostReading(microUsdPerSecond: reading.live.output * Self.previewMicroUsdPerToken,
+                                       liveOutput: reading.live.output)
+@@ -130,26 +136,33 @@ final class OrbRuntime {
+     /// Delivers an engine event if it concerns this orb (METRICS 6.8, Events).
+     func handle(_ event: SpeedEvent, isPreviewing: Bool) {
+         guard OrbSubset.accepts(event, sources: isPreviewing ? nil : sourceSet) else { return }
++        if !isPreviewing {
++            switch event {
++            case .responseCompleted(let response):
++                guard OrbSubset.includes(hostID: nil, source: response.source, sources: sourceSet, excluded: config.excludedSources) else { return }
++            case .newPeak: return
++            }
++        }
+         switch event {
+         case .responseCompleted(let response): feed.emit(.response(output: response.outputTokens, speed: response.speed))
+         case .newPeak: feed.emit(.newPeak)
+         }
+     }
+ 
+-    func remoteCompletion(source: SourceKind, output: Int, speed: Double?) {
+-        guard sourceSet?.contains(source) ?? true else { return }
++    func remoteCompletion(hostID: UUID, source: SourceKind, output: Int, speed: Double?) {
++        guard OrbSubset.includes(hostID: hostID, source: source, sources: sourceSet, excluded: config.excludedSources) else { return }
+         feed.emit(.response(output: output, speed: speed))
+     }
+ 
+     private func trackPeak(snapshot: SpeedSnapshot, set: SourceSet?, isPreviewing: Bool) {
+-        guard let set, !isPreviewing, case .running = snapshot.state else { return }
++        guard !isPreviewing, case .running = snapshot.state else { return }
+         let nowMs = Int64((snapshot.timestamp.timeIntervalSince1970 * 1000).rounded())
+         if !trackerArmed {
+             tracker.restart(nowMs: nowMs)
+             trackerArmed = true
+         }
+         let dayStartMs = Int64((snapshot.dayStart.timeIntervalSince1970 * 1000).rounded())
+-        let fired = tracker.update(liveOutput: reading.live.output, measuredPeakOutput: snapshot.subsetPeaks[set],
++        let fired = tracker.update(liveOutput: reading.live.output, measuredPeakOutput: reading.liveRateAvailable ? 0 : nil,
+                                    dayStartMs: dayStartMs, nowMs: nowMs)
+         if fired { feed.emit(.newPeak) }
+     }
+diff --git a/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift b/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
+index caace5c7..70de1127 100644
+--- a/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
++++ b/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
+@@ -120,10 +120,10 @@ final class OrbsController {
+         }
+     }
+ 
+-    func remoteCompletion(source: SourceKind, output: Int, speed: Double?) {
++    func remoteCompletion(hostID: UUID, source: SourceKind, output: Int, speed: Double?) {
+         guard model?.store.isPreviewing == false else { return }
+         for runtime in runtimes.values {
+-            runtime.remoteCompletion(source: source, output: output, speed: speed)
++            runtime.remoteCompletion(hostID: hostID, source: source, output: output, speed: speed)
+         }
+     }
+ 
+@@ -164,6 +164,12 @@ final class OrbsController {
+     static var arrangementKey: String { OrbsDocument.arrangementKey(connectedDisplays) }
+ 
+     // MARK: Data
++    private func unknownHosts(_ model: AppModel) -> [UUID] {
++        model.remoteHosts.hosts.filter { host in
++            host.enabled && model.remoteHosts.states[host.id]?.snapshot?.sources == nil
++        }.map(\.id)
++    }
++
+ 
+     private func ingest(_ snapshot: SpeedSnapshot, model: AppModel) {
+         let detected = snapshot.sources.filter { $0.enabled && !OrbSubset.isUnavailable($0) }.map(\.kind)
+@@ -172,7 +178,7 @@ final class OrbsController {
+         let previewing = model.store.isPreviewing
+         let now = Clock.now
+         for orb in document.orbs {
+-            runtimes[orb.id]?.ingest(snapshot, settings: model.settings, cost: model.cost, isPreviewing: previewing, now: now)
++            runtimes[orb.id]?.ingest(snapshot, settings: model.settings, cost: model.cost, isPreviewing: previewing, now: now, unknownHosts: unknownHosts(model))
+         }
+     }
+ 
+@@ -314,6 +320,16 @@ final class OrbsController {
+         setDocument(OrbEditing.setSources(selection, of: id, in: document))
+         onChange?(.sourcesChanged(id: id))
+     }
++    func setSourceEnabled(_ enabled: Bool, hostID: UUID?, source: SourceKind, of id: String) {
++        guard let orb = document.orb(id) else { return }
++        let key = OrbSourceExclusion(hostID: hostID, source: source.rawValue)
++        var excluded = orb.excludedSources.filter { $0 != key }
++        if !enabled { excluded.append(key) }
++        guard excluded != orb.excludedSources else { return }
++        setDocument(OrbEditing.setExcludedSources(excluded, of: id, in: document))
++        onChange?(.sourcesChanged(id: id))
++    }
++
+ 
+     /// The context-menu rule: all ↔ one source, toggling within an explicit set, never the last known source.
+     func toggleSource(_ kind: SourceKind, of id: String) {
+@@ -501,7 +517,7 @@ final class OrbsController {
+             let snapshot = model.store.snapshot
+             for orb in document.orbs {
+                 runtimes[orb.id]?.ingest(snapshot, settings: model.settings, cost: model.cost, isPreviewing: model.store.isPreviewing,
+-                                         now: Clock.now)
++                                         now: Clock.now, unknownHosts: unknownHosts(model))
+             }
+         }
+     }
+diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+index cd5e8a66..0e67a379 100644
+--- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
++++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+@@ -196,7 +196,7 @@ final class RemoteHosts {
+     @ObservationIgnored private var workers: [UUID: RemoteSSHWorker] = [:]
+     @ObservationIgnored private var timezoneObserver: NSObjectProtocol?
+     @ObservationIgnored private var reconnects: [UUID: Task<Void, Never>] = [:]
+-    @ObservationIgnored var onCompletion: ((SourceKind, Int, Double?) -> Void)?
++    @ObservationIgnored var onCompletion: ((UUID, SourceKind, Int, Double?) -> Void)?
+     @ObservationIgnored private var emittedCompletions: Set<String> = []
+     private static let key = "remoteHosts.v1"
+ 
+@@ -269,7 +269,7 @@ final class RemoteHosts {
+             if message.type == "completion", let id = message.responseId, let source = message.source,
+                let kind = SourceKind(rawValue: source), let output = message.output {
+                 let machine = states[host.id]?.snapshot?.machineId ?? host.id.uuidString
+-                if emittedCompletions.insert(machine + ":" + source + ":" + id).inserted { onCompletion?(kind, output, message.speed) }
++                if emittedCompletions.insert(machine + ":" + source + ":" + id).inserted { onCompletion?(host.id, kind, output, message.speed) }
+             }
+         case .ended(let reason):
+             workers.removeValue(forKey: host.id)
+diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+index f477e92c..51c968dd 100644
+--- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
++++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+@@ -481,6 +481,7 @@ enum StringTable {
+         "orbs.sources.all": Entry("全部來源", "全部来源", "All Sources", "すべてのソース"),
+         "orbs.sources.allHint": Entry("包含之後新增或偵測到的來源。", "包含之后新增或检测到的来源。", "Includes sources that are added or detected later.", "あとから追加・検出されたソースも含みます。"),
+         "orbs.sources.lastOne": Entry("每個懸浮窗至少要追蹤一個來源。", "每个悬浮窗至少要追踪一个来源。", "An orb tracks at least one source.", "オーブには少なくとも 1 つのソースが必要です。"),
++        "orbs.sources.local": Entry("本機", "本机", "This Mac", "この Mac"),
+         "orbs.split": Entry("依來源拆分", "按来源拆分", "Split by Source", "ソースごとに分割"),
+         "orbs.split.hint": Entry("為每個偵測到的來源各建立一個懸浮窗，排成整齊的一列。", "为每个检测到的来源各建立一个悬浮窗，排成整齐的一行。", "Creates one orb for each detected source, lined up in a tidy row.", "検出されたソースごとにオーブを 1 つずつ作り、きれいに並べます。"),
+         "orbs.split.unavailable": Entry("偵測到兩個以上的來源後才能拆分。", "检测到两个以上的来源后才能拆分。", "Available once two or more sources are detected.", "2 つ以上のソースが検出されると分割できます。"),
+diff --git a/macos/Sources/AgentSpeed/SettingsWindow/OrbPane/OrbSourcesSection.swift b/macos/Sources/AgentSpeed/SettingsWindow/OrbPane/OrbSourcesSection.swift
+index a9a1704d..b3bbe2b6 100644
+--- a/macos/Sources/AgentSpeed/SettingsWindow/OrbPane/OrbSourcesSection.swift
++++ b/macos/Sources/AgentSpeed/SettingsWindow/OrbPane/OrbSourcesSection.swift
+@@ -10,6 +10,11 @@ struct OrbSourcesSection<Heading: View>: View {
+     let orb: OrbConfig
+     @ViewBuilder var heading: Heading
+ 
++    private struct HostRow: Identifiable {
++        let id: UUID?
++        let name: String
++    }
++
+     var body: some View {
+         let l10n = model.l10n
+         let orbs = model.orbs
+@@ -51,6 +56,36 @@ struct OrbSourcesSection<Heading: View>: View {
+                 .disabled(all || isLast)
+                 .help(isLast ? l10n("orbs.sources.lastOne") : "")
+             }
++
++            let instances = model.store.snapshot.sourceInstances.isEmpty
++                ? model.store.snapshot.sources.map { SourceInstance(hostID: nil, status: $0) }
++                : model.store.snapshot.sourceInstances
++            let hosts = [HostRow(id: nil, name: l10n("orbs.sources.local"))] + model.remoteHosts.hosts.map {
++                HostRow(id: $0.id, name: $0.label.isEmpty ? $0.destination : $0.label)
++            }
++            ForEach(hosts) { host in
++                let hostID = host.id
++                let kinds = SourceKind.allCases.filter { kind in
++                    orb.excludedSources.contains(OrbSourceExclusion(hostID: hostID, source: kind.rawValue)) ||
++                    instances.contains { $0.hostID == hostID && $0.status.kind == kind && ($0.status.producedToday || $0.status.today.requests > 0 || $0.status.activeAgents > 0) }
++                }
++                if !kinds.isEmpty {
++                    Text(host.name).font(.headline)
++                    ForEach(kinds) { kind in
++                        let key = OrbSourceExclusion(hostID: hostID, source: kind.rawValue)
++                        Toggle(isOn: Binding(
++                            get: { !orb.excludedSources.contains(key) },
++                            set: { orbs.setSourceEnabled($0, hostID: hostID, source: kind, of: orb.id) }
++                        )) {
++                            HStack(spacing: Spacing.xs) {
++                                SourceDot(source: kind, available: true)
++                                Text(l10n(kind.titleKey))
++                            }
++                        }
++                        .toggleStyle(.checkbox)
++                    }
++                }
++            }
+         } header: {
+             VStack(alignment: .leading, spacing: 0) {
+                 heading
+diff --git a/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift b/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
+index a2cb4e98..ac43fab1 100644
+--- a/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
++++ b/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
+@@ -1,5 +1,16 @@
+ import Foundation
+ 
++/// A source excluded from one orb; a nil host identifies this computer.
++public struct OrbSourceExclusion: Codable, Hashable, Sendable {
++    public var hostID: UUID?
++    public var source: String
++
++    public init(hostID: UUID?, source: String) {
++        self.hostID = hostID
++        self.source = source
++    }
++}
++
+ /// Whether a floating orb's sources can show anything (DESIGN 2b, "Unavailable sources").
+ public enum SubsetState: Equatable, Sendable {
+     /// At least one source is available.
+@@ -117,6 +128,60 @@ public struct CostReading: Equatable, Sendable {
+ 
+ /// Per-orb views of a snapshot (METRICS 6.8, DESIGN 2b).
+ public enum OrbSubset {
++    public static func includes(hostID: UUID?, source: SourceKind, sources: SourceSet?, excluded: [OrbSourceExclusion]) -> Bool {
++        (sources?.contains(source) ?? true) && !excluded.contains(OrbSourceExclusion(hostID: hostID, source: source.rawValue))
++    }
++
++    /// An unseen host can contain any kind that the orb has not explicitly excluded.
++    public static func hasUnknownSources(hosts: [UUID], sources: SourceSet?, excluded: [OrbSourceExclusion]) -> Bool {
++        hosts.contains { host in
++            SourceKind.allCases.contains { includes(hostID: host, source: $0, sources: sources, excluded: excluded) }
++        }
++    }
++
++    /// Select by source kind and host, retaining offline instances.
++    public static func instances(_ snapshot: SpeedSnapshot, sources: SourceSet?, excluded: [OrbSourceExclusion]) -> [SourceInstance] {
++        let instances = snapshot.sourceInstances.isEmpty ? snapshot.sources.map { SourceInstance(hostID: nil, status: $0) } : snapshot.sourceInstances
++        let exclusions = Set(excluded)
++        return instances.filter { (sources?.contains($0.status.kind) ?? true) && !exclusions.contains(OrbSourceExclusion(hostID: $0.hostID, source: $0.status.kind.rawValue)) }
++    }
++
++    public static func instanceReading(_ snapshot: SpeedSnapshot, sources: SourceSet?, excluded: [OrbSourceExclusion]) -> SubsetReading {
++        let selected = instances(snapshot, sources: sources, excluded: excluded)
++        let available = selected.filter { !isUnavailable($0.status) }
++        let keys = Set(available.map { OrbSourceExclusion(hostID: $0.hostID, source: $0.status.kind.rawValue) })
++        var agents = snapshot.agents.filter { keys.contains(OrbSourceExclusion(hostID: $0.hostID, source: $0.source.rawValue)) }
++        let ids = Set(agents.map(\.id))
++        for index in agents.indices where agents[index].parentId.map({ !ids.contains($0) }) ?? false { agents[index].parentId = nil }
++        var live = Rate.zero
++        var today = TokenTotals.zero
++        var intelligence = IntelligenceSums.zero
++        var estimated = 0.0
++        for instance in available {
++            let status = instance.status
++            live.add(status.live)
++            today.add(status.today)
++            intelligence.add(status.intelligence)
++            estimated += status.liveEstimated.output
++        }
++        let unavailable = SourceKind.allCases.filter { kind in
++            selected.contains { $0.status.kind == kind && isUnavailable($0.status) } && !available.contains { $0.status.kind == kind }
++        }
++        let state: SubsetState = !available.isEmpty ? .available : (selected.contains { $0.status.enabled } || selected.isEmpty ? .allNotFound : .allDisabled)
++        let enabled = selected.filter { $0.status.enabled }
++        return SubsetReading(live: live, liveRateAvailable: enabled.allSatisfy { $0.status.liveRateAvailable },
++            todayAvailable: enabled.allSatisfy { $0.status.todayAvailable }, peakTodayAvailable: false,
++            estimatedShare: live.output > 0 ? estimated / live.output : 0, agents: agents,
++            generatingSources: generatingSources(of: agents), today: today, measuredPeakOutput: nil,
++            unavailable: unavailable, state: state, intelligence: intelligence)
++    }
++
++    public static func instanceCost(_ snapshot: SpeedSnapshot, sources: SourceSet?, excluded: [OrbSourceExclusion], billable: SourceSet) -> CostReading {
++        var filteredSnapshot = snapshot
++        filteredSnapshot.sources = instances(snapshot, sources: sources, excluded: excluded).map(\.status)
++        return cost(filteredSnapshot, sources: nil, billable: billable)
++    }
++
+     /// The money-unit reading of `sources` (nil = every source) counting only `billable` sources (METRICS 9.4).
+     public static func cost(_ snapshot: SpeedSnapshot, sources: SourceSet?, billable: SourceSet) -> CostReading {
+         let members = sources ?? .everything
+diff --git a/macos/Sources/AgentSpeedOrbModel/OrbConfig.swift b/macos/Sources/AgentSpeedOrbModel/OrbConfig.swift
+index 3690bc91..9a919a17 100644
+--- a/macos/Sources/AgentSpeedOrbModel/OrbConfig.swift
++++ b/macos/Sources/AgentSpeedOrbModel/OrbConfig.swift
+@@ -1,4 +1,5 @@
+ import Foundation
++import AgentSpeedCore
+ 
+ /// One floating orb (DESIGN 2b, Data model). Decoding is tolerant: missing fields take their defaults and
+ /// out-of-range values are clamped, so a hand-edited or newer document never fails to load.
+@@ -10,6 +11,7 @@ public struct OrbConfig: Equatable, Hashable, Identifiable, Sendable {
+     /// Custom name (1–32 characters, trimmed); nil = automatic.
+     public var name: String?
+     public var sources: OrbSourceSelection
++    public var excludedSources: [OrbSourceExclusion]
+     public var style: OrbStyleKind
+     /// Diameter in points, within the style's range.
+     public var size: Double
+@@ -36,6 +38,7 @@ public struct OrbConfig: Equatable, Hashable, Identifiable, Sendable {
+         id: String,
+         name: String? = nil,
+         sources: OrbSourceSelection = .all,
++        excludedSources: [OrbSourceExclusion] = [],
+         style: OrbStyleKind = .led,
+         size: Double = OrbSizes.default,
+         opacity: Double = 1,
+@@ -54,6 +57,7 @@ public struct OrbConfig: Equatable, Hashable, Identifiable, Sendable {
+         self.id = id
+         self.name = Self.cleanName(name)
+         self.sources = sources
++        self.excludedSources = excludedSources
+         self.style = style
+         self.size = style.clampSize(size)
+         self.opacity = Self.cleanOpacity(opacity)
+@@ -108,6 +112,7 @@ public struct OrbConfig: Equatable, Hashable, Identifiable, Sendable {
+ extension OrbConfig: Codable {
+     enum CodingKeys: String, CodingKey {
+         case id, name, sources, style, size, opacity, alwaysOnTop, clickThrough, fadeWhenIdle, allSpaces, visible
++        case excludedSources
+         case redlineOutput, redlineTotal, titleTheme, unit, traffic, showName
+     }
+ 
+@@ -124,6 +129,7 @@ extension OrbConfig: Codable {
+             id: id,
+             name: value(String.self, .name),
+             sources: value(OrbSourceSelection.self, .sources) ?? .all,
++            excludedSources: value([OrbSourceExclusion].self, .excludedSources) ?? [],
+             style: value(OrbStyleKind.self, .style) ?? .led,
+             size: value(Double.self, .size) ?? OrbSizes.default,
+             opacity: value(Double.self, .opacity) ?? 1,
+@@ -152,6 +158,7 @@ extension OrbConfig: Codable {
+         try container.encode(id, forKey: .id)
+         try container.encode(name, forKey: .name)
+         try container.encode(sources, forKey: .sources)
++        try container.encode(excludedSources, forKey: .excludedSources)
+         try container.encode(style, forKey: .style)
+         try container.encode(size, forKey: .size)
+         try container.encode(opacity, forKey: .opacity)
+diff --git a/macos/Sources/AgentSpeedOrbModel/OrbEditing.swift b/macos/Sources/AgentSpeedOrbModel/OrbEditing.swift
+index ad4bc63a..9de1bd1c 100644
+--- a/macos/Sources/AgentSpeedOrbModel/OrbEditing.swift
++++ b/macos/Sources/AgentSpeedOrbModel/OrbEditing.swift
+@@ -148,6 +148,10 @@ public enum OrbEditing {
+     public static func setSources(_ selection: OrbSourceSelection, of id: String, in doc: OrbsDocument) -> OrbsDocument {
+         update(id, in: doc) { $0.sources = selection }
+     }
++    public static func setExcludedSources(_ excluded: [OrbSourceExclusion], of id: String, in doc: OrbsDocument) -> OrbsDocument {
++        update(id, in: doc) { $0.excludedSources = excluded }
++    }
++
+ 
+     /// Changes the style and clamps the size to its range.
+     public static func setStyle(_ style: OrbStyleKind, of id: String, in doc: OrbsDocument) -> OrbsDocument {
+diff --git a/macos/Tests/AgentSpeedCoreTests/OrbHostSelectionTests.swift b/macos/Tests/AgentSpeedCoreTests/OrbHostSelectionTests.swift
+new file mode 100644
+index 00000000..115ac25a
+--- /dev/null
++++ b/macos/Tests/AgentSpeedCoreTests/OrbHostSelectionTests.swift
+@@ -0,0 +1,58 @@
++import Foundation
++import Testing
++@testable import AgentSpeedCore
++
++@Suite("Orb host source selection")
++struct OrbHostSelectionTests {
++    @Test func filtersReadingsCostsAndCompletenessByInstance() {
++        let host = UUID()
++        var local = SourceStatus(kind: .codex, enabled: true, rootPath: "local", available: true, sessionCount: 1,
++                                 live: Rate(output: 10, total: 10), today: TokenTotals(requests: 1, output: 20), activeAgents: 0)
++        local.liveCost = LiveCost(microUsdPerSecond: 2, knownOutput: 10)
++        var remote = local
++        remote.live = Rate(output: 30, total: 30)
++        remote.liveCost = LiveCost(microUsdPerSecond: 6, knownOutput: 30)
++        remote.liveRateAvailable = false
++        remote.todayAvailable = false
++        var snapshot = SpeedSnapshot.empty
++        snapshot.sourceInstances = [SourceInstance(hostID: nil, status: local), SourceInstance(hostID: host, status: remote)]
++        let exclusion = OrbSourceExclusion(hostID: host, source: SourceKind.codex.rawValue)
++        let reading = OrbSubset.instanceReading(snapshot, sources: nil, excluded: [exclusion])
++        #expect(reading.live.output == 10)
++        #expect(reading.today.output == 20)
++        #expect(reading.liveRateAvailable && reading.todayAvailable)
++        #expect(reading.measuredPeakOutput == nil)
++        #expect(OrbSubset.instanceCost(snapshot, sources: nil, excluded: [exclusion], billable: .everything).microUsdPerSecond == 2)
++        #expect(!OrbSubset.instanceReading(snapshot, sources: nil, excluded: []).liveRateAvailable)
++        #expect(OrbSubset.instanceReading(snapshot, sources: SourceSet([.claudeCode]), excluded: []).state == .allNotFound)
++    }
++
++    @Test func localAndRemoteExclusionsAreIndependent() {
++        let host = UUID()
++        let status = SourceStatus(kind: .codex, enabled: true, rootPath: "", available: true, sessionCount: 0,
++                                  live: Rate(output: 5, total: 5), today: .zero, activeAgents: 0)
++        var snapshot = SpeedSnapshot.empty
++        snapshot.sourceInstances = [SourceInstance(hostID: nil, status: status), SourceInstance(hostID: host, status: status)]
++        let local = OrbSourceExclusion(hostID: nil, source: SourceKind.codex.rawValue)
++        #expect(OrbSubset.instanceReading(snapshot, sources: nil, excluded: [local]).live.output == 5)
++        #expect(OrbSubset.instances(snapshot, sources: nil, excluded: [local]).first?.hostID == host)
++    }
++    @Test func completionSelectionUsesHostAndKind() {
++        let host = UUID()
++        let exclusion = OrbSourceExclusion(hostID: host, source: SourceKind.codex.rawValue)
++        #expect(!OrbSubset.includes(hostID: host, source: .codex, sources: nil, excluded: [exclusion]))
++        #expect(OrbSubset.includes(hostID: nil, source: .codex, sources: nil, excluded: [exclusion]))
++        #expect(OrbSubset.includes(hostID: host, source: .claudeCode, sources: nil, excluded: [exclusion]))
++        #expect(!OrbSubset.includes(hostID: nil, source: .codex, sources: SourceSet([.claudeCode]), excluded: []))
++    }
++
++    @Test func unknownHostOnlyMattersForIncludedKinds() {
++        let host = UUID()
++        let set = SourceSet([.codex, .claudeCode])
++        let codex = OrbSourceExclusion(hostID: host, source: SourceKind.codex.rawValue)
++        let claude = OrbSourceExclusion(hostID: host, source: SourceKind.claudeCode.rawValue)
++        #expect(OrbSubset.hasUnknownSources(hosts: [host], sources: set, excluded: [codex]))
++        #expect(!OrbSubset.hasUnknownSources(hosts: [host], sources: set, excluded: [codex, claude]))
++        #expect(!OrbSubset.hasUnknownSources(hosts: [], sources: nil, excluded: []))
++    }
++}
+diff --git a/macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift b/macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift
+new file mode 100644
+index 00000000..6e47837e
+--- /dev/null
++++ b/macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift
+@@ -0,0 +1,19 @@
++import Foundation
++import Testing
++import AgentSpeedCore
++@testable import AgentSpeedOrbModel
++
++@Suite("Orb host source persistence")
++struct OrbHostSourceCodingTests {
++    @Test func defaultsAndRoundTrip() throws {
++        let decoder = JSONDecoder()
++        let old = try decoder.decode(OrbConfig.self, from: Data(#"{"id":"old"}"#.utf8))
++        #expect(old.excludedSources.isEmpty)
++        let exclusions = [OrbSourceExclusion(hostID: nil, source: "codex"), OrbSourceExclusion(hostID: UUID(), source: "future-source")]
++        let orb = OrbConfig(id: "a", excludedSources: exclusions)
++        let restored = try decoder.decode(OrbConfig.self, from: JSONEncoder().encode(orb))
++        #expect(restored.excludedSources == exclusions)
++        let doc = OrbEditing.setExcludedSources(exclusions, of: "a", in: OrbsDocument.fresh(id: "a"))
++        #expect(doc.orb("a")?.excludedSources == exclusions)
++    }
++}
+diff --git a/windows/src/AgentSpeed.Core/OrbSubset.cs b/windows/src/AgentSpeed.Core/OrbSubset.cs
+index a573c72c..ed8875c7 100644
+--- a/windows/src/AgentSpeed.Core/OrbSubset.cs
++++ b/windows/src/AgentSpeed.Core/OrbSubset.cs
+@@ -1,5 +1,8 @@
+ namespace AgentSpeed.Core;
+ 
++/// <summary>One source on a configured host; null identifies the local machine.</summary>
++public readonly record struct OrbSourceInstance(Guid? HostId, SourceKind Kind);
++
+ /// <summary>Whether a floating orb's sources can show anything (DESIGN 2b, "Unavailable sources").</summary>
+ public enum SubsetState
+ {
+@@ -33,6 +36,9 @@ public sealed record SubsetReading(
+ {
+     /// <summary>The live intelligence sums of the available members (METRICS 6.9).</summary>
+     public Intelligence.IntelligenceSums Intelligence { get; init; }
++
++    public bool LiveComplete { get; init; } = true;
++    public bool TodayComplete { get; init; } = true;
+ }
+ 
+ /// <summary>Per-orb views of a snapshot (METRICS 6.8, DESIGN 2b).</summary>
+@@ -100,11 +106,57 @@ public static class OrbSubset
+             state) { Intelligence = IntelligenceOf(snapshot.Sources, included) };
+     }
+ 
++    /// <summary>Reads selected host/source instances without using global peaks.</summary>
++    public static SubsetReading Reading(SpeedSnapshot snapshot, SourceSet? sources, IReadOnlyCollection<OrbSourceInstance> exclusions)
++    {
++        var members = sources ?? SourceSet.Everything;
++        var available = new HashSet<OrbSourceInstance>();
++        var unavailable = SourceSet.Empty;
++        var anyEnabled = false;
++        double output = 0, total = 0, estimated = 0;
++        var today = TokenTotals.Zero;
++        var liveComplete = true;
++        var todayComplete = true;
++        var intelligence = Intelligence.IntelligenceSums.Zero;
++        foreach (var status in snapshot.Sources)
++        {
++            var instance = new OrbSourceInstance(status.HostId, status.Kind);
++            if (!members.Contains(status.Kind) || exclusions.Contains(instance)) continue;
++            anyEnabled |= status.Enabled;
++            liveComplete &= status.LiveAvailable;
++            todayComplete &= status.TodayAvailable;
++            if (IsUnavailable(status)) { unavailable = unavailable.With(status.Kind); continue; }
++            available.Add(instance);
++            output += status.Live.Output;
++            total += status.Live.Total;
++            estimated += status.LiveEstimated.Output;
++            today = Add(today, status.Today);
++            intelligence += status.Intelligence;
++        }
++        foreach (var host in snapshot.RemoteHosts)
++        {
++            if (!host.Online && !snapshot.Sources.Any(s => s.HostId == host.Id)
++                && members.Any(kind => !exclusions.Contains(new OrbSourceInstance(host.Id, kind))))
++            {
++                liveComplete = false;
++                todayComplete = false;
++            }
++        }
++        var agents = snapshot.Agents.Where(a => available.Contains(new OrbSourceInstance(a.HostId, a.Source))).ToList();
++        var ids = agents.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
++        for (var i = 0; i < agents.Count; i++)
++            if (agents[i].ParentId is { } parent && !ids.Contains(parent)) agents[i] = agents[i] with { ParentId = null };
++        var state = available.Count > 0 ? SubsetState.Available : anyEnabled || unavailable.IsEmpty ? SubsetState.AllNotFound : SubsetState.AllDisabled;
++        return new SubsetReading(new Rate(output, total), output > 0 ? estimated / output : 0, agents,
++            GeneratingSources(agents), today, null, [.. unavailable], state)
++        { Intelligence = intelligence, LiveComplete = liveComplete, TodayComplete = todayComplete };
++    }
++
+     /// <summary>
+     /// The money-unit reading of <paramref name="sources"/> (null = every source) counting only
+     /// <paramref name="billable"/> sources (METRICS 9.4, 9.5).
+     /// </summary>
+-    public static CostReading Cost(SpeedSnapshot snapshot, SourceSet? sources, SourceSet billable)
++    public static CostReading Cost(SpeedSnapshot snapshot, SourceSet? sources, SourceSet billable, IReadOnlyCollection<OrbSourceInstance>? exclusions = null)
+     {
+         ArgumentNullException.ThrowIfNull(snapshot);
+         var members = sources ?? SourceSet.Everything;
+@@ -117,7 +169,7 @@ public static class OrbSubset
+         var order = new List<string>();
+         foreach (var status in snapshot.Sources)
+         {
+-            if (!members.Contains(status.Kind) || IsUnavailable(status))
++            if (!members.Contains(status.Kind) || (exclusions?.Contains(new OrbSourceInstance(status.HostId, status.Kind)) ?? false) || IsUnavailable(status))
+             {
+                 continue;
+             }
+@@ -167,10 +219,11 @@ public static class OrbSubset
+     /// sources (all for null), and the all-sources new peak only for an all-sources orb (subset orbs use
+     /// <see cref="SubsetPeakTracker"/>).
+     /// </summary>
+-    public static bool Accepts(SpeedEvent speedEvent, SourceSet? sources) => speedEvent switch
++    public static bool Accepts(SpeedEvent speedEvent, SourceSet? sources, IReadOnlyCollection<OrbSourceInstance>? exclusions = null) => speedEvent switch
+     {
+-        SpeedEvent.ResponseCompleted completed => sources?.Contains(completed.Response.Source) ?? true,
+-        SpeedEvent.NewPeak => sources is null,
++        SpeedEvent.ResponseCompleted completed => (sources?.Contains(completed.Response.Source) ?? true)
++            && !(exclusions?.Contains(new OrbSourceInstance(completed.Response.HostId, completed.Response.Source)) ?? false),
++        SpeedEvent.NewPeak => sources is null && (exclusions is null || exclusions.Count == 0),
+         _ => false,
+     };
+ 
+diff --git a/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs b/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
+index 716848b5..a2216aeb 100644
+--- a/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
++++ b/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
+@@ -8,7 +8,7 @@ namespace AgentSpeed.Presentation.Orb;
+ /// <summary>
+ /// One floating orb's view of the data (METRICS 6.8, DESIGN 2b Engine): the live value of its sources in the selected
+ /// metric, its own effect tier and speed title (hysteresis and hold) with its own redline, its agents, and its own
+-/// <c>newPeak_A</c>. An all-sources orb gets exactly the all-sources values and uses the engine's <c>NewPeak</c> event.
++/// <c>newPeak_A</c>. Each orb tracks its own observed peak for its selected host/source instances.
+ /// </summary>
+ public sealed class OrbFeed
+ {
+@@ -17,6 +17,7 @@ public sealed class OrbFeed
+     private readonly SubsetPeakTracker _peak = new();
+     private bool _configured;
+     private long _lastNowMs;
++    private readonly HashSet<OrbSourceInstance> _availableInstances = [];
+ 
+     public OrbFeed(string id)
+     {
+@@ -28,6 +29,8 @@ public sealed class OrbFeed
+     /// <summary>The tracked sources; null for all sources.</summary>
+     public SourceSet? Sources { get; private set; }
+ 
++    public IReadOnlyList<OrbSourceInstance> ExcludedSources { get; private set; } = [];
++
+     public SpeedMetric Metric { get; private set; } = SpeedMetric.Output;
+ 
+     public double Redline { get; private set; } = HeatMath.DefaultRedline;
+@@ -55,10 +58,10 @@ public sealed class OrbFeed
+ 
+     public SpeedTitle Title => _title.Displayed;
+ 
+-    public bool IsUnavailable => Reading.State != SubsetState.Available;
++    public bool IsUnavailable => Reading.State != SubsetState.Available || !Reading.LiveComplete;
+ 
+     /// <summary>Today's peak output of the orb's sources (METRICS 6.8 <c>peakToday_A</c>).</summary>
+-    public double PeakToday => Sources is null ? Reading.MeasuredPeakOutput ?? 0 : _peak.PeakTodayOutput;
++    public double PeakToday => _peak.PeakTodayOutput;
+ 
+     public double? NextDeadline => (_tier.NextDeadline, _title.NextDeadline) switch
+     {
+@@ -70,10 +73,12 @@ public sealed class OrbFeed
+     /// Sets the sources, metric and redline. A change of the source set while running restarts the orb's peak and
+     /// silences its celebration for 60 s (METRICS 6.8); the first configuration (app start) does not.
+     /// </summary>
+-    public void Configure(SourceSet? sources, SpeedMetric metric, double redline, long nowMs, bool created = false)
++    public void Configure(SourceSet? sources, SpeedMetric metric, double redline, long nowMs, bool created = false, IReadOnlyList<OrbSourceInstance>? exclusions = null)
+     {
+-        var changed = _configured && sources != Sources;
++        exclusions ??= [];
++        var changed = _configured && (sources != Sources || !ExcludedSources.SequenceEqual(exclusions));
+         Sources = sources;
++        ExcludedSources = exclusions;
+         Metric = metric;
+         Redline = HeatMath.ClampRedline(metric, redline);
+         if (changed || created)
+@@ -88,16 +93,23 @@ public sealed class OrbFeed
+     public bool Update(SpeedSnapshot snapshot, double nowSeconds)
+     {
+         ArgumentNullException.ThrowIfNull(snapshot);
+-        Reading = OrbSubset.Reading(snapshot, Sources);
++        Reading = OrbSubset.Reading(snapshot, Sources, ExcludedSources);
++        _availableInstances.Clear();
++        foreach (var status in snapshot.Sources)
++        {
++            var instance = new OrbSourceInstance(status.HostId, status.Kind);
++            if ((Sources?.Contains(status.Kind) ?? true) && !ExcludedSources.Contains(instance) && !OrbSubset.IsUnavailable(status))
++                _availableInstances.Add(instance);
++        }
+         Money = Unit == OrbUnit.Cost && Cost is { } cost
+-            ? cost.Live(Previewing ? PreviewReading(Reading.Live.Output) : OrbSubset.Cost(snapshot, Sources, cost.Billable), Reading.Agents.Count)
++            ? cost.Live(Previewing ? PreviewReading(Reading.Live.Output) : OrbSubset.Cost(snapshot, Sources, cost.Billable, ExcludedSources), Reading.Agents.Count)
+             : null;
+         var value = Reading.Live.ValueFor(Metric);
+         Value = double.IsFinite(value) && value > 0 ? value : 0;
+         _tier.Update(Value, Redline, nowSeconds);
+         _title.Update(Value, Redline, nowSeconds);
+ 
+-        if (Sources is null || snapshot.Timestamp == DateTimeOffset.MinValue)
++        if (snapshot.Timestamp == DateTimeOffset.MinValue || !Reading.LiveComplete)
+         {
+             return false;
+         }
+@@ -110,7 +122,7 @@ public sealed class OrbFeed
+ 
+         _lastNowMs = nowMs;
+         var dayStart = snapshot.DayStart == DateTimeOffset.MinValue ? 0 : snapshot.DayStart.ToUnixTimeMilliseconds();
+-        return _peak.Update(Reading.Live.Output, Reading.MeasuredPeakOutput, dayStart, nowMs);
++        return _peak.Update(Reading.Live.Output, 0, dayStart, nowMs);
+     }
+ 
+     private static CostReading PreviewReading(double output) => CostReading.Zero with
+@@ -127,6 +139,8 @@ public sealed class OrbFeed
+         return tier || title;
+     }
+ 
+-    /// <summary>Whether an engine event belongs to this orb (completions of its sources; the all-sources new peak).</summary>
+-    public bool Accepts(SpeedEvent speedEvent) => OrbSubset.Accepts(speedEvent, Sources);
++    /// <summary>Whether a completion belongs to an available selected host/source instance.</summary>
++    public bool Accepts(SpeedEvent speedEvent) => speedEvent is SpeedEvent.ResponseCompleted completed
++        && _availableInstances.Contains(new OrbSourceInstance(completed.Response.HostId, completed.Response.Source))
++        && OrbSubset.Accepts(speedEvent, Sources, ExcludedSources);
+ }
+diff --git a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbDefinition.cs b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbDefinition.cs
+index 56c1a6ee..bae46567 100644
+--- a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbDefinition.cs
++++ b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbDefinition.cs
+@@ -1,3 +1,4 @@
++using System.Collections.Immutable;
+ using System.Globalization;
+ using System.Text;
+ using AgentSpeed.Core;
+@@ -28,6 +29,9 @@ public sealed record OrbDefinition
+ 
+     public OrbSources Sources { get; init; } = OrbSources.All;
+ 
++    /// <summary>Per-host source exclusions; missing entries remain enabled.</summary>
++    public ImmutableArray<OrbSourceInstance> ExcludedSources { get; init; } = [];
++
+     public OrbStyle Style { get; init; } = OrbStyle.Led;
+ 
+     /// <summary>Diameter in DIPs within the style's range.</summary>
+diff --git a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbsJson.cs b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbsJson.cs
+index ca15330f..e7fd1246 100644
+--- a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbsJson.cs
++++ b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbsJson.cs
+@@ -1,6 +1,7 @@
+ using System.Collections.Immutable;
+ using System.Text.Json;
+ using AgentSpeed.Presentation.Orb;
++using AgentSpeed.Core;
+ 
+ namespace AgentSpeed.Presentation.Settings.Orbs;
+ 
+@@ -99,6 +100,16 @@ public static class OrbsJson
+             writer.WriteString("sources", "all");
+         }
+ 
++        writer.WriteStartArray("excludedSources");
++        foreach (var excluded in orb.ExcludedSources.IsDefault ? [] : orb.ExcludedSources)
++        {
++            writer.WriteStartObject();
++            if (excluded.HostId is { } hostId) writer.WriteString("hostID", hostId);
++            writer.WriteString("source", OrbSources.KeyOf(excluded.Kind));
++            writer.WriteEndObject();
++        }
++        writer.WriteEndArray();
++
+         writer.WriteString("style", OrbStyles.Key(orb.Style));
+         writer.WriteNumber("size", orb.Size);
+         writer.WriteNumber("opacity", orb.Opacity);
+@@ -136,6 +147,7 @@ public static class OrbsJson
+         {
+             Name = ReadString(element, "name", 1024),
+             Sources = ReadSources(element),
++            ExcludedSources = ReadExcludedSources(element),
+             Style = style,
+             Size = ReadNumber(element, "size") ?? OrbDefinition.DefaultSize,
+             Opacity = ReadNumber(element, "opacity") ?? OrbDefinition.MaxOpacity,
+@@ -153,6 +165,25 @@ public static class OrbsJson
+         }.Validated();
+     }
+ 
++    private static ImmutableArray<OrbSourceInstance> ReadExcludedSources(JsonElement element)
++    {
++        if (!element.TryGetProperty("excludedSources", out var items) || items.ValueKind != JsonValueKind.Array) return [];
++        var result = ImmutableArray.CreateBuilder<OrbSourceInstance>();
++        foreach (var item in items.EnumerateArray())
++        {
++            if (item.ValueKind != JsonValueKind.Object || !OrbSources.TryParseKey(ReadString(item, "source", 64), out var kind)) continue;
++            Guid? host = null;
++            if (item.TryGetProperty("hostID", out var id) && id.ValueKind != JsonValueKind.Null)
++            {
++                if (id.ValueKind != JsonValueKind.String || !id.TryGetGuid(out var parsed)) continue;
++                host = parsed;
++            }
++            var instance = new OrbSourceInstance(host, kind);
++            if (!result.Contains(instance)) result.Add(instance);
++        }
++        return result.ToImmutable();
++    }
++
+     internal static OrbSources ReadSources(JsonElement element)
+     {
+         if (!element.TryGetProperty("sources", out var sources))
+diff --git a/windows/src/AgentSpeed/Orb/OrbManager.cs b/windows/src/AgentSpeed/Orb/OrbManager.cs
+index 84d2b461..0fc8f472 100644
+--- a/windows/src/AgentSpeed/Orb/OrbManager.cs
++++ b/windows/src/AgentSpeed/Orb/OrbManager.cs
+@@ -249,7 +249,7 @@ internal sealed class OrbManager : IDisposable
+             {
+                 entry = CreateEntry(orb);
+                 var isNew = _started && previous is not null && previous.Find(orb.Id) is null;
+-                entry.Feed.Configure(orb.TrackedSources, settings.Metric, orb.EffectiveRedline(settings.Metric, settings), NowMs(), isNew);
++                entry.Feed.Configure(orb.TrackedSources, settings.Metric, orb.EffectiveRedline(settings.Metric, settings), NowMs(), isNew, orb.ExcludedSources);
+                 created.Add(orb.Id);
+                 if (isNew)
+                 {
+@@ -258,8 +258,8 @@ internal sealed class OrbManager : IDisposable
+             }
+             else
+             {
+-                var sourcesChanged = entry.Definition.TrackedSources != orb.TrackedSources;
+-                entry.Feed.Configure(orb.TrackedSources, settings.Metric, orb.EffectiveRedline(settings.Metric, settings), NowMs());
++                var sourcesChanged = entry.Definition.TrackedSources != orb.TrackedSources || !entry.Definition.ExcludedSources.SequenceEqual(orb.ExcludedSources);
++                entry.Feed.Configure(orb.TrackedSources, settings.Metric, orb.EffectiveRedline(settings.Metric, settings), NowMs(), exclusions: orb.ExcludedSources);
+                 if (sourcesChanged)
+                 {
+                     resourced.Add(orb.Id);
+diff --git a/windows/src/AgentSpeed/Settings/OrbsPane/OrbsPaneViewModel.cs b/windows/src/AgentSpeed/Settings/OrbsPane/OrbsPaneViewModel.cs
+index afb264ea..ad35ee35 100644
+--- a/windows/src/AgentSpeed/Settings/OrbsPane/OrbsPaneViewModel.cs
++++ b/windows/src/AgentSpeed/Settings/OrbsPane/OrbsPaneViewModel.cs
+@@ -78,6 +78,13 @@ internal sealed class OrbSourceRowViewModel(SourceKind kind) : ObservableObject
+     public string? Tooltip { get => _tooltip; set => Set(ref _tooltip, value); }
+ }
+ 
++internal sealed class OrbHostSourceRow(OrbSourceInstance instance, string name, bool isChecked)
++{
++    public OrbSourceInstance Instance { get; } = instance;
++    public string Name { get; } = name;
++    public bool IsChecked { get; } = isChecked;
++}
++
+ /// <summary>A style card of the editor (DESIGN 5, item 3, `orbs.style`).</summary>
+ internal sealed class OrbStyleCardViewModel(OrbStyle style, int index) : ObservableObject
+ {
+@@ -206,6 +213,8 @@ internal sealed class OrbsPaneViewModel : ObservableObject
+ 
+     public ObservableCollection<OrbSourceRowViewModel> SourceRows { get; } = [];
+ 
++    public ObservableCollection<OrbHostSourceRow> HostSourceRows { get; } = [];
++
+     public ObservableCollection<OrbStyleCardViewModel> StyleCards { get; } = [];
+ 
+     /// <summary>The custom redline's title list, in the selected orb's theme (DESIGN 1, Where the theme applies).</summary>
+@@ -760,6 +769,16 @@ internal sealed class OrbsPaneViewModel : ObservableObject
+         Update(d => OrbEditing.ToggleSource(d, id, row.Kind));
+     }
+ 
++    public void ToggleHostSource(OrbHostSourceRow row)
++    {
++        if (SelectedId is not { } id || _syncing) return;
++        Update(d => d with { Orbs = [.. d.Orbs.Select(o => o.Id != id ? o : o with
++        {
++            ExcludedSources = o.ExcludedSources.Contains(row.Instance)
++                ? o.ExcludedSources.Remove(row.Instance) : o.ExcludedSources.Add(row.Instance),
++        })] });
++    }
++
+     private void Update(Func<OrbsDocument, OrbsDocument?> change, bool showOrbsIfVisible = false) =>
+         _settings.Update(s =>
+         {
+@@ -956,6 +975,22 @@ internal sealed class OrbsPaneViewModel : ObservableObject
+                 row.IsEnabled = !all && !lastOne;
+                 row.Tooltip = lastOne ? _loc["orbs.sources.lastOne"] : null;
+             }
++            HostSourceRows.Clear();
++            if (orb is not null)
++            {
++                var instances = snapshot.Sources.Where(s => !OrbSubset.IsUnavailable(s) && (s.SessionCount > 0 || s.Today.Requests > 0 || s.Live != Rate.Zero))
++                    .Select(s => new OrbSourceInstance(s.HostId, s.Kind))
++                    .Concat(orb.ExcludedSources).Distinct();
++                foreach (var instance in instances)
++                {
++                    var host = instance.HostId is null ? _loc["win.history.local"]
++                        : S.RemoteHosts.FirstOrDefault(h => h.Id == instance.HostId) is { } remote
++                            ? $"{_loc["win.history.host"]}: {(string.IsNullOrWhiteSpace(remote.Label) ? remote.Destination : remote.Label)}"
++                            : null;
++                    if (host is null) continue;
++                    HostSourceRows.Add(new OrbHostSourceRow(instance, $"{host} · {_loc[DisplayText.SourceKey(instance.Kind)]}", !orb.ExcludedSources.Contains(instance)));
++                }
++            }
+         }
+         finally
+         {
+diff --git a/windows/src/AgentSpeed/Settings/Pages/OrbPage.xaml b/windows/src/AgentSpeed/Settings/Pages/OrbPage.xaml
+index c38d2afd..8bb27716 100644
+--- a/windows/src/AgentSpeed/Settings/Pages/OrbPage.xaml
++++ b/windows/src/AgentSpeed/Settings/Pages/OrbPage.xaml
+@@ -237,6 +237,15 @@
+                             </DataTemplate>
+                         </ItemsControl.ItemTemplate>
+                     </ItemsControl>
++                    <Rectangle Style="{StaticResource Hairline}" Margin="0,6,0,2" />
++                    <ItemsControl ItemsSource="{Binding HostSourceRows}" Focusable="False">
++                        <ItemsControl.ItemTemplate>
++                            <DataTemplate DataType="{x:Type pane:OrbHostSourceRow}">
++                                <CheckBox Content="{Binding Name}" IsChecked="{Binding IsChecked, Mode=OneWay}"
++                                          Click="OnHostSourceClick" Margin="0,3,0,3" />
++                            </DataTemplate>
++                        </ItemsControl.ItemTemplate>
++                    </ItemsControl>
+                 </StackPanel>
+             </Border>
+ 
+diff --git a/windows/src/AgentSpeed/Settings/Pages/OrbPage.xaml.cs b/windows/src/AgentSpeed/Settings/Pages/OrbPage.xaml.cs
+index 43af00a5..e91329c1 100644
+--- a/windows/src/AgentSpeed/Settings/Pages/OrbPage.xaml.cs
++++ b/windows/src/AgentSpeed/Settings/Pages/OrbPage.xaml.cs
+@@ -152,6 +152,11 @@ internal partial class OrbPage : UserControl
+         }
+     }
+ 
++    private void OnHostSourceClick(object sender, RoutedEventArgs e)
++    {
++        if (sender is FrameworkElement { DataContext: OrbHostSourceRow row }) Model?.ToggleHostSource(row);
++    }
++
+     /// <summary>Space toggles visibility, Ctrl+D duplicates, Delete removes (the removal can be undone).</summary>
+     private void OnListKeyDown(object sender, KeyEventArgs e)
+     {
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs
+index 1a96c198..d1e6c47c 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs
+@@ -74,12 +74,12 @@ public class OrbFeedTests
+     }
+ 
+     [Fact]
+-    public void AllSourcesOrbLeavesNewPeakToTheEngineEvent()
++    public void AllSourcesOrbUsesItsOwnPeakInsteadOfTheEngineEvent()
+     {
+         var feed = new OrbFeed("a");
+         feed.Configure(null, SpeedMetric.Output, 400, 0);
+         Assert.False(feed.Update(Snapshot(500, 0, 1), 1));
+-        Assert.True(feed.Accepts(new SpeedEvent.NewPeak(500)));
++        Assert.False(feed.Accepts(new SpeedEvent.NewPeak(500)));
+         var subset = new OrbFeed("b");
+         subset.Configure(SourceSet.Of(SourceKind.Codex), SpeedMetric.Output, 400, 0);
+         Assert.False(subset.Accepts(new SpeedEvent.NewPeak(500)));
+@@ -93,7 +93,52 @@ public class OrbFeedTests
+         codex.Configure(SourceSet.Of(SourceKind.Codex), SpeedMetric.Output, 400, 0);
+         var claude = new OrbFeed("b");
+         claude.Configure(SourceSet.Of(SourceKind.ClaudeCode), SpeedMetric.Output, 400, 0);
++        codex.Update(Snapshot(1, 1, 1), 1);
++        claude.Update(Snapshot(1, 1, 1), 1);
+         Assert.False(codex.Accepts(new SpeedEvent.ResponseCompleted(response)));
+         Assert.True(claude.Accepts(new SpeedEvent.ResponseCompleted(response)));
+     }
++    [Fact]
++    public void HostExclusionsApplyToReadingsAndEventsIndependentlyPerOrb()
++    {
++        var host = Guid.NewGuid();
++        var snapshot = Snapshot(100, 0, 1) with
++        {
++            Sources = [Source(SourceKind.Codex, 100), Source(SourceKind.Codex, 40) with { HostId = host }],
++        };
++        var localOnly = new OrbFeed("local");
++        localOnly.Configure(null, SpeedMetric.Output, 400, 0, exclusions: [new(host, SourceKind.Codex)]);
++        var remoteOnly = new OrbFeed("remote");
++        remoteOnly.Configure(null, SpeedMetric.Output, 400, 0, exclusions: [new(null, SourceKind.Codex)]);
++        localOnly.Update(snapshot, 1);
++        remoteOnly.Update(snapshot, 1);
++        Assert.Equal(100, localOnly.Value);
++        Assert.Equal(40, remoteOnly.Value);
++        Assert.False(localOnly.Accepts(new SpeedEvent.NewPeak(1000)));
++        var response = new ResponseSummary(SourceKind.Codex, "p", null, 100, 100, TimeSpan.FromSeconds(1), 100, Day) { HostId = host };
++        Assert.False(localOnly.Accepts(new SpeedEvent.ResponseCompleted(response)));
++        Assert.True(remoteOnly.Accepts(new SpeedEvent.ResponseCompleted(response)));
++        var disconnected = snapshot with { Sources = [snapshot.Sources[0], snapshot.Sources[1] with { LiveAvailable = false, TodayAvailable = false }] };
++        localOnly.Update(disconnected, 2);
++        remoteOnly.Update(disconnected, 2);
++        Assert.True(localOnly.Reading.LiveComplete);
++        Assert.False(remoteOnly.Reading.LiveComplete);
++        Assert.False(remoteOnly.Reading.TodayComplete);
++    }
++
++    [Fact]
++    public void UnknownOfflineHostOnlyAffectsSelectedKinds()
++    {
++        var host = Guid.NewGuid();
++        var snapshot = Snapshot(10, 0, 1) with { RemoteHosts = [new RemoteHostStatus(host, "remote", false, null)] };
++        var feed = new OrbFeed("a");
++        feed.Configure(SourceSet.Of(SourceKind.Codex), SpeedMetric.Output, 400, 0);
++        feed.Update(snapshot, 1);
++        Assert.False(feed.Reading.LiveComplete);
++        feed.Configure(SourceSet.Of(SourceKind.Codex), SpeedMetric.Output, 400, 0, exclusions: [new(host, SourceKind.Codex)]);
++        feed.Update(snapshot, 2);
++        Assert.True(feed.Reading.LiveComplete);
++        Assert.True(feed.Reading.TodayComplete);
++    }
++
+ }
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbSettingsTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbSettingsTests.cs
+index 4a6b9698..4ba26d71 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/OrbSettingsTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbSettingsTests.cs
+@@ -55,6 +55,18 @@ public class OrbSettingsTests
+ 
+     private static string OneOrb(string fields) => "{ \"version\": 1, \"orbs\": [ { \"id\": \"" + IdA + "\"" + fields + " } ] }";
+ 
++    [Fact]
++    public void HostExclusionsRoundTripAndOldSettingsDefaultToEnabled()
++    {
++        var host = Guid.NewGuid();
++        var settings = WithOrbsJson(OneOrb($", \"excludedSources\": [{{\"hostID\": \"{host}\", \"source\": \"codex\"}}, {{\"source\": \"claudeCode\"}}]"));
++        var saved = SettingsSerializer.Deserialize(SettingsSerializer.Serialize(settings));
++        var excluded = Assert.Single(saved.Orbs.Orbs).ExcludedSources;
++        Assert.Contains(new OrbSourceInstance(host, SourceKind.Codex), excluded);
++        Assert.Contains(new OrbSourceInstance(null, SourceKind.ClaudeCode), excluded);
++        Assert.Empty(Assert.Single(WithOrbsJson(OneOrb("")).Orbs.Orbs).ExcludedSources);
++    }
++
+     [Fact]
+     public void FreshInstallHasOneDefaultOrb()
+     {
+-- 
+2.41.0
+

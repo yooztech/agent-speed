@@ -82,5 +82,37 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0012-Add-per-user-Windows-installer.patch": {
+    "regression": [{"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests"}],
+    "related": [],
+    "reason": ""
+  },
+  "0013-Integrate-Windows-SSH-sources-and-fork-updates.patch": {
+    "regression": [
+      {"platform": "linux", "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote -j2 && ctest --test-dir build-remote --output-on-failure"},
+      {"platform": "macos", "run": "cd macos && swift test"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests"}
+    ],
+    "related": [],
+    "reason": ""
+  },
+  "0014-Stamp-fork.2-release-version.patch": {
+    "regression": [{"platform": "linux", "run": "python3 tests/test_release_version.py"}],
+    "related": [],
+    "reason": ""
+  },
+  "0015-Preserve-remote-source-completeness-and-history-inte.patch": {
+    "regression": [{"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests && dotnet test windows/tests/AgentSpeed.Windows.Tests"}],
+    "related": [],
+    "reason": ""
+  },
+  "0016-Select-orb-sources-independently-by-host.patch": {
+    "regression": [
+      {"platform": "macos", "run": "cd macos && swift test"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests && dotnet test windows/tests/AgentSpeed.Windows.Tests"}
+    ],
+    "related": [],
+    "reason": ""
   }
 }

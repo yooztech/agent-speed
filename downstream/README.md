@@ -4,28 +4,28 @@ The upstream baseline is pinned in `config.json` at version `1.6.1`
 (`384ce020cc655133e95aaad5cc085f3985f0ed99`). The maintenance workspace's
 root `VERSION` remains the upstream baseline; do not change it to the fork
 version. The application patch queue sets the prepared tree's `VERSION` to
-`1.6.1-fork.1`, which is the version used for release builds and tag checks.
+`1.6.1-fork.2`, which is the version used for release builds and tag checks.
 Maintenance files are not application patches. Build and package from a
 prepared tree, not from the main workspace. Python 3, Git, network access to
 the upstream URL, and the relevant platform toolchain are required.
 
 `patches/series` is the sole application order. Each entry names one numbered
 `git format-patch` mail patch in the same directory. `patches/tests.json` has
-exactly the same keys. The queue contains remote monitoring, its macOS
-settings compilation fix, the fork version patch, native multi-host source
-integration, remote freshness and source completeness fixes, and the Windows
-stream end-to-end test driver fix. Never place
+exactly the same keys. The queue carries remote monitoring, native multi-host
+integration, fork release and updater changes, and platform fixes. Never place
 credentials in this repository or a patch.
 
 ## Remote sources
 
-On macOS, local sources and enabled SSH-connected Linux hosts operate at the
-same time. They are grouped by host and source in the native dashboard, whose
-available statistics aggregate across sources; there is no target selector.
-Unavailable values are not zeros, and offline periods remain gaps in history.
-History exports match the visible history; local diagnostic reports exclude
-remote data. See the [fork release notes](../docs/releases/v1.6.1-fork.1.md)
+On macOS and Windows, local sources and enabled SSH-connected Linux hosts
+operate at the same time. They are grouped by host and source in the native
+dashboard, whose available statistics aggregate across sources; there is no
+target selector. Unavailable values are not zeros, and offline periods remain
+gaps in history. History exports match the visible history; local diagnostic
+reports exclude remote data. See the [fork release notes](../docs/releases/v1.6.1-fork.2.md)
 for setup, collector requirements and verification limitations.
+Floating orb source settings on macOS and Windows also allow selection by host
+and source, including enabled remote hosts.
 
 ## CI and releases
 
@@ -37,10 +37,8 @@ maintenance checkout. Preparation needs Python 3, Git and access to the pinned
 upstream repository on every runner.
 
 `CI` runs on pushes to any branch, pull requests and manual dispatch. It builds
-and tests the dynamically linked Linux x86_64 collector on Ubuntu 22.04, then
-passes that same tested binary to the macOS packaging job and checks that the
-packaged executable matches it. The
-Windows job also builds from a prepared tree. The separate `Linux` workflow
+and tests the dynamically linked Linux x86_64 collector on Ubuntu 22.04 for
+inclusion in the macOS and Windows packages. The separate `Linux` workflow
 runs on branch pushes, pull requests and manual dispatch and builds/tests the
 core; its desktop packages use Qt 6.8.3 and target x86_64 and arm64. These
 runs upload Actions artifacts only, using the prepared tree's CMake version
@@ -56,18 +54,18 @@ synthetic archives covering missing, non-executable, changed and valid files.
 The `Release` workflow runs on `v*` tag pushes in `yooztech/agent-speed`; the
 tagged commit must be an ancestor of `main`. Fork tags use `vX.Y.Z-fork.N`,
 and the version must equal `VERSION` in the prepared tree. For this release,
-the tag is `v1.6.1-fork.1`; see `docs/releases/v1.6.1-fork.1.md` for release
+the tag is `v1.6.1-fork.2`; see `docs/releases/v1.6.1-fork.2.md` for release
 notes and limitations. The workflow publishes Linux, macOS and Windows
-artifacts together, including the x86_64 collector in the macOS bundle.
+artifacts together, including the x86_64 collector in macOS and Windows
+packages. Windows offers both a portable ZIP and a per-user installer.
 Existing drafts receive assets without overwriting existing names and remain
 drafts; an already published release is left unchanged. A successful build
-does not establish runtime compatibility on every target system; real SSH
+does not establish runtime compatibility on every target system; real GUI SSH
 end-to-end operation has not been verified on a physical remote host.
 
 Published fork tags and assets are immutable: changes after publication require
-a new fork version and tag (for example, `v1.6.1-fork.2`), not replacement of
-`v1.6.1-fork.1` assets. Fixes made before its first publication remain part of
-`v1.6.1-fork.1`.
+a new fork version and tag, not replacement of `v1.6.1-fork.2` assets. The
+historical `v1.6.1-fork.1` release notes remain available separately.
 
 ## Prepare and verify
 

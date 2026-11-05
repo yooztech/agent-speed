@@ -9,3 +9,8 @@
 0009-Fix-remote-history-test-fixtures.patch
 0010-Make-traffic-clear-test-account-for-elapsed-time.patch
 0011-Clear-restored-traffic-ledger-before-first-sample.patch
+0012-Add-per-user-Windows-installer.patch
+0013-Integrate-Windows-SSH-sources-and-fork-updates.patch
+0014-Stamp-fork.2-release-version.patch
+0015-Preserve-remote-source-completeness-and-history-inte.patch
+0016-Select-orb-sources-independently-by-host.patch
