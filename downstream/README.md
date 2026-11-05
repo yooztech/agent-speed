@@ -82,6 +82,9 @@ the tag is `v1.6.1-fork.2`; see `docs/releases/v1.6.1-fork.2.md` for release
 notes and limitations. The workflow publishes Linux, macOS and Windows
 artifacts together, including the x86_64 collector in macOS and Windows
 packages. Windows offers both a portable ZIP and a per-user installer.
+The Windows installer smoke test exercises legacy startup migration, upgrades
+with startup enabled and disabled, and explicit installer task overrides; run
+it after producing the Windows installer and ZIP artifacts.
 Existing drafts receive assets without overwriting existing names and remain
 drafts; an already published release is left unchanged. A successful build
 does not establish runtime compatibility on every target system; real GUI SSH

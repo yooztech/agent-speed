@@ -142,5 +142,10 @@
     "regression": [{"platform": "macos", "run": "python3 macos/scripts/test-update-relaunch.py"}],
     "related": [],
     "reason": ""
+  },
+  "0022-Preserve-Windows-installer-startup-choice.patch": {
+    "regression": [{"platform": "windows", "run": "./windows/scripts/test-installer.ps1"}],
+    "related": [],
+    "reason": ""
   }
 }

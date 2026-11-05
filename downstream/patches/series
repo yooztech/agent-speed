@@ -19,3 +19,4 @@
 0019-Fix-remote-and-updater-regression-tests.patch
 0020-Fix-fork-release-feed-boundary-fixture.patch
 0021-Fix-fork-update-relaunch-integration-fixture.patch
+0022-Preserve-Windows-installer-startup-choice.patch
