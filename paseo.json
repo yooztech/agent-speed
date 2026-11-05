@@ -1,0 +1,1 @@
+{"scripts":{"release":{"command":"exec bash downstream/release.sh"}}}

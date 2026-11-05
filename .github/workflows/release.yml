@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   spec:
     name: Release contracts
@@ -21,15 +25,22 @@ jobs:
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$ ]]
           git fetch origin refs/heads/downstream/patch-build
           git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD
+      - name: Test collector zip verifier
+        run: python3 downstream/test-verify-collector-zip.py
       - name: Prepare downstream tree
         run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
+      - name: Install zstd and brotli
+        run: (command -v zstd && command -v brotli) || (sudo apt-get update && sudo apt-get install -y zstd brotli)
       - name: Check version and contracts
         working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: |
           test "$(cat VERSION)" = "${GITHUB_REF_NAME#v}"
+          python3 spec/tools/reference.py --check-fixtures
           python3 spec/tools/report_reference.py
           python3 spec/tools/execution_modes_reference.py
           python3 spec/tools/test_reporting_extensions.py
+          python3 spec/tools/vehicles.py
+          shellcheck install.sh
 
   linux:
     name: Linux desktop packages
@@ -229,26 +240,36 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: sha256sum AgentSpeed-* > SHA256SUMS.txt && cat SHA256SUMS.txt
-      - name: Upload release assets
+      - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          existing="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null || true)"
-          if [ "$existing" = "true" ]; then
-            gh release upload "$GITHUB_REF_NAME" dist/*
-            echo "Assets uploaded to the existing draft; publication remains manual."
+          verify_tag() {
+            git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+            test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
+          }
+          verify_tag
+          # A successful authenticated listing distinguishes an absent release from API errors.
+          existing="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[][] | select(.tag_name == \"$GITHUB_REF_NAME\") | .draft")"
+          if [ "$existing" = "false" ]; then
+            echo "Release is already published; leaving it unchanged."
             exit 0
-          elif [ "$existing" = "false" ]; then
-            echo "Release is already published; leaving its assets unchanged."
-            exit 0
+          elif [ -n "$existing" ] && [ "$existing" != "true" ]; then
+            echo "Unexpected release state: $existing" >&2
+            exit 1
           fi
-          if [[ "$GITHUB_REF_NAME" == *-fork.* ]]; then
-            cp "docs/releases/${GITHUB_REF_NAME}.md" notes.md
-          else
-            : > notes.md
-            if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
-              cat "docs/releases/${GITHUB_REF_NAME}.md" >> notes.md
+          if [ -z "$existing" ]; then
+            if [[ "$GITHUB_REF_NAME" == *-fork.* ]]; then
+              cp "docs/releases/${GITHUB_REF_NAME}.md" notes.md
+            else
+              : > notes.md
+              if [ -f "docs/releases/${GITHUB_REF_NAME}.md" ]; then
+                cat "docs/releases/${GITHUB_REF_NAME}.md" >> notes.md
+              fi
+              sed "s/{{VERSION}}/${GITHUB_REF_NAME}/g" .github/release-notes.md >> notes.md
             fi
-            sed "s/{{VERSION}}/${GITHUB_REF_NAME}/g" .github/release-notes.md >> notes.md
+            gh release create "$GITHUB_REF_NAME" --draft --title "Agent Speed ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
           fi
-          gh release create "$GITHUB_REF_NAME" dist/* --title "Agent Speed ${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag --prerelease=false
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          verify_tag
+          gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=false

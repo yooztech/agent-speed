@@ -52,68 +52,75 @@ test registry affects the build without copying application files into the
 maintenance checkout. Preparation needs Python 3, Git and access to the pinned
 upstream repository on every runner.
 
-`CI` runs only by manual dispatch, not on commits, branch pushes or pull-request
-updates. Batch related fixes before requesting a full build. It builds and
-tests the dynamically linked Linux x86_64 collector on Ubuntu 22.04 for
-inclusion in the macOS and Windows packages. `Linux` runs only by manual
-dispatch or as a reusable workflow; it builds/tests the core and packages Qt
-6.8.3 desktop apps for x86_64 and arm64. Validation runs upload Actions
-artifacts only. `Release` runs on version tags, calls the Linux workflow and
-waits for all platform packages before publishing; ordinary branch pushes do
-not publish or start full builds.
+`Release` is the **only complete release gate**: it prepares the pinned tree,
+runs the required cross-platform validation and packaging, and publishes only
+after all required jobs succeed. The separate `CI` workflow has been removed;
+`Linux` is a reusable workflow called by `Release`, not a separately
+dispatchable gate. Ordinary branch pushes do not publish or start full builds.
 
-After a batch of changes on the long-lived branch, request validation with:
+Run the release wrapper from a clean `downstream/patch-build` checkout:
 
 ```sh
-gh workflow run ci.yml --ref downstream/patch-build
-gh workflow run linux.yml --ref downstream/patch-build
+bash downstream/release.sh --plan  # read-only inspection
+bash downstream/release.sh         # launch and wait for publication
 ```
+
+The wrapper requires Git, network access, push access to `origin`, and an
+authenticated `gh` session with access to the upstream repository and fork
+releases, drafts, and Actions, including permission to write releases and
+Actions. It queries the latest upstream release and its tag commit; if that
+commit does not match `downstream/config.json`, it stops rather than silently
+building a stale pin. First migrate the pin and patch queue, then retry.
+The wrapper selects the next fork number after the highest published release.
+An unpublished candidate of that number is retried by cancelling its old runs
+and cleaning up the old draft and tag before recreating it. The wrapper checks
+again immediately before deletion, but GitHub's API does not provide an atomic
+draft-only delete. While the wrapper runs, nobody, including third-party
+automation or administrators, may manually publish the same tag: a concurrent
+publication can race that check. Published releases must never be replaced.
+The wrapper reports success only after publication and all release assets are
+ready. `--plan` performs queries without changing anything.
 
 To check a macOS bundle locally against its tested Linux collector, run
 `python3 downstream/verify-collector-zip.py <zip> <collector>` from the
 maintenance workspace. It checks archive and extracted executable permissions
-and byte equality. CI also runs `downstream/test-verify-collector-zip.py` with
+and byte equality. Release also runs `downstream/test-verify-collector-zip.py` with
 synthetic archives covering missing, non-executable, changed and valid files.
 
 The `Release` workflow runs on `v*` tag pushes in `yooztech/agent-speed`; the
-tagged commit must be an ancestor of `downstream/patch-build`. Fork tags use `vX.Y.Z-fork.N`,
-and the version must equal `VERSION` in the prepared tree. For this release,
-the tag is `v1.6.1-fork.2`; see `docs/releases/v1.6.1-fork.2.md` for release
-notes and limitations. The workflow publishes Linux, macOS and Windows
-artifacts together, including the x86_64 collector in macOS and Windows
-packages. Windows offers both a portable ZIP and a per-user installer.
+tagged commit must be an ancestor of `downstream/patch-build`. Fork tags use
+`vX.Y.Z-fork.N`, and the version must equal `VERSION` in the prepared tree.
+The workflow publishes Linux, macOS and Windows artifacts together, including
+the x86_64 collector in macOS and Windows packages. Windows offers both a
+portable ZIP and a per-user installer.
 The Windows installer smoke test exercises legacy startup migration, upgrades
-with startup enabled and disabled, and explicit installer task overrides; run
-it after producing the Windows installer and ZIP artifacts.
-Existing drafts receive assets without overwriting existing names and remain
-drafts; an already published release is left unchanged. A successful build
-does not establish runtime compatibility on every target system; real GUI SSH
-end-to-end operation has not been verified on a physical remote host.
+with startup enabled and disabled, and explicit installer task overrides.
+Drafts can be retried and published; published releases are left unchanged.
+A successful build does not establish runtime compatibility on every target
+system; real GUI SSH end-to-end operation has not been verified on a physical
+remote host.
 
 Published fork tags and assets are immutable: changes after publication require
 a new fork version and tag, not replacement of `v1.6.1-fork.2` assets. The
 historical `v1.6.1-fork.1` release notes remain available separately.
 
-## Prepare and verify
+## Prepare for focused development
 
 From the main workspace, choose an output path **outside** the workspace that
 does not exist:
 
 ```sh
 python3 downstream/manage.py prepare /tmp/agent-speed-prepared
-python3 downstream/manage.py verify --platform linux
-# On a Mac:
-python3 downstream/manage.py verify --platform macos
 ```
 
 Prepare clones the pinned upstream and applies every entry in order with
 `git am`; it stops on the first failure and leaves the output for diagnosis.
-Verify creates a fresh temporary prepared tree and runs all registered commands
-for that platform and `all`, stopping at the first failure. Commands run from
-the prepared tree root in the host shell. Verification on one platform does not
-claim verification on another. Run macOS checks on macOS; UI, real remote
-end-to-end, disconnect/reconnect and performance checks require their own
-appropriate environments and are not replaced by this command.
+The `verify` implementation remains a maintenance diagnostic, not a release
+prerequisite. Do not run full registered platform suites before starting
+Release: Release owns those checks and blocks publication on failure. Use
+only focused checks needed to resolve a concrete problem. UI, real remote
+end-to-end, disconnect/reconnect and performance checks require appropriate
+environments and are not established by successful compilation.
 
 The current registry runs the Linux CMake build and CTest suite, and `swift
 test` on macOS. Linux needs a C++ toolchain, CMake, and the dependencies used
@@ -173,18 +180,19 @@ Registry commands are trusted code: review them before running verification.
    with unchanged filenames are retained; new entries are intentionally empty.
 3. Review the exported patches and update their test registrations. Replace
    the main workspace's queue files with the complete reviewed export, removing
-   obsolete patches as well. Verify from a fresh tree on each affected platform.
-   Do not push, publish or rewrite history without authorization.
+   obsolete patches as well. Check replay in a fresh tree, then let the single
+   Release pipeline perform full platform validation. Do not push, publish or
+   rewrite history without authorization.
 
 ## Updating the upstream pin
 
 Use `python3 downstream/manage.py --base <full-candidate-sha> prepare
 <new-output>` to trial a candidate without changing the configured pin. For
 conflicts, resolve and re-create the linear commits in a separate development
-checkout, export against that same candidate with `--base`, install the
-reviewed queue and run `--base <full-candidate-sha> verify --platform ...` on
-each affected platform. Only after successful replay and verification update
-`config.json`. When upstream absorbs a patch, confirm equivalent behavior,
+checkout, export against that same candidate with `--base`, and review the
+complete replay before committing the pin and queue migration. The next
+Release performs full platform validation and blocks publication on failure;
+do not precede it with duplicate full suites. When upstream absorbs a patch, confirm equivalent behavior,
 remove its patch, series entry and test registration together, and record the
 upstream commit or PR in the change description. Never use a direct merge as a
 substitute for replaying and testing the queue.

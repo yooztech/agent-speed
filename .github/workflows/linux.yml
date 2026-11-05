@@ -1,9 +1,8 @@
 name: Linux
 
-# Run explicitly for validation; the release workflow calls this for tagged builds.
+# The release workflow calls this for tagged builds.
 on:
   workflow_call:
-  workflow_dispatch:
 permissions:
   contents: read
 
