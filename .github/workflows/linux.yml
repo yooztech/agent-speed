@@ -1,11 +1,10 @@
 name: Linux
 
-# Build and test the prepared downstream tree on branches, pull requests and manual runs.
-# A vX.Y.Z or vX.Y.Z-fork.N tag push also attaches both architectures' packages to the release.
+# Build and test on branches, pull requests and manual runs; release calls this workflow.
 on:
   push:
     branches: ["**"]
-    tags: ["v*"]
+  workflow_call:
   pull_request:
   workflow_dispatch:
 permissions:
@@ -78,7 +77,6 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$ ]]; then
             test "$(cat "$RUNNER_TEMP/agent-speed/VERSION")" = "${GITHUB_REF_NAME#v}"
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           else
             echo "value=$(sed -nE 's/^project\(AgentSpeedLinux VERSION ([0-9.]+).*/\1/p' "$RUNNER_TEMP/agent-speed/linux/CMakeLists.txt")-dev" >> "$GITHUB_OUTPUT"
           fi
@@ -101,26 +99,3 @@ jobs:
             dist/agent-speed_${{ steps.version.outputs.value }}_${{ matrix.debarch }}.deb
             dist/SHA256SUMS-Linux-${{ matrix.arch }}.txt
           if-no-files-found: error
-      - name: Verify trusted release tag
-        if: github.repository == 'yooztech/agent-speed' && steps.version.outputs.tag != ''
-        run: |
-          git fetch origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD
-          test "$(cat "$RUNNER_TEMP/agent-speed/VERSION")" = "${GITHUB_REF_NAME#v}"
-      - name: Attach to the release
-        if: github.repository == 'yooztech/agent-speed' && steps.version.outputs.tag != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          # release.yml creates the release; wait for it before uploading.
-          for attempt in $(seq 1 30); do
-            gh release view "$TAG" >/dev/null 2>&1 && break
-            sleep 20
-          done
-          gh release upload "$TAG" \
-            "dist/AgentSpeed-Linux-${{ matrix.arch }}.AppImage" \
-            "dist/agent-speed_${{ steps.version.outputs.value }}_${{ matrix.debarch }}.deb" \
-            "dist/SHA256SUMS-Linux-${{ matrix.arch }}.txt"
-    permissions:
-      contents: write

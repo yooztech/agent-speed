@@ -31,6 +31,13 @@ jobs:
           python3 spec/tools/execution_modes_reference.py
           python3 spec/tools/test_reporting_extensions.py
 
+  linux:
+    name: Linux desktop packages
+    needs: spec
+    uses: ./.github/workflows/linux.yml
+    permissions:
+      contents: read
+
   collector:
     name: Linux x86_64 collector
     needs: spec
@@ -132,7 +139,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [spec, macos, windows]
+    needs: [spec, linux, macos, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -146,6 +153,14 @@ jobs:
         with:
           name: AgentSpeed-Windows
           path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: agent-speed-linux-linux
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: agent-speed-linux-linux_arm64
+          path: dist
       - name: Checksums
         working-directory: dist
         run: sha256sum AgentSpeed-* > SHA256SUMS.txt && cat SHA256SUMS.txt
@@ -155,7 +170,7 @@ jobs:
         run: |
           existing="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null || true)"
           if [ "$existing" = "true" ]; then
-            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            gh release upload "$GITHUB_REF_NAME" dist/*
             echo "Assets uploaded to the existing draft; publication remains manual."
             exit 0
           elif [ "$existing" = "false" ]; then

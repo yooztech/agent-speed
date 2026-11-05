@@ -41,12 +41,11 @@ and tests the dynamically linked Linux x86_64 collector on Ubuntu 22.04, then
 passes that same tested binary to the macOS packaging job and checks that the
 packaged executable matches it. The
 Windows job also builds from a prepared tree. The separate `Linux` workflow
-runs on pushes, pull requests and manual dispatch and builds/tests the core;
-its desktop packages use Qt 6.8.3 and target x86_64 and arm64. Manual dispatch
-has no release input and uploads Actions artifacts only. On a
-`vX.Y.Z-fork.N` tag push, Linux waits for the release workflow to create the
-release and uploads its packages there; other runs use the prepared tree's
-CMake version with a `-dev` suffix.
+runs on branch pushes, pull requests and manual dispatch and builds/tests the
+core; its desktop packages use Qt 6.8.3 and target x86_64 and arm64. These
+runs upload Actions artifacts only, using the prepared tree's CMake version
+with a `-dev` suffix. The `Release` workflow calls the same Linux workflow for
+tagged builds and waits for both architectures before publishing.
 
 To check a macOS bundle locally against its tested Linux collector, run
 `python3 downstream/verify-collector-zip.py <zip> <collector>` from the
@@ -58,17 +57,17 @@ The `Release` workflow runs on `v*` tag pushes in `yooztech/agent-speed`; the
 tagged commit must be an ancestor of `main`. Fork tags use `vX.Y.Z-fork.N`,
 and the version must equal `VERSION` in the prepared tree. For this release,
 the tag is `v1.6.1-fork.1`; see `docs/releases/v1.6.1-fork.1.md` for release
-notes and limitations. The workflow publishes macOS and Windows artifacts,
-including the x86_64 collector in the macOS bundle. Existing drafts receive
-assets but remain drafts; an already published release is left unchanged.
-Linux release assets are handled separately by the Linux workflow. A successful
-build does not establish runtime compatibility on every target system; real
-SSH end-to-end operation has not been verified on a physical remote host.
+notes and limitations. The workflow publishes Linux, macOS and Windows
+artifacts together, including the x86_64 collector in the macOS bundle.
+Existing drafts receive assets without overwriting existing names and remain
+drafts; an already published release is left unchanged. A successful build
+does not establish runtime compatibility on every target system; real SSH
+end-to-end operation has not been verified on a physical remote host.
 
 Published fork tags and assets are immutable: changes after publication require
 a new fork version and tag (for example, `v1.6.1-fork.2`), not replacement of
 `v1.6.1-fork.1` assets. Fixes made before its first publication remain part of
-`v1.6.1-fork.1`. Linux uploads do not overwrite existing assets.
+`v1.6.1-fork.1`.
 
 ## Prepare and verify
 
