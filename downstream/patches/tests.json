@@ -68,5 +68,12 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0010-Make-traffic-clear-test-account-for-elapsed-time.patch": {
+    "regression": [
+      {"platform": "macos", "run": "cd macos && swift test"}
+    ],
+    "related": [],
+    "reason": ""
   }
 }

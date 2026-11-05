@@ -1,0 +1,56 @@
+From 49b4fcf9039179963fda18bf8c65360ee8a97ee1 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Thu, 5 Nov 2026 18:24:08 +0800
+Subject: [PATCH] Make traffic clear test account for elapsed time
+
+---
+ .../AgentSpeedCoreTests/TrafficMonitorTests.swift      | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/macos/Tests/AgentSpeedCoreTests/TrafficMonitorTests.swift b/macos/Tests/AgentSpeedCoreTests/TrafficMonitorTests.swift
+index 22fc81f6..fbc31c21 100644
+--- a/macos/Tests/AgentSpeedCoreTests/TrafficMonitorTests.swift
++++ b/macos/Tests/AgentSpeedCoreTests/TrafficMonitorTests.swift
+@@ -85,6 +85,10 @@ struct TrafficMonitorTests {
+     func monitorPublishesWritesAndLeavesNoChild() async throws {
+         let directory = try TempDirectory()
+         let url = directory.file("history.sqlite")
++        let seededSampledMs: Int64 = 1_000_000_000
++        let today = DayLabeler(timeZone: .current).label(for: Date())
++        try HistoryDatabase.saveTraffic(
++            [TrafficDay(day: today, key: TrafficDay.machineKey, rx: 0, tx: 0, sampledMs: seededSampledMs)], at: url.path)
+         let store = TrafficStore()
+         let monitor = TrafficMonitor(store: store, storeURL: url)
+         monitor.start(enabled: true)
+@@ -100,6 +104,7 @@ struct TrafficMonitorTests {
+         let stored = HistoryDatabase.storedTraffic(at: url.path)
+         #expect(stored.days.contains { $0.isMachine }, "flush writes today's rows")
+         #expect(stored.since != nil)
++        #expect(stored.days.contains { $0.isMachine && $0.sampledMs >= seededSampledMs }, "flush preserves restored totals")
+ 
+         monitor.setEnabled(false)
+         for _ in 0..<20 where store.snapshot.enabled { try await Task.sleep(nanoseconds: 50_000_000) }
+@@ -107,6 +112,7 @@ struct TrafficMonitorTests {
+         if let nettop { #expect(kill(nettop, 0) == -1, "off stops nettop at once") }
+ 
+         monitor.setEnabled(true)
++        let clearStartedMs = TrafficCore.monotonicMs()
+         monitor.clearHistory()
+         HistoryDatabase.delete(at: url.path)
+         for _ in 0..<40 where !store.snapshot.enabled { try await Task.sleep(nanoseconds: 50_000_000) }
+@@ -114,9 +120,11 @@ struct TrafficMonitorTests {
+         let running = monitor.diagnostics()?.nettopPid
+         monitor.stop()
+         #expect(!monitor.isRunning)
++        let stoppedMs = TrafficCore.monotonicMs()
+         let afterClear = HistoryDatabase.storedTraffic(at: url.path)
+         #expect(afterClear.days.contains { $0.isMachine }, "stop recreates today's rows in the new file")
+-        #expect(afterClear.days.allSatisfy { $0.sampledMs < 10_000 }, "today restarted at the clear")
++        #expect(afterClear.days.allSatisfy { $0.sampledMs <= stoppedMs - clearStartedMs + TrafficEngine.gapMs },
++                "today restarted at the clear, allowing for the preceding sample interval")
+         if let running { #expect(kill(running, 0) == -1 && errno == ESRCH, "stop kills and reaps nettop") }
+     }
+ }
+-- 
+2.41.0
+
