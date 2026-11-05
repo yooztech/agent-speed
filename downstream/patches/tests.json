@@ -46,5 +46,13 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0007-Integrate-remote-sources-into-native-dashboard.patch": {
+    "regression": [
+      {"platform": "linux", "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote -j2 && ctest --test-dir build-remote --output-on-failure"},
+      {"platform": "macos", "run": "cd macos && swift test"}
+    ],
+    "related": [],
+    "reason": ""
   }
 }

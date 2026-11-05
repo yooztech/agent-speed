@@ -121,6 +121,6 @@ jobs:
           gh release upload "$TAG" \
             "dist/AgentSpeed-Linux-${{ matrix.arch }}.AppImage" \
             "dist/agent-speed_${{ steps.version.outputs.value }}_${{ matrix.debarch }}.deb" \
-            "dist/SHA256SUMS-Linux-${{ matrix.arch }}.txt" --clobber
+            "dist/SHA256SUMS-Linux-${{ matrix.arch }}.txt"
     permissions:
       contents: write

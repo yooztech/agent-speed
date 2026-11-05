@@ -1815,6 +1815,14 @@ Windows only. macOS has no equivalent: the system places menu bar items and the 
 macOS: popover-style panel under the menu bar item. Windows: flyout above the taskbar with Mica. Width 368 pt/DIP.
 Follows system light/dark. Corner radius: platform default (macOS 12–16 pt, Windows 8 px). 20 pt padding.
 
+**Downstream macOS remote sources:** Local sources and enabled remote Linux
+hosts operate simultaneously as standard sources, grouped by host and source
+in the native dashboard. Available data contributes to the existing aggregate;
+there is no local/remote target selector. Unavailable values are not zero,
+offline periods remain gaps in history, and export matches the visible history.
+Local diagnostic reports exclude remote data. Remote collection uses an SSH
+standard-stream collector rather than the optional network reporting service.
+
 Sections (top to bottom, 16 pt spacing, hairline separators):
 
 1. **Hero** — a 112 pt orb (same component, ring effects capped at Soft) on the left, its center carrying the hero

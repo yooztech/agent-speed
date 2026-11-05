@@ -12,10 +12,20 @@ the upstream URL, and the relevant platform toolchain are required.
 `patches/series` is the sole application order. Each entry names one numbered
 `git format-patch` mail patch in the same directory. `patches/tests.json` has
 exactly the same keys. The queue contains remote monitoring, its macOS
-settings compilation fix, the fork version patch, unified per-target
-dashboard and history statistics, remote freshness and source completeness
-fixes, and the Windows stream end-to-end test driver fix. Never place
+settings compilation fix, the fork version patch, native multi-host source
+integration, remote freshness and source completeness fixes, and the Windows
+stream end-to-end test driver fix. Never place
 credentials in this repository or a patch.
+
+## Remote sources
+
+On macOS, local sources and enabled SSH-connected Linux hosts operate at the
+same time. They are grouped by host and source in the native dashboard, whose
+available statistics aggregate across sources; there is no target selector.
+Unavailable values are not zeros, and offline periods remain gaps in history.
+History exports match the visible history; local diagnostic reports exclude
+remote data. See the [fork release notes](../docs/releases/v1.6.1-fork.1.md)
+for setup, collector requirements and verification limitations.
 
 ## CI and releases
 
@@ -54,6 +64,11 @@ assets but remain drafts; an already published release is left unchanged.
 Linux release assets are handled separately by the Linux workflow. A successful
 build does not establish runtime compatibility on every target system; real
 SSH end-to-end operation has not been verified on a physical remote host.
+
+Published fork tags and assets are immutable: changes after publication require
+a new fork version and tag (for example, `v1.6.1-fork.2`), not replacement of
+`v1.6.1-fork.1` assets. Fixes made before its first publication remain part of
+`v1.6.1-fork.1`. Linux uploads do not overwrite existing assets.
 
 ## Prepare and verify
 
