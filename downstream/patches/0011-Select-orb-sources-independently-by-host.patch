@@ -1,7 +1,7 @@
 From af1f2354a2c3c20ce443a6db2460364dde985d70 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:50:08 +0800
-Subject: [PATCH 12/16] Select orb sources independently by host
+Subject: [PATCH 11/15] Select orb sources independently by host
 
 ---
  README.md                                     |   5 +-
@@ -35,7 +35,7 @@ Subject: [PATCH 12/16] Select orb sources independently by host
  .../Settings/Orbs/OrbsJson.cs                 |  31 +++++
  windows/src/AgentSpeed/App/AppController.cs   |  48 ++++---
  .../Dashboard/DashboardViewModel.cs           |  10 +-
- .../AgentSpeed/Dashboard/DashboardWindow.xaml |   7 +-
+ .../AgentSpeed/Dashboard/DashboardWindow.xaml |   2 +-
  windows/src/AgentSpeed/Dashboard/LiveChart.cs |  18 +++
  windows/src/AgentSpeed/Orb/OrbManager.cs      |  14 +-
  .../src/AgentSpeed/Services/HeroTourDriver.cs |  13 +-
@@ -47,7 +47,7 @@ Subject: [PATCH 12/16] Select orb sources independently by host
  .../RemoteConsumerTests.cs                    |  75 ++++++++++
  .../OrbFeedTests.cs                           |  76 +++++++++-
  .../OrbSettingsTests.cs                       |  40 ++++++
- 43 files changed, 1155 insertions(+), 132 deletions(-)
+ 43 files changed, 1152 insertions(+), 130 deletions(-)
  create mode 100644 macos/Tests/AgentSpeedAppTests/OrbHostRuntimeTests.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteCompletionOwnershipTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/OrbHostSelectionTests.swift
@@ -71,7 +71,7 @@ index cf9664f4..71b051dc 100644
  When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
  Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
 -response rates use the logged duration. In particular omp commonly writes a response when it completes, so remote
-+response rates use the logged duration. On macOS and Windows, the chart's “Contains estimates” legend remains visible
++response rates use the logged duration. On macOS and Windows, the chart's “Estimating” legend remains visible
 +whenever the selected range includes a dashed estimated segment, even after that response has completed. In particular omp commonly writes a response when it completes, so remote
  monitoring cannot measure per-token streaming speed or infer an unrecorded time to first token. End-to-end speed includes
  the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
@@ -1795,19 +1795,16 @@ diff --git a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml b/windows/src
 index e829a99d..49253329 100644
 --- a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml
 +++ b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml
-@@ -221,11 +221,12 @@
+@@ -221,11 +221,11 @@
                      <Grid Margin="0,0,0,8">
                          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                              <TextBlock Text="{loc:Loc dashboard.live}" Style="{StaticResource BodyStrongText}" />
--                            <StackPanel Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center"
+                             <StackPanel Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center"
 -                                        Visibility="{Binding HasEstimate, Converter={StaticResource Visible}}">
-+                            <StackPanel Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center" Background="Transparent"
-+                                        Visibility="{Binding HasEstimate, ElementName=Chart, Converter={StaticResource Visible}}"
-+                                        ToolTip="{loc:Loc chart.containsEstimates.hint}" AutomationProperties.HelpText="{loc:Loc chart.containsEstimates.hint}">
++                                        Visibility="{Binding HasEstimate, ElementName=Chart, Converter={StaticResource Visible}}">
                                  <Line X1="0" Y1="0" X2="14" Y2="0" Stroke="{DynamicResource TextFillColorSecondaryBrush}" StrokeThickness="1.5"
                                        StrokeDashArray="1.5 1.5" VerticalAlignment="Center" Opacity="0.8" />
--                                <TextBlock Text="{loc:Loc chart.estimated}" Margin="5,0,0,0" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-+                                <TextBlock Text="{loc:Loc chart.containsEstimates}" Margin="5,0,0,0" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                 <TextBlock Text="{loc:Loc chart.estimated}" Margin="5,0,0,0" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                              </StackPanel>
                          </StackPanel>
                          <Border Style="{StaticResource SegmentedContainer}" HorizontalAlignment="Right"

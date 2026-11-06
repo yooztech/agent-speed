@@ -1,7 +1,7 @@
 From 62d44ae34bed66e7b64b4167f7a932f590656e76 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:28 +0800
-Subject: [PATCH 09/16] Integrate Windows SSH sources and fork updates
+Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
 
 ---
  linux/app/src/network_service.cpp             |  44 ++--

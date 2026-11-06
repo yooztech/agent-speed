@@ -1,7 +1,7 @@
 From 221329111bf0e5b1cf029aae79614b4cfdc8ae46 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:14 +0800
-Subject: [PATCH 02/16] Stamp v1.6.1-fork.3 release version
+Subject: [PATCH 02/15] Stamp v1.6.1-fork.3 release version
 
 ---
  VERSION                                       |  2 +-

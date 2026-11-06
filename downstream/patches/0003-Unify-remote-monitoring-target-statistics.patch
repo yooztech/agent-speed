@@ -1,7 +1,7 @@
 From 503a0aa007504ceb330d4f0386b6fade06d997e3 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:17 +0800
-Subject: [PATCH 03/16] Unify remote monitoring target statistics
+Subject: [PATCH 03/15] Unify remote monitoring target statistics
 
 ---
  README.md                                     |  17 +-

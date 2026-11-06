@@ -1,7 +1,7 @@
 From bc432360cfec76879cad30c72de8781b81b991e1 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
-Subject: [PATCH] Connect remote performance and history metrics
+Subject: [PATCH 14/15] Connect remote performance and history metrics
 
 ---
  README.md                                     |  15 +-
@@ -63,7 +63,7 @@ index 71b051dc..baecc4be 100644
 +average of host averages. If a required contribution is unavailable, the combined average is unavailable. Remote
 +live reasoning readings use the same semantics as local readings when provided by the collector.
  Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
- response rates use the logged duration. On macOS and Windows, the chart's “Contains estimates” legend remains visible
+ response rates use the logged duration. On macOS and Windows, the chart's “Estimating” legend remains visible
  whenever the selected range includes a dashed estimated segment, even after that response has completed. In particular omp commonly writes a response when it completes, so remote
 @@ -131,10 +134,14 @@ monitoring cannot measure per-token streaming speed or infer an unrecorded time
  the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.

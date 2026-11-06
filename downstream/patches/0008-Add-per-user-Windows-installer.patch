@@ -1,7 +1,7 @@
 From 223d137d01c2a849adbd858d84168446526de829 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:23 +0800
-Subject: [PATCH 08/16] Add per-user Windows installer
+Subject: [PATCH 08/15] Add per-user Windows installer
 
 ---
  README.ja.md                                  |  14 +-

@@ -1,7 +1,7 @@
 From 648ea5f0db7813af8d53742e1a9d24eaf516c71f Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
-Subject: [PATCH] Integrate remote network traffic by host and source
+Subject: [PATCH 15/15] Integrate remote network traffic by host and source
 
 ---
  linux/collector/main.cpp                      |   6 +-

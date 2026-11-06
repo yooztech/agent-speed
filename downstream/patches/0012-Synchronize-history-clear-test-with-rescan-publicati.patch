@@ -1,7 +1,7 @@
 From 0ed1593459ab0b8a071faeccccc50dd00d24cb13 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 09:10:19 +0800
-Subject: [PATCH 13/16] Synchronize history clear test with rescan publication
+Subject: [PATCH 12/15] Synchronize history clear test with rescan publication
 
 ---
  .../AgentSpeedCoreTests/HistoryTests.swift    | 36 ++++++++++++++-----

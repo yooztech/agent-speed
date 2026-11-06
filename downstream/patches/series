@@ -8,9 +8,8 @@
 0008-Add-per-user-Windows-installer.patch
 0009-Integrate-Windows-SSH-sources-and-fork-updates.patch
 0010-Preserve-remote-source-completeness-and-history-inte.patch
-0011-Clarify-estimated-chart-values.patch
-0012-Select-orb-sources-independently-by-host.patch
-0013-Synchronize-history-clear-test-with-rescan-publicati.patch
-0014-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch
-0015-Connect-remote-performance-and-history-metrics.patch
-0016-Integrate-remote-network-traffic-by-host-and-source.patch
+0011-Select-orb-sources-independently-by-host.patch
+0012-Synchronize-history-clear-test-with-rescan-publicati.patch
+0013-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch
+0014-Connect-remote-performance-and-history-metrics.patch
+0015-Integrate-remote-network-traffic-by-host-and-source.patch

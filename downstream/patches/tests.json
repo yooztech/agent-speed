@@ -144,21 +144,7 @@
     "related": [],
     "reason": ""
   },
-  "0011-Clarify-estimated-chart-values.patch": {
-    "regression": [
-      {
-        "platform": "macos",
-        "run": "cd macos && swift test --filter LiveChartAvailabilityTests"
-      },
-      {
-        "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemoteConsumerTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~OrbFeedTests && dotnet test windows/tests/AgentSpeed.Windows.Tests --filter FullyQualifiedName~DashboardRemoteCompletenessTests"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0012-Select-orb-sources-independently-by-host.patch": {
+  "0011-Select-orb-sources-independently-by-host.patch": {
     "regression": [
       {
         "platform": "macos",
@@ -184,7 +170,7 @@
     "related": [],
     "reason": ""
   },
-  "0013-Synchronize-history-clear-test-with-rescan-publicati.patch": {
+  "0012-Synchronize-history-clear-test-with-rescan-publicati.patch": {
     "regression": [
       {
         "platform": "macos",
@@ -194,7 +180,7 @@
     "related": [],
     "reason": ""
   },
-  "0014-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch": {
+  "0013-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch": {
     "regression": [
       {
         "platform": "macos",
@@ -204,7 +190,7 @@
     "related": [],
     "reason": ""
   },
-  "0015-Connect-remote-performance-and-history-metrics.patch": {
+  "0014-Connect-remote-performance-and-history-metrics.patch": {
     "regression": [
       {
         "platform": "linux",
@@ -231,7 +217,7 @@
     ],
     "reason": ""
   },
-  "0016-Integrate-remote-network-traffic-by-host-and-source.patch": {
+  "0015-Integrate-remote-network-traffic-by-host-and-source.patch": {
     "regression": [
       {
         "platform": "linux",

@@ -1,7 +1,7 @@
 From 38c472a258e1a001aa534c07a90eb80a0df1b483 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:20 +0800
-Subject: [PATCH 05/16] Integrate remote sources into native dashboard
+Subject: [PATCH 05/15] Integrate remote sources into native dashboard
 
 ---
  .github/release-notes.md                      |   2 +-
