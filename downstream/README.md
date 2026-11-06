@@ -99,11 +99,12 @@ the first installation whose `--list-sdks` reports a 10.x SDK. The selected
 installation is used for all .NET build and test subprocesses; the wrapper does
 not install SDKs. It builds the complete `windows/AgentSpeed.slnx` in Release
 with Windows targeting enabled, including compilation of all Windows tests.
-It then runs only two cross-platform traffic smoke-test selections targeting
-`net10.0` with `--no-build`: the exact Core test
+It then runs the exact Core traffic smoke test
 `AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart`
-and the Presentation `AgentSpeed.Presentation.Tests.HistoryTrafficTests` class.
-This does not run the full Core or Presentation suites or validate the native
+and the complete `AgentSpeed.Presentation.Tests` suite, both targeting `net10.0`
+in Release with `--no-build`. The Presentation suite is a required gate, including
+CPU and Effort tests without filtering. Failure blocks tag mutation and preserves
+the preflight log. This does not run the full Core suite or validate the native
 Windows UI.
 
 The host also determines which native core tests run: Linux requires CMake,

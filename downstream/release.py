@@ -68,7 +68,7 @@ def preflight():
     for tool in required:
         if not shutil.which(tool):
             raise RuntimeError(f'{tool} is required for release preflight on {host}')
-    print(f'Release preflight on {host}: Windows cross-platform build and traffic smoke tests; '
+    print(f'Release preflight on {host}: Windows cross-platform build, Core traffic smoke test and full Presentation tests; '
           + ('Linux headless core build and tests.' if host == 'Linux' else 'native macOS Swift tests.'),
           flush=True)
     print('Native UI tests and platform packaging remain Release workflow checks; '
@@ -81,14 +81,12 @@ def preflight():
                            cwd=ROOT, check=True)
             subprocess.run([dotnet, 'build', 'windows/AgentSpeed.slnx', '-c', 'Release',
                             '-p:EnableWindowsTargeting=true'], cwd=tree, check=True, env=dotnet_env)
-            tests = (
-                ('AgentSpeed.Core.Tests', 'FullyQualifiedName=AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart'),
-                ('AgentSpeed.Presentation.Tests', 'FullyQualifiedName~AgentSpeed.Presentation.Tests.HistoryTrafficTests'),
-            )
-            for project, test_filter in tests:
-                subprocess.run([dotnet, 'test', f'windows/tests/{project}', '-c', 'Release',
-                                '-f', 'net10.0', '--no-build', '--filter', test_filter],
-                               cwd=tree, check=True, env=dotnet_env)
+            subprocess.run([dotnet, 'test', 'windows/tests/AgentSpeed.Core.Tests', '-c', 'Release',
+                            '-f', 'net10.0', '--no-build', '--filter',
+                            'FullyQualifiedName=AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart'],
+                           cwd=tree, check=True, env=dotnet_env)
+            subprocess.run([dotnet, 'test', 'windows/tests/AgentSpeed.Presentation.Tests', '-c', 'Release',
+                            '-f', 'net10.0', '--no-build'], cwd=tree, check=True, env=dotnet_env)
             if host == 'Linux':
                 build = Path(temp) / 'linux-build'
                 configure = ['cmake', '-S', 'linux', '-B', str(build),
