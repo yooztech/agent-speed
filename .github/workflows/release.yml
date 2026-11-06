@@ -27,6 +27,8 @@ jobs:
           git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD
       - name: Test collector zip verifier
         run: python3 downstream/test-verify-collector-zip.py
+      - name: Test Windows installer version verifier
+        run: python3 downstream/test-release.py WindowsInstallerVersionTests
       - name: Prepare downstream tree
         run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
       - name: Install zstd and brotli
@@ -196,7 +198,8 @@ jobs:
             $actual = ((Get-Item (Join-Path $dir 'AgentSpeed.exe')).VersionInfo.ProductVersion -split '\+')[0]
             if ($actual -ne $version) { throw "Windows $arch executable version $actual != $version" }
             $actual = (Get-Item "dist/AgentSpeed-Windows-$arch-Setup.exe").VersionInfo.ProductVersion
-            if ($actual -ne $version) { throw "Windows $arch installer version $actual != $version" }
+            python "$env:GITHUB_WORKSPACE/downstream/verify-windows-installer-version.py" $version $actual
+            if ($LASTEXITCODE -ne 0) { throw "Windows $arch installer version verification failed" }
           }
       - name: Smoke test Windows installer
         working-directory: ${{ runner.temp }}/agent-speed-prepared

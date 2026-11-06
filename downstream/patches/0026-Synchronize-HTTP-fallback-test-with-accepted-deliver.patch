@@ -1,0 +1,134 @@
+From 4e86b5b0837d6f4cb8f8ea5a5451b447273b6041 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 6 Nov 2026 09:15:56 +0800
+Subject: [PATCH] Synchronize HTTP fallback test with accepted delivery
+
+---
+ .../ReportTransportTests.swift                | 56 +++++++++++++++++--
+ 1 file changed, 51 insertions(+), 5 deletions(-)
+
+diff --git a/macos/Tests/AgentSpeedAppTests/ReportTransportTests.swift b/macos/Tests/AgentSpeedAppTests/ReportTransportTests.swift
+index 20781b35..47c3dc23 100644
+--- a/macos/Tests/AgentSpeedAppTests/ReportTransportTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/ReportTransportTests.swift
+@@ -1,6 +1,8 @@
+ import AgentSpeedCore
+ import Foundation
++import Observation
+ import Testing
++import XCTest
+ @testable import AgentSpeed
+ 
+ /// DESIGN 11 item 2b and METRICS 11.9: WebSocket is the default transport, only an HTTP choice is stored, a service
+@@ -95,8 +97,10 @@ struct ReportTransportTests {
+     // MARK: - The effective transport
+ 
+     @Test func webSocketWithoutTheCapabilityReportsOverHTTP() async throws {
+-        let rig = Rig()
+-        defer { rig.tearDown() }
++        let received = XCTestExpectation(description: "HTTP request received")
++        let gate = ResponseGate(received: received)
++        let rig = Rig(gate: gate)
++        defer { rig.tearDown(); Task { await gate.release() } }
+         rig.register(Self.withoutWebSocket)
+         #expect(rig.report.transport == .websocket)
+         #expect(rig.report.effectiveTransport == .http)
+@@ -108,12 +112,17 @@ struct ReportTransportTests {
+         #expect(rig.report.mode == .active)
+         #expect(rig.report.streamIssue == nil, "no WebSocket status line while falling back")
+ 
++        #expect(rig.report.status == .never)
+         rig.report.pause(for: 3600)
+-        try await rig.waitUntil { rig.report.lastDeliveryAt != nil }
++        let receivedResult = await XCTWaiter.fulfillment(of: [received], timeout: 60)
++        try #require(receivedResult == .completed, "HTTP request was not received")
+         let request = try #require(rig.transport.requests.first)
+         #expect(request.method == "POST")
+         #expect(request.url.path.hasSuffix(ReportEndpoint.reports))
+         rig.report.resume()
++        #expect(rig.report.status == .never, "a request is not a delivered report")
++        await gate.release()
++        try await rig.waitForDelivery()
+         guard case .reporting = rig.report.status else {
+             Issue.record("the status line is HTTP's, got \(rig.report.status)")
+             return
+@@ -191,15 +200,17 @@ private struct Rig {
+     let suite = "AgentSpeedReportTransportTests-\(UUID().uuidString)"
+     let defaults: UserDefaults
+     let folder: URL
+-    let transport = RecordingTransport()
++    let transport: RecordingTransport
+     let stream = SilentStreamTransport()
+     let report: ReportController
+ 
+-    init() {
++    init(gate: ResponseGate? = nil) {
+         let defaults = UserDefaults(suiteName: suite)!
+         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(suite, isDirectory: true)
++        let transport = RecordingTransport(gate: gate)
+         self.defaults = defaults
+         self.folder = folder
++        self.transport = transport
+         report = ReportController(
+             settings: AppSettings(defaults: defaults), store: SpeedStore(), traffic: TrafficStore(),
+             priceBook: PriceBook(), appData: folder, transport: transport, streamTransport: stream, version: "1.4.1")
+@@ -245,12 +256,25 @@ private struct Rig {
+         }
+         #expect(condition())
+     }
++
++    func waitForDelivery() async throws {
++        while true {
++            if case .reporting = report.status { return }
++            let changed = XCTestExpectation(description: "HTTP reporting status changes")
++            withObservationTracking { _ = report.status } onChange: { changed.fulfill() }
++            let result = await XCTWaiter.fulfillment(of: [changed], timeout: 60)
++            try #require(result == .completed, "report delivery did not complete")
++        }
++    }
+ }
+ 
+ /// Answers every API request with `accepted` and keeps it; discovery is not fetched in these tests.
+ private final class RecordingTransport: ReportTransport, @unchecked Sendable {
+     private let lock = NSLock()
+     private var sent: [ReportRequest] = []
++    private let gate: ResponseGate?
++
++    init(gate: ResponseGate? = nil) { self.gate = gate }
+ 
+     var requests: [ReportRequest] { lock.withLock { sent } }
+ 
+@@ -262,11 +286,33 @@ private final class RecordingTransport: ReportTransport, @unchecked Sendable {
+     func send(_ request: ReportRequest, maxBytes: Int, timeout: TimeInterval)
+         async throws(ReportTransportError) -> ReportHTTPResponse {
+         lock.withLock { sent.append(request) }
++        await gate?.wait()
+         return ReportHTTPResponse(status: 200, headers: ["content-type": "application/json"],
+                                   body: Data(#"{"status":"accepted"}"#.utf8))
+     }
+ }
+ 
++/// Keeps the accepted response pending until the test has inspected the request and pre-delivery status.
++private actor ResponseGate {
++    let received: XCTestExpectation
++    private var released = false
++    private var waiter: CheckedContinuation<Void, Never>?
++
++    init(received: XCTestExpectation) { self.received = received }
++
++    func wait() async {
++        received.fulfill()
++        guard !released else { return }
++        await withCheckedContinuation { waiter = $0 }
++    }
++
++    func release() {
++        released = true
++        waiter?.resume()
++        waiter = nil
++    }
++}
++
+ /// Connections that never open: the session asks for one and nothing leaves the process.
+ private final class SilentStreamTransport: ReportStreamTransport, @unchecked Sendable {
+     private let lock = NSLock()

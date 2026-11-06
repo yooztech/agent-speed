@@ -1,0 +1,80 @@
+From 1fab9aa45d685160619193e432b831e88818d219 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 6 Nov 2026 09:10:19 +0800
+Subject: [PATCH] Synchronize history clear test with rescan publication
+
+---
+ .../AgentSpeedCoreTests/HistoryTests.swift    | 36 ++++++++++++++-----
+ 1 file changed, 27 insertions(+), 9 deletions(-)
+
+diff --git a/macos/Tests/AgentSpeedCoreTests/HistoryTests.swift b/macos/Tests/AgentSpeedCoreTests/HistoryTests.swift
+index 13c3f23f..769cd0c4 100644
+--- a/macos/Tests/AgentSpeedCoreTests/HistoryTests.swift
++++ b/macos/Tests/AgentSpeedCoreTests/HistoryTests.swift
+@@ -1,5 +1,7 @@
+ import Foundation
++import Observation
+ import Testing
++import XCTest
+ @testable import AgentSpeedCore
+ 
+ @Suite("Daily history")
+@@ -309,33 +311,49 @@ struct HistoryTests {
+ struct HistoryServiceTests {
+     @Test func publishesProgressThenReadyAndClears() async throws {
+         let directory = try TempDirectory()
++        let (fixtureDirectory, fixtures) = try HistoryTests.fixtureCopy()
++        let initialConfiguration = HistoryTests.configuration(fixtures: fixtures)
+         let store = HistoryStore()
+         let storeURL = directory.file("Application Support/AgentSpeed/history.sqlite")
+-        let service = HistoryService(store: store, configuration: HistoryTests.fixtureConfiguration, storeURL: storeURL)
++        let service = HistoryService(store: store, configuration: initialConfiguration, storeURL: storeURL)
+         service.start()
+         defer { service.stop() }
+ 
+-        let ready = await LiveMonitorTests.waitUntil {
++        try await waitForChange(store) {
+             if case .ready = store.state { return true }
+             return false
+         }
+-        #expect(ready)
+         #expect(!store.days.isEmpty)
+         #expect(FileManager.default.fileExists(atPath: storeURL.path))
+         let expectedOutput = store.days.reduce(0) { $0 + $1.totals.output }
++        // This file did not exist during the first scan, so the old ready publication cannot satisfy the check.
++        try fixtureDirectory.write("fixtures/claude/projects/clear-regression/new.jsonl",
++                                   HistoryTests.claude([("clear-regression-unique-response", 123)]))
+ 
+         store.clear()
+-        let cleared = await LiveMonitorTests.waitUntil {
+-            if case .ready(let at) = store.state, Date().timeIntervalSince(at) < 5,
+-               store.days.reduce(0, { $0 + $1.totals.output }) == expectedOutput { return true }
++        try await waitForChange(store) {
++            if case .ready = store.state,
++               store.days.reduce(0, { $0 + $1.totals.output }) == expectedOutput + 123 { return true }
+             return false
+         }
+-        #expect(cleared)
+ 
+-        var configuration = HistoryTests.fixtureConfiguration
++        var configuration = initialConfiguration
+         configuration.enabledSources = [.opencode]
+         service.update(configuration: configuration)
+-        #expect(await LiveMonitorTests.waitUntil { !store.days.isEmpty && store.days.allSatisfy { $0.source == .opencode } })
++        try await waitForChange(store) { !store.days.isEmpty && store.days.allSatisfy { $0.source == .opencode } }
++    }
++
++    private enum HistoryWaitError: Error { case failed(String) }
++
++    private func waitForChange(_ store: HistoryStore, _ condition: @MainActor () -> Bool) async throws {
++        while true {
++            if case .failed(let message) = store.state { throw HistoryWaitError.failed(message) }
++            if condition() { return }
++            let changed = XCTestExpectation(description: "history publication changes")
++            withObservationTracking { _ = store.state; _ = condition() } onChange: { changed.fulfill() }
++            let result = await XCTWaiter.fulfillment(of: [changed], timeout: 60)
++            try #require(result == .completed, "history publication did not complete")
++        }
+     }
+ 
+     @Test func recordsTheLivePeakOfTheDay() async throws {

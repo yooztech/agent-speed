@@ -283,5 +283,25 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0025-Synchronize-history-clear-test-with-rescan-publicati.patch": {
+    "regression": [
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test --filter HistoryServiceTests"
+      }
+    ],
+    "related": [],
+    "reason": ""
+  },
+  "0026-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch": {
+    "regression": [
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test --filter ReportTransportTests"
+      }
+    ],
+    "related": [],
+    "reason": ""
   }
 }

@@ -14,6 +14,10 @@ sys.path.insert(0, str(HERE))
 spec = importlib.util.spec_from_file_location("release_driver", HERE / "release.py")
 driver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(driver)
+installer_spec = importlib.util.spec_from_file_location(
+    "installer_version", HERE / "verify-windows-installer-version.py")
+installer_version = importlib.util.module_from_spec(installer_spec)
+installer_spec.loader.exec_module(installer_version)
 
 
 def git(cwd, *args):
@@ -214,6 +218,22 @@ class ReleaseDriverTests(unittest.TestCase):
         prerelease = {"tag_name": "v1.2.3-fork.7", "draft": False, "prerelease": True}
         self.assertEqual(driver.select([self.published, self.draft, prerelease], "1.2.3"),
                          "v1.2.3-fork.8")
+
+
+class WindowsInstallerVersionTests(unittest.TestCase):
+    def test_matching_inno_padding(self):
+        for actual in ("1.6.1-fork.3", "1.6.1-fork.3" + " " * 38):
+            with self.subTest(actual=actual):
+                self.assertTrue(installer_version.matches("1.6.1-fork.3", actual))
+
+    def test_rejects_mismatch_metadata_and_malformed_values(self):
+        for actual in ("1.6.1-fork.4", "1.6.1-fork.3+abc", " 1.6.1-fork.3",
+                       "1.6.1-fork.3\t", "1.6.1-fork.3 x", "", "1.6.1-fork.3\n"):
+            with self.subTest(actual=actual):
+                self.assertFalse(installer_version.matches("1.6.1-fork.3", actual))
+        for expected in ("", "v1.6.1-fork.3", "1.6.1-fork.3+abc", "1.6.1-fork.3 "):
+            with self.subTest(expected=expected):
+                self.assertFalse(installer_version.matches(expected, expected))
 
 
 if __name__ == "__main__":

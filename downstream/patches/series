@@ -22,3 +22,5 @@
 0022-Preserve-Windows-installer-startup-choice.patch
 0023-Fix-source-selection-and-estimate-visibility.patch
 0024-Stamp-v1.6.1-fork.3-release-version.patch
+0025-Synchronize-history-clear-test-with-rescan-publicati.patch
+0026-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch

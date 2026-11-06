@@ -100,6 +100,12 @@ maintenance workspace. It checks archive and extracted executable permissions
 and byte equality. Release also runs `downstream/test-verify-collector-zip.py` with
 synthetic archives covering missing, non-executable, changed and valid files.
 
+Windows release verification compares the installer ProductVersion with the
+tag version, allowing only trailing ASCII spaces. Inno Setup's
+[SetupLdr version resource](https://github.com/jrsoftware/issrc/blob/main/Projects/Res/SetupLdr.version.rc)
+reserves space-filled placeholders for these fields. Executable ProductVersion
+verification remains separate and permits .NET build metadata.
+
 The `Release` workflow runs on `v*` tag pushes in `yooztech/agent-speed`; the
 tagged commit must be an ancestor of `downstream/patch-build`. Fork tags use
 `vX.Y.Z-fork.N`; `GITHUB_REF_NAME` supplies the version injected into the
