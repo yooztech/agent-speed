@@ -88,7 +88,7 @@ def preflight():
                             'FullyQualifiedName=AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart'],
                            cwd=tree, check=True, env=dotnet_env)
             subprocess.run([dotnet, 'test', 'windows/tests/AgentSpeed.Presentation.Tests', '-c', 'Release',
-                            '-f', 'net10.0', '--no-build'], cwd=tree, check=True, env=dotnet_env)
+                            '-f', 'net10.0', '--no-build', '--', 'xUnit.ParallelizeTestCollections=false'], cwd=tree, check=True, env=dotnet_env)
             if host == 'Linux':
                 build = Path(temp) / 'linux-build'
                 configure = ['cmake', '-S', 'linux', '-B', str(build),

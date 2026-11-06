@@ -135,6 +135,12 @@ CPU and Effort tests without filtering. Failure blocks tag mutation and preserve
 the preflight log. This does not run the full Core suite or validate the native
 Windows UI.
 
+The preflight runs its test subprocesses sequentially, and the Presentation
+suite additionally disables xUnit test collection parallelism within the suite.
+The Windows Release job uses the same Presentation setting. All Presentation
+tests and their existing thresholds remain in effect; external processes can
+still contend for CPU, so this does not isolate the host from load.
+
 The host also determines which native core tests run: Linux requires CMake,
 CTest, a C++ toolchain and the Linux core's build dependencies; it configures
 and builds the headless core and runs CTest. GoogleTest may be supplied from

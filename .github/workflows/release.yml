@@ -155,7 +155,7 @@ jobs:
         run: dotnet test windows/tests/AgentSpeed.Core.Tests -c Release
       - name: Test presentation
         working-directory: ${{ runner.temp }}/agent-speed-prepared
-        run: dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release
+        run: dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -- xUnit.ParallelizeTestCollections=false
       - name: Test Windows consumers
         working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release

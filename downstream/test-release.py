@@ -152,7 +152,7 @@ class ReleaseDriverTests(unittest.TestCase):
                 if sys.argv[2].endswith("AgentSpeed.Core.Tests"):
                     assert sys.argv[8:] == ["--filter", "FullyQualifiedName=AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart"]
                 else:
-                    assert len(sys.argv) == 8
+                    assert sys.argv[8:] == ["--", "xUnit.ParallelizeTestCollections=false"]
                 if os.environ.get("PREFLIGHT_FAIL") == pathlib.Path(sys.argv[2]).name:
                     sys.exit(1)
         '''))
@@ -328,7 +328,6 @@ class ReleaseDriverTests(unittest.TestCase):
                 self.assertEqual(len(tests), 2)
                 core_filter = "FullyQualifiedName=AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart"
                 self.assertIn(f"dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --no-build --filter {core_filter} cwd={tree}", tests)
-                self.assertIn(f"dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --no-build cwd={tree}", tests)
                 self.assertTrue(all(f"cwd={tree}" in line for line in commands
                                     if line.startswith(("dotnet build ", "dotnet test "))))
                 cmake = [line for line in commands if line.startswith("cmake ")]
