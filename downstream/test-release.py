@@ -2,6 +2,7 @@
 """Exercise release selection and race safeguards with local Git remotes."""
 from contextlib import nullcontext
 import importlib.util
+import io
 import json
 from pathlib import Path
 import os
@@ -407,6 +408,39 @@ class ReleaseDriverTests(unittest.TestCase):
 
 
 class ActionsProgressTests(unittest.TestCase):
+    def test_display_transitions_heartbeat_and_matrix(self):
+        clock = [0]
+        out = io.StringIO()
+        jobs = [
+            {'id': 1, 'name': 'Build (linux, x86_64)', 'status': 'queued'},
+            {'id': 2, 'name': 'Build (linux, arm64)', 'status': 'in_progress',
+             'started_at': '2024-01-01T00:00:00Z', 'completed_at': '2024-01-01T01:02:03Z',
+             'steps': [{'name': 'Compile', 'status': 'in_progress'}]},
+        ]
+        with patch.object(sys, 'stdout', out), patch.object(driver.time, 'monotonic', lambda: clock[0]):
+            display = driver.ProgressDisplay()
+            display.update(jobs)
+            clock[0] = 10
+            display.update(jobs)
+            jobs[0]['status'] = 'in_progress'
+            jobs[0]['steps'] = [{'name': 'Test', 'status': 'in_progress'}]
+            display.update(jobs)
+            clock[0] = 70
+            display.update(jobs)
+            jobs[0].update(status='completed', conclusion='success', steps=[{'name': 'Complete job', 'status': 'completed'}])
+            jobs[1].update(status='completed', conclusion='cancelled')
+            display.update(jobs)
+        text = out.getvalue()
+        self.assertEqual(text.count('Build (linux, x86_64) | waiting'), 1)
+        self.assertEqual(text.count('Build (linux, arm64) | running'), 1)
+        self.assertIn('Build (linux, arm64) | running | 1:02:03 | Compile', text)
+        self.assertIn('Build (linux, x86_64) | running | - | Test', text)
+        self.assertIn('Build (linux, x86_64) | success | -', text)
+        self.assertIn('Build (linux, arm64) | cancelled | 1:02:03', text)
+        self.assertEqual(text.count('Actions still running'), 1)
+        self.assertNotIn('Complete job', text)
+        self.assertNotIn('\x1b', text)
+
     def run_watch(self, scenario, cli=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -487,16 +521,15 @@ class ActionsProgressTests(unittest.TestCase):
     def test_progress_and_success_in_redirected_output(self):
         result = self.run_watch('success')
         self.assertEqual(result.returncode, 0, result.stderr)
-        for text in ('Waiting for GitHub Actions', '[0s] Waiting', '[10s] Waiting',
-                     'https://example.invalid/runs/42', '[20s] Run 42: in_progress',
-                     'Linux: in_progress; step Build: in_progress', 'step Package: in_progress',
-                     'Windows: queued', 'macOS: completed (success); step Test: completed (success)',
-                     'Run 42: completed (success)', 'Published v1.2.3-fork.2'):
+        for text in ('Waiting for GitHub Actions', 'https://example.invalid/runs/42',
+                     'Linux | running | - | Build', 'Linux | running | - | Package',
+                     'Windows | waiting | -', 'macOS | success | -',
+                     'Linux | success | -', 'Published v1.2.3-fork.2'):
             self.assertIn(text, result.stdout)
         self.assertNotIn('\x1b', result.stdout)
 
     def test_failure_timeout_and_api_error_exit_nonzero(self):
-        for scenario, message in (('failure', 'ended: failure'),
+        for scenario, message in (('failure', 'ended: failed'),
                                   ('timeout', 'timed out watching'),
                                   ('api-error', 'GitHub API unavailable')):
             with self.subTest(scenario=scenario):
@@ -505,14 +538,14 @@ class ActionsProgressTests(unittest.TestCase):
                 self.assertIn(message, result.stderr)
                 self.assertNotIn('Published ', result.stdout)
                 if scenario == 'failure':
-                    self.assertIn('Linux: completed (failure); step Package: completed (failure)', result.stdout)
+                    self.assertIn('Linux | failed | -', result.stdout)
 
     def test_release_entrypoint_reports_progress(self):
         result = self.run_watch('success', cli=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Waiting for GitHub Actions Release run', result.stdout)
         self.assertIn('Found Release run 42:', result.stdout)
-        self.assertIn('Linux: in_progress; step Build: in_progress', result.stdout)
+        self.assertIn('Linux | running | - | Build', result.stdout)
         self.assertIn('Published v1.2.3-fork.2', result.stdout)
 
 

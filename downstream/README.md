@@ -85,6 +85,11 @@ bash downstream/release.sh --plan  # read-only inspection
 bash downstream/release.sh         # launch and wait for publication
 ```
 
+Actions progress shows each job's status, elapsed time and current running step.
+Direct terminal output updates in place; the wrapper pipes through `tee`, so its
+terminal and persistent log instead show only job changes and a roughly one-minute
+heartbeat. The run link is printed once. A dash means timing is not yet available.
+
 The wrapper requires Git, network access, push access to `origin`, and an
 authenticated `gh` session with access to the upstream repository and fork
 releases, drafts, and Actions, including permission to write releases and

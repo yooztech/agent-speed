@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Safely prepare, trigger, and observe the downstream Release workflow."""
 from contextlib import nullcontext
+from datetime import datetime, timezone
 import argparse
 import fcntl
 import json
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -225,9 +227,100 @@ def assets_expected(version):
             'SHA256SUMS-Linux-x86_64.txt', 'SHA256SUMS-Linux-aarch64.txt', 'SHA256SUMS.txt'}
 
 
-def describe_status(item):
-    status = item['status']
-    return f"{status} ({item['conclusion']})" if status == 'completed' and item.get('conclusion') else status
+def progress_status(item):
+    if item['status'] != 'completed':
+        return 'running' if item['status'] == 'in_progress' else 'waiting'
+    conclusion = item.get('conclusion')
+    if conclusion == 'success':
+        return 'success'
+    if conclusion in ('cancelled', 'skipped'):
+        return 'cancelled' if conclusion == 'cancelled' else 'skipped'
+    return 'failed'
+
+
+def job_duration(job):
+    try:
+        start = datetime.fromisoformat(job['started_at'].replace('Z', '+00:00'))
+        end = (datetime.fromisoformat(job['completed_at'].replace('Z', '+00:00'))
+               if job.get('completed_at') else datetime.now(timezone.utc))
+        seconds = max(0, int((end - start).total_seconds()))
+    except (KeyError, TypeError, ValueError):
+        return '-'
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f'{hours:d}:{minutes:02d}:{seconds:02d}' if hours else f'{minutes:02d}:{seconds:02d}'
+
+
+def clean_progress_text(text):
+    return ' '.join(''.join(c if c.isprintable() else ' ' for c in str(text)).split())
+
+
+def fit_terminal(text, width):
+    result = ''
+    used = 0
+    for char in text:
+        cells = 2 if unicodedata.east_asian_width(char) in ('W', 'F') else (0 if unicodedata.combining(char) else 1)
+        if used + cells > width:
+            break
+        result += char
+        used += cells
+    return result
+
+
+class ProgressDisplay:
+    """Render a live table on a direct TTY, or a compact change log through tee."""
+    def __init__(self):
+        self.tty = sys.stdout.isatty()
+        self.lines = 0
+        self.previous = {}
+        self.last_output = time.monotonic()
+
+    def update(self, jobs):
+        now = time.monotonic()
+        rows = []
+        for index, job in enumerate(jobs):
+            status = progress_status(job)
+            current = next((step for step in job.get('steps', [])
+                            if step['status'] == 'in_progress'), None) if status == 'running' else None
+            step = clean_progress_text(current['name']) if current else ''
+            name = clean_progress_text(job['name'])
+            key = job.get('id', (name, index))
+            signature = (name, status, step)
+            duration = job_duration(job)
+            row = f"{name} | {status} | {duration}" + (f' | {step}' if step else '')
+            rows.append((key, signature, row, name, status, duration, step))
+        if self.tty:
+            if self.lines:
+                print(f'\033[{self.lines}A', end='')
+            width = max(1, shutil.get_terminal_size((80, 24)).columns - 1)
+            count = max(self.lines, len(rows))
+            for index in range(count):
+                if index < len(rows):
+                    _, _, _, name, status, duration, step = rows[index]
+                    suffix = f' | {status} | {duration}'
+                    available = max(0, width - len(suffix))
+                    if len(name) > available and available > 3:
+                        left = (available - 1) // 2
+                        name = name[:left] + '…' + name[-(available - left - 1):]
+                    line = name + suffix + (f' | {step}' if step else '')
+                    line = fit_terminal(line, width)
+                else:
+                    line = ''
+                print('\r\033[2K' + line)
+            if count > len(rows):
+                print(f'\033[{count - len(rows)}A', end='')
+            self.lines = len(rows)
+            sys.stdout.flush()
+        else:
+            changed = [row for key, signature, row, *_ in rows if self.previous.get(key) != signature]
+            for row in changed:
+                print(row, flush=True)
+            if changed:
+                self.last_output = now
+            elif now - self.last_output >= 60:
+                print(f'Actions still running ({len(rows)} jobs reported).', flush=True)
+                self.last_output = now
+        self.previous = {key: signature for key, signature, *_ in rows}
 
 
 def watch(tag, sha, old_ids):
@@ -236,6 +329,7 @@ def watch(tag, sha, old_ids):
     print(f'Waiting for GitHub Actions Release run for {tag}...', flush=True)
     run_id = None
     announced = False
+    display = ProgressDisplay()
     while time.monotonic() < deadline:
         matching = [r for r in runs(tag) if r['id'] not in old_ids and r['head_branch'] == tag and r['head_sha'] == sha]
         if len(matching) > 1:
@@ -249,20 +343,10 @@ def watch(tag, sha, old_ids):
                 print(f"Found Release run {run_id}: {run.get('html_url') or f'https://github.com/{REPO}/actions/runs/{run_id}'}", flush=True)
                 announced = True
             jobs = pages(f'repos/{REPO}/actions/runs/{run_id}/jobs', 'jobs')
-            elapsed = int(time.monotonic() - started)
-            print(f'[{elapsed}s] Run {run_id}: {describe_status(run)}', flush=True)
-            if not jobs:
-                print('  No jobs reported yet.', flush=True)
-            for job in jobs:
-                steps = job.get('steps', [])
-                current = next((step for step in steps if step['status'] == 'in_progress'), None)
-                if current is None:
-                    current = next((step for step in reversed(steps) if step['status'] == 'completed'), None)
-                detail = f"; step {current['name']}: {describe_status(current)}" if current else ''
-                print(f"  {job['name']}: {describe_status(job)}{detail}", flush=True)
+            display.update(jobs)
             if run['status'] == 'completed':
                 if run['conclusion'] != 'success':
-                    raise RuntimeError(f"Release run {run_id} ended: {run['conclusion']}")
+                    raise RuntimeError(f"Release run {run_id} ended: {progress_status(run)}")
                 r = target_release(tag)
                 if not r or r['draft'] or r['prerelease']:
                     raise RuntimeError('workflow succeeded but no formal published release exists')
@@ -276,7 +360,7 @@ def watch(tag, sha, old_ids):
                 print(f'Published {tag} with all expected assets (run {run_id}).')
                 return
         else:
-            print(f'[{int(time.monotonic() - started)}s] Waiting for Release run to appear...', flush=True)
+            display.update([])
         time.sleep(10)
     raise RuntimeError('timed out watching the Release workflow; inspect Actions before retrying')
 
