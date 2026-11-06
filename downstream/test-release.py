@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Exercise release selection and race safeguards with local Git remotes."""
-from contextlib import nullcontext
+from contextlib import nullcontext, redirect_stderr
 import importlib.util
 import io
 import json
@@ -31,8 +31,10 @@ def git(cwd, *args):
 
 class FakeAPI:
     def __init__(self, baseline, releases, active=False, publish_on_cancel=False,
-                 publish_on_delete=False, fail=None):
+                 publish_on_delete=False, fail=None, latest_tag="v1.2.3", annotated=False):
         self.baseline = baseline
+        self.latest_tag = latest_tag
+        self.annotated = annotated
         self.releases = releases
         self.active = active
         self.publish_on_cancel = publish_on_cancel
@@ -45,8 +47,13 @@ class FakeAPI:
         if self.fail and self.fail in path:
             raise subprocess.CalledProcessError(1, ["gh", "api", path])
         if path.endswith("/releases/latest"):
-            return {"tag_name": "v1.2.3"}
+            return {"tag_name": self.latest_tag}
         if "/git/ref/tags/" in path:
+            if not path.endswith("/v1.2.3"):
+                raise AssertionError(f"unexpected upstream tag: {path}")
+            return {"object": {"type": "tag" if self.annotated else "commit",
+                               "sha": "tag-object" if self.annotated else self.baseline}}
+        if path.endswith("/git/tags/tag-object") and self.annotated:
             return {"object": {"type": "commit", "sha": self.baseline}}
         if "/actions/workflows/" in path:
             return {"workflow_runs": ([{"id": 42, "status": "in_progress",
@@ -213,6 +220,37 @@ class ReleaseDriverTests(unittest.TestCase):
                               if p.is_file() and ".git" not in p.relative_to(self.root).parts}, files)
             self.assertEqual(git(self.remote, "rev-parse", "refs/heads/downstream/patch-build"), self.latest)
         return observed
+
+    def test_newer_upstream_warns_and_releases_pinned_candidate(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()],
+                      latest_tag="v1.2.4")
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            self.launch(api)
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
+        self.assertIn("WARNING", stderr.getvalue())
+        self.assertIn("v1.2.4", stderr.getvalue())
+        self.assertIn("pinned v1.2.3", stderr.getvalue())
+        self.assertIn("manually migrate", stderr.getvalue())
+        config = json.loads((self.root / "downstream/config.json").read_text())
+        self.assertEqual(config["upstream_version"], "1.2.3")
+        self.assertEqual(config["upstream_commit"], self.baseline)
+
+    def test_retagged_pin_blocks_before_mutation(self):
+        api = FakeAPI("b" * 40, [self.published.copy(), self.draft.copy()],
+                      latest_tag="v1.2.4")
+        with self.assertRaisesRegex(RuntimeError, "pinned tag v1.2.3"):
+            self.launch(api)
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.old)
+        self.assertFalse(self.preflight_log.exists())
+        self.assertFalse(any(method != "GET" for method, _ in api.calls))
+
+    def test_annotated_pinned_tag_is_peeled_for_candidate(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()],
+                      annotated=True)
+        self.launch(api)
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
+        self.assertTrue(any(path.endswith("/git/tags/tag-object") for _, path in api.calls))
 
     def check_tag_push_failure_retry(self, accepted):
         tag = "v1.2.3-fork.2"

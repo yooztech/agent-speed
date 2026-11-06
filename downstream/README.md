@@ -116,9 +116,11 @@ heartbeat. The run link is printed once. A dash means timing is not yet availabl
 The wrapper requires Git, network access, push access to `origin`, and an
 authenticated `gh` session with access to the upstream repository and fork
 releases, drafts, and Actions, including permission to write releases and
-Actions. It queries the latest upstream release and its tag commit; if that
-commit does not match `downstream/config.json`, it stops rather than silently
-building a stale pin. First migrate the pin and patch queue, then retry.
+Actions. The wrapper verifies that the configured upstream tag resolves to the
+commit in `downstream/config.json` and stops if it does not. It also queries the
+latest upstream release; a different tag produces a warning, while the release
+continues using the configured pin. Only when choosing to upgrade, manually
+migrate and commit the pin and patch queue before releasing against the new baseline.
 Before any cancellation, draft deletion or tag mutation, the wrapper prepares
 the complete patch queue once in a temporary tree and runs a local preflight
 against that tree. On Linux and macOS it requires the .NET 10 SDK. It probes

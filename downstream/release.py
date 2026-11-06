@@ -152,10 +152,7 @@ def verify_origin():
 
 def check_baseline():
     config = json.loads((ROOT / 'downstream/config.json').read_text())
-    latest = api(f'repos/{UPSTREAM}/releases/latest')
-    tag = latest['tag_name']
-    if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
-        raise RuntimeError(f'unsupported upstream latest release tag: {tag}')
+    tag = f"v{config['upstream_version']}"
     obj = api(f'repos/{UPSTREAM}/git/ref/tags/{quote(tag, safe="")}')['object']
     for _ in range(8):
         if obj['type'] == 'commit':
@@ -165,13 +162,16 @@ def check_baseline():
         obj = api(f"repos/{UPSTREAM}/git/tags/{obj['sha']}")['object']
     else:
         raise RuntimeError('upstream tag nesting is too deep')
-    if tag[1:] != config['upstream_version'] or obj['sha'] != config['upstream_commit']:
-        raise RuntimeError(f"upstream latest {tag} resolves to {obj['sha']}, but pin is "
-                           f"v{config['upstream_version']} {config['upstream_commit']}. "
-                           'Migrate downstream/config.json and replay/rebase the patch queue against the new upstream, '
-                           'update its tests and release notes, commit the migration, then retry; no baseline was changed.')
-    return tag[1:]
-
+    if obj['sha'] != config['upstream_commit']:
+        raise RuntimeError(f"upstream pinned tag {tag} resolves to {obj['sha']}, but configured pin is "
+                           f"{config['upstream_commit']}; no baseline was changed.")
+    latest = api(f'repos/{UPSTREAM}/releases/latest')['tag_name']
+    if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', latest):
+        raise RuntimeError(f'unsupported upstream latest release tag: {latest}')
+    if latest != tag:
+        print(f'WARNING: upstream latest release is {latest}; staying on pinned {tag}. '
+              'To upgrade, manually migrate the baseline and patch queue before releasing.', file=sys.stderr)
+    return config['upstream_version']
 
 def remote_ref(ref):
     output = git('ls-remote', '--refs', 'origin', ref)
