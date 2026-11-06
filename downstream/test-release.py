@@ -3,9 +3,11 @@
 import importlib.util
 import json
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -218,6 +220,56 @@ class ReleaseDriverTests(unittest.TestCase):
         prerelease = {"tag_name": "v1.2.3-fork.7", "draft": False, "prerelease": True}
         self.assertEqual(driver.select([self.published, self.draft, prerelease], "1.2.3"),
                          "v1.2.3-fork.8")
+
+
+class PublishWorkflowTests(unittest.TestCase):
+    def test_release_lookup_and_publication(self):
+        workflow = (HERE.parent / ".github/workflows/release.yml").read_text()
+        script = textwrap.dedent(workflow.split("      - name: Publish release assets\n", 1)[1]
+                                 .split("        run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "git").write_text("#!/bin/sh\n[ \"$1\" != rev-parse ] || echo expected-sha\n")
+            (root / "gh").write_text(textwrap.dedent('''\
+                #!/usr/bin/env python3
+                import json, os, sys
+                args = sys.argv[1:]
+                with open(os.environ['CALLS'], 'a') as log:
+                    log.write(json.dumps(args) + '\\n')
+                if args[0] == 'api':
+                    if args != ['api', '--paginate', 'repos/owner/repo/releases?per_page=100',
+                                '--jq', '.[] | select(.tag_name == "v1") | .draft']:
+                        sys.exit(2)
+                    if os.environ['STATE'] == 'error':
+                        sys.exit(1)
+                    # The target occurs on the second page, after an unrelated release.
+                    pages = [[{'tag_name': 'other', 'draft': False}], []]
+                    if os.environ['STATE'] != 'absent':
+                        pages[1].append({'tag_name': 'v1', 'draft': os.environ['STATE'] == 'draft'})
+                    for page in pages:
+                        for release in page:
+                            if release['tag_name'] == 'v1':
+                                print(str(release['draft']).lower())
+                '''))
+            for name in ("git", "gh"):
+                (root / name).chmod(0o755)
+            calls = root / "calls"
+            env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}", CALLS=str(calls),
+                       GITHUB_REPOSITORY="owner/repo", GITHUB_REF_NAME="v1", GITHUB_SHA="expected-sha")
+            for state, expected, success in (
+                ("absent", ["create", "upload", "edit"], True),
+                ("draft", ["upload", "edit"], True),
+                ("published", [], True),
+                ("error", [], False),
+            ):
+                with self.subTest(state=state):
+                    calls.write_text("")
+                    result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script],
+                                            cwd=root, env=dict(env, STATE=state),
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode == 0, success, result.stderr)
+                    invoked = [json.loads(line) for line in calls.read_text().splitlines()]
+                    self.assertEqual([args[1] for args in invoked if args[0] == "release"], expected)
 
 
 class WindowsInstallerVersionTests(unittest.TestCase):

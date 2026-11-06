@@ -275,7 +275,7 @@ jobs:
           }
           verify_tag
           # A successful authenticated listing distinguishes an absent release from API errors.
-          existing="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[][] | select(.tag_name == \"$GITHUB_REF_NAME\") | .draft")"
+          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .draft")"
           if [ "$existing" = "false" ]; then
             echo "Release is already published; leaving it unchanged."
             exit 0

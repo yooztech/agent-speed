@@ -93,6 +93,9 @@ automation or administrators, may manually publish the same tag: a concurrent
 publication can race that check. Published releases must never be replaced.
 The wrapper reports success only after publication and all release assets are
 ready. `--plan` performs queries without changing anything.
+The focused maintenance checks in `python3 downstream/test-release.py` cover
+the publication workflow's paginated release lookup and its handling of absent,
+draft, published, and failed API responses without contacting GitHub.
 
 To check a macOS bundle locally against its tested Linux collector, run
 `python3 downstream/verify-collector-zip.py <zip> <collector>` from the
