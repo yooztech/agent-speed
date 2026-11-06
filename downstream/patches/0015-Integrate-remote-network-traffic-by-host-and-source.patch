@@ -1,39 +1,49 @@
-From 648ea5f0db7813af8d53742e1a9d24eaf516c71f Mon Sep 17 00:00:00 2001
+From e8b3c5b2504f66a26a629d3d5e3fcb6bcb1bcf48 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 15/15] Integrate remote network traffic by host and source
 
 ---
  linux/collector/main.cpp                      |   6 +-
- linux/collector/protocol.cpp                  |  46 ++++++-
+ linux/collector/protocol.cpp                  |  46 +++++-
  linux/collector/protocol.hpp                  |   3 +-
  linux/core/include/agentspeed/monitor.hpp     |   1 +
  .../include/agentspeed/traffic_service.hpp    |   1 +
  linux/core/src/traffic.cpp                    |  11 +-
- linux/tests/collector_test.cpp                |  50 ++++++++
- linux/tests/traffic_test.cpp                  |  21 ++++
+ linux/tests/collector_test.cpp                |  50 ++++++
+ linux/tests/traffic_test.cpp                  |  21 +++
  .../Sources/AgentSpeed/App/AppDelegate.swift  |   6 +
  macos/Sources/AgentSpeed/App/AppModel.swift   |   1 +
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  10 ++
  .../AgentSpeed/App/RemoteSnapshot.swift       |   3 +-
- .../AgentSpeed/App/RemoteTraffic.swift        |  72 +++++++++++
- .../Dashboard/Traffic/TrafficSection.swift    |  66 +++++++---
- .../AgentSpeed/History/HistoryViewModel.swift |  36 +++++-
+ .../AgentSpeed/App/RemoteTraffic.swift        |  72 ++++++++
+ .../Dashboard/Traffic/TrafficSection.swift    |  66 ++++++--
+ .../AgentSpeed/History/HistoryViewModel.swift |  47 +++++-
  .../History/HistoryWindowController.swift     |   4 +-
  .../History/Model/HistoryTraffic.swift        |   7 +-
  .../History/Views/HistoryView.swift           |   6 +
- .../RemoteTrafficTests.swift                  |  82 +++++++++++++
- spec/NETWORK.md                               |  12 +-
- .../src/AgentSpeed.Core/RemoteAggregation.cs  |  15 ++-
- windows/src/AgentSpeed.Core/RemoteTraffic.cs  | 114 ++++++++++++++++++
- windows/src/AgentSpeed.Core/SpeedHub.cs       |   1 +
- .../History/HistoryTraffic.cs                 |   6 +-
- windows/src/AgentSpeed/App/AppController.cs   |   3 +-
- .../History/HistoryViewModel.Traffic.cs       |  13 +-
+ .../RemoteTrafficTests.swift                  | 110 +++++++++++++
+ spec/NETWORK.md                               |  26 ++-
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  |  16 +-
+ windows/src/AgentSpeed.Core/RemoteTraffic.cs  | 154 ++++++++++++++++++
+ windows/src/AgentSpeed.Core/SpeedHub.cs       |   9 +-
+ .../AgentSpeed.Core/Traffic/TrafficTypes.cs   |   8 +
+ .../Formatting/DashboardTraffic.cs            |  22 ++-
+ .../History/HistoryTraffic.cs                 |  27 ++-
+ .../Settings/Orbs/OrbTraffic.cs               |  28 ++++
+ windows/src/AgentSpeed/App/AppController.cs   |   9 +-
+ .../Dashboard/DashboardViewModel.Traffic.cs   |  11 +-
+ .../Dashboard/DashboardWindow.xaml.cs         |   4 +-
+ .../AgentSpeed/History/HistoryController.cs   |   4 +-
+ .../History/HistoryViewModel.Perf.cs          |   2 +-
+ .../History/HistoryViewModel.Traffic.cs       |  10 +-
+ .../AgentSpeed/History/HistoryViewModel.cs    |   7 +
+ windows/src/AgentSpeed/Orb/OrbManager.cs      |   9 +-
  .../src/AgentSpeed/Traffic/TrafficService.cs  |   9 +-
- .../RemoteConsumerTests.cs                    |  24 ++++
- .../HistoryTrafficTests.cs                    |   8 ++
- 29 files changed, 595 insertions(+), 42 deletions(-)
+ .../RemoteConsumerTests.cs                    |  93 +++++++++--
+ .../HistoryTrafficTests.cs                    |  33 ++++
+ .../TrafficSurfaceTests.cs                    |  54 ++++++
+ 39 files changed, 923 insertions(+), 83 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteTraffic.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
  create mode 100644 windows/src/AgentSpeed.Core/RemoteTraffic.cs
@@ -451,7 +461,7 @@ index 00000000..ed10116f
 +    let history: [RemoteTrafficHistoryRow]?
 +}
 diff --git a/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift b/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
-index efeaf4e3..2cc6fcba 100644
+index efeaf4e3..cf55e452 100644
 --- a/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
 +++ b/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
 @@ -16,7 +16,9 @@ struct TrafficSection: View {
@@ -587,7 +597,7 @@ index efeaf4e3..2cc6fcba 100644
          .accessibilityAddTraits(.isButton)
      }
 diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-index 2f82d34a..6151b828 100644
+index 2f82d34a..71d5046c 100644
 --- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 +++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 @@ -76,6 +76,11 @@ final class HistoryViewModel {
@@ -745,7 +755,7 @@ index f2ee5a2c..2011ca72 100644
                      if model.remoteHistoryStale { Text(model.l10n("history.remoteStale")) }
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
 new file mode 100644
-index 00000000..df0405c7
+index 00000000..fdaa60b8
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
 @@ -0,0 +1,110 @@
@@ -860,7 +870,7 @@ index 00000000..df0405c7
 +    }
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 744c0312..d0e018e0 100644
+index 744c0312..c3b1abce 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -238,8 +238,8 @@ and outputs, and absolute working paths do not. SSH credentials are not embedded
@@ -874,10 +884,22 @@ index 744c0312..d0e018e0 100644
  After the client requests its time zone, `today_day`, `today_start_ms` and snapshot today totals use that zone;
  `today_day` is in `YYYY-MM-DD` form or null if conversion fails. Untagged or null-zone snapshots retain collector-local
  compatibility behavior. Snapshot and history frames identify their aggregation time zone; history from an older
-@@ -247,6 +247,16 @@ collector without a matching time-zone tag must not be presented as viewer-local
+@@ -247,6 +247,28 @@ collector without a matching time-zone tag must not be presented as viewer-local
  can be measured or live data is incomplete. If global live data is incomplete, each source's live rates and estimated
  share are also null.
  
++On Windows, a host becomes online only after a valid snapshot for a recognized protocol version and source set. Invalid
++frames do not refresh its heartbeat or clear its error; reconnecting does not reuse a previous snapshot as live data.
++Connection failures expose a bounded tail of collector stderr and the exit code when available. SSH continues to use
++the system configuration and host-key verification.
++
++Dashboard averages combine measured output and measured duration across selected machine/source pairs, rather than
++averaging per-source rates. Missing categorized remote today totals remain unknown. Duplicate connections to a machine
++do not double-count its sources; current online history takes precedence over stale history. Traffic rows retain their
++host and source identity, and local source filters remain independent of remote selections. An unavailable sample has
++an unknown rate, while a disconnected host has a zero live rate and retains its last observed totals; missing totals
++remain unknown.
++
 +Snapshots may include a `traffic` object with `enabled`, `available`, nullable `machine_rate` (`rx`, `tx` bytes/s),
 +`machine_today` (`rx`, `tx`, `sampled_ms`), and `sources` keyed by source ID. Each source has nullable `self_rate`,
 +`with_tools_rate` (both `rx`, `tx` bytes/s), and nullable `today` (`rx_self`, `tx_self`, `rx_tools`, `tx_tools` bytes).
@@ -892,10 +914,10 @@ index 744c0312..d0e018e0 100644
  `tools`, `active_ms`, `span_start_ms`, `model`, `components`, `baseline`, `vs_usual`, `vs_usual_percent` and
  `work_signals`. Each component has `id`, `present`, `reason`, `samples`, `measure`, `ratio` and `sub_score`;
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-index 331870ef..f8e54fa5 100644
+index 37c92c80..e57527bf 100644
 --- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-@@ -13,6 +13,7 @@ public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string
+@@ -15,6 +15,7 @@ public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string
      public IReadOnlyList<DailyUsage> Days { get; init; } = [];
      /// <summary>Performance records sent by this host, or null when its collector does not provide them.</summary>
      public IReadOnlyList<PerfRecord>? PerfRecords { get; init; }
@@ -903,8 +925,8 @@ index 331870ef..f8e54fa5 100644
      public bool? HistoryPartial { get; init; }
      public DateTimeOffset? HistoryReceivedAt { get; init; }
      public bool HistoryCurrent { get; init; }
-@@ -29,6 +30,16 @@ internal sealed class RemoteHostData(Guid id, string label)
-     public JsonElement? Snapshot { get; set; }
+@@ -33,6 +34,16 @@ internal sealed class RemoteHostData(Guid id, string label)
+     private string? _historyMachineId;
      public IReadOnlyList<DailyUsage> Days { get; set; } = [];
      public IReadOnlyList<PerfRecord>? PerfRecords { get; set; }
 +    public RemoteTraffic? Traffic { get; set; }
@@ -920,30 +942,31 @@ index 331870ef..f8e54fa5 100644
      public string? HistoryTimezone { get; set; }
      public bool? HistoryPartial { get; set; }
      public DateTimeOffset? HistoryReceivedAt { get; set; }
-@@ -46,6 +57,8 @@ internal sealed class RemoteHostData(Guid id, string label)
-                 case "snapshot":
-                     if (root.Array("sources") is null) return null;
+@@ -54,6 +65,9 @@ internal sealed class RemoteHostData(Guid id, string label)
+                     { Error = "Invalid collector sources"; return false; }
                      Snapshot = root.Clone(); Online = true; Error = null;
+                     _machineId = root.Text("machine_id");
 +                    var receivedTraffic = RemoteTraffic.Parse(root);
-+                    Traffic = receivedTraffic is null ? _previousTraffic?.Offline() : RemoteTraffic.MergeSession(_previousTraffic, receivedTraffic);
-                     break;
++                    Traffic = receivedTraffic is null ? (Traffic ?? _previousTraffic)?.Unavailable()
++                        : RemoteTraffic.PreserveMissingToday(Traffic, RemoteTraffic.MergeSession(_previousTraffic, receivedTraffic));
+                     return true;
                  case "history":
                      var timezone = root.Text("timezone");
-@@ -92,7 +105,7 @@ internal sealed class RemoteHostData(Guid id, string label)
-     public RemoteHostStatus Status()
+@@ -111,7 +125,7 @@ internal sealed class RemoteHostData(Guid id, string label)
      {
          bool sameZone = HistoryTimezone == LocalTimezone();
--        return new(Id, Label, Online, Error) { MachineId = Snapshot?.Text("machine_id") ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null, Days = sameZone ? Days : [], PerfRecords = sameZone ? PerfRecords : null, HistoryPartial = sameZone ? HistoryPartial : null,
-+        return new(Id, Label, Online, Error) { MachineId = Snapshot?.Text("machine_id") ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null, Days = sameZone ? Days : [], PerfRecords = sameZone ? PerfRecords : null, Traffic = Online ? Traffic : Traffic?.Offline(), HistoryPartial = sameZone ? HistoryPartial : null,
+         return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null,
+-            EnabledSources = SourceSet.From(Enum.GetValues<SourceKind>().Where(IsSourceEnabled)), Days = sameZone ? Days : [], PerfRecords = sameZone ? PerfRecords : null, HistoryPartial = sameZone ? HistoryPartial : null,
++            EnabledSources = SourceSet.From(Enum.GetValues<SourceKind>().Where(IsSourceEnabled)), Days = sameZone ? Days : [], PerfRecords = sameZone ? PerfRecords : null, Traffic = Online ? Traffic : Traffic?.Offline(), HistoryPartial = sameZone ? HistoryPartial : null,
              HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
      }
  
 diff --git a/windows/src/AgentSpeed.Core/RemoteTraffic.cs b/windows/src/AgentSpeed.Core/RemoteTraffic.cs
 new file mode 100644
-index 00000000..9906ee52
+index 00000000..1d92d44b
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/RemoteTraffic.cs
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,154 @@
 +using System.Text.Json;
 +using AgentSpeed.Core.Traffic;
 +
@@ -965,7 +988,9 @@ index 00000000..9906ee52
 +                var today = Object(item.Value, "today");
 +                var split = new TrafficSplit(new(today.Integer("rx_self"), today.Integer("tx_self")),
 +                    new(today.Integer("rx_tools"), today.Integer("tx_tools")));
-+                sources[kind] = new(kind, split, TrafficBytes.Zero, Rate(item.Value, "with_tools_rate"), Rate(item.Value, "self_rate"));
++                var available = traffic.Boolean("available") == true;
++                sources[kind] = new(kind, split, TrafficBytes.Zero, available ? Rate(item.Value, "with_tools_rate") : null, available ? Rate(item.Value, "self_rate") : null)
++                { TodayKnown = today.ValueKind == JsonValueKind.Object };
 +            }
 +        }
 +        var machine = Object(traffic, "machine_today");
@@ -993,8 +1018,8 @@ index 00000000..9906ee52
 +        if (previous is null) return current;
 +        var rows = previous.Days.Concat(current.Days).GroupBy(r => (r.Day, r.Key))
 +            .Select(g => new TrafficDay(g.Key.Day, g.Key.Key, g.Sum(r => r.Rx), g.Sum(r => r.Tx),
-+                g.Sum(r => r.RxTools), g.Sum(r => r.TxTools), g.Max(r => r.SampledMs))).ToArray();
-+        var currentDay = current.Days.Select(r => r.Day).Max(StringComparer.Ordinal);
++                g.Sum(r => r.RxTools), g.Sum(r => r.TxTools), g.Sum(r => r.SampledMs))).ToArray();
++        var currentDay = current.Days.Select(r => r.Day).Max(StringComparer.Ordinal) ?? previous.Days.Select(r => r.Day).Max(StringComparer.Ordinal);
 +        var previousToday = previous.Days.Where(r => r.Day == currentDay).ToArray();
 +        var machine = previousToday.FirstOrDefault(r => r.IsMachine);
 +        var sources = new Dictionary<SourceKind, SourceTraffic>(current.Snapshot.Sources);
@@ -1003,22 +1028,50 @@ index 00000000..9906ee52
 +            var kind = row.Source!.Value;
 +            var prior = new TrafficSplit(new(row.Rx, row.Tx), new(row.RxTools, row.TxTools));
 +            if (sources.TryGetValue(kind, out var source)) sources[kind] = source with { Today = source.Today + prior };
-+            else sources[kind] = new(kind, prior, TrafficBytes.Zero, TrafficRate.Zero, TrafficRate.Zero);
++            else sources[kind] = new(kind, prior, TrafficBytes.Zero, null, null) { TodayKnown = false };
 +        }
 +        return new(current.Snapshot with { Sources = sources, MachineToday = current.Snapshot.MachineToday +
 +            (machine is null ? TrafficBytes.Zero : new TrafficBytes(machine.Rx, machine.Tx)) }, rows);
 +    }
 +
++    /// <summary>Keep previously observed totals when a later snapshot omits today's values.</summary>
++    public static RemoteTraffic PreserveMissingToday(RemoteTraffic? previous, RemoteTraffic current)
++    {
++        if (previous is null) return current;
++        var sources = new Dictionary<SourceKind, SourceTraffic>(current.Snapshot.Sources);
++        foreach (var (kind, prior) in previous.Snapshot.Sources)
++        {
++            if (!sources.TryGetValue(kind, out var source))
++                sources[kind] = prior with { TodayKnown = false, LiveSelf = null, LiveWithTools = null };
++            else if (!source.TodayKnown)
++                sources[kind] = source with { Today = prior.Today };
++        }
++        var days = current.Days.GroupBy(row => (row.Day, row.Key)).ToDictionary(group => group.Key, group => group.Last());
++        foreach (var row in previous.Days) days.TryAdd((row.Day, row.Key), row);
++        return current with { Snapshot = current.Snapshot with { Sources = sources }, Days = days.Values.ToArray() };
++    }
++
 +    /// <summary>Combines observed host snapshots without inventing samples for older collectors.</summary>
 +    public static TrafficSnapshot Combine(TrafficSnapshot local, IEnumerable<RemoteHostStatus> hosts)
 +    {
-+        var snapshots = hosts.Select(h => h.Traffic?.Snapshot).Where(s => s is { Enabled: true }).Cast<TrafficSnapshot>().ToArray();
-+        if (snapshots.Length == 0) return local;
++        var hostRows = new List<HostTraffic> { new(null, string.Empty, string.Empty, local) };
++        var seenSources = new HashSet<(string, SourceKind)>();
++        var seenMachines = new HashSet<string>(StringComparer.Ordinal);
 +        var sources = new Dictionary<SourceKind, SourceTraffic>(local.Sources);
 +        var machineRate = local.MachineLive;
++        var machineUnknown = local.Enabled && local.MachineLive is null;
 +        var machineToday = local.MachineToday;
-+        foreach (var snapshot in snapshots)
++        var snapshots = new List<TrafficSnapshot>();
++        foreach (var host in hosts)
 +        {
++            if (host.Traffic?.Snapshot is not { Enabled: true } raw) continue;
++            var uniqueSources = raw.Sources.Where(x => seenSources.Add((host.MachineId, x.Key))).ToDictionary(x => x.Key, x => x.Value);
++            var uniqueMachine = seenMachines.Add(host.MachineId);
++            var snapshot = raw with { Sources = uniqueSources, MachineLive = uniqueMachine ? raw.MachineLive : null, MachineToday = uniqueMachine ? raw.MachineToday : TrafficBytes.Zero };
++            hostRows.Add(new(host.Id, host.Label, host.MachineId, raw));
++            if (uniqueSources.Count == 0 && !uniqueMachine) continue;
++            snapshots.Add(snapshot);
++            if (uniqueMachine && snapshot.MachineLive is null) machineUnknown = true;
 +            if (snapshot.MachineLive is { } rate) machineRate = (machineRate ?? TrafficRate.Zero) + rate;
 +            machineToday += snapshot.MachineToday;
 +            foreach (var (kind, source) in snapshot.Sources)
@@ -1033,16 +1086,26 @@ index 00000000..9906ee52
 +                };
 +            }
 +        }
-+        return local with { Enabled = true, MachineLive = machineRate, MachineToday = machineToday, Sources = sources,
++        return local with { Enabled = local.Enabled || snapshots.Count > 0, MachineLive = machineUnknown ? null : machineRate, MachineToday = machineToday, Sources = sources, Hosts = hostRows,
 +            ProcessState = local.ProcessState.IsAvailable ? local.ProcessState : snapshots.FirstOrDefault(s => s.ProcessState.IsAvailable)?.ProcessState ?? local.ProcessState };
 +    }
 +
 +    private static TrafficRate? Add(TrafficRate? a, TrafficRate? b) =>
-+        a is null ? b : b is null ? a : a.Value + b.Value;
++        a is { } left && b is { } right ? left + right : null;
++
++    /// <summary>Last accumulated values with rates unknown while an online collector omits traffic.</summary>
++    public RemoteTraffic Unavailable() => this with { Snapshot = Snapshot with
++    {
++        MachineLive = null,
++        ProcessState = ProcessTrafficState.Unavailable(TrafficUnavailableReason.Sampler),
++        Sources = Snapshot.Sources.ToDictionary(x => x.Key, x => x.Value with
++        { LiveSelf = null, LiveWithTools = null, TodayKnown = false }),
++    } };
 +
 +    public RemoteTraffic Offline() => this with { Snapshot = Snapshot with
 +    {
 +        MachineLive = TrafficRate.Zero,
++        ProcessState = ProcessTrafficState.Standby,
 +        Sources = Snapshot.Sources.ToDictionary(x => x.Key, x => x.Value with
 +        { LiveSelf = TrafficRate.Zero, LiveWithTools = TrafficRate.Zero }),
 +    } };
@@ -1059,19 +1122,123 @@ index 00000000..9906ee52
 +    }
 +}
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 8a672b50..70d0e669 100644
+index adf58604..810bde60 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
-@@ -65,6 +65,7 @@ public sealed class SpeedHub
+@@ -73,6 +73,7 @@ public sealed class SpeedHub
+             {
+                 if (!online)
+                 {
++                    host.DisconnectTraffic();
+                     host.Online = false;
+                     host.HistoryCurrent = false;
+                 }
+@@ -204,8 +205,12 @@ public sealed class SpeedHub
+         foreach (var host in _remote.Values.OrderByDescending(h => h.Online))
          {
-             if (!_remote.TryGetValue(id, out var host)) _remote[id] = host = new RemoteHostData(id, label);
-             host.Label = label;
-+            if (!online) host.DisconnectTraffic();
-             host.Online = online;
-             host.Error = error;
-             if (!online) host.HistoryCurrent = false;
+             var status = host.Status();
+-            statuses.Add(status with { Days = status.Days.Where(day => host.IsSourceEnabled(day.Source)).ToArray(),
+-                PerfRecords = status.PerfRecords?.Where(record => host.IsSourceEnabled(record.Source)).ToArray() });
++            var remoteEnabled = SourceSet.From(Enum.GetValues<SourceKind>().Where(host.IsSourceEnabled));
++            statuses.Add(status with { Days = status.Days.Where(day => remoteEnabled.Contains(day.Source)).ToArray(),
++                PerfRecords = status.PerfRecords?.Where(record => remoteEnabled.Contains(record.Source)).ToArray(),
++                Traffic = status.Traffic is { } traffic ? traffic with {
++                    Snapshot = Traffic.TrafficVisibility.Snapshot(traffic.Snapshot, remoteEnabled),
++                    Days = Traffic.TrafficVisibility.Days(traffic.Days, remoteEnabled) } : null });
+             if (host.Snapshot is not { } message || message.Array("sources") is not { } remoteSources)
+             {
+                 complete = false; todayComplete = false;
+diff --git a/windows/src/AgentSpeed.Core/Traffic/TrafficTypes.cs b/windows/src/AgentSpeed.Core/Traffic/TrafficTypes.cs
+index 21bb0de0..1fdca6e1 100644
+--- a/windows/src/AgentSpeed.Core/Traffic/TrafficTypes.cs
++++ b/windows/src/AgentSpeed.Core/Traffic/TrafficTypes.cs
+@@ -58,6 +58,8 @@ public sealed record SourceTraffic(
+     TrafficRate? LiveWithTools,
+     TrafficRate? LiveSelf)
+ {
++    public bool TodayKnown { get; init; } = true;
++
+     public TrafficRate? Live(bool includeTools) => includeTools ? LiveWithTools : LiveSelf;
+ }
+ 
+@@ -122,6 +124,9 @@ public readonly record struct ProcessTrafficState(ProcessTrafficKind Kind, int I
+     public TrafficUnavailableReason? UnavailableReason => Kind == ProcessTrafficKind.Unavailable ? Reason : null;
+ }
+ 
++/// <summary>A traffic snapshot belonging to one configured host; null ID denotes this computer.</summary>
++public sealed record HostTraffic(Guid? HostId, string Label, string MachineId, TrafficSnapshot Snapshot);
++
+ /// <summary>Everything the UI shows about network traffic (METRICS 10.7, 10.8), published once per tick.</summary>
+ public sealed record TrafficSnapshot
+ {
+@@ -139,6 +144,9 @@ public sealed record TrafficSnapshot
+     /// <summary><c>trafficEnabled</c> (DESIGN 10); everything else is empty while off.</summary>
+     public bool Enabled { get; init; }
+ 
++    /// <summary>Individual host snapshots, before aggregation.</summary>
++    public IReadOnlyList<HostTraffic> Hosts { get; init; } = [];
++
+     /// <summary>This computer's live rate; null before two samples exist.</summary>
+     public TrafficRate? MachineLive { get; init; }
+ 
+diff --git a/windows/src/AgentSpeed.Presentation/Formatting/DashboardTraffic.cs b/windows/src/AgentSpeed.Presentation/Formatting/DashboardTraffic.cs
+index 0c5f6db6..34f7acfe 100644
+--- a/windows/src/AgentSpeed.Presentation/Formatting/DashboardTraffic.cs
++++ b/windows/src/AgentSpeed.Presentation/Formatting/DashboardTraffic.cs
+@@ -14,7 +14,8 @@ public sealed record DashboardTrafficRow(
+     TrafficFormat.Parts? Rx,
+     TrafficFormat.Parts? Tx,
+     long TodayBytes,
+-    string AccessibleName);
++    string AccessibleName,
++    Guid? HostId = null);
+ 
+ /// <summary>
+ /// The dashboard's Network section (DESIGN 10, Dashboard): this computer's live rates in the header, the source rows
+@@ -50,7 +51,8 @@ public sealed record DashboardTraffic(
+         var machine = snapshot.MachineLive;
+         var spoken = machine is { } m ? text.SpokenRates(m) : string.Empty;
+         var reason = snapshot.ProcessState.UnavailableReason;
+-        if (reason is { } why)
++        if (reason is { } why && (snapshot.Hosts.Count <= 1 ||
++            (snapshot.Sources.Count == 0 && snapshot.Hosts.All(h => h.Snapshot.Sources.Count == 0))))
+         {
+             var button = why switch
+             {
+@@ -63,21 +65,25 @@ public sealed record DashboardTraffic(
+         }
+ 
+         var rows = new List<DashboardTrafficRow>();
+-        foreach (var (source, traffic) in snapshot.Sources)
++        IReadOnlyList<HostTraffic> hosts = snapshot.Hosts.Count == 0 ? [new HostTraffic(null, string.Empty, string.Empty, snapshot)] : snapshot.Hosts;
++        foreach (var host in hosts)
++        foreach (var (source, traffic) in host.Snapshot.Sources)
+         {
+             var today = traffic.Today.Total(includeTools);
+             var live = traffic.Live(includeTools);
+-            if (today.IsZero && (live?.Sum ?? 0) <= 0)
++            if (today.IsZero && traffic.TodayKnown && (live?.Sum ?? 0) <= 0)
+             {
+                 continue;
+             }
+ 
+-            var name = localizer[DisplayText.SourceKey(source)];
+-            var todayText = text.Pair(today);
++            var sourceName = localizer[DisplayText.SourceKey(source)];
++            var name = host.HostId is null ? sourceName : $"{sourceName} · {host.Label}";
++            var todayText = traffic.TodayKnown ? text.Pair(today) : "–";
+             TrafficFormat.Parts? rx = live is { Rx: >= QuietRate } l1 ? text.Rate(l1.Rx) : null;
+             TrafficFormat.Parts? tx = live is { Tx: >= QuietRate } l2 ? text.Rate(l2.Tx) : null;
+-            var spokenRow = live is { } l ? $"{name}, {text.SpokenTotals(today)}, {text.SpokenRates(l)}" : $"{name}, {text.SpokenTotals(today)}";
+-            rows.Add(new DashboardTrafficRow(source, name, todayText, rx, tx, today.Sum, spokenRow));
++            var spokenToday = traffic.TodayKnown ? text.SpokenTotals(today) : "–";
++            var spokenRow = live is { } l ? $"{name}, {spokenToday}, {text.SpokenRates(l)}" : $"{name}, {spokenToday}";
++            rows.Add(new DashboardTrafficRow(source, name, todayText, rx, tx, today.Sum, spokenRow, host.HostId));
+         }
+ 
+         rows.Sort((a, b) => b.TodayBytes != a.TodayBytes ? b.TodayBytes.CompareTo(a.TodayBytes) : a.Source.CompareTo(b.Source));
 diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryTraffic.cs b/windows/src/AgentSpeed.Presentation/History/HistoryTraffic.cs
-index a313e907..622128c7 100644
+index a313e907..abd87d2d 100644
 --- a/windows/src/AgentSpeed.Presentation/History/HistoryTraffic.cs
 +++ b/windows/src/AgentSpeed.Presentation/History/HistoryTraffic.cs
 @@ -35,10 +35,12 @@ public sealed class HistoryTraffic
@@ -1088,17 +1255,95 @@ index a313e907..622128c7 100644
          foreach (var row in days)
          {
              if (row is null || !HistoryRanges.TryParseDay(row.Day, out var day))
-@@ -71,7 +73,7 @@ public sealed class HistoryTraffic
+@@ -59,6 +61,23 @@ public sealed class HistoryTraffic
+         IncludeTools = includeTools;
+     }
+ 
++    /// <summary>Combine selected hosts once per machine and traffic key, retaining all days for each key.</summary>
++    public static IReadOnlyList<TrafficDay> CombineHosts(IEnumerable<RemoteHostStatus> hosts, IEnumerable<TrafficDay> local)
++    {
++        var seen = new HashSet<(string Machine, string Key)>();
++        var rows = new List<TrafficDay>(local);
++        foreach (var host in hosts)
++        {
++            if (host.Traffic is not { } traffic) continue;
++            var keys = traffic.Days.Select(row => row.Key).Distinct(StringComparer.Ordinal)
++                .Where(key => seen.Add((host.MachineId, key))).ToHashSet(StringComparer.Ordinal);
++            rows.AddRange(traffic.Days.Where(row => keys.Contains(row.Key)));
++        }
++        return rows.GroupBy(row => (row.Day, row.Key)).Select(g => new TrafficDay(g.Key.Day, g.Key.Key,
++            g.Sum(row => row.Rx), g.Sum(row => row.Tx), g.Sum(row => row.RxTools), g.Sum(row => row.TxTools),
++            g.Max(row => row.SampledMs))).ToArray();
++    }
++
+     public static HistoryTraffic None { get; } = new([], null, includeTools: true);
+ 
+     /// <summary>The first day with a stored sample (<c>trafficSince</c>).</summary>
+@@ -71,7 +90,9 @@ public sealed class HistoryTraffic
      /// <summary>Traffic was ever measured: the table shows its column.</summary>
      public bool IsMeasured => HasData || Since is not null;
  
 -    public bool NotRecorded(DateOnly day) => Since is not { } since || day < since;
-+    public bool NotRecorded(DateOnly day) => Since is not { } since || day < since || (_sparse && !_rows.ContainsKey(day));
++    public bool NotRecorded(DateOnly day, SourceKind? source = null) => Since is not { } since || day < since ||
++        (_sparse && (!_rows.TryGetValue(day, out var rows) ||
++            (source is { } selected && !rows.Values.Any(row => row.Source == selected))));
  
      /// <summary>
      /// The day's traffic for <paramref name="source"/> (every source when null); null before measuring began.
+@@ -79,7 +100,7 @@ public sealed class HistoryTraffic
+     /// </summary>
+     public DayTraffic? Day(DateOnly day, SourceKind? source, DateOnly today, DateTimeOffset now, TimeZoneInfo? zone = null)
+     {
+-        if (NotRecorded(day))
++        if (NotRecorded(day, source))
+         {
+             return null;
+         }
+diff --git a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs
+index 5f811c2d..f3cb7d1a 100644
+--- a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs
++++ b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs
+@@ -1,3 +1,6 @@
++using AgentSpeed.Core;
++using AgentSpeed.Core.Traffic;
++
+ namespace AgentSpeed.Presentation.Settings.Orbs;
+ 
+ /// <summary>
+@@ -25,6 +28,31 @@ public static class OrbTraffics
+     /// <summary>Network traffic, which needs measuring (and, for sources, per-process data); intelligence needs neither.</summary>
+     public static bool IsNetwork(OrbTraffic traffic) => traffic is OrbTraffic.Sources or OrbTraffic.Machine;
+ 
++    /// <summary>Rates from the host/source instances selected for an orb.</summary>
++    public static TrafficRate? SourceRate(TrafficSnapshot snapshot, OrbDefinition definition, bool includeTools)
++    {
++        if (snapshot.Hosts.Count <= 1)
++        {
++            if (definition.ExcludedSources.IsDefaultOrEmpty) return snapshot.Live(definition.TrackedSources, includeTools);
++            var local = snapshot.Hosts.Count == 0 ? snapshot : snapshot.Hosts[0].Snapshot;
++            var sources = local.Sources.Where(pair => !definition.ExcludedSources.Contains(new OrbSourceInstance(null, pair.Key)))
++                .ToDictionary(pair => pair.Key, pair => pair.Value);
++            return (local with { Sources = sources }).Live(definition.TrackedSources, includeTools);
++        }
++        TrafficRate? total = null;
++        var seen = new HashSet<(string, AgentSpeed.Core.SourceKind)>();
++        foreach (var host in snapshot.Hosts)
++        foreach (var (kind, source) in host.Snapshot.Sources)
++        {
++            if (definition.TrackedSources is { } selected && !selected.Contains(kind)) continue;
++            if (definition.ExcludedSources.Contains(new OrbSourceInstance(host.HostId, kind))) continue;
++            if (host.HostId is not null && !seen.Add((host.MachineId, kind))) continue;
++            if (!host.Snapshot.ProcessState.IsAvailable || source.Live(includeTools) is not { } rate) return null;
++            total = (total ?? TrafficRate.Zero) + rate;
++        }
++        return total;
++    }
++
+     /// <summary>Absent (orbs saved by earlier versions) reads as <see cref="OrbTraffic.Sources"/>; an unknown value as <see cref="OrbTraffic.Off"/>.</summary>
+     public static OrbTraffic Parse(string? key) => key switch
+     {
 diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
-index 886f24b5..6ee31ec9 100644
+index 886f24b5..a7a218f4 100644
 --- a/windows/src/AgentSpeed/App/AppController.cs
 +++ b/windows/src/AgentSpeed/App/AppController.cs
 @@ -136,6 +136,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
@@ -1118,11 +1363,137 @@ index 886f24b5..6ee31ec9 100644
          _speed.EventRaised += (_, e) => OnSpeedEvent(e);
          _settings.Changed += (_, e) => OnSettingsChanged(e.Previous, e.Current);
          _theme.Changed += (_, _) => OnThemeChanged();
+@@ -937,7 +938,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             _dashboard.AgentsExpandedChanged += (_, expanded) => _settings.Update(s => s with { AgentsExpanded = expanded });
+             _dashboard.UpdateRequested += (_, _) => OpenUpdate();
+             _dashboard.UnitToggleRequested += (_, _) => ToggleLiveUnit();
+-            _dashboard.TrafficHistoryRequested += (_, source) => ShowHistory(source, traffic: true);
++            _dashboard.TrafficHistoryRequested += (_, row) => ShowHistory(row.Kind, traffic: true, hostId: row.HostId);
+             _dashboard.TrafficSettingsRequested += (_, _) => OpenSettings("traffic");
+             _dashboard.BoardsMenuRequested += (_, _) => ShowDashboardBoardsMenu();
+             AttachReporting(_dashboard);
+@@ -1008,7 +1009,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+     // ---- Usage history ----
+ 
+     /// <param name="traffic">Open on the traffic metric (a row of the dashboard's Network section, DESIGN 10).</param>
+-    private void ShowHistory(SourceKind? source, bool traffic = false)
++    private void ShowHistory(SourceKind? source, bool traffic = false, Guid? hostId = null)
+     {
+         if (_quitting)
+         {
+@@ -1017,7 +1018,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+ 
+         _dashboard?.Dismiss();
+         StartHistory();
+-        _history?.Open(source, traffic);
++        _history?.Open(source, traffic, hostId);
+     }
+ 
+     /// <summary>
+diff --git a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.Traffic.cs b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.Traffic.cs
+index 5012b3d2..f55db2da 100644
+--- a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.Traffic.cs
++++ b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.Traffic.cs
+@@ -20,14 +20,17 @@ internal sealed class TrafficRowItem : ObservableObject
+     private bool _bits;
+     private string _accessibleName = string.Empty;
+ 
+-    public TrafficRowItem(SourceKind source)
++    public TrafficRowItem(SourceKind source, Guid? hostId)
+     {
+         Source = source;
++        HostId = hostId;
+         DotBrush = MediaColors.Frozen(MediaColors.ToColor(HeatPalette.SourceColor(source)));
+     }
+ 
+     public SourceKind Source { get; }
+ 
++    public Guid? HostId { get; }
++
+     public Brush DotBrush { get; }
+ 
+     public string Name { get => _name; set => Set(ref _name, value); }
+@@ -121,15 +124,15 @@ internal sealed partial class DashboardViewModel
+         for (var i = 0; i < visible.Count; i++)
+         {
+             var row = visible[i];
+-            if (i == TrafficRows.Count || TrafficRows[i].Source != row.Source)
++            if (i == TrafficRows.Count || TrafficRows[i].Source != row.Source || TrafficRows[i].HostId != row.HostId)
+             {
+                 if (i < TrafficRows.Count)
+                 {
+-                    TrafficRows[i] = new TrafficRowItem(row.Source);
++                    TrafficRows[i] = new TrafficRowItem(row.Source, row.HostId);
+                 }
+                 else
+                 {
+-                    TrafficRows.Add(new TrafficRowItem(row.Source));
++                    TrafficRows.Add(new TrafficRowItem(row.Source, row.HostId));
+                 }
+             }
+ 
+diff --git a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
+index 5df810b0..477a6c25 100644
+--- a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
++++ b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
+@@ -117,7 +117,7 @@ internal sealed partial class DashboardWindow : Window
+     public event EventHandler? UnitToggleRequested;
+ 
+     /// <summary>A Network row was clicked: Usage History on the traffic metric with that source (DESIGN 10).</summary>
+-    public event EventHandler<SourceKind>? TrafficHistoryRequested;
++    public event EventHandler<OrbSourceInstance>? TrafficHistoryRequested;
+ 
+     /// <summary>The Network section's helper button: Settings → 網路流量, never the administrator prompt itself.</summary>
+     public event EventHandler? TrafficSettingsRequested;
+@@ -691,7 +691,7 @@ internal sealed partial class DashboardWindow : Window
+         if (sender is FrameworkElement { DataContext: TrafficRowItem row })
+         {
+             Dismiss();
+-            TrafficHistoryRequested?.Invoke(this, row.Source);
++            TrafficHistoryRequested?.Invoke(this, new OrbSourceInstance(row.HostId, row.Source));
+         }
+     }
+ 
+diff --git a/windows/src/AgentSpeed/History/HistoryController.cs b/windows/src/AgentSpeed/History/HistoryController.cs
+index f72cc493..7419ed9d 100644
+--- a/windows/src/AgentSpeed/History/HistoryController.cs
++++ b/windows/src/AgentSpeed/History/HistoryController.cs
+@@ -61,7 +61,7 @@ internal sealed class HistoryController : IDisposable
+ 
+     /// <summary>Opens the window (or brings it forward) showing <paramref name="source"/>, or every source when null.</summary>
+     /// <param name="traffic">Select the traffic metric (DESIGN 10).</param>
+-    public void Open(SourceKind? source, bool traffic = false)
++    public void Open(SourceKind? source, bool traffic = false, Guid? hostId = null)
+     {
+         if (_disposed)
+         {
+@@ -111,6 +111,8 @@ internal sealed class HistoryController : IDisposable
+             _model.RefreshLiveDay();
+         }
+ 
++        if (traffic) _model.SetHost(hostId);
++
+         if (traffic)
+         {
+             _model.SetMetric(Presentation.History.HistoryChartMetric.Traffic);
+diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
+index 12622b8b..edc936ed 100644
+--- a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
++++ b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
+@@ -30,7 +30,7 @@ internal sealed partial class HistoryViewModel
+         if (_hostId is null) records.AddRange(_hub.PerfRecords);
+         var available = _hostId is null || (_speed?.Snapshot.RemoteHosts.Any(h => h.Id == _hostId) == true);
+         var seen = new HashSet<(string, AgentSpeed.Core.SourceKind)>();
+-        foreach (var host in (_speed?.Snapshot.RemoteHosts ?? []).OrderByDescending(h => h.Online))
++        foreach (var host in (_speed?.Snapshot.RemoteHosts ?? []).OrderByDescending(h => h.Online).ThenByDescending(h => h.HistoryCurrent))
+         {
+             if (!_allHosts && host.Id != _hostId) continue;
+             if (host.PerfRecords is null) { available = false; continue; }
 diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs
-index 8f95cf96..5213bc6e 100644
+index 8f95cf96..e2dea96c 100644
 --- a/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs
 +++ b/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs
-@@ -100,11 +100,22 @@ internal sealed partial class HistoryViewModel
+@@ -100,11 +100,19 @@ internal sealed partial class HistoryViewModel
      /// </summary>
      private HistoryTraffic CurrentTraffic()
      {
@@ -1134,20 +1505,55 @@ index 8f95cf96..5213bc6e 100644
  
 +        if (_hostId is not null || (_allHosts && HasRemoteHosts))
 +        {
-+            var hosts = _speed?.Snapshot.RemoteHosts ?? [];
-+            var rows = hosts.Where(h => _hostId is null || h.Id == _hostId)
-+                .SelectMany(h => h.Traffic?.Days ?? []);
-+            if (_allHosts && _hostId is null) rows = rows.Concat(hub.Days);
-+            var combined = rows.GroupBy(r => (r.Day, r.Key)).Select(g => new TrafficDay(g.Key.Day, g.Key.Key,
-+                g.Sum(r => r.Rx), g.Sum(r => r.Tx), g.Sum(r => r.RxTools), g.Sum(r => r.TxTools), g.Max(r => r.SampledMs))).ToArray();
-+            return new HistoryTraffic(TrafficVisibility.Days(combined, _enabledSources()), null, _includeTools(), sparse: true);
++            var hosts = (_speed?.Snapshot.RemoteHosts ?? []).Where(h => _hostId is null || h.Id == _hostId);
++            var local = _allHosts && _hostId is null ? TrafficVisibility.Days(hub.Days, _enabledSources()) : [];
++            var combined = HistoryTraffic.CombineHosts(hosts, local);
++            return new HistoryTraffic(combined, null, _includeTools(), sparse: true);
 +        }
 +
          var key = (hub.Days, hub.Since, IncludeTools: _includeTools(), Enabled: _enabledSources());
          if (_trafficKey is not { } last || !ReferenceEquals(last.Days, key.Days) || last.Since != key.Since || last.IncludeTools != key.IncludeTools
              || last.Enabled != key.Enabled)
+diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.cs b/windows/src/AgentSpeed/History/HistoryViewModel.cs
+index de55ad97..51d47034 100644
+--- a/windows/src/AgentSpeed/History/HistoryViewModel.cs
++++ b/windows/src/AgentSpeed/History/HistoryViewModel.cs
+@@ -197,6 +197,13 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+         }
+     }
+ 
++    /// <summary>Select the machine owning a dashboard traffic row; null selects this computer.</summary>
++    public void SetHost(Guid? hostId)
++    {
++        var option = HostOptions.FirstOrDefault(host => host.Id == hostId && !host.All);
++        if (option is not null) SelectedHost = option;
++    }
++
+     public bool HasRemoteHosts => HostOptions.Count > 2;
+ 
+     public IReadOnlyList<SummaryCardView> Cards { get; }
+diff --git a/windows/src/AgentSpeed/Orb/OrbManager.cs b/windows/src/AgentSpeed/Orb/OrbManager.cs
+index 1ad88e7c..d8385521 100644
+--- a/windows/src/AgentSpeed/Orb/OrbManager.cs
++++ b/windows/src/AgentSpeed/Orb/OrbManager.cs
+@@ -373,9 +373,12 @@ internal sealed class OrbManager : IDisposable
+         OrbLinesSample? sample = mode switch
+         {
+             OrbTraffic.Intelligence => IntelligenceSample(entry.Feed.Reading),
+-            OrbTraffic.Machine when network => OrbLinesText.Traffic(_traffic.MachineLive ?? TrafficRate.Zero, settings.Bits, _loc),
+-            OrbTraffic.Sources when network => OrbLinesText.Traffic(
+-                _traffic.Live(entry.Definition.TrackedSources, settings.IncludeTools) ?? TrafficRate.Zero, settings.Bits, _loc),
++            OrbTraffic.Machine when network && _traffic.Hosts.Count <= 1 => OrbLinesText.Traffic(_traffic.MachineLive ?? TrafficRate.Zero, settings.Bits, _loc),
++            OrbTraffic.Sources when network && _traffic.Hosts.Count <= 1 => OrbLinesText.Traffic(
++                OrbTraffics.SourceRate(_traffic, entry.Definition, settings.IncludeTools) ?? TrafficRate.Zero, settings.Bits, _loc),
++            OrbTraffic.Machine when network && _traffic.MachineLive is { } machine => OrbLinesText.Traffic(machine, settings.Bits, _loc),
++            OrbTraffic.Sources when network && OrbTraffics.SourceRate(_traffic, entry.Definition, settings.IncludeTools) is { } rate =>
++                OrbLinesText.Traffic(rate, settings.Bits, _loc),
+             _ => null,
+         };
+         entry.Window.Surface.SetLines(sample, sample is not null);
 diff --git a/windows/src/AgentSpeed/Traffic/TrafficService.cs b/windows/src/AgentSpeed/Traffic/TrafficService.cs
-index 1c2b6165..cc7c1b71 100644
+index 1c2b6165..cc7ebf7a 100644
 --- a/windows/src/AgentSpeed/Traffic/TrafficService.cs
 +++ b/windows/src/AgentSpeed/Traffic/TrafficService.cs
 @@ -23,6 +23,7 @@ internal sealed class TrafficService : IDisposable
@@ -1179,15 +1585,101 @@ index 1c2b6165..cc7c1b71 100644
 +                _visibleRemote = remote;
                  _visibleFor = enabled;
 -                _visible = TrafficVisibility.Snapshot(raw, enabled);
-+                _visible = TrafficVisibility.Snapshot(RemoteTraffic.Combine(raw, remote?.RemoteHosts ?? []), enabled);
++                _visible = RemoteTraffic.Combine(TrafficVisibility.Snapshot(raw, enabled), remote?.RemoteHosts ?? []);
              }
  
              return _visible;
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
-index 4dbe01a4..e00ca8b6 100644
+index 30d8f474..2e778396 100644
 --- a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
-@@ -326,4 +326,28 @@ public sealed class RemoteConsumerTests
+@@ -160,7 +160,7 @@ public sealed class RemoteConsumerTests
+         hub.PublishLive(SpeedSnapshot.Empty with { History = [point] });
+         Assert.False(Assert.Single(hub.Snapshot.History).IsAvailable);
+ 
+-        hub.SetEnabledSources(new HashSet<SourceKind> { SourceKind.Codex });
++        hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 42).Replace("\"enabled\":true", "\"enabled\":false"));
+         var restored = Assert.Single(hub.Snapshot.History);
+         Assert.True(restored.IsAvailable);
+         Assert.Equal(point.Measured, restored.Measured);
+@@ -185,26 +185,61 @@ public sealed class RemoteConsumerTests
+     }
+ 
+     [Fact]
+-    public async Task GlobalSelectionFiltersRemoteSnapshotsAndHistory()
++    public async Task LocalSelectionDoesNotFilterOtherHosts()
+     {
+         var hub = await Task.Run(() => new SpeedHub());
+-        var id = Guid.NewGuid();
+-        hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 42));
+-        hub.UpdateRemoteHost(id, "host", true, json: History(LocalTimezone, 42));
+-        Assert.Single(Assert.Single(hub.Snapshot.RemoteHosts).Days);
+-
++        var enabled = Guid.NewGuid();
++        var disabled = Guid.NewGuid();
++        var events = new List<SpeedEvent>();
++        hub.EventRaised += (_, e) => events.Add(e);
+         hub.SetEnabledSources(new HashSet<SourceKind>());
+-        Assert.DoesNotContain(hub.Snapshot.Sources, s => s.HostId == id);
+-        Assert.Empty(Assert.Single(hub.Snapshot.RemoteHosts).Days);
+-        Assert.Equal(0, hub.Snapshot.Live.Output);
+-        Assert.Equal(0, hub.Snapshot.Today.Output);
+-        Assert.True(hub.Snapshot.RemoteLiveComplete);
+-        Assert.True(hub.Snapshot.RemoteTodayComplete);
+-
+-        hub.SetEnabledSources(new HashSet<SourceKind> { SourceKind.Pi });
++        hub.PublishLive(SpeedSnapshot.Empty with
++        {
++            Sources = [new SourceStatus(SourceKind.Omp, false, "", true, 0, Rate.Zero, TokenTotals.Zero, 0)]
++        });
++
++        const string traffic = "\"traffic\":{\"enabled\":true,\"available\":true,\"sources\":{\"omp\":{\"today\":{\"rx_self\":30,\"tx_self\":10}}},\"history\":[{\"day\":\"2026-01-01\",\"key\":\"omp\",\"rx\":30,\"tx\":10,\"sampled_ms\":1000}]}";
++        const string agents = "\"agents\":[{\"id\":\"agent\",\"source\":\"omp\",\"phase\":\"generating\"}]";
++        var first = Snapshot("first", 42).Replace("\"source\":\"pi\"", "\"source\":\"omp\"").Replace("\"agents\":[]", agents + "," + traffic);
++        var second = Snapshot("second", 99, "8").Replace("\"source\":\"pi\"", "\"source\":\"omp\"").Replace("\"enabled\":true", "\"enabled\":false").Replace("\"agents\":[]", agents + "," + traffic);
++        hub.UpdateRemoteHost(enabled, "first", true, json: first);
++        hub.UpdateRemoteHost(disabled, "second", true, json: second);
++        hub.UpdateRemoteHost(enabled, "first", true, json: History(LocalTimezone, 42).Replace("\"source\":\"pi\"", "\"source\":\"omp\""));
++        hub.UpdateRemoteHost(disabled, "second", true, json: History(LocalTimezone, 99).Replace("\"source\":\"pi\"", "\"source\":\"omp\""));
++
++        Assert.False(hub.Snapshot.EnabledSources.Contains(SourceKind.Omp));
++        Assert.False(Assert.Single(hub.Snapshot.Sources, s => s.HostId is null && s.Kind == SourceKind.Omp).Enabled);
++        Assert.Single(hub.Snapshot.Sources, s => s.HostId == enabled && s.Kind == SourceKind.Omp);
++        Assert.DoesNotContain(hub.Snapshot.Sources, s => s.HostId == disabled);
++        Assert.Single(hub.Snapshot.Agents, a => a.HostId == enabled && a.Source == SourceKind.Omp);
++        Assert.DoesNotContain(hub.Snapshot.Agents, a => a.HostId == disabled);
+         Assert.Equal(5, hub.Snapshot.Live.Output);
+         Assert.Equal(42, hub.Snapshot.Today.Output);
+-        Assert.Single(Assert.Single(hub.Snapshot.RemoteHosts).Days);
++        var firstHost = Assert.Single(hub.Snapshot.RemoteHosts, h => h.Id == enabled);
++        var secondHost = Assert.Single(hub.Snapshot.RemoteHosts, h => h.Id == disabled);
++        Assert.Equal(42, Assert.Single(firstHost.Days).Totals.Output);
++        Assert.Empty(secondHost.Days);
++        Assert.Contains(SourceKind.Omp, firstHost.Traffic!.Snapshot.Sources.Keys);
++        Assert.DoesNotContain(SourceKind.Omp, secondHost.Traffic!.Snapshot.Sources.Keys);
++        Assert.Single(firstHost.Traffic.Days, d => d.Key == "omp");
++        Assert.DoesNotContain(secondHost.Traffic.Days, d => d.Key == "omp");
++        Assert.Contains(new OrbSourceInstance(enabled, SourceKind.Omp), hub.Snapshot.InstanceHistory.Keys);
++        Assert.DoesNotContain(new OrbSourceInstance(disabled, SourceKind.Omp), hub.Snapshot.InstanceHistory.Keys);
++        var instance = new OrbSourceInstance(enabled, SourceKind.Omp);
++        var point = hub.Snapshot.InstanceHistory[instance].Last();
++        var snapshotWithHistory = hub.Snapshot with { History = [point] };
++        var included = OrbSubset.Project(snapshotWithHistory, SourceSet.Everything, []);
++        var excluded = OrbSubset.Project(snapshotWithHistory, SourceSet.Everything, [instance]);
++        Assert.Equal(5, Assert.Single(included.History).Measured.Output);
++        Assert.Equal(0, Assert.Single(excluded.History).Measured.Output);
++        Assert.Empty(excluded.Sources);
++        Assert.Empty(excluded.Agents);
++
++        hub.UpdateRemoteHost(enabled, "first", true, json: "{\"version\":1,\"type\":\"completion\",\"source\":\"omp\",\"response_id\":\"first\",\"output\":9}");
++        hub.UpdateRemoteHost(disabled, "second", true, json: "{\"version\":1,\"type\":\"completion\",\"source\":\"omp\",\"response_id\":\"second\",\"output\":19}");
++        Assert.Equal(enabled, Assert.IsType<SpeedEvent.ResponseCompleted>(Assert.Single(events)).Response.HostId);
++        Assert.True(OrbSubset.Accepts(Assert.Single(events), SourceSet.Everything, []));
++        Assert.False(OrbSubset.Accepts(Assert.Single(events), SourceSet.Everything, [instance]));
+     }
+ 
+     [Fact]
+@@ -384,4 +419,30 @@ public sealed class RemoteConsumerTests
          hub.UpdateRemoteHost(id, "host", true, json: "{\"version\":2,\"type\":\"snapshot\",\"sources\":[]}");
          Assert.Equal(42, hub.Snapshot.Today.Output);
      }
@@ -1199,7 +1691,7 @@ index 4dbe01a4..e00ca8b6 100644
 +        hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 0));
 +        Assert.Null(Assert.Single(hub.Snapshot.RemoteHosts).Traffic);
 +        const string frame = """
-+            {"version":1,"type":"snapshot","sources":[],"traffic":{"enabled":true,"available":true,
++            {"version":1,"type":"snapshot","sources":[{"source":"pi","enabled":true,"available":true}],"traffic":{"enabled":true,"available":true,
 +            "machine_rate":{"rx":10,"tx":2},"machine_today":{"rx":100,"tx":20,"sampled_ms":1000},
 +            "sources":{"pi":{"self_rate":{"rx":3,"tx":1},"with_tools_rate":{"rx":4,"tx":2},"today":{"rx_self":30,"tx_self":10,"rx_tools":5,"tx_tools":2}}},
 +            "history":[{"day":"2026-01-01","key":"machine","rx":100,"tx":20,"sampled_ms":1000},{"day":"2026-01-01","key":"pi","rx":30,"tx":10,"rx_tools":5,"tx_tools":2,"sampled_ms":1000}]}}
@@ -1213,14 +1705,48 @@ index 4dbe01a4..e00ca8b6 100644
 +        var restarted = Assert.Single(hub.Snapshot.RemoteHosts).Traffic!;
 +        Assert.Equal(200, restarted.Snapshot.MachineToday.Rx);
 +        Assert.Equal(200, Assert.Single(restarted.Days, d => d.IsMachine).Rx);
++        Assert.Equal(2000, Assert.Single(restarted.Days, d => d.IsMachine).SampledMs);
++        Assert.Equal(2000, Assert.Single(restarted.Days, d => d.Source == SourceKind.Pi).SampledMs);
 +    }
 +
  }
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/HistoryTrafficTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/HistoryTrafficTests.cs
-index d5135123..eabc7d6b 100644
+index d5135123..57447251 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/HistoryTrafficTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/HistoryTrafficTests.cs
-@@ -352,4 +352,12 @@ public class HistoryTrafficTests
+@@ -27,6 +27,31 @@ public class HistoryTrafficTests
+ 
+     private static HistoryTraffic Traffic(bool includeTools = true) => new(Rows, Day(Since), includeTools);
+ 
++    [Fact]
++    public void CombinedHistoryCountsEachMachineAndSourceOnce()
++    {
++        var first = new RemoteHostStatus(Guid.NewGuid(), "first", true, null) { MachineId = "same", Traffic = new(TrafficSnapshot.Off, Rows) };
++        var duplicate = new RemoteHostStatus(Guid.NewGuid(), "duplicate", true, null) { MachineId = "same", Traffic = new(TrafficSnapshot.Off, Rows) };
++        var other = new RemoteHostStatus(Guid.NewGuid(), "other", true, null) { MachineId = "other", Traffic = new(TrafficSnapshot.Off, Rows) };
++        var combined = HistoryTraffic.CombineHosts([first, duplicate, other], []);
++        var codex = combined.Single(row => row.Day == Day(Today) && row.Key == "codex");
++        Assert.Equal(600, codex.Rx);
++        Assert.Equal(1200, combined.Single(row => row.Day == Day(Today) && row.IsMachine).Rx);
++    }
++
++    [Fact]
++    public void SparseHistoryDoesNotInventMissingSourceMeasurements()
++    {
++        var traffic = new HistoryTraffic([new(Day(Today), "machine", 100, 10, 0, 0, 1000),
++            new(Day(Today), "codex", 20, 2, 0, 0, 1000)], null, true, sparse: true);
++        Assert.NotNull(traffic.Day(Today, null, Today, Noon, TimeZoneInfo.Utc));
++        Assert.NotNull(traffic.Day(Today, SourceKind.Codex, Today, Noon, TimeZoneInfo.Utc));
++        Assert.Null(traffic.Day(Today, SourceKind.Pi, Today, Noon, TimeZoneInfo.Utc));
++        Assert.True(traffic.NotRecorded(Today, SourceKind.Pi));
++        var local = new HistoryTraffic([new(Day(Today), "machine", 100, 10, 0, 0, 1000)], null, true);
++        Assert.NotNull(local.Day(Today, SourceKind.Pi, Today, Noon, TimeZoneInfo.Utc));
++    }
++
+     [Fact]
+     public void DaysBeforeMeasuringBeganAreNotRecorded()
+     {
+@@ -352,4 +377,12 @@ public class HistoryTrafficTests
          Assert.Equal(expected.Replace('_', Nbsp), spoken);
          Assert.NotEqual(loc.Format("traffic.a11y.totals", TrafficFormat.Total(11_000), TrafficFormat.Total(1_100)), spoken);
      }
@@ -1233,3 +1759,68 @@ index d5135123..eabc7d6b 100644
 +        Assert.NotNull(traffic.Day(new DateOnly(2026, 1, 3), null, new DateOnly(2026, 1, 3), DateTimeOffset.Now));
 +    }
  }
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs
+index 5286eee1..fa753050 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs
+@@ -30,6 +30,60 @@ public class TrafficSurfaceTests
+         },
+     };
+ 
++    [Fact]
++    public void DashboardAndOrbKeepHostSourceIdentity()
++    {
++        var id = Guid.NewGuid();
++        var local = Snapshot();
++        var remote = Snapshot() with { Sources = new Dictionary<SourceKind, SourceTraffic>
++        {
++            [SourceKind.Codex] = new(SourceKind.Codex, TrafficSplit.Zero, TrafficBytes.Zero, new TrafficRate(900, 0), new TrafficRate(900, 0)) { TodayKnown = false },
++        } };
++        var combined = RemoteTraffic.Combine(local, [new RemoteHostStatus(id, "server", true, null) { MachineId = "server", Traffic = new(remote, []) }]);
++        var rows = DashboardTraffic.From(combined, true, false, En).Rows.Where(r => r.Source == SourceKind.Codex).ToArray();
++        Assert.Equal(2, rows.Length);
++        Assert.Contains(rows, row => row.HostId == id && row.Name.Contains("server") && row.TodayText == "–");
++        var definition = new OrbDefinition("orb") { Sources = OrbSources.Of(SourceKind.Codex), ExcludedSources = [new(null, SourceKind.Codex)] };
++        Assert.Equal(new TrafficRate(900, 0), OrbTraffics.SourceRate(combined, definition, true));
++        definition = definition with { ExcludedSources = [new(id, SourceKind.Codex)] };
++        Assert.Equal(new TrafficRate(24_000, 1_200), OrbTraffics.SourceRate(combined, definition, true));
++    }
++
++    [Fact]
++    public void UnavailableRemoteRatesAreUnknownButOfflineRatesAreZero()
++    {
++        var remote = new RemoteTraffic(Snapshot(), []);
++        Assert.Null(remote.Unavailable().Snapshot.Sources[SourceKind.Codex].LiveSelf);
++        Assert.Equal(TrafficRate.Zero, remote.Offline().Snapshot.Sources[SourceKind.Codex].LiveSelf);
++        Assert.Equal(remote.Snapshot.Sources[SourceKind.Codex].Today, remote.Unavailable().Snapshot.Sources[SourceKind.Codex].Today);
++    }
++
++    [Fact]
++    public void LocalOrbTrafficExcludesIndividualSourcesAndKeepsIdleZero()
++    {
++        var local = Snapshot();
++        var definition = new OrbDefinition("orb") { ExcludedSources = [new(null, SourceKind.Codex)] };
++        Assert.Equal(TrafficRate.Zero, OrbTraffics.SourceRate(local, definition, true) ?? TrafficRate.Zero);
++        var combined = RemoteTraffic.Combine(local, []);
++        Assert.Equal(TrafficRate.Zero, OrbTraffics.SourceRate(combined, definition, true) ?? TrafficRate.Zero);
++        definition = definition with { ExcludedSources = [] };
++        Assert.Equal(local.Live(null, true), OrbTraffics.SourceRate(combined, definition, true));
++    }
++
++    [Fact]
++    public void MissingTodayKeepsAccumulatedBytesAndHistory()
++    {
++        var prior = new RemoteTraffic(Snapshot(), [new("2026-01-01", "codex", 12, 3, 0, 0, 1000)]);
++        var missing = Snapshot() with { Sources = new Dictionary<SourceKind, SourceTraffic>
++        {
++            [SourceKind.Codex] = new(SourceKind.Codex, TrafficSplit.Zero, TrafficBytes.Zero, null, null) { TodayKnown = false },
++        } };
++        var retained = RemoteTraffic.PreserveMissingToday(prior, new(missing, []));
++        Assert.Equal(prior.Snapshot.Sources[SourceKind.Codex].Today, retained.Snapshot.Sources[SourceKind.Codex].Today);
++        Assert.False(retained.Snapshot.Sources[SourceKind.Codex].TodayKnown);
++        Assert.Single(retained.Days);
++    }
++
+     [Fact]
+     public void TheTaskbarBlockFollowsTheSetting()
+     {

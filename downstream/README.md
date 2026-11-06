@@ -46,9 +46,10 @@ reports exclude remote data. See the [fork release notes](../docs/releases/v1.6.
 for setup, collector requirements and verification limitations.
 Floating orb source settings on macOS and Windows also allow selection by host
 and source, including enabled remote hosts.
-On Windows, global source switches apply to local and remote instances of a
-source. An orb's host/source exclusions are separate: they affect that orb and
-its associated views without excluding the same source on another host.
+On Windows, source switches for local monitoring do not filter remote sources.
+Remote data remains associated with its host. An orb's host/source exclusions
+are separate: excluding a source on one host affects that orb and its associated
+views without excluding the same source on another host.
 Undetected sources do not make an otherwise valid rate incomplete; detected
 sources with unknown rates and offline intervals remain unknown and produce
 history gaps. Chart estimate indicators mean that the visible range contains
@@ -61,6 +62,11 @@ TCP traffic using the existing traffic service; it requires no sudo. Traffic is
 kept separate by host and source. Older collectors may not provide traffic;
 unknown values and offline history are not treated as measured zeroes. Live
 rates clear on disconnect while the last observed totals remain available.
+On Windows, a host is online only after a valid collector snapshot; malformed or incompatible frames do not keep the
+connection healthy. Connection errors include a bounded stderr tail and exit code when available. Weighted average
+speed uses measured output and time, with each machine/source counted once; missing categorized totals remain unknown.
+Duplicate connections prefer current online history over stale history. An unavailable traffic sample has an unknown
+rate, distinct from the zero live rate of a disconnected host; last known totals remain visible when available.
 
 ## CI and releases
 

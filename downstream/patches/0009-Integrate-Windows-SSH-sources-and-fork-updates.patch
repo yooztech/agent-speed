@@ -1,9 +1,10 @@
-From 62d44ae34bed66e7b64b4167f7a932f590656e76 Mon Sep 17 00:00:00 2001
+From 86515e7c69dc8ca0c3d0a79b2ce31e2d9dab3be6 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:28 +0800
 Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
 
 ---
+ README.md                                     |   4 +-
  linux/app/src/network_service.cpp             |  44 ++--
  linux/app/src/update_release.hpp              |  71 ++++++
  linux/tests/CMakeLists.txt                    |   1 +
@@ -17,13 +18,13 @@ Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
  spec/UPDATES.md                               |  32 ++-
  windows/src/AgentSpeed.Core/History.cs        |   2 +
  windows/src/AgentSpeed.Core/Models.cs         |  21 +-
- .../src/AgentSpeed.Core/RemoteAggregation.cs  | 111 +++++++++
- windows/src/AgentSpeed.Core/SpeedHub.cs       | 148 ++++++++++-
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  | 125 ++++++++++
+ windows/src/AgentSpeed.Core/SpeedHub.cs       | 171 ++++++++++++-
  .../History/ExecutionModeCsv.cs               |   4 +-
  .../History/HistoryCsv.cs                     |   9 +-
  .../Localization/Strings.Windows.json         |  36 +++
  .../Settings/AppSettings.cs                   |   2 +
- .../Settings/RemoteHost.cs                    |  18 ++
+ .../Settings/RemoteHost.cs                    |  29 +++
  .../Settings/SettingsSerializer.cs            |  30 +++
  .../Updates/ReleaseFeed.cs                    |   4 +-
  .../Updates/ReleaseInfo.cs                    |   4 +-
@@ -40,19 +41,21 @@ Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
  .../AgentSpeed/History/HistoryViewModel.cs    | 162 +++++++++++-
  .../src/AgentSpeed/History/HistoryWindow.xaml |   4 +
  windows/src/AgentSpeed/Orb/OrbManager.cs      |   4 +-
- .../Services/RemoteConnectionManager.cs       | 231 ++++++++++++++++++
- .../AgentSpeed/Services/RemoteSshWorker.cs    | 153 ++++++++++++
+ .../Services/RemoteConnectionManager.cs       | 236 ++++++++++++++++++
+ .../AgentSpeed/Services/RemoteSshWorker.cs    | 203 +++++++++++++++
  .../Settings/Pages/SourcesPage.xaml           |  26 ++
- .../AgentSpeed/Settings/SettingsViewModel.cs  | 154 ++++++++++++
+ .../AgentSpeed/Settings/SettingsViewModel.cs  | 153 ++++++++++++
  .../src/AgentSpeed/Updates/ExecutableSwap.cs  |  49 +++-
  .../RemoteConsumerTests.cs                    | 189 ++++++++++++++
+ .../RemoteProtocolLifecycleTests.cs           | 102 ++++++++
  .../ReleaseFeedTests.cs                       |  53 ++--
  .../RemoteHistoryCsvTests.cs                  |  37 +++
  .../RemoteHostSettingsTests.cs                |  42 ++++
+ .../RemoteHostStatusTextTests.cs              |  16 ++
  .../UpdatePackageTests.cs                     |  45 +++-
  .../UpdateScheduleTests.cs                    |  48 ++--
  .../UpdateSourceTests.cs                      |   2 +-
- 48 files changed, 1817 insertions(+), 181 deletions(-)
+ 51 files changed, 2040 insertions(+), 182 deletions(-)
  create mode 100644 linux/app/src/update_release.hpp
  create mode 100644 linux/tests/update_release_test.cpp
  create mode 100644 windows/src/AgentSpeed.Core/RemoteAggregation.cs
@@ -60,9 +63,31 @@ Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
  create mode 100644 windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
  create mode 100644 windows/src/AgentSpeed/Services/RemoteSshWorker.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHostStatusTextTests.cs
 
+diff --git a/README.md b/README.md
+index cf9664f4..7dcdf650 100644
+--- a/README.md
++++ b/README.md
+@@ -107,12 +107,14 @@ The full, testable specification lives in [`spec/METRICS.md`](spec/METRICS.md).
+ 
+ Ordinary Claude Desktop chat conversations are not stored on your computer, so they cannot be measured; WorkBuddy conversations that run in the cloud are not counted either.
+ 
+-## Remote Linux monitoring on macOS
++## Remote Linux monitoring on macOS and Windows
+ 
+ Remote monitoring is opt-in. Configure an SSH host alias in `~/.ssh/config` for the Linux account that owns the agent
+ logs, including its user, port and identity as needed. Use normal SSH host-key verification, pre-trust the host key,
+ and use noninteractive key or SSH agent authentication. Enable each host in Settings → Sources. Local sources and all
+ enabled remote sources appear together in the native dashboard; source identity includes the host and source kind.
++On Windows, local source switches do not filter remote sources. Orb host/source exclusions are independent, so
++excluding a source on one host does not exclude the same source on another host.
+ Settings → Sources shows each host's online, offline or disabled status and its last connection error until a successful
+ snapshot arrives.
+ Local diagnostic reports and live reporting contain local data only, not remote data. Remote SSH is independent of the
 diff --git a/linux/app/src/network_service.cpp b/linux/app/src/network_service.cpp
 index f0dec53e..666001ad 100644
 --- a/linux/app/src/network_service.cpp
@@ -649,10 +674,10 @@ index 2d3ed0d4..92eba8a6 100644
      /// (METRICS 6.8), keyed by the requested set: the maximum 3-bucket trailing average of the enabled members' summed
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 new file mode 100644
-index 00000000..ffe7a71c
+index 00000000..4b7d2cda
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,125 @@
 +using System.Text.Json;
 +using AgentSpeed.Core.Reporting;
 +
@@ -661,6 +686,7 @@ index 00000000..ffe7a71c
 +/// <summary>Connection and last received history for one configured remote host.</summary>
 +public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string? Error)
 +{
++    public string MachineId { get; init; } = Id.ToString();
 +    public IReadOnlyList<DailyUsage> Days { get; init; } = [];
 +    public bool? HistoryPartial { get; init; }
 +    public DateTimeOffset? HistoryReceivedAt { get; init; }
@@ -676,44 +702,57 @@ index 00000000..ffe7a71c
 +    public bool Online { get; set; }
 +    public string? Error { get; set; }
 +    public JsonElement? Snapshot { get; set; }
++    private string? _machineId;
++    private string? _historyMachineId;
 +    public IReadOnlyList<DailyUsage> Days { get; set; } = [];
 +    public string? HistoryTimezone { get; set; }
 +    public bool? HistoryPartial { get; set; }
 +    public DateTimeOffset? HistoryReceivedAt { get; set; }
 +    public bool HistoryCurrent { get; set; }
 +
-+    public RemoteCompletion? Apply(string json)
++    public bool Apply(string json, out RemoteCompletion? completion)
 +    {
++        completion = null;
 +        try
 +        {
 +            using var doc = JsonDocument.Parse(json);
 +            var root = doc.RootElement;
-+            if (root.ValueKind != JsonValueKind.Object || root.Number("version") != 1) return null;
++            if (root.ValueKind != JsonValueKind.Object) { Error = "Malformed collector message"; return false; }
++            if (root.Number("version") != 1) { Error = "Unsupported collector protocol version"; return false; }
 +            switch (root.Text("type"))
 +            {
 +                case "snapshot":
-+                    if (root.Array("sources") is null) return null;
++                    if (root.Array("sources") is not { } sources || sources.EnumerateArray().Any(s => s.ValueKind != JsonValueKind.Object || string.IsNullOrEmpty(s.Text("source")) || s.Boolean("enabled") is null))
++                    { Error = "Invalid collector sources"; return false; }
 +                    Snapshot = root.Clone(); Online = true; Error = null;
-+                    break;
++                    _machineId = root.Text("machine_id");
++                    return true;
 +                case "history":
 +                    var timezone = root.Text("timezone");
-+                    if (timezone != LocalTimezone() || root.Array("days") is not { } days) return null;
++                    if (timezone != LocalTimezone() || root.Array("days") is not { } days) { Error = "Invalid collector history"; return false; }
++                    if (days.EnumerateArray().Any(d => d.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(d.Text("day")) || string.IsNullOrWhiteSpace(d.Text("source"))))
++                    { Error = "Invalid collector history row"; return false; }
 +                    Days = days.EnumerateArray().Select(Day).Where(d => d is not null).Cast<DailyUsage>().ToArray();
++                    _historyMachineId = _machineId;
 +                    HistoryTimezone = timezone; HistoryPartial = root.Boolean("partial");
 +                    HistoryReceivedAt = DateTimeOffset.UtcNow; HistoryCurrent = true;
-+                    break;
++                    return true;
 +                case "completion":
 +                    var responseId = root.Text("response_id");
 +                    var source = Kind(root.Text("source"));
 +                    if (string.IsNullOrEmpty(responseId) || source is null || !root.TryGetProperty("output", out var output) ||
-+                        output.ValueKind != JsonValueKind.Number || !output.TryGetInt64(out var count) || count < 0) return null;
++                        output.ValueKind != JsonValueKind.Number || !output.TryGetInt64(out var count) || count < 0) { Error = "Invalid collector completion source or output"; return false; }
 +                    var speed = root.NullableNumber("speed");
-+                    return new RemoteCompletion(responseId, source.Value, count, speed is >= 0 ? speed : null);
++                    completion = new RemoteCompletion(responseId, source.Value, count, speed is >= 0 ? speed : null);
++                    return true;
++                default:
++                    Error = "Unknown collector message type";
++                    return false;
 +            }
 +        }
-+        catch (JsonException) { }
-+        catch (ArgumentOutOfRangeException) { }
-+        return null;
++        catch (JsonException) { Error = "Malformed collector message"; }
++        catch (ArgumentOutOfRangeException) { Error = "Malformed collector message"; }
++        return false;
 +    }
 +
 +    private DailyUsage? Day(JsonElement d)
@@ -739,7 +778,7 @@ index 00000000..ffe7a71c
 +    public RemoteHostStatus Status()
 +    {
 +        bool sameZone = HistoryTimezone == LocalTimezone();
-+        return new(Id, Label, Online, Error) { Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
++        return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
 +            HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
 +    }
 +
@@ -765,7 +804,7 @@ index 00000000..ffe7a71c
 +    internal static bool? Boolean(this JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False) ? v.GetBoolean() : null;
 +}
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 3a2cd893..4f82a1d6 100644
+index 3a2cd893..93ca2e4d 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
 @@ -9,6 +9,11 @@ public sealed class SpeedHub
@@ -780,23 +819,35 @@ index 3a2cd893..4f82a1d6 100644
      private Reporting.ReportPerfWatch _perfWatch = Reporting.ReportPerfWatch.Off;
  
      public SpeedHub(SynchronizationContext? context = null)
-@@ -39,6 +44,42 @@ public sealed class SpeedHub
+@@ -39,6 +44,65 @@ public sealed class SpeedHub
      /// <summary>Every live snapshot, on the UI context, also while a preview is displayed (live reporting, METRICS 11).</summary>
      public event EventHandler<SpeedSnapshot>? LivePublished;
  
 +    /// <summary>Updates a configured host from a collector frame or connection state.</summary>
-+    public void UpdateRemoteHost(Guid id, string label, bool online, string? error = null, string? json = null)
++    public (bool Accepted, bool Online, string? Error) UpdateRemoteHost(Guid id, string label, bool online, string? error = null, string? json = null)
 +    {
 +        SpeedEvent? completionEvent = null;
++        bool accepted = false;
++        bool currentOnline;
++        string? currentError;
 +        lock (_gate)
 +        {
 +            if (!_remote.TryGetValue(id, out var host)) { _remote[id] = host = new RemoteHostData(id, label); _remoteHistory.Clear(); }
 +            host.Label = label;
-+            host.Online = online;
-+            host.Error = error;
-+            if (!online) host.HistoryCurrent = false;
-+            var completion = json is null ? null : host.Apply(json);
-+            if (online && completion is not null)
++            RemoteCompletion? completion = null;
++            if (json is null)
++            {
++                if (!online)
++                {
++                    host.Online = false;
++                    host.HistoryCurrent = false;
++                }
++                host.Error = error;
++            }
++            else accepted = host.Apply(json, out completion);
++            currentOnline = host.Online;
++            currentError = host.Error;
++            if (host.Online && completion is not null)
 +            {
 +                var machine = host.Snapshot is { } snapshot ? snapshot.Text("machine_id") ?? id.ToString() : id.ToString();
 +                var key = (machine, completion.Source, completion.Id);
@@ -811,6 +862,17 @@ index 3a2cd893..4f82a1d6 100644
 +            }
 +        }
 +        Post(() => { if (!IsPreviewing) Apply(CurrentCombined(), completionEvent is null ? null : [completionEvent]); });
++        return (accepted, currentOnline, currentError);
++    }
++
++    /// <summary>Begins a new connection without reusing the preceding session's snapshot.</summary>
++    public void ResetRemoteHostSession(Guid id)
++    {
++        lock (_gate)
++        {
++            if (_remote.TryGetValue(id, out var host)) host.Snapshot = null;
++        }
++        Post(() => { if (!IsPreviewing) Apply(CurrentCombined(), null); });
 +    }
 +
 +    public void RemoveRemoteHost(Guid id)
@@ -823,7 +885,7 @@ index 3a2cd893..4f82a1d6 100644
      /// <summary>Called by <see cref="LiveMonitor"/> from any thread.</summary>
      public void PublishLive(SpeedSnapshot snapshot, IReadOnlyList<SpeedEvent>? events = null)
      {
-@@ -55,7 +96,7 @@ public sealed class SpeedHub
+@@ -55,7 +119,7 @@ public sealed class SpeedHub
                  return;
              }
  
@@ -832,7 +894,7 @@ index 3a2cd893..4f82a1d6 100644
          });
      }
  
-@@ -84,13 +125,116 @@ public sealed class SpeedHub
+@@ -84,13 +148,116 @@ public sealed class SpeedHub
          SpeedSnapshot live;
          lock (_gate)
          {
@@ -1071,10 +1133,10 @@ index b0874889..491527f3 100644
      public AppLanguage Language { get; init; } = AppLanguage.System;
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs b/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
 new file mode 100644
-index 00000000..a7104b4b
+index 00000000..e769fcfd
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,29 @@
 +using System.Text;
 +
 +namespace AgentSpeed.Presentation.Settings;
@@ -1091,6 +1153,17 @@ index 00000000..a7104b4b
 +                if (!Rune.IsLetterOrDigit(rune) && rune.Value is not ('.' or '_' or '-' or '@' or ':')) return false;
 +            return true;
 +        }
++    }
++}
++
++/// <summary>Formats the connection state shown alongside an SSH host.</summary>
++public static class RemoteHostStatusText
++{
++    public static string Format(bool? online, string? error)
++    {
++        if (online is null) return "Waiting for connection";
++        var state = online.Value ? "Online" : "Offline";
++        return string.IsNullOrWhiteSpace(error) ? state : $"{state}: {error}";
 +    }
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs b/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
@@ -1860,10 +1933,10 @@ index 8fa0e3da..84d2b461 100644
                      entry.Window.Surface.Pulse(speed, tokens);
 diff --git a/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
 new file mode 100644
-index 00000000..48e7b2e5
+index 00000000..9e5864fe
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,236 @@
 +using System.Diagnostics;
 +using System.Windows.Threading;
 +using AgentSpeed.Core;
@@ -1981,6 +2054,7 @@ index 00000000..48e7b2e5
 +
 +        try
 +        {
++            _hub.ResetRemoteHostSession(connection.Host.Id);
 +            var worker = new RemoteSshWorker(connection.Host.Destination);
 +            connection.Worker = worker;
 +            connection.LastReceived = Stopwatch.GetTimestamp();
@@ -2003,10 +2077,10 @@ index 00000000..48e7b2e5
 +    private void Receive(Guid id, Guid token, string line)
 +    {
 +        if (_disposed || !_connections.TryGetValue(id, out var connection) || connection.Worker?.Token != token) return;
-+        connection.LastReceived = Stopwatch.GetTimestamp();
-+        connection.Online = true;
-+        connection.Error = null;
-+        _hub.UpdateRemoteHost(id, connection.Host.Label, true, json: line);
++        var result = _hub.UpdateRemoteHost(id, connection.Host.Label, connection.Online, json: line);
++        if (result.Accepted) connection.LastReceived = Stopwatch.GetTimestamp();
++        connection.Online = result.Online;
++        connection.Error = result.Error;
 +    }
 +
 +    private void Ended(Guid id, Guid token, string reason)
@@ -2014,10 +2088,14 @@ index 00000000..48e7b2e5
 +        if (_disposed || !_connections.TryGetValue(id, out var connection) || connection.Worker?.Token != token) return;
 +        connection.Worker = null;
 +        connection.Online = false;
-+        connection.Error = reason;
++        connection.Error = AppendError(connection.Error, reason);
 +        Publish(connection);
 +        ScheduleReconnect(connection);
 +    }
++    private static string AppendError(string? prior, string reason) => prior is { Length: > 0 }
++        ? $"{prior[..Math.Min(prior.Length, 512)]}; {reason}"
++        : reason;
++
 +
 +    private void ScheduleReconnect(Connection connection)
 +    {
@@ -2068,7 +2146,7 @@ index 00000000..48e7b2e5
 +        {
 +            if (connection.Worker is null || Stopwatch.GetElapsedTime(connection.LastReceived) < TimeSpan.FromSeconds(90)) continue;
 +            Stop(connection);
-+            connection.Error = "Collector heartbeat timed out";
++            connection.Error = AppendError(connection.Error, "Collector heartbeat timed out");
 +            Publish(connection);
 +            ScheduleReconnect(connection);
 +        }
@@ -2097,10 +2175,10 @@ index 00000000..48e7b2e5
 +}
 diff --git a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
 new file mode 100644
-index 00000000..330de59a
+index 00000000..7808904e
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,203 @@
 +using System.Diagnostics;
 +using System.Text;
 +using System.Text.Json;
@@ -2120,6 +2198,7 @@ index 00000000..330de59a
 +    private StreamWriter? collectorInput;
 +    private bool stopped;
 +    private bool started;
++    private readonly Dictionary<Process, Task<string>> diagnostics = new();
 +
 +    public RemoteSshWorker(string destination) => this.destination = destination;
 +    public Guid Token { get; } = Guid.NewGuid();
@@ -2174,10 +2253,35 @@ index 00000000..330de59a
 +            if (!child.Start()) throw new IOException("SSH connection failed");
 +            process = child;
 +        }
-+        // Drain diagnostics without retaining private remote output.
-+        _ = child.StandardError.BaseStream.CopyToAsync(Stream.Null);
++        diagnostics[child] = ReadDiagnosticsAsync(child.StandardError);
 +        return child;
 +    }
++    private static async Task<string> ReadDiagnosticsAsync(StreamReader reader)
++    {
++        const int limit = 4096;
++        var result = new StringBuilder(limit);
++        var buffer = new char[1024];
++        int count;
++        while ((count = await reader.ReadAsync(buffer.AsMemory()).ConfigureAwait(false)) != 0)
++        {
++            if (count >= limit) { result.Clear(); result.Append(buffer, count - limit, limit); }
++            else
++            {
++                var excess = result.Length + count - limit;
++                if (excess > 0) result.Remove(0, excess);
++                result.Append(buffer, 0, count);
++            }
++        }
++        return result.ToString().Trim();
++    }
++
++    private async Task<string> ExitReasonAsync(Process child, string prefix)
++    {
++        await child.WaitForExitAsync().ConfigureAwait(false);
++        var detail = await diagnostics[child].ConfigureAwait(false);
++        return $"{prefix} (exit code {child.ExitCode})" + (detail.Length == 0 ? "" : $": {detail}");
++    }
++
 +
 +    private async Task RunAsync()
 +    {
@@ -2186,51 +2290,61 @@ index 00000000..330de59a
 +        {
 +            if (!new RemoteHost(Guid.Empty, "", destination, false).ValidDestination)
 +                throw new IOException("Invalid SSH destination");
-+            using (var probe = Launch("uname -m"))
++            var probe = Launch("uname -m");
++            try
 +            {
 +                probe.StandardInput.Close();
 +                var architecture = (await probe.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).Trim();
 +                await probe.WaitForExitAsync().ConfigureAwait(false);
-+                if (probe.ExitCode != 0) throw new IOException("SSH connection failed; check host key and authentication");
++                if (probe.ExitCode != 0) throw new IOException(await ExitReasonAsync(probe, "SSH connection failed; check host key and authentication").ConfigureAwait(false));
 +                var arch = architecture switch { "x86_64" => "x86_64", "aarch64" or "arm64" => "aarch64", _ => throw new IOException("Unsupported remote architecture") };
 +                var path = Path.Combine(AppContext.BaseDirectory, "collectors", "linux-" + arch, "agent-speed-collector");
 +                if (!File.Exists(path)) throw new IOException($"Linux collector for {arch} is missing from this application");
-+                using var upload = Launch(UploadCommand);
-+                var drain = upload.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
-+                await using (var binary = File.OpenRead(path))
-+                    await binary.CopyToAsync(upload.StandardInput.BaseStream).ConfigureAwait(false);
-+                upload.StandardInput.Close();
-+                await drain.ConfigureAwait(false);
-+                await upload.WaitForExitAsync().ConfigureAwait(false);
-+                if (upload.ExitCode != 0) throw new IOException("Collector upload failed");
-+            }
-+            using var collector = Launch(CollectorCommand);
-+            lock (gate) { if (!stopped) collectorInput = collector.StandardInput; }
-+            RequestHistoryTimezone();
-+            var stream = collector.StandardOutput.BaseStream;
-+            var chunk = new byte[8192];
-+            using var line = new MemoryStream();
-+            while (true)
-+            {
-+                var count = await stream.ReadAsync(chunk).ConfigureAwait(false);
-+                if (count == 0) break;
-+                for (var i = 0; i < count; i++)
++                var upload = Launch(UploadCommand);
++                try
 +                {
-+                    if (chunk[i] == (byte)'\n')
++                    var drain = upload.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
++                    await using (var binary = File.OpenRead(path))
++                        await binary.CopyToAsync(upload.StandardInput.BaseStream).ConfigureAwait(false);
++                    upload.StandardInput.Close();
++                    await drain.ConfigureAwait(false);
++                    await upload.WaitForExitAsync().ConfigureAwait(false);
++                    if (upload.ExitCode != 0) throw new IOException(await ExitReasonAsync(upload, "Collector upload failed").ConfigureAwait(false));
++                }
++                finally { await CleanupAsync(upload).ConfigureAwait(false); }
++            }
++            finally { await CleanupAsync(probe).ConfigureAwait(false); }
++            var collector = Launch(CollectorCommand);
++            try
++            {
++                lock (gate) { if (!stopped) collectorInput = collector.StandardInput; }
++                RequestHistoryTimezone();
++                var stream = collector.StandardOutput.BaseStream;
++                var chunk = new byte[8192];
++                using var line = new MemoryStream();
++                while (true)
++                {
++                    var count = await stream.ReadAsync(chunk).ConfigureAwait(false);
++                    if (count == 0) break;
++                    for (var i = 0; i < count; i++)
 +                    {
-+                        var text = Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length);
-+                        line.SetLength(0);
-+                        lock (gate) { if (stopped) return; }
-+                        LineReceived?.Invoke(Token, text);
-+                    }
-+                    else
-+                    {
-+                        if (line.Length >= MaxLineBytes) throw new IOException("Collector sent an oversized message");
-+                        line.WriteByte(chunk[i]);
++                        if (chunk[i] == (byte)'\n')
++                        {
++                            var text = Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length);
++                            line.SetLength(0);
++                            lock (gate) { if (stopped) return; }
++                            LineReceived?.Invoke(Token, text);
++                        }
++                        else
++                        {
++                            if (line.Length >= MaxLineBytes) throw new IOException("Collector sent an oversized message");
++                            line.WriteByte(chunk[i]);
++                        }
 +                    }
 +                }
++                reason = await ExitReasonAsync(collector, "Collector disconnected; retrying").ConfigureAwait(false);
 +            }
-+            reason = "Disconnected; retrying";
++            finally { await CleanupAsync(collector).ConfigureAwait(false); }
 +        }
 +        catch (IOException e) { reason = e.Message; }
 +        catch (Exception) { reason = "SSH connection failed"; }
@@ -2239,12 +2353,26 @@ index 00000000..330de59a
 +            lock (gate)
 +            {
 +                collectorInput = null;
-+                Kill(process);
 +                process = null;
 +                if (stopped) reason = "";
 +            }
 +        }
 +        if (reason.Length != 0) Ended?.Invoke(Token, reason);
++    }
++
++    private async Task CleanupAsync(Process child)
++    {
++        lock (gate)
++        {
++            if (ReferenceEquals(process, child))
++            {
++                collectorInput = null;
++                process = null;
++            }
++            Kill(child);
++        }
++        try { await child.WaitForExitAsync().ConfigureAwait(false); await diagnostics[child].ConfigureAwait(false); }
++        finally { diagnostics.Remove(child); child.Dispose(); }
 +    }
 +
 +    private static void Kill(Process? child)
@@ -2292,7 +2420,7 @@ index faf7aff5..d4488f14 100644
          <controls:SettingsCard Header="{loc:Loc source.codex}" Icon="&#xE8B7;" Description="{Binding CodexPath}">
              <StackPanel Orientation="Horizontal">
 diff --git a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
-index caeac5be..d8c5c2d2 100644
+index caeac5be..61dac736 100644
 --- a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
 +++ b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
 @@ -1,4 +1,5 @@
@@ -2398,7 +2526,7 @@ index caeac5be..d8c5c2d2 100644
  
          OnPropertyChanged(nameof(CodexStatus));
          OnPropertyChanged(nameof(ClaudeStatus));
-@@ -839,6 +902,95 @@ internal sealed class SettingsViewModel : ObservableObject
+@@ -839,6 +902,94 @@ internal sealed class SettingsViewModel : ObservableObject
          _settings.Update(change);
      }
  
@@ -2486,15 +2614,14 @@ index caeac5be..d8c5c2d2 100644
 +        foreach (var row in RemoteHosts)
 +        {
 +            var status = _snapshot.RemoteHosts.FirstOrDefault(item => item.Id == row.Host.Id);
-+            row.SetStatus(status is null ? "Waiting for connection" : status.Online ? "Online" :
-+                string.IsNullOrWhiteSpace(status.Error) ? "Offline" : $"Offline: {status.Error}");
++            row.SetStatus(RemoteHostStatusText.Format(status?.Online, status?.Error));
 +        }
 +    }
 +
      private void Sync()
      {
          _syncing = true;
-@@ -848,6 +1000,8 @@ internal sealed class SettingsViewModel : ObservableObject
+@@ -848,6 +999,8 @@ internal sealed class SettingsViewModel : ObservableObject
              {
                  row.Enabled = S.IsSourceEnabled(row.Kind);
              }
@@ -2787,6 +2914,114 @@ index 00000000..3225b7fb
 +        Assert.Equal(42, hub.Snapshot.Today.Output);
 +    }
 +}
+diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs
+new file mode 100644
+index 00000000..c58b4962
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs
+@@ -0,0 +1,102 @@
++namespace AgentSpeed.Core.Tests;
++
++public sealed class RemoteProtocolLifecycleTests
++{
++    private const string Snapshot = """
++        {"version":1,"type":"snapshot","machine_id":"remote","sources":[{"source":"pi","enabled":true,"available":true,"live_output":5}],"agents":[]}
++        """;
++    private const string Completion = """
++        {"version":1,"type":"completion","source":"pi","response_id":"a","output":1}
++        """;
++
++    [Fact]
++    public async Task OnlyValidSnapshotMakesHostOnlineAndErrorsSurviveOtherFrames()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        hub.UpdateRemoteHost(id, "remote", false);
++        var completion = hub.UpdateRemoteHost(id, "remote", false, json: Completion);
++        Assert.True(completion.Accepted);
++        Assert.False(completion.Online);
++        Assert.False(Assert.Single(hub.Snapshot.RemoteHosts).Online);
++
++        var invalid = hub.UpdateRemoteHost(id, "remote", false, json: "{broken");
++        Assert.False(invalid.Accepted);
++        Assert.NotNull(Assert.Single(hub.Snapshot.RemoteHosts).Error);
++        var afterCompletion = hub.UpdateRemoteHost(id, "remote", false, json: Completion);
++        Assert.True(afterCompletion.Accepted);
++        Assert.Equal(invalid.Error, afterCompletion.Error);
++        Assert.False(afterCompletion.Online);
++
++        var snapshot = hub.UpdateRemoteHost(id, "remote", false, json: Snapshot);
++        Assert.True(snapshot.Accepted);
++        Assert.True(snapshot.Online);
++        Assert.Null(snapshot.Error);
++        Assert.True(Assert.Single(hub.Snapshot.RemoteHosts).Online);
++    }
++
++    [Fact]
++    public async Task InvalidFramesDoNotRefreshHeartbeatOrEraseErrors()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        hub.UpdateRemoteHost(id, "remote", false, json: Snapshot);
++        foreach (var frame in new[] { "{}", "{\"version\":2,\"type\":\"snapshot\",\"sources\":[]}", "{\"version\":1,\"type\":\"snapshot\",\"sources\":[{}]}", "{\"version\":1,\"type\":\"unknown\"}" })
++        {
++            var result = hub.UpdateRemoteHost(id, "remote", true, json: frame);
++            Assert.False(result.Accepted);
++            Assert.True(result.Online);
++            Assert.NotNull(result.Error);
++            Assert.Equal(result.Error, Assert.Single(hub.Snapshot.RemoteHosts).Error);
++        }
++    }
++
++    [Fact]
++    public async Task ReconnectCannotReusePreviousSnapshot()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        hub.UpdateRemoteHost(id, "remote", false, json: Snapshot);
++        hub.UpdateRemoteHost(id, "remote", false, "disconnected");
++        hub.ResetRemoteHostSession(id);
++        var result = hub.UpdateRemoteHost(id, "remote", false, json: Completion);
++        Assert.False(result.Online);
++        var host = Assert.Single(hub.Snapshot.RemoteHosts);
++        Assert.False(host.Online);
++        Assert.Equal("disconnected", host.Error);
++        Assert.DoesNotContain(hub.Snapshot.Sources, source => source.HostId == id);
++    }
++    [Fact]
++    public async Task ReconnectRetainsHistoryIdentityAndRejectsMalformedHistory()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        var zone = TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana) ? iana : TimeZoneInfo.Local.Id;
++        var history = $$"""
++            {"version":1,"type":"history","timezone":{{System.Text.Json.JsonSerializer.Serialize(zone)}},"partial":false,"days":[{"day":"2026-01-01","source":"pi","output":42}]}
++            """;
++        hub.UpdateRemoteHost(id, "remote", false, json: Snapshot);
++        Assert.True(hub.UpdateRemoteHost(id, "remote", true, json: history).Accepted);
++        var before = Assert.Single(hub.Snapshot.RemoteHosts);
++        Assert.Equal(42, Assert.Single(before.Days).Totals.Output);
++        foreach (var row in new[] { "{}", "{\"source\":\"pi\"}", "{\"day\":\"2026-01-01\"}" })
++        {
++            var malformed = $$"""
++                {"version":1,"type":"history","timezone":{{System.Text.Json.JsonSerializer.Serialize(zone)}},"partial":false,"days":[{{row}}]}
++                """;
++            var result = hub.UpdateRemoteHost(id, "remote", true, json: malformed);
++            Assert.False(result.Accepted);
++            Assert.NotNull(result.Error);
++            var current = Assert.Single(hub.Snapshot.RemoteHosts);
++            Assert.Equal(42, Assert.Single(current.Days).Totals.Output);
++            Assert.Equal(before.HistoryReceivedAt, current.HistoryReceivedAt);
++        }
++        hub.UpdateRemoteHost(id, "remote", false, "disconnected");
++        hub.ResetRemoteHostSession(id);
++        var reconnected = Assert.Single(hub.Snapshot.RemoteHosts);
++        Assert.Equal("remote", reconnected.MachineId);
++        Assert.Equal(42, Assert.Single(reconnected.Days).Totals.Output);
++        Assert.False(reconnected.HistoryCurrent);
++    }
++
++}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/ReleaseFeedTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/ReleaseFeedTests.cs
 index 6267d0cc..aeb64c32 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/ReleaseFeedTests.cs
@@ -3006,6 +3241,28 @@ index 00000000..010e28f6
 +
 +        Assert.Equal(new[] { first, second }, restored.RemoteHosts.ToArray());
 +        Assert.Empty(AppSettings.Default.RemoteHosts);
++    }
++}
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHostStatusTextTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHostStatusTextTests.cs
+new file mode 100644
+index 00000000..4a497b16
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHostStatusTextTests.cs
+@@ -0,0 +1,16 @@
++using AgentSpeed.Presentation.Settings;
++
++namespace AgentSpeed.Presentation.Tests;
++
++public sealed class RemoteHostStatusTextTests
++{
++    [Theory]
++    [InlineData(null, null, "Waiting for connection")]
++    [InlineData(true, null, "Online")]
++    [InlineData(true, "Invalid collector history row", "Online: Invalid collector history row")]
++    [InlineData(false, "SSH exited", "Offline: SSH exited")]
++    public void DisplaysConnectionStateAndRetainedError(bool? online, string? error, string expected)
++    {
++        Assert.Equal(expected, RemoteHostStatusText.Format(online, error));
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs

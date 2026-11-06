@@ -1,4 +1,4 @@
-From af1f2354a2c3c20ce443a6db2460364dde985d70 Mon Sep 17 00:00:00 2001
+From 1ed0b5336c253bbb49bbcd62defb4a2f1d054dd7 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:50:08 +0800
 Subject: [PATCH 11/15] Select orb sources independently by host
@@ -8,53 +8,55 @@ Subject: [PATCH 11/15] Select orb sources independently by host
  README.zh-CN.md                               |   2 +-
  macos/Sources/AgentSpeed/App/AppModel.swift   |   4 +-
  .../AgentSpeed/App/Orbs/OrbRuntime.swift      |  45 ++++--
- .../AgentSpeed/App/Orbs/OrbsController.swift  |  24 +++-
+ .../AgentSpeed/App/Orbs/OrbsController.swift  |  24 ++-
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  19 ++-
- .../AgentSpeed/App/RemoteSnapshot.swift       |  31 ++++-
+ .../AgentSpeed/App/RemoteSnapshot.swift       |  31 +++-
  .../AgentSpeed/Localization/StringTable.swift |   1 +
- .../OrbPane/OrbSourcesSection.swift           |  41 ++++++
- .../AgentSpeedCore/Engine/OrbSubset.swift     |  65 +++++++++
+ .../OrbPane/OrbSourcesSection.swift           |  41 +++++
+ .../AgentSpeedCore/Engine/OrbSubset.swift     |  65 ++++++++
  .../AgentSpeedOrbModel/OrbConfig.swift        |   7 +
  .../AgentSpeedOrbModel/OrbEditing.swift       |   4 +
- .../OrbHostRuntimeTests.swift                 |  85 ++++++++++++
- .../RemoteCompletionOwnershipTests.swift      |  60 ++++++++
- .../OrbHostSelectionTests.swift               |  58 ++++++++
+ .../OrbHostRuntimeTests.swift                 |  85 ++++++++++
+ .../RemoteCompletionOwnershipTests.swift      |  60 +++++++
+ .../OrbHostSelectionTests.swift               |  58 +++++++
  .../OrbHostSourceCodingTests.swift            |  19 +++
  windows/src/AgentSpeed.Core/DemoDriver.cs     |  14 +-
  .../src/AgentSpeed.Core/Engine/EngineFrame.cs |   2 +
  .../src/AgentSpeed.Core/Engine/SpeedEngine.cs |  14 +-
- windows/src/AgentSpeed.Core/Models.cs         |  10 ++
+ windows/src/AgentSpeed.Core/Models.cs         |  13 ++
  .../AgentSpeed.Core/Monitoring/MonitorCore.cs |   1 +
- windows/src/AgentSpeed.Core/OrbSubset.cs      | 130 +++++++++++++++++-
- .../src/AgentSpeed.Core/RemoteAggregation.cs  |   4 +-
- windows/src/AgentSpeed.Core/SpeedHub.cs       | 101 +++++++++-----
+ windows/src/AgentSpeed.Core/OrbSubset.cs      | 148 +++++++++++++++++-
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  |  16 +-
+ windows/src/AgentSpeed.Core/SpeedHub.cs       | 128 ++++++++++-----
  .../Boards/BoardFeed.cs                       |   2 +-
- .../AgentSpeed.Presentation/Orb/OrbFeed.cs    |  39 ++++--
+ .../History/HistoryAggregator.cs              |   4 +-
+ .../AgentSpeed.Presentation/Orb/OrbFeed.cs    |  39 +++--
  .../Settings/Orbs/OrbDefinition.cs            |   4 +
  .../Settings/Orbs/OrbSources.cs               |  15 ++
- .../Settings/Orbs/OrbsJson.cs                 |  31 +++++
- windows/src/AgentSpeed/App/AppController.cs   |  48 ++++---
+ .../Settings/Orbs/OrbsJson.cs                 |  31 ++++
+ windows/src/AgentSpeed/App/AppController.cs   |  48 +++---
  .../Dashboard/DashboardViewModel.cs           |  10 +-
  .../AgentSpeed/Dashboard/DashboardWindow.xaml |   2 +-
  windows/src/AgentSpeed/Dashboard/LiveChart.cs |  18 +++
  windows/src/AgentSpeed/Orb/OrbManager.cs      |  14 +-
  .../src/AgentSpeed/Services/HeroTourDriver.cs |  13 +-
  .../AgentSpeed/Services/PinnedSpeedDriver.cs  |  13 +-
- .../Settings/OrbsPane/OrbsPaneViewModel.cs    |  33 +++++
+ .../Settings/OrbsPane/OrbsPaneViewModel.cs    |  33 ++++
  .../AgentSpeed/Settings/Pages/OrbPage.xaml    |   9 ++
  .../AgentSpeed/Settings/Pages/OrbPage.xaml.cs |   5 +
- .../AgentSpeed.Core.Tests/OrbSubsetTests.cs   |  89 ++++++++++++
- .../RemoteConsumerTests.cs                    |  75 ++++++++++
- .../OrbFeedTests.cs                           |  76 +++++++++-
- .../OrbSettingsTests.cs                       |  40 ++++++
- 43 files changed, 1152 insertions(+), 130 deletions(-)
+ .../AgentSpeed.Core.Tests/OrbSubsetTests.cs   |  89 +++++++++++
+ .../RemoteConsumerTests.cs                    |  75 +++++++++
+ .../OrbFeedTests.cs                           |  76 ++++++++-
+ .../OrbSettingsTests.cs                       |  40 +++++
+ .../RemoteHistoryCsvTests.cs                  |  37 +++++
+ 45 files changed, 1237 insertions(+), 146 deletions(-)
  create mode 100644 macos/Tests/AgentSpeedAppTests/OrbHostRuntimeTests.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteCompletionOwnershipTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/OrbHostSelectionTests.swift
  create mode 100644 macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift
 
 diff --git a/README.md b/README.md
-index cf9664f4..71b051dc 100644
+index 7dcdf650..d1cabe55 100644
 --- a/README.md
 +++ b/README.md
 @@ -54,7 +54,7 @@ Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uni
@@ -66,7 +68,7 @@ index cf9664f4..71b051dc 100644
  - **Menu bar / taskbar** — a compact gauge and number that never jitters, right where you look: tok/s, money, or tok/s with the live money rate over today's total, plus optional network speed. On Windows it lives inside the taskbar, next to the clock.
  - **Dashboard** — a glowing line drawing of your current speed title's vehicle moves inside its orb — a walker, a bicycle pushing off, all the way to a rocket at the redline — plus a live chart, per-source speed, every active agent (including sub-agents) with its phase, and today's totals. Click a source to open its history.
  - **Performance score** — a benchmark-style number for every agent's live setup, where 1000 is the reference and there is no upper limit: higher is faster. It combines output throughput, time to first content, thinking speed, tool pace, tool time, tool success and cache hits, and compares it with the same model's usual on your computer (the 14 days before today). It shows on the orbs, the leaderboard boards, the menu bar / taskbar and the dashboard (hover for the breakdown), and the usage history charts each model's daily trend.
-@@ -125,7 +125,8 @@ stale data, not as idle or zero usage; reconnection replaces its snapshot and hi
+@@ -127,7 +127,8 @@ stale data, not as idle or zero usage; reconnection replaces its snapshot and hi
  On macOS, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
  When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
  Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
@@ -369,10 +371,10 @@ index 45e278d0..5396abe7 100644
              guard let state = states[host.id], state.online,
                    let remote = state.dashboardSnapshot, let message = state.snapshot, message.sources != nil else {
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index 33f716e0..e6b3a027 100644
+index f477e92c..51c968dd 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-@@ -483,6 +483,7 @@ enum StringTable {
+@@ -481,6 +481,7 @@ enum StringTable {
          "orbs.sources.all": Entry("全部來源", "全部来源", "All Sources", "すべてのソース"),
          "orbs.sources.allHint": Entry("包含之後新增或偵測到的來源。", "包含之后新增或检测到的来源。", "Includes sources that are added or detected later.", "あとから追加・検出されたソースも含みます。"),
          "orbs.sources.lastOne": Entry("每個懸浮窗至少要追蹤一個來源。", "每个悬浮窗至少要追踪一个来源。", "An orb tracks at least one source.", "オーブには少なくとも 1 つのソースが必要です。"),
@@ -951,7 +953,7 @@ index 0ea4e277..247b5262 100644
              var to = Math.Min(lastSecond, SpeedMath.FloorDiv(end, 1000));
              for (var second = from; second <= to; second++)
 diff --git a/windows/src/AgentSpeed.Core/Models.cs b/windows/src/AgentSpeed.Core/Models.cs
-index 3a10726f..81f8d6cd 100644
+index 3a10726f..fe75c61d 100644
 --- a/windows/src/AgentSpeed.Core/Models.cs
 +++ b/windows/src/AgentSpeed.Core/Models.cs
 @@ -139,6 +139,8 @@ public sealed record SourceStatus(
@@ -963,11 +965,14 @@ index 3a10726f..81f8d6cd 100644
      public bool LiveAvailable { get; init; } = true;
      public bool TodayAvailable { get; init; } = true;
  
-@@ -231,6 +233,14 @@ public sealed record SpeedSnapshot(
+@@ -231,6 +233,17 @@ public sealed record SpeedSnapshot(
      IReadOnlyList<MonitorWarning> Warnings)
  {
      public IReadOnlyList<RemoteHostStatus> RemoteHosts { get; init; } = [];
-+    /// <summary>The globally enabled source kinds, including for remote hosts without a snapshot.</summary>
++    /// <summary>Duplicate machine/source instances retained for host-specific orb selection.</summary>
++    public IReadOnlyList<SourceStatus> AlternateSources { get; init; } = [];
++    public IReadOnlyList<AgentStatus> AlternateAgents { get; init; } = [];
++    /// <summary>The enabled local source kinds, including when a remote host has no snapshot.</summary>
 +    public SourceSet EnabledSources { get; init; } = SourceSet.Everything;
 +    /// <summary>Whether today's peak is known for each rate metric.</summary>
 +    public bool PeakTodayOutputAvailable { get; init; } = true;
@@ -991,7 +996,7 @@ index 81c01ae5..a455f2a4 100644
              DayStart = DateTimeOffset.FromUnixTimeMilliseconds(todayStartMs),
              LiveCost = frame.LiveCost,
 diff --git a/windows/src/AgentSpeed.Core/OrbSubset.cs b/windows/src/AgentSpeed.Core/OrbSubset.cs
-index a573c72c..2f06ca9d 100644
+index a573c72c..315883dc 100644
 --- a/windows/src/AgentSpeed.Core/OrbSubset.cs
 +++ b/windows/src/AgentSpeed.Core/OrbSubset.cs
 @@ -1,5 +1,8 @@
@@ -1013,14 +1018,14 @@ index a573c72c..2f06ca9d 100644
  }
  
  /// <summary>Per-orb views of a snapshot (METRICS 6.8, DESIGN 2b).</summary>
-@@ -100,11 +106,120 @@ public static class OrbSubset
+@@ -100,11 +106,122 @@ public static class OrbSubset
              state) { Intelligence = IntelligenceOf(snapshot.Sources, included) };
      }
  
 +    /// <summary>Reads selected host/source instances without using global peaks.</summary>
 +    public static SubsetReading Reading(SpeedSnapshot snapshot, SourceSet? sources, IReadOnlyCollection<OrbSourceInstance> exclusions)
 +    {
-+        var members = (sources ?? SourceSet.Everything).Intersect(snapshot.EnabledSources);
++        var members = sources ?? SourceSet.Everything;
 +        var available = new HashSet<OrbSourceInstance>();
 +        var unavailable = SourceSet.Empty;
 +        var anyEnabled = false;
@@ -1029,10 +1034,10 @@ index a573c72c..2f06ca9d 100644
 +        var liveComplete = true;
 +        var todayComplete = true;
 +        var intelligence = Intelligence.IntelligenceSums.Zero;
-+        foreach (var status in snapshot.Sources)
++        foreach (var status in SelectedInstances(snapshot, members, exclusions))
 +        {
 +            var instance = new OrbSourceInstance(status.HostId, status.Kind);
-+            if (!members.Contains(status.Kind) || exclusions.Contains(instance)) continue;
++            if (!members.Contains(status.Kind) || (status.HostId is null && !snapshot.EnabledSources.Contains(status.Kind)) || exclusions.Contains(instance)) continue;
 +            anyEnabled |= status.Enabled;
 +            if (IsUnavailable(status)) { unavailable = unavailable.With(status.Kind); continue; }
 +            liveComplete &= status.LiveAvailable;
@@ -1047,14 +1052,14 @@ index a573c72c..2f06ca9d 100644
 +        foreach (var host in snapshot.RemoteHosts)
 +        {
 +            if (!host.Online && !host.SourcesKnown && !snapshot.Sources.Any(s => s.HostId == host.Id)
-+                && members.Any(kind => !exclusions.Contains(new OrbSourceInstance(host.Id, kind))))
++                && members.Any(kind => snapshot.EnabledSources.Contains(kind) && !exclusions.Contains(new OrbSourceInstance(host.Id, kind))))
 +            {
 +                liveComplete = false;
 +                todayComplete = false;
 +            }
 +        }
 +        foreach (var instance in available) unavailable = unavailable.Without(instance.Kind);
-+        var agents = snapshot.Agents.Where(a => available.Contains(new OrbSourceInstance(a.HostId, a.Source))).ToList();
++        var agents = snapshot.Agents.Concat(snapshot.AlternateAgents).Where(a => available.Contains(new OrbSourceInstance(a.HostId, a.Source))).ToList();
 +        var ids = agents.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
 +        for (var i = 0; i < agents.Count; i++)
 +            if (agents[i].ParentId is { } parent && !ids.Contains(parent)) agents[i] = agents[i] with { ParentId = null };
@@ -1072,16 +1077,16 @@ index a573c72c..2f06ca9d 100644
 +        if (sources is null && exclusions.Count == 0) return snapshot;
 +
 +        var reading = Reading(snapshot, sources, exclusions);
-+        var members = (sources ?? SourceSet.Everything).Intersect(snapshot.EnabledSources);
-+        var selected = snapshot.Sources.Where(s => members.Contains(s.Kind)
-+            && !exclusions.Contains(new OrbSourceInstance(s.HostId, s.Kind)) && !IsUnavailable(s)).ToArray();
++        var members = sources ?? SourceSet.Everything;
++        var selected = SelectedInstances(snapshot, members, exclusions).Where(s => !IsUnavailable(s)).ToArray();
 +        var last = snapshot.LastResponse;
 +        if (last is not null && (!members.Contains(last.Source)
++            || (last.HostId is null && !snapshot.EnabledSources.Contains(last.Source))
 +            || exclusions.Contains(new OrbSourceInstance(last.HostId, last.Source)))) last = null;
 +        var histories = selected.Select(s => snapshot.InstanceHistory.TryGetValue(new OrbSourceInstance(s.HostId, s.Kind), out var points)
 +            ? points.ToDictionary(point => point.Time) : null).ToArray();
 +        var unknownHost = snapshot.RemoteHosts.Any(host => !host.Online && !host.SourcesKnown
-+            && members.Any(kind => !exclusions.Contains(new OrbSourceInstance(host.Id, kind))));
++            && members.Any(kind => snapshot.EnabledSources.Contains(kind) && !exclusions.Contains(new OrbSourceInstance(host.Id, kind))));
 +        var history = snapshot.History.Select(point =>
 +        {
 +            double measuredOutput = 0, measuredTotal = 0, estimatedOutput = 0, estimatedTotal = 0;
@@ -1102,7 +1107,7 @@ index a573c72c..2f06ca9d 100644
 +        }).ToArray();
 +        var localMembers = SourceSet.Empty;
 +        foreach (var kind in members)
-+            if (!exclusions.Contains(new OrbSourceInstance(null, kind))) localMembers = localMembers.With(kind);
++            if (snapshot.EnabledSources.Contains(kind) && !exclusions.Contains(new OrbSourceInstance(null, kind))) localMembers = localMembers.With(kind);
 +        var hasPeak = snapshot.RemoteHosts.Count == 0 && snapshot.SubsetPeaks.TryGetValue(localMembers, out _);
 +        var subsetPeak = hasPeak ? snapshot.SubsetPeaks[localMembers] : 0;
 +        return snapshot with
@@ -1111,6 +1116,8 @@ index a573c72c..2f06ca9d 100644
 +            LiveEstimatedShare = reading.EstimatedShare,
 +            Today = reading.Today,
 +            Sources = selected,
++            AlternateSources = [],
++            AlternateAgents = [],
 +            Agents = reading.Agents,
 +            GeneratingCount = reading.Agents.Count(a => a.Phase == AgentPhase.Generating),
 +            ToolsCount = reading.Agents.Count(a => a.Phase == AgentPhase.Tools),
@@ -1135,16 +1142,19 @@ index a573c72c..2f06ca9d 100644
      {
          ArgumentNullException.ThrowIfNull(snapshot);
          var members = sources ?? SourceSet.Everything;
-@@ -117,7 +232,7 @@ public static class OrbSubset
+@@ -115,9 +232,9 @@ public static class OrbSubset
+         var excluded = new List<SourceKind>();
+         var rank = new Dictionary<string, int>(StringComparer.Ordinal);
          var order = new List<string>();
-         foreach (var status in snapshot.Sources)
+-        foreach (var status in snapshot.Sources)
++        foreach (var status in SelectedInstances(snapshot, members, exclusions, filterLocal: false))
          {
 -            if (!members.Contains(status.Kind) || IsUnavailable(status))
 +            if (!members.Contains(status.Kind) || (exclusions?.Contains(new OrbSourceInstance(status.HostId, status.Kind)) ?? false) || IsUnavailable(status))
              {
                  continue;
              }
-@@ -167,10 +282,11 @@ public static class OrbSubset
+@@ -167,10 +284,11 @@ public static class OrbSubset
      /// sources (all for null), and the all-sources new peak only for an all-sources orb (subset orbs use
      /// <see cref="SubsetPeakTracker"/>).
      /// </summary>
@@ -1159,7 +1169,25 @@ index a573c72c..2f06ca9d 100644
          _ => false,
      };
  
-@@ -193,7 +309,9 @@ public static class OrbSubset
+@@ -189,11 +307,27 @@ public static class OrbSubset
+         return sums;
+     }
+ 
++    private static IEnumerable<SourceStatus> SelectedInstances(SpeedSnapshot snapshot, SourceSet members,
++        IReadOnlyCollection<OrbSourceInstance>? exclusions, bool filterLocal = true)
++    {
++        var machines = snapshot.RemoteHosts.ToDictionary(h => h.Id, h => h.MachineId);
++        var seen = new HashSet<(string, SourceKind)>();
++        foreach (var status in snapshot.Sources.Concat(snapshot.AlternateSources))
++        {
++            if (!members.Contains(status.Kind) || (filterLocal && status.HostId is null && !snapshot.EnabledSources.Contains(status.Kind))
++                || (exclusions?.Contains(new OrbSourceInstance(status.HostId, status.Kind)) ?? false)) continue;
++            if (status.HostId is { } host && !seen.Add((machines.GetValueOrDefault(host, host.ToString()), status.Kind))) continue;
++            yield return status;
++        }
++    }
++
+     /// <summary>Disabled, or not detected: no readable root and no data today.</summary>
      public static bool IsUnavailable(SourceStatus status)
      {
          ArgumentNullException.ThrowIfNull(status);
@@ -1171,29 +1199,48 @@ index a573c72c..2f06ca9d 100644
  
      private static List<AgentStatus> Filter(IReadOnlyList<AgentStatus> agents, SourceSet sources)
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-index 9acd94df..d6974e2d 100644
+index 5e889900..3d50cbd2 100644
 --- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-@@ -7,6 +7,8 @@ namespace AgentSpeed.Core;
+@@ -7,8 +7,10 @@ namespace AgentSpeed.Core;
  public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string? Error)
  {
      public string MachineId { get; init; } = Id.ToString();
+-    /// <summary>Enabled sources in the last received source list, or null before one is known.</summary>
+-    public SourceSet? HistorySourceCoverage { get; init; }
 +    /// <summary>Whether a valid source list has been received, including one filtered to no sources.</summary>
 +    public bool SourcesKnown { get; init; }
++    /// <summary>Enabled sources covered by this host's source list.</summary>
++    public SourceSet EnabledSources { get; init; }
      public IReadOnlyList<DailyUsage> Days { get; init; } = [];
      public bool? HistoryPartial { get; init; }
      public DateTimeOffset? HistoryReceivedAt { get; init; }
-@@ -85,7 +87,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -77,6 +79,9 @@ internal sealed class RemoteHostData(Guid id, string label)
+         return false;
+     }
+ 
++    public bool IsSourceEnabled(SourceKind kind) => Snapshot?.Array("sources") is not { } sources
++        || sources.EnumerateArray().Any(source => Kind(source.Text("source")) == kind && source.Boolean("enabled") == true);
++
+     private DailyUsage? Day(JsonElement d)
+     {
+         if (d.Text("day") is not { } day || Kind(d.Text("source")) is not { } kind) return null;
+@@ -100,11 +105,8 @@ internal sealed class RemoteHostData(Guid id, string label)
      public RemoteHostStatus Status()
      {
          bool sameZone = HistoryTimezone == LocalTimezone();
--        return new(Id, Label, Online, Error) { MachineId = Snapshot?.Text("machine_id") ?? Id.ToString(), Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
-+        return new(Id, Label, Online, Error) { MachineId = Snapshot?.Text("machine_id") ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null, Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
+-        var coverage = Snapshot?.Array("sources") is { } sources
+-            ? SourceSet.From(sources.EnumerateArray().Where(source => source.Boolean("enabled") == true)
+-                .Select(source => Kind(source.Text("source"))).Where(kind => kind.HasValue).Select(kind => kind!.Value))
+-            : (SourceSet?)null;
+-        return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), HistorySourceCoverage = coverage, Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
++        return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null,
++            EnabledSources = SourceSet.From(Enum.GetValues<SourceKind>().Where(IsSourceEnabled)), Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
              HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
      }
  
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 9b38488e..dabfc6a4 100644
+index 5e69e691..8ad6ff86 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
 @@ -10,9 +10,10 @@ public sealed class SpeedHub
@@ -1208,11 +1255,11 @@ index 9b38488e..dabfc6a4 100644
  
      private Reporting.ReportPerfWatch _perfWatch = Reporting.ReportPerfWatch.Off;
  
-@@ -44,19 +45,31 @@ public sealed class SpeedHub
+@@ -44,6 +45,18 @@ public sealed class SpeedHub
      /// <summary>Every live snapshot, on the UI context, also while a preview is displayed (live reporting, METRICS 11).</summary>
      public event EventHandler<SpeedSnapshot>? LivePublished;
  
-+    /// <summary>Applies the global source selection to remote snapshots, events and history.</summary>
++    /// <summary>Records the local source selection for local snapshot projections.</summary>
 +    public void SetEnabledSources(IReadOnlySet<SourceKind> enabledSources)
 +    {
 +        ArgumentNullException.ThrowIfNull(enabledSources);
@@ -1225,24 +1272,44 @@ index 9b38488e..dabfc6a4 100644
 +    }
 +
      /// <summary>Updates a configured host from a collector frame or connection state.</summary>
-     public void UpdateRemoteHost(Guid id, string label, bool online, string? error = null, string? json = null)
+     public (bool Accepted, bool Online, string? Error) UpdateRemoteHost(Guid id, string label, bool online, string? error = null, string? json = null)
      {
-         SpeedEvent? completionEvent = null;
+@@ -53,7 +66,7 @@ public sealed class SpeedHub
+         string? currentError;
          lock (_gate)
          {
 -            if (!_remote.TryGetValue(id, out var host)) { _remote[id] = host = new RemoteHostData(id, label); _remoteHistory.Clear(); }
 +            if (!_remote.TryGetValue(id, out var host)) _remote[id] = host = new RemoteHostData(id, label);
              host.Label = label;
-             host.Online = online;
-             host.Error = error;
-             if (!online) host.HistoryCurrent = false;
-             var completion = json is null ? null : host.Apply(json);
--            if (online && completion is not null)
-+            if (online && completion is not null && _enabledSources.Contains(completion.Source))
+             RemoteCompletion? completion = null;
+             if (json is null)
+@@ -68,16 +81,20 @@ public sealed class SpeedHub
+             else accepted = host.Apply(json, out completion);
+             currentOnline = host.Online;
+             currentError = host.Error;
+-            if (host.Online && completion is not null)
++            if (host.Online && completion is not null && host.Snapshot is { } snapshot && host.IsSourceEnabled(completion.Source))
              {
-                 var machine = host.Snapshot is { } snapshot ? snapshot.Text("machine_id") ?? id.ToString() : id.ToString();
+-                var machine = host.Snapshot is { } snapshot ? snapshot.Text("machine_id") ?? id.ToString() : id.ToString();
++                var machine = snapshot.Text("machine_id") ?? id.ToString();
++                var owner = _remote.Values.OrderByDescending(h => h.Online).FirstOrDefault(h =>
++                    h.Snapshot is { } candidate && (candidate.Text("machine_id") ?? h.Id.ToString()) == machine
++                    && candidate.Array("sources") is { } sourceList && sourceList.EnumerateArray().Any(source =>
++                        RemoteHostData.Kind(source.Text("source")) == completion.Source && source.Boolean("enabled") == true));
                  var key = (machine, completion.Source, completion.Id);
-@@ -75,7 +88,13 @@ public sealed class SpeedHub
+-                if (_remoteCompletionIds.Add(key))
++                if (owner is not null && _remoteCompletionIds.Add(key))
+                 {
+                     _remoteCompletionOrder.Enqueue(key);
+                     if (_remoteCompletionOrder.Count > 4096) _remoteCompletionIds.Remove(_remoteCompletionOrder.Dequeue());
+-                    var response = new ResponseSummary(completion.Source, label, null, completion.Output, 0, null,
+-                        completion.Speed, DateTimeOffset.UtcNow) { HostId = id, HasTotalTokens = false };
++                    var response = new ResponseSummary(completion.Source, owner.Label, null, completion.Output, 0, null,
++                        completion.Speed, DateTimeOffset.UtcNow) { HostId = owner.Id, HasTotalTokens = false };
+                     completionEvent = new SpeedEvent.ResponseCompleted(response);
+                 }
+             }
+@@ -98,7 +115,13 @@ public sealed class SpeedHub
  
      public void RemoveRemoteHost(Guid id)
      {
@@ -1257,7 +1324,7 @@ index 9b38488e..dabfc6a4 100644
          Post(() => { if (!IsPreviewing) Apply(CurrentCombined(), null); });
      }
  
-@@ -140,7 +159,8 @@ public sealed class SpeedHub
+@@ -163,35 +186,40 @@ public sealed class SpeedHub
      // Called under _gate. Collector snapshots replace, rather than accumulate, a host's contribution.
      private SpeedSnapshot Combine(SpeedSnapshot local)
      {
@@ -1266,8 +1333,11 @@ index 9b38488e..dabfc6a4 100644
 +        if (_remote.Count == 0) return local.EnabledSources == enabledSources ? local : local with { EnabledSources = enabledSources };
          var sources = new List<SourceStatus>(local.Sources);
          var agents = new List<AgentStatus>(local.Agents);
++        var alternateSources = new List<SourceStatus>();
++        var alternateAgents = new List<AgentStatus>();
          var statuses = new List<RemoteHostStatus>(_remote.Count);
-@@ -149,17 +169,16 @@ public sealed class SpeedHub
+         var seen = new HashSet<string>(StringComparer.Ordinal);
+         var live = local.Live;
          var today = local.Today;
          var todayCost = local.TodayCost;
          double estimated = local.Live.Output * local.LiveEstimatedShare;
@@ -1279,32 +1349,40 @@ index 9b38488e..dabfc6a4 100644
          {
 -            statuses.Add(host.Status());
 +            var status = host.Status();
-+            statuses.Add(status with { Days = status.Days.Where(day => _enabledSources.Contains(day.Source)).ToArray() });
++            statuses.Add(status with { Days = status.Days.Where(day => host.IsSourceEnabled(day.Source)).ToArray() });
              if (host.Snapshot is not { } message || message.Array("sources") is not { } remoteSources)
              {
 -                complete = false;
 -                todayComplete = false;
-+                if (_enabledSources.Count > 0) { complete = false; todayComplete = false; }
++                complete = false; todayComplete = false;
                  continue;
              }
              var machine = message.Text("machine_id") ?? host.Id.ToString();
-@@ -167,8 +186,8 @@ public sealed class SpeedHub
+             var added = new HashSet<SourceKind>();
++            var owned = new HashSet<SourceKind>();
              foreach (var source in remoteSources.EnumerateArray())
              {
                  var kind = RemoteHostData.Kind(source.Text("source"));
 -                if (kind is null || source.Boolean("enabled") != true || !seen.Add(machine + ":" + kind)) continue;
 -                added.Add(kind.Value);
-+                if (kind is null || !_enabledSources.Contains(kind.Value) || source.Boolean("enabled") != true || !seen.Add(machine + ":" + kind)) continue;
++                if (kind is null || source.Boolean("enabled") != true) continue;
++                bool isOwner = seen.Add(machine + ":" + kind);
++                if (isOwner) owned.Add(kind.Value);
 +                if (source.Boolean("available") != false) added.Add(kind.Value);
                  bool available = host.Online && source.Boolean("available") == true;
                  bool todayAvailable = available && message.Text("timezone") == RemoteHostData.LocalTimezone()
                      && message.Text("today_day") == DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-@@ -181,14 +200,18 @@ public sealed class SpeedHub
+@@ -202,16 +230,22 @@ public sealed class SpeedHub
+                 var share = Math.Clamp(source.Number("estimated_share"), 0, 1);
+                 var sourceToday = todayAvailable ? RemoteHostData.Totals(source, "today_") : TokenTotals.Zero;
                  var sourceCost = todayAvailable ? new CostTally(source.Integer("today_cost_micro_usd"), source.Integer("unpriced_requests")) : CostTally.Zero;
-                 sources.Add(new SourceStatus(kind.Value, true, "", available, (int)source.Integer("sessions"), rate,
+-                sources.Add(new SourceStatus(kind.Value, true, "", available, (int)source.Integer("sessions"), rate,
++                var sourceStatus = new SourceStatus(kind.Value, true, "", available, (int)source.Integer("sessions"), rate,
                      sourceToday, available ? (int)source.Integer("active_agents") : 0, new Rate(rate.Output * share, rate.Total * share))
 -                    { HostId = host.Id, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost });
-+                    { HostId = host.Id, NotDetected = source.Boolean("available") == false, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost });
++                    { HostId = host.Id, NotDetected = source.Boolean("available") == false, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost };
++                if (!isOwner) { alternateSources.Add(sourceStatus); continue; }
++                sources.Add(sourceStatus);
                  todayCost += sourceCost;
                  live = new Rate(live.Output + rate.Output, live.Total + rate.Total);
                  estimated += rate.Output * share;
@@ -1322,13 +1400,25 @@ index 9b38488e..dabfc6a4 100644
              }
              if (!host.Online) continue;
              if (message.Array("agents") is { } remoteAgents)
-@@ -210,30 +233,44 @@ public sealed class SpeedHub
+@@ -225,38 +259,54 @@ public sealed class SpeedHub
+                     var lastMs = agent.Number("last_line_ms");
+                     var last = lastMs >= 0 && lastMs <= 253402300799999 ? DateTimeOffset.FromUnixTimeMilliseconds((long)lastMs) : DateTimeOffset.MinValue;
+                     var parent = agent.Text("parent_id");
+-                    agents.Add(new AgentStatus(prefix + id, kind.Value, host.Label, agent.Text("model"), phase,
++                    var statusAgent = new AgentStatus(prefix + id, kind.Value, host.Label, agent.Text("model"), phase,
+                         agent.Boolean("subagent") == true, new Rate(agent.Number("live_output"), agent.Number("live_total")), null, last,
+-                        parent is null ? null : prefix + parent) { HostId = host.Id });
++                        parent is null ? null : prefix + parent) { HostId = host.Id };
++                    if (!owned.Contains(kind.Value)) { alternateAgents.Add(statusAgent); continue; }
++                    agents.Add(statusAgent);
+                     if (phase == AgentPhase.Generating) generating++;
+                     else if (phase == AgentPhase.Tools) tools++;
                  }
          }
          var second = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 -        if (complete && (!_remoteHistory.TryGetValue(second, out var previous) || previous.IsAvailable))
 +        var instanceHistory = new Dictionary<OrbSourceInstance, IReadOnlyList<HistoryPoint>>(local.InstanceHistory);
-+        foreach (var source in sources.Where(s => s.HostId.HasValue && !s.NotDetected))
++        foreach (var source in sources.Concat(alternateSources).Where(s => s.HostId.HasValue && !s.NotDetected))
          {
 -            var remoteOutput = Math.Max(0, live.Output - local.Live.Output);
 -            var remoteTotal = Math.Max(0, live.Total - local.Live.Total);
@@ -1352,7 +1442,7 @@ index 9b38488e..dabfc6a4 100644
 -        var history = new List<HistoryPoint>();
 +        var selectedRemoteHistory = sources.Where(s => s.HostId.HasValue && !s.NotDetected)
 +            .Select(s => _remoteInstanceHistory[new OrbSourceInstance(s.HostId, s.Kind)]).ToArray();
-+        var unknownHost = _enabledSources.Count > 0 && statuses.Any(s => !s.SourcesKnown);
++        var unknownHost = statuses.Any(s => !s.SourcesKnown);
 +        var history = new List<HistoryPoint>(local.History.Count);
          foreach (var point in local.History)
          {
@@ -1380,7 +1470,7 @@ index 9b38488e..dabfc6a4 100644
          return local with { Live = live, LiveEstimatedShare = live.Output > 0 ? estimated / live.Output : 0,
              Today = today, TodayCost = todayCost, Sources = sources, Agents = agents, GeneratingCount = generating, ToolsCount = tools,
 -            RemoteHosts = statuses, RemoteLiveComplete = complete, RemoteTodayComplete = todayComplete, History = history,
-+            RemoteHosts = statuses, RemoteLiveComplete = complete, RemoteTodayComplete = todayComplete, History = history, InstanceHistory = instanceHistory, EnabledSources = enabledSources,
++            RemoteHosts = statuses, AlternateSources = alternateSources, AlternateAgents = alternateAgents, RemoteLiveComplete = complete, RemoteTodayComplete = todayComplete, History = history, InstanceHistory = instanceHistory, EnabledSources = enabledSources,
              State = local.State.Kind == MonitorStateKind.NoSources && sources.Any(s => s.HostId is not null) ? MonitorState.Running : local.State };
      }
  
@@ -1397,6 +1487,21 @@ index e091996d..df36e28e 100644
  
      /// <summary>Advances the tier and title holds without new data; true when either changed.</summary>
      public bool Tick(double nowSeconds)
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs b/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
+index 4d306672..67f7853c 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
+@@ -13,8 +13,8 @@ public static class HistoryAggregator
+         var seen = new HashSet<(string Machine, SourceKind Source)>();
+         foreach (var host in hosts.OrderByDescending(h => h.Online).ThenByDescending(h => h.HistoryCurrent))
+         {
+-            var covered = host.HistoryCurrent && host.HistoryPartial == false && host.HistorySourceCoverage is { } coverage
+-                ? host.Days.Select(d => d.Source).Concat(coverage)
++            var covered = host.HistoryCurrent && host.HistoryPartial == false && host.SourcesKnown
++                ? host.Days.Select(d => d.Source).Concat(host.EnabledSources)
+                 : host.Days.Select(d => d.Source);
+             var accepted = covered.Distinct()
+                 .Where(source => seen.Add((host.MachineId ?? host.Id.ToString(), source))).ToHashSet();
 diff --git a/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs b/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
 index 716848b5..d299bbcc 100644
 --- a/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
@@ -1792,11 +1897,10 @@ index 8c47a3b9..b2d709b7 100644
          foreach (var key in remoteKeys)
              if (!Sources.Any(r => r.HostId == key.HostId && r.Kind == key.Kind)) Sources.Add(new SourceRow(key.Kind, key.HostId));
 diff --git a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml
-index e829a99d..49253329 100644
+index e829a99d..3490bf9d 100644
 --- a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml
 +++ b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml
-@@ -221,11 +221,11 @@
-                     <Grid Margin="0,0,0,8">
+@@ -222,7 +222,7 @@
                          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                              <TextBlock Text="{loc:Loc dashboard.live}" Style="{StaticResource BodyStrongText}" />
                              <StackPanel Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center"
@@ -1805,9 +1909,6 @@ index e829a99d..49253329 100644
                                  <Line X1="0" Y1="0" X2="14" Y2="0" Stroke="{DynamicResource TextFillColorSecondaryBrush}" StrokeThickness="1.5"
                                        StrokeDashArray="1.5 1.5" VerticalAlignment="Center" Opacity="0.8" />
                                  <TextBlock Text="{loc:Loc chart.estimated}" Margin="5,0,0,0" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                             </StackPanel>
-                         </StackPanel>
-                         <Border Style="{StaticResource SegmentedContainer}" HorizontalAlignment="Right"
 diff --git a/windows/src/AgentSpeed/Dashboard/LiveChart.cs b/windows/src/AgentSpeed/Dashboard/LiveChart.cs
 index 9025a8fc..3f49f99b 100644
 --- a/windows/src/AgentSpeed/Dashboard/LiveChart.cs
@@ -2399,4 +2500,52 @@ index 4a6b9698..25010355 100644
 +
      [Fact]
      public void FreshInstallHasOneDefaultOrb()
+     {
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
+index 916b7d47..6eeba75e 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
+@@ -23,6 +23,43 @@ public sealed class RemoteHistoryCsvTests
+         Assert.Equal(staleId.ToString(), Assert.Single(HistoryAggregator.Hosts([], [offline, stale]), h => h.Id != "local").Id);
+     }
+ 
++    [Fact]
++    public void CurrentCompleteEmptyHistorySuppressesStaleDuplicateRows()
++    {
++        var stale = new RemoteHostStatus(Guid.NewGuid(), "stale", true, null)
++        {
++            MachineId = "m", Days = [new("2026-10-24", SourceKind.Pi, new TokenTotals(1, 0, 0, 0, 10), 10, 1000, 0, 1, null, [])],
++        };
++        var current = new RemoteHostStatus(Guid.NewGuid(), "current", true, null)
++        {
++            MachineId = "m", SourcesKnown = true, EnabledSources = SourceSet.Of(SourceKind.Pi), HistoryCurrent = true, HistoryPartial = false,
++        };
++        Assert.DoesNotContain(HistoryAggregator.Hosts([], [stale, current]), host => host.Id != "local");
++        var partial = current with { HistoryPartial = true };
++        Assert.Single(HistoryAggregator.Hosts([], [stale, partial]), host => host.Id != "local");
++    }
++
++    [Fact]
++    public async Task ReconnectingDuplicateKeepsCachedHistoryDeduplicated()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var first = Guid.NewGuid();
++        var second = Guid.NewGuid();
++        var zone = TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana) ? iana : TimeZoneInfo.Local.Id;
++        const string snapshot = """{"version":1,"type":"snapshot","machine_id":"same-machine","sources":[{"source":"pi","enabled":true}]}""";
++        var history = $$"""{"version":1,"type":"history","timezone":{{System.Text.Json.JsonSerializer.Serialize(zone)}},"partial":false,"days":[{"day":"2026-10-24","source":"pi","output":10}]}""";
++        foreach (var id in new[] { first, second })
++        {
++            hub.UpdateRemoteHost(id, "remote", false, json: snapshot);
++            hub.UpdateRemoteHost(id, "remote", true, json: history);
++        }
++        hub.UpdateRemoteHost(first, "remote", false, "disconnected");
++        hub.ResetRemoteHostSession(first);
++        var hosts = HistoryAggregator.Hosts([], hub.Snapshot.RemoteHosts).Where(host => host.Id != "local").ToArray();
++        var remote = Assert.Single(hosts);
++        Assert.Equal(10, Assert.Single(HistoryAggregator.Daily(remote.Days, SourceKind.Pi)).Output);
++    }
++
+     [Fact]
+     public void HistoryCsvAddsHostIdentityWithoutChangingLegacyExport()
      {

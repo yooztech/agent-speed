@@ -116,7 +116,7 @@
       },
       {
         "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests"
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests && dotnet test windows/tests/AgentSpeed.Windows.Tests"
       },
       {
         "platform": "macos",

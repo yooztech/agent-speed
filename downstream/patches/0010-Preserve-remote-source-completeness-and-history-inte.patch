@@ -1,4 +1,4 @@
-From 6f1d3eb505a35599913580680bfed3aa529a815e Mon Sep 17 00:00:00 2001
+From b7744b80f5827f1456e141d1d121fba7cc33671e Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:49:37 +0800
 Subject: [PATCH 10/15] Preserve remote source completeness and history
@@ -6,20 +6,20 @@ Subject: [PATCH 10/15] Preserve remote source completeness and history
 
 ---
  windows/src/AgentSpeed.Core/Models.cs         |  6 +-
- .../src/AgentSpeed.Core/RemoteAggregation.cs  |  3 +-
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  |  8 +-
  windows/src/AgentSpeed.Core/SpeedHub.cs       | 15 ++--
  .../History/DaySummary.cs                     |  2 +-
- .../History/HistoryAggregator.cs              | 15 ++++
+ .../History/HistoryAggregator.cs              | 18 ++++
  .../History/HistoryCsv.cs                     |  8 +-
  windows/src/AgentSpeed/App/AppController.cs   |  8 +-
  .../Dashboard/DashboardViewModel.cs           | 22 ++---
  windows/src/AgentSpeed/Dashboard/LiveChart.cs | 70 +++++++++++----
  .../AgentSpeed/History/HistoryViewModel.cs    | 17 ++--
- .../AgentSpeed/Services/RemoteSshWorker.cs    | 86 ++++++++++++-------
  .../RemoteConsumerTests.cs                    | 64 ++++++++++++--
  .../HistoryCostTests.cs                       | 38 ++++++++
- .../DashboardRemoteCompletenessTests.cs       | 60 +++++++++++++
- 14 files changed, 324 insertions(+), 90 deletions(-)
+ .../RemoteHistoryCsvTests.cs                  | 18 ++++
+ .../DashboardRemoteCompletenessTests.cs       | 87 +++++++++++++++++++
+ 14 files changed, 322 insertions(+), 59 deletions(-)
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/DashboardRemoteCompletenessTests.cs
 
 diff --git a/windows/src/AgentSpeed.Core/Models.cs b/windows/src/AgentSpeed.Core/Models.cs
@@ -40,31 +40,36 @@ index 92eba8a6..3a10726f 100644
  /// <param name="Id">Absolute transcript path.</param>
  /// <param name="RecentSpeed">Output tok/s of the agent's recent responses (METRICS 6.2).</param>
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-index ffe7a71c..9acd94df 100644
+index 4b7d2cda..5e889900 100644
 --- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-@@ -6,6 +6,7 @@ namespace AgentSpeed.Core;
- /// <summary>Connection and last received history for one configured remote host.</summary>
+@@ -7,6 +7,8 @@ namespace AgentSpeed.Core;
  public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string? Error)
  {
-+    public string MachineId { get; init; } = Id.ToString();
+     public string MachineId { get; init; } = Id.ToString();
++    /// <summary>Enabled sources in the last received source list, or null before one is known.</summary>
++    public SourceSet? HistorySourceCoverage { get; init; }
      public IReadOnlyList<DailyUsage> Days { get; init; } = [];
      public bool? HistoryPartial { get; init; }
      public DateTimeOffset? HistoryReceivedAt { get; init; }
-@@ -84,7 +85,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -98,7 +100,11 @@ internal sealed class RemoteHostData(Guid id, string label)
      public RemoteHostStatus Status()
      {
          bool sameZone = HistoryTimezone == LocalTimezone();
--        return new(Id, Label, Online, Error) { Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
-+        return new(Id, Label, Online, Error) { MachineId = Snapshot?.Text("machine_id") ?? Id.ToString(), Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
+-        return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
++        var coverage = Snapshot?.Array("sources") is { } sources
++            ? SourceSet.From(sources.EnumerateArray().Where(source => source.Boolean("enabled") == true)
++                .Select(source => Kind(source.Text("source"))).Where(kind => kind.HasValue).Select(kind => kind!.Value))
++            : (SourceSet?)null;
++        return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), HistorySourceCoverage = coverage, Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
              HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
      }
  
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 4f82a1d6..9b38488e 100644
+index 93ca2e4d..5e69e691 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
-@@ -170,7 +170,8 @@ public sealed class SpeedHub
+@@ -193,7 +193,8 @@ public sealed class SpeedHub
                  if (kind is null || source.Boolean("enabled") != true || !seen.Add(machine + ":" + kind)) continue;
                  added.Add(kind.Value);
                  bool available = host.Online && source.Boolean("available") == true;
@@ -74,7 +79,7 @@ index 4f82a1d6..9b38488e 100644
                  var output = source.NullableNumber("live_output");
                  var total = source.NullableNumber("live_total");
                  bool liveAvailable = available && output.HasValue && total.HasValue;
-@@ -189,7 +190,7 @@ public sealed class SpeedHub
+@@ -212,7 +213,7 @@ public sealed class SpeedHub
                  if (!liveAvailable) complete = false;
                  if (!todayAvailable) todayComplete = false;
              }
@@ -83,7 +88,7 @@ index 4f82a1d6..9b38488e 100644
              if (message.Array("agents") is { } remoteAgents)
                  foreach (var agent in remoteAgents.EnumerateArray())
                  {
-@@ -209,7 +210,7 @@ public sealed class SpeedHub
+@@ -232,7 +233,7 @@ public sealed class SpeedHub
                  }
          }
          var second = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -92,7 +97,7 @@ index 4f82a1d6..9b38488e 100644
          {
              var remoteOutput = Math.Max(0, live.Output - local.Live.Output);
              var remoteTotal = Math.Max(0, live.Total - local.Live.Total);
-@@ -218,14 +219,18 @@ public sealed class SpeedHub
+@@ -241,14 +242,18 @@ public sealed class SpeedHub
              _remoteHistory[second] = new HistoryPoint(DateTimeOffset.FromUnixTimeSeconds(second),
                  new Rate(remoteOutput - estimatedRate.Output, remoteTotal - estimatedRate.Total), estimatedRate);
          }
@@ -127,10 +132,10 @@ index 1cf90aba..0821b968 100644
  
      /// <summary>The price table version bound to the day (METRICS 9.7); null without cost data.</summary>
 diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs b/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
-index f9c9d06b..4ed3a90f 100644
+index f9c9d06b..4d306672 100644
 --- a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
 +++ b/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
-@@ -5,6 +5,21 @@ namespace AgentSpeed.Presentation.History;
+@@ -5,6 +5,24 @@ namespace AgentSpeed.Presentation.History;
  /// <summary>Turns stored per-source days (<see cref="DailyUsage"/>) into what the Usage History window shows.</summary>
  public static class HistoryAggregator
  {
@@ -140,9 +145,12 @@ index f9c9d06b..4ed3a90f 100644
 +    {
 +        yield return ("local", local);
 +        var seen = new HashSet<(string Machine, SourceKind Source)>();
-+        foreach (var host in hosts.OrderByDescending(h => h.Online))
++        foreach (var host in hosts.OrderByDescending(h => h.Online).ThenByDescending(h => h.HistoryCurrent))
 +        {
-+            var accepted = host.Days.Select(d => d.Source).Distinct()
++            var covered = host.HistoryCurrent && host.HistoryPartial == false && host.HistorySourceCoverage is { } coverage
++                ? host.Days.Select(d => d.Source).Concat(coverage)
++                : host.Days.Select(d => d.Source);
++            var accepted = covered.Distinct()
 +                .Where(source => seen.Add((host.MachineId ?? host.Id.ToString(), source))).ToHashSet();
 +            var days = host.Days.Where(d => accepted.Contains(d.Source)).ToArray();
 +            if (days.Length > 0) yield return (host.Id.ToString(), days);
@@ -409,131 +417,6 @@ index 395fa292..de55ad97 100644
              : _hostId is { } hostId ? _speed?.Snapshot.RemoteHosts.FirstOrDefault(h => h.Id == hostId)?.Days ?? [] : _hub.Days;
          var options = new HistoryCostOptions(_cost.Settings.Subscriptions, _includeSubscriptions, _metric);
          var excluded = options.Excluded(_source);
-diff --git a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
-index 330de59a..35e51a72 100644
---- a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
-+++ b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
-@@ -83,7 +83,8 @@ public sealed class RemoteSshWorker
-         {
-             if (!new RemoteHost(Guid.Empty, "", destination, false).ValidDestination)
-                 throw new IOException("Invalid SSH destination");
--            using (var probe = Launch("uname -m"))
-+            var probe = Launch("uname -m");
-+            try
-             {
-                 probe.StandardInput.Close();
-                 var architecture = (await probe.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).Trim();
-@@ -92,42 +93,51 @@ public sealed class RemoteSshWorker
-                 var arch = architecture switch { "x86_64" => "x86_64", "aarch64" or "arm64" => "aarch64", _ => throw new IOException("Unsupported remote architecture") };
-                 var path = Path.Combine(AppContext.BaseDirectory, "collectors", "linux-" + arch, "agent-speed-collector");
-                 if (!File.Exists(path)) throw new IOException($"Linux collector for {arch} is missing from this application");
--                using var upload = Launch(UploadCommand);
--                var drain = upload.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
--                await using (var binary = File.OpenRead(path))
--                    await binary.CopyToAsync(upload.StandardInput.BaseStream).ConfigureAwait(false);
--                upload.StandardInput.Close();
--                await drain.ConfigureAwait(false);
--                await upload.WaitForExitAsync().ConfigureAwait(false);
--                if (upload.ExitCode != 0) throw new IOException("Collector upload failed");
-+                var upload = Launch(UploadCommand);
-+                try
-+                {
-+                    var drain = upload.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
-+                    await using (var binary = File.OpenRead(path))
-+                        await binary.CopyToAsync(upload.StandardInput.BaseStream).ConfigureAwait(false);
-+                    upload.StandardInput.Close();
-+                    await drain.ConfigureAwait(false);
-+                    await upload.WaitForExitAsync().ConfigureAwait(false);
-+                    if (upload.ExitCode != 0) throw new IOException("Collector upload failed");
-+                }
-+                finally { await CleanupAsync(upload).ConfigureAwait(false); }
-             }
--            using var collector = Launch(CollectorCommand);
--            lock (gate) { if (!stopped) collectorInput = collector.StandardInput; }
--            RequestHistoryTimezone();
--            var stream = collector.StandardOutput.BaseStream;
--            var chunk = new byte[8192];
--            using var line = new MemoryStream();
--            while (true)
-+            finally { await CleanupAsync(probe).ConfigureAwait(false); }
-+            var collector = Launch(CollectorCommand);
-+            try
-             {
--                var count = await stream.ReadAsync(chunk).ConfigureAwait(false);
--                if (count == 0) break;
--                for (var i = 0; i < count; i++)
-+                lock (gate) { if (!stopped) collectorInput = collector.StandardInput; }
-+                RequestHistoryTimezone();
-+                var stream = collector.StandardOutput.BaseStream;
-+                var chunk = new byte[8192];
-+                using var line = new MemoryStream();
-+                while (true)
-                 {
--                    if (chunk[i] == (byte)'\n')
--                    {
--                        var text = Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length);
--                        line.SetLength(0);
--                        lock (gate) { if (stopped) return; }
--                        LineReceived?.Invoke(Token, text);
--                    }
--                    else
-+                    var count = await stream.ReadAsync(chunk).ConfigureAwait(false);
-+                    if (count == 0) break;
-+                    for (var i = 0; i < count; i++)
-                     {
--                        if (line.Length >= MaxLineBytes) throw new IOException("Collector sent an oversized message");
--                        line.WriteByte(chunk[i]);
-+                        if (chunk[i] == (byte)'\n')
-+                        {
-+                            var text = Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length);
-+                            line.SetLength(0);
-+                            lock (gate) { if (stopped) return; }
-+                            LineReceived?.Invoke(Token, text);
-+                        }
-+                        else
-+                        {
-+                            if (line.Length >= MaxLineBytes) throw new IOException("Collector sent an oversized message");
-+                            line.WriteByte(chunk[i]);
-+                        }
-                     }
-                 }
-+                reason = "Disconnected; retrying";
-             }
--            reason = "Disconnected; retrying";
-+            finally { await CleanupAsync(collector).ConfigureAwait(false); }
-         }
-         catch (IOException e) { reason = e.Message; }
-         catch (Exception) { reason = "SSH connection failed"; }
-@@ -136,7 +146,6 @@ public sealed class RemoteSshWorker
-             lock (gate)
-             {
-                 collectorInput = null;
--                Kill(process);
-                 process = null;
-                 if (stopped) reason = "";
-             }
-@@ -144,6 +153,21 @@ public sealed class RemoteSshWorker
-         if (reason.Length != 0) Ended?.Invoke(Token, reason);
-     }
- 
-+    private async Task CleanupAsync(Process child)
-+    {
-+        lock (gate)
-+        {
-+            if (ReferenceEquals(process, child))
-+            {
-+                collectorInput = null;
-+                process = null;
-+            }
-+            Kill(child);
-+        }
-+        try { await child.WaitForExitAsync().ConfigureAwait(false); }
-+        finally { child.Dispose(); }
-+    }
-+
-     private static void Kill(Process? child)
-     {
-         try { if (child is not null && !child.HasExited) child.Kill(entireProcessTree: true); }
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
 index 3225b7fb..1f362af8 100644
 --- a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
@@ -706,12 +589,41 @@ index a5471848..d9b9bbf8 100644
      /// <summary>Codex has more output, Claude Code more cost; Gemini has output but no cost data.</summary>
      private static readonly DailyUsage[] Flipped =
      [
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
+index b80075a0..916b7d47 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
+@@ -5,6 +5,24 @@ namespace AgentSpeed.Presentation.Tests;
+ 
+ public sealed class RemoteHistoryCsvTests
+ {
++    [Fact]
++    public void DuplicateMachineHistoryUsesOnlineCurrentOwnerForCsvAndTotals()
++    {
++        var staleId = Guid.NewGuid();
++        var currentId = Guid.NewGuid();
++        DailyUsage Day(long output) => new("2026-10-24", SourceKind.Pi, new TokenTotals(1, 0, 0, 0, output), output, 1000, 0, 1, null, []);
++        var stale = new RemoteHostStatus(staleId, "stale", true, null) { MachineId = "machine", Days = [Day(10)] };
++        var current = new RemoteHostStatus(currentId, "current", true, null) { MachineId = "machine", HistoryCurrent = true, Days = [Day(50)] };
++        var selected = HistoryAggregator.Hosts([], [stale, current]).ToArray();
++        var remote = Assert.Single(selected, h => h.Id != "local");
++        Assert.Equal(currentId.ToString(), remote.Id);
++        var summary = Assert.Single(HistoryAggregator.Daily(remote.Days, SourceKind.Pi));
++        Assert.Equal(50, summary.Output);
++        Assert.Contains(currentId.ToString(), HistoryCsv.Build([summary], SourceKind.Pi, hostId: remote.Id));
++        var offline = current with { Online = false };
++        Assert.Equal(staleId.ToString(), Assert.Single(HistoryAggregator.Hosts([], [offline, stale]), h => h.Id != "local").Id);
++    }
++
+     [Fact]
+     public void HistoryCsvAddsHostIdentityWithoutChangingLegacyExport()
+     {
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/DashboardRemoteCompletenessTests.cs b/windows/tests/AgentSpeed.Windows.Tests/DashboardRemoteCompletenessTests.cs
 new file mode 100644
-index 00000000..c0f2427a
+index 00000000..afe2f25a
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/DashboardRemoteCompletenessTests.cs
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,87 @@
 +using AgentSpeed.Core;
 +using AgentSpeed.Core.Money;
 +using AgentSpeed.Dashboard;
@@ -770,5 +682,32 @@ index 00000000..c0f2427a
 +        {
 +            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
 +        }
++    }
++    [Fact]
++    public void RemoteHostDoesNotHideMeasuredAverage()
++    {
++        Exception? failure = null;
++        var thread = new Thread(() =>
++        {
++            try
++            {
++                var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
++                var model = new DashboardViewModel();
++                var snapshot = SpeedSnapshot.Empty with
++                {
++                    AverageToday = 12.5,
++                    RemoteHosts = [new RemoteHostStatus(Guid.NewGuid(), "remote", true, null)],
++                };
++                model.Update(snapshot, 0, SpeedTitle.Idle, 400, SpeedMetric.Output, loc, false);
++                Assert.NotEqual("—", model.AverageText);
++                model.Update(snapshot with { AverageToday = null }, 0, SpeedTitle.Idle, 400, SpeedMetric.Output, loc, false);
++                Assert.Equal("—", model.AverageText);
++            }
++            catch (Exception ex) { failure = ex; }
++        });
++        thread.SetApartmentState(ApartmentState.STA);
++        thread.Start();
++        thread.Join();
++        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
 +    }
 +}
