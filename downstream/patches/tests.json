@@ -321,5 +321,23 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0028-Integrate-remote-network-traffic-by-host-and-source.patch": {
+    "regression": [
+      {
+        "platform": "linux",
+        "run": "cmake -S linux -B build-remote && cmake --build build-remote --target agentspeed_tests -j2 && build-remote/tests/agentspeed_tests --gtest_filter='CollectorProtocol.Traffic*'"
+      },
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test --filter RemoteTrafficTests"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemoteConsumerTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~HistoryTrafficTests"
+      }
+    ],
+    "related": [],
+    "reason": ""
   }
 }

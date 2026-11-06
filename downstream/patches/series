@@ -25,3 +25,4 @@
 0025-Synchronize-history-clear-test-with-rescan-publicati.patch
 0026-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch
 0027-Connect-remote-performance-and-history-metrics.patch
+0028-Integrate-remote-network-traffic-by-host-and-source.patch

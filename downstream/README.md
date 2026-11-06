@@ -52,6 +52,13 @@ history gaps. Chart estimate indicators mean that the visible range contains
 estimated segments, not necessarily that the current rate is being estimated;
 omp does not provide per-token measurements.
 
+The existing network traffic views also show supported remote Linux source
+traffic on macOS and Windows. The collector measures the SSH user's non-loopback
+TCP traffic using the existing traffic service; it requires no sudo. Traffic is
+kept separate by host and source. Older collectors may not provide traffic;
+unknown values and offline history are not treated as measured zeroes. Live
+rates clear on disconnect while the last observed totals remain available.
+
 ## CI and releases
 
 The GitHub workflows check out the maintenance repository and prepare an
