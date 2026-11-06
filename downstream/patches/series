@@ -24,3 +24,4 @@
 0024-Stamp-v1.6.1-fork.3-release-version.patch
 0025-Synchronize-history-clear-test-with-rescan-publicati.patch
 0026-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch
+0027-Connect-remote-performance-and-history-metrics.patch

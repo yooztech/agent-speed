@@ -1,0 +1,1578 @@
+From b06da725fc53cc1cf3e7d7bddbbc1863f2ecae01 Mon Sep 17 00:00:00 2001
+From: Agent Speed Contributors <contributors@localhost>
+Date: Fri, 6 Nov 2026 11:00:29 +0800
+Subject: [PATCH] Connect remote performance and history metrics
+
+---
+ README.md                                     |   7 +-
+ linux/collector/main.cpp                      |  32 ++++-
+ linux/collector/protocol.cpp                  |  59 ++++++++-
+ linux/collector/protocol.hpp                  |   4 +-
+ linux/tests/collector_integration_test.cpp    | 123 ++++++++++++++++++
+ linux/tests/collector_test.cpp                |  44 +++++++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  54 ++++++++
+ .../AgentSpeed/App/RemoteSnapshot.swift       |  51 ++++++++
+ .../AgentSpeed/History/HistoryViewModel.swift |  24 +++-
+ .../Perf/History/PerfHistoryContent.swift     |   5 +-
+ .../Perf/History/PerfHistoryTable.swift       |   6 +-
+ .../Perf/History/PerfHistoryText.swift        |   3 +-
+ .../AgentSpeed/Perf/Model/PerfCardModel.swift |   3 +-
+ .../AgentSpeed/Perf/Model/PerfCardText.swift  |   3 +-
+ .../AgentSpeedAppTests/RemoteHostsTests.swift |  76 +++++++++++
+ spec/METRICS.md                               |  12 ++
+ spec/NETWORK.md                               |  17 +++
+ .../src/AgentSpeed.Core/Perf/PerfHistory.cs   |  19 ++-
+ .../src/AgentSpeed.Core/Perf/PerfRecord.cs    |   2 +
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  |   7 +-
+ .../src/AgentSpeed.Core/RemotePerformance.cs  |  63 +++++++++
+ windows/src/AgentSpeed.Core/SpeedHub.cs       |  15 ++-
+ .../History/Perf/PerfHistoryChart.cs          |   4 +-
+ .../History/Perf/PerfHistoryRow.cs            |   5 +-
+ .../History/Perf/PerfHistorySection.cs        |  17 ++-
+ .../AgentSpeed.Presentation/Perf/PerfCard.cs  |  12 +-
+ .../History/HistoryViewModel.Perf.cs          |  18 ++-
+ .../History/Perf/PerfHistoryViewModel.cs      |  18 +--
+ .../AgentSpeed/History/Perf/PerfRowView.cs    |   6 +-
+ .../RemotePerformanceTests.cs                 |  78 +++++++++++
+ .../Perf/PerfCardTests.cs                     |   9 ++
+ .../Perf/PerfHistoryTests.cs                  |  20 +++
+ .../PerfPerformanceSectionTests.cs            |  28 ++++
+ 33 files changed, 793 insertions(+), 51 deletions(-)
+ create mode 100644 windows/src/AgentSpeed.Core/RemotePerformance.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
+
+diff --git a/README.md b/README.md
+index 71b051dc..75ca6946 100644
+--- a/README.md
++++ b/README.md
+@@ -133,8 +133,11 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
+ Remote sources and agents appear alongside local sources in the native dashboard and history when available. Remote
+ data does not include categorized today's token totals, project paths, traffic or a continuous live chart; unavailable
+ values, including missing price data, remain unknown. History is aggregated in the viewer's time zone, requested by
+-the client from the collector. Partial log reads are marked as potentially incomplete. Remote network and performance
+-history are unavailable; disconnected intervals remain gaps rather than continuous measurements.
++the client from the collector. Partial log reads are marked as potentially incomplete. Supported collectors provide
++remote performance scores and host-specific baselines, plus real daily performance history from analyzed logs. A
++baseline uses the collector host's local dates; history uses the viewer's time zone, so day boundaries can differ.
++Older collectors without performance fields leave it unavailable while their other data remains usable. Remote network
++history is unavailable, and disconnected intervals remain gaps rather than continuous measurements.
+ After the client requests its time zone, snapshot today totals also use that zone. Untagged or null-zone snapshots
+ retain collector-local compatibility behavior. History from older collectors without a matching time-zone tag is
+ unavailable rather than being mislabeled as viewer-local.
+diff --git a/linux/collector/main.cpp b/linux/collector/main.cpp
+index 8f7364f0..4048ce12 100644
+--- a/linux/collector/main.cpp
++++ b/linux/collector/main.cpp
+@@ -105,6 +105,7 @@ int main(int argc, char**) {
+         std::atomic<std::uint64_t> zoneGeneration{0};
+         std::optional<std::string> requestedZone;
+         std::shared_ptr<const agentspeed::TimeZone> requestedZoneValue;
++        std::map<std::pair<agentspeed::SourceKind, std::string>, double> baselines;
+         std::string inputBuffer;
+         auto checkInput = [&](short events) {
+             std::lock_guard inputLock(inputMutex);
+@@ -167,6 +168,8 @@ int main(int argc, char**) {
+                 collector::HistoryCache cache(home ? home : "");
+                 auto store = cache.open(cacheIdentity(config.locations, config.enabled));
+                 agentspeed::history::Analyzer analyzer(*store, std::make_shared<agentspeed::pricing::PriceBook>());
++                auto localStore = agentspeed::history::Store::open(":memory:");
++                agentspeed::history::Analyzer localAnalyzer(*localStore, std::make_shared<agentspeed::pricing::PriceBook>());
+                 auto local = agentspeed::localZone(agentspeed::processEnvironment());
+                 const auto localId = zoneIdentity();
+                 while (!stopping) {
+@@ -183,7 +186,30 @@ int main(int argc, char**) {
+                     auto report = analyzer.run(config.locations, config.enabled, zone, id,
+                         [&] { return stopping.load(); });
+                     if (!stopping && !report.cancelled && zoneGeneration.load() == generation)
+-                        emit(collector::Protocol::history(analyzer.days(), report, name));
++                        emit(collector::Protocol::history(analyzer.days(), report, name, analyzer.perfRecords()));
++                    const auto localReport = localAnalyzer.run(config.locations, config.enabled, local, localId,
++                        [&] { return stopping.load(); });
++                    if (!stopping && !localReport.cancelled) {
++                        const auto records = localAnalyzer.perfRecords();
++                        const auto current = nowMs();
++                        const std::time_t seconds = static_cast<std::time_t>((current + (local ? local->offsetMs(current) : 0)) / 1000);
++                        std::tm wall{};
++                        char day[11];
++                        std::map<std::pair<agentspeed::SourceKind, std::string>, double> next;
++                        if ((local ? gmtime_r(&seconds, &wall) : localtime_r(&seconds, &wall)) &&
++                            std::strftime(day, sizeof(day), "%Y-%m-%d", &wall) == 10) {
++                            for (const auto& record : records) {
++                                const auto key = std::make_pair(record.source, record.model);
++                                if (next.count(key)) continue;
++                                if (const auto value = agentspeed::perf::baseline(records, record.source, record.model, day))
++                                    next.emplace(key, *value);
++                            }
++                        }
++                        {
++                            std::lock_guard lock(zoneMutex);
++                            baselines = std::move(next);
++                        }
++                    }
+                     std::unique_lock lock(zoneMutex);
+                     zoneChanged.wait_for(lock, std::chrono::seconds(60), [&] {
+                         return stopping.load() || zoneGeneration.load() != generation;
+@@ -218,6 +244,10 @@ int main(int argc, char**) {
+             } else {
+                 monitor->poll(now, start);
+             }
++            {
++                std::lock_guard lock(zoneMutex);
++                monitor->setPerfBaselines(baselines);
++            }
+             emit(protocol.snapshot(monitor->snapshot(now, start), name, zone));
+             for (const auto& event : monitor->takeCompletions()) emit(collector::Protocol::completion(event));
+         }
+diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
+index 7889436b..5e592cc0 100644
+--- a/linux/collector/protocol.cpp
++++ b/linux/collector/protocol.cpp
+@@ -8,6 +8,7 @@
+ #include <locale>
+ #include <sstream>
+ #include <string_view>
++#include <tuple>
+ #include <type_traits>
+ 
+ namespace collector {
+@@ -120,13 +121,46 @@ std::string Protocol::snapshot(const agentspeed::Snapshot& v, const std::optiona
+         o << ",\"speed\":"; optionalText(o, a.speed);
+         o << ",\"effort_configured\":" << (a.effortConfigured ? "true" : "false")
+           << ",\"speed_configured\":" << (a.speedConfigured ? "true" : "false");
++        if (a.perf) {
++            const auto& p = a.perf->score;
++            const auto& w = a.perf->workSignals;
++            o << ",\"perf\":{\"form\":"; text(o, agentspeed::perf::formId(p.form));
++            o << ",\"score\":"; optionalNumber(o, p.score);
++            o << ",\"shown\":"; optionalNumber(o, p.shown);
++            o << ",\"provisional\":" << (p.provisional ? "true" : "false")
++              << ",\"n\":" << p.n << ",\"tools\":" << p.tools << ",\"active_ms\":" << p.activeMs
++              << ",\"span_start_ms\":"; optionalNumber(o, p.spanStartMs);
++            o << ",\"model\":"; optionalText(o, p.model);
++            o << ",\"components\":[";
++            bool firstComponent = true;
++            for (const auto& c : p.components) {
++                if (!firstComponent) o << ',';
++                firstComponent = false;
++                o << "{\"id\":"; text(o, agentspeed::perf::idName(c.id));
++                o << ",\"present\":" << (c.present ? "true" : "false") << ",\"reason\":";
++                if (c.reason == agentspeed::perf::Reason::None) o << "null";
++                else text(o, agentspeed::perf::reasonId(c.reason));
++                o << ",\"samples\":" << c.samples << ",\"measure\":"; optionalNumber(o, c.measure);
++                o << ",\"ratio\":"; optionalNumber(o, c.ratio);
++                o << ",\"sub_score\":"; optionalNumber(o, c.subScore);
++                o << '}';
++            }
++            o << "],\"baseline\":"; optionalNumber(o, p.baseline);
++            o << ",\"vs_usual\":"; optionalNumber(o, p.vsUsual);
++            o << ",\"vs_usual_percent\":"; optionalNumber(o, p.vsUsualPercent);
++            o << ",\"work_signals\":{\"looping\":"; optionalNumber(o, w.looping);
++            o << ",\"repeating\":"; optionalNumber(o, w.repeating);
++            o << ",\"novelty\":"; optionalNumber(o, w.novelty);
++            o << ",\"failed\":" << w.failed << ",\"recovered\":" << w.recovered << "}}";
++        }
+         o << '}';
+     }
+     o << "]}";
+     return o.str();
+ }
+ std::string Protocol::history(const std::vector<agentspeed::history::DailyUsage>& days, const agentspeed::history::Report& report,
+-                              const std::optional<std::string>& timezone) {
++                              const std::optional<std::string>& timezone,
++                              const std::vector<agentspeed::perf::DayRecord>& perfRecords) {
+     auto o = stream();
+     o << "{\"version\":1,\"type\":\"history\",\"timezone\":"; optionalText(o, timezone);
+     o << ",\"partial\":" << (report.filesUnreadable ? "true" : "false") << ",\"days\":[";
+@@ -183,6 +217,29 @@ std::string Protocol::history(const std::vector<agentspeed::history::DailyUsage>
+         o << ']';
+         o << '}';
+     }
++    o << "],\"perf_records\":[";
++    std::map<std::tuple<std::string, agentspeed::SourceKind, std::string>, agentspeed::perf::Record> grouped;
++    for (const auto& d : perfRecords) grouped[{d.day, d.source, d.model}].add(d.record);
++    first = true;
++    for (const auto& [key, r] : grouped) {
++        if (!first) o << ',';
++        first = false;
++        const auto& [day, source, model] = key;
++        o << "{\"day\":"; text(o, day);
++        o << ",\"source\":"; text(o, agentspeed::sourceId(source));
++        o << ",\"model\":"; text(o, model);
++        o << ",\"n\":" << r.n << ",\"output_sum\":" << r.outputSum << ",\"duration_ms_sum\":" << r.durationMsSum
++          << ",\"latency_bins\":[";
++        for (std::size_t i = 0; i < r.latencyBins.size(); ++i) {
++            if (i) o << ',';
++            o << r.latencyBins[i];
++        }
++        o << "],\"reason_n\":" << r.reasonN << ",\"reason_output\":" << r.reasonOutput
++          << ",\"reason_duration_ms_sum\":" << r.reasonDurationMsSum << ",\"cache_n\":" << r.cacheN
++          << ",\"cache_input\":" << r.cacheInput << ",\"cache_cached\":" << r.cacheCached
++          << ",\"tool_n\":" << r.toolN << ",\"tool_ln_sum\":"; number(o, r.toolLnSum);
++        o << ",\"tool_failed\":" << r.toolFailed << ",\"active_ms\":" << r.activeMs << '}';
++    }
+     o << "]}";
+     return o.str();
+ }
+diff --git a/linux/collector/protocol.hpp b/linux/collector/protocol.hpp
+index 23e6006e..9ea0c9d4 100644
+--- a/linux/collector/protocol.hpp
++++ b/linux/collector/protocol.hpp
+@@ -8,6 +8,7 @@
+ 
+ #include "agentspeed/history.hpp"
+ #include "agentspeed/snapshot.hpp"
++#include "agentspeed/perf_history.hpp"
+ #include "agentspeed/tz.hpp"
+ namespace agentspeed::history { struct Report; }
+ 
+@@ -21,7 +22,8 @@ public:
+     std::string snapshot(const agentspeed::Snapshot& value, const std::optional<std::string>& timezone = std::nullopt,
+                          const std::shared_ptr<const agentspeed::TimeZone>& zone = nullptr);
+     static std::string history(const std::vector<agentspeed::history::DailyUsage>& days, const agentspeed::history::Report& report,
+-                               const std::optional<std::string>& timezone = std::nullopt);
++                               const std::optional<std::string>& timezone = std::nullopt,
++                               const std::vector<agentspeed::perf::DayRecord>& perfRecords = {});
+     static std::string completion(const agentspeed::Completion& value);
+ private:
+     std::string id(const std::string& raw);
+diff --git a/linux/tests/collector_integration_test.cpp b/linux/tests/collector_integration_test.cpp
+index 6eca14f2..f70a18a2 100644
+--- a/linux/tests/collector_integration_test.cpp
++++ b/linux/tests/collector_integration_test.cpp
+@@ -238,3 +238,126 @@ TEST(CollectorIntegration, EofInterruptsBlockedOutput) {
+     EXPECT_TRUE(exited);
+     if (exited) EXPECT_TRUE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+ }
++
++TEST(CollectorIntegration, StdioReportsOnlyMeasuredPerformanceSamples) {
++    char home[] = "/tmp/agentspeed-collector-perf-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-perf";
++    std::filesystem::create_directories(dir);
++    const auto file = dir / "2026-10-20T10-48-00-000Z_01a158ec-db00-75e2-83a6-00013c6ef362.jsonl";
++    const auto now = std::time(nullptr);
++    std::tm utc{}; gmtime_r(&now, &utc);
++    char stamp[32]; std::strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
++    std::ofstream(file) << "{\"type\":\"session\",\"version\":3,\"id\":\"01a158ec-db00-75e2-83a6-00013c6ef362\",\"timestamp\":\"" << stamp << "\",\"cwd\":\"/perf\"}\n";
++    int input[2], output[2];
++    ASSERT_EQ(pipe(input), 0); ASSERT_EQ(pipe(output), 0);
++    const auto pid = fork(); ASSERT_GE(pid, 0);
++    if (pid == 0) {
++        dup2(input[0], STDIN_FILENO); dup2(output[1], STDOUT_FILENO);
++        close(input[0]); close(input[1]); close(output[0]); close(output[1]);
++        setenv("HOME", home, 1); unsetenv("PI_CODING_AGENT_DIR"); unsetenv("PI_CONFIG_DIR");
++        execl(AGENTSPEED_COLLECTOR_PATH, AGENTSPEED_COLLECTOR_PATH, nullptr); _exit(127);
++    }
++    close(input[0]); close(output[1]);
++    auto append = [&](int id, bool timed) {
++        std::ofstream out(file, std::ios::app);
++        out << "{\"type\":\"message\",\"id\":\"r" << id << "\",\"parentId\":null,\"timestamp\":\"" << stamp
++            << "\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"api\":\"openai-responses\",\"provider\":\"openai\",\"model\":\"gpt-5.5\",\"usage\":{\"input\":300,\"output\":410,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":710},\"stopReason\":\"stop\"";
++        if (timed) out << ",\"timestamp\":" << (static_cast<long long>(now) - 10 + id) * 1000 << ",\"duration\":1000";
++        out << "}}\n";
++    };
++    std::string data; std::size_t consumed = 0; int stage = 0;
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
++    while (std::chrono::steady_clock::now() < deadline && stage < 3) {
++        pollfd fd{output[0], POLLIN, 0};
++        if (poll(&fd, 1, 1000) <= 0) continue;
++        char bytes[8192]; const auto n = read(output[0], bytes, sizeof(bytes));
++        if (n <= 0) break;
++        data.append(bytes, static_cast<std::size_t>(n));
++        std::size_t end;
++        while ((end = data.find('\n', consumed)) != std::string::npos) {
++            agentspeed::json::Document doc;
++            const auto line = data.substr(consumed, end - consumed); consumed = end + 1;
++            if (!doc.parse(line) || doc.root()["type"].string() != "snapshot") continue;
++            if (stage == 0) { append(1, true); append(2, true); append(3, false); stage = 1; continue; }
++            const auto perf = doc.root()["agents"].at(0)["perf"];
++            if (!perf.valid()) continue;
++            if (stage == 1 && perf["n"].count() == 2) {
++                EXPECT_EQ(perf["score"].raw(), "null");
++                append(4, true); stage = 2;
++            } else if (stage == 2 && perf["n"].count() == 3) {
++                EXPECT_NE(perf["score"].raw(), "null"); stage = 3;
++            }
++        }
++    }
++    close(input[1]); close(output[0]);
++    int status = 0; waitpid(pid, &status, 0);
++    EXPECT_EQ(stage, 3);
++    std::filesystem::remove_all(home);
++}
++
++TEST(CollectorIntegration, ViewerHistoryTimezoneDoesNotChangeHostBaseline) {
++    char home[] = "/tmp/agentspeed-collector-baseline-zone-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-baseline";
++    std::filesystem::create_directories(dir);
++    const auto file = dir / "2026-10-20T10-48-00-000Z_01a158ec-db00-75e2-83a6-00013c6ef362.jsonl";
++    const auto now = std::time(nullptr);
++    const auto midnight = now - now % 86400;
++    const bool early = now - midnight < 43200;
++    const auto old = early ? midnight - 86400 + 13 * 3600 : midnight - 14 * 86400 + 3600;
++    const std::string viewer = early ? "Etc/GMT-12" : "Etc/GMT+12";
++    auto stamp = [](std::time_t value) {
++        std::tm utc{}; gmtime_r(&value, &utc);
++        char result[32]; std::strftime(result, sizeof(result), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
++        return std::string(result);
++    };
++    auto message = [&](std::ostream& out, int id, std::time_t at) {
++        out << "{\"type\":\"message\",\"id\":\"r" << id << "\",\"parentId\":null,\"timestamp\":\"" << stamp(at)
++            << "\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"api\":\"openai-responses\",\"provider\":\"openai\",\"model\":\"gpt-5.5\",\"usage\":{\"input\":300,\"output\":410,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":710},\"stopReason\":\"stop\",\"timestamp\":" << (static_cast<long long>(at) - 2) * 1000 << ",\"duration\":1000}}\n";
++    };
++    {
++        std::ofstream out(file);
++        out << "{\"type\":\"session\",\"version\":3,\"id\":\"01a158ec-db00-75e2-83a6-00013c6ef362\",\"timestamp\":\"" << stamp(old) << "\",\"cwd\":\"/baseline\"}\n";
++        for (int i = 0; i < 20; ++i) message(out, i, old + i);
++    }
++    int input[2], output[2]; ASSERT_EQ(pipe(input), 0); ASSERT_EQ(pipe(output), 0);
++    const auto pid = fork(); ASSERT_GE(pid, 0);
++    if (pid == 0) {
++        dup2(input[0], STDIN_FILENO); dup2(output[1], STDOUT_FILENO);
++        close(input[0]); close(input[1]); close(output[0]); close(output[1]);
++        setenv("HOME", home, 1); setenv("TZ", "UTC", 1);
++        unsetenv("PI_CODING_AGENT_DIR"); unsetenv("PI_CONFIG_DIR");
++        execl(AGENTSPEED_COLLECTOR_PATH, AGENTSPEED_COLLECTOR_PATH, nullptr); _exit(127);
++    }
++    close(input[0]); close(output[1]);
++    const std::string request = "{\"version\":1,\"type\":\"history_timezone\",\"timezone\":\"" + viewer + "\"}\n";
++    EXPECT_EQ(write(input[1], request.data(), request.size()), static_cast<ssize_t>(request.size()));
++    bool appended = false, history = false, baseline = false;
++    std::string data; std::size_t consumed = 0;
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
++    while (std::chrono::steady_clock::now() < deadline && !(history && baseline)) {
++        pollfd fd{output[0], POLLIN, 0}; if (poll(&fd, 1, 1000) <= 0) continue;
++        char bytes[8192]; const auto n = read(output[0], bytes, sizeof(bytes)); if (n <= 0) break;
++        data.append(bytes, static_cast<std::size_t>(n)); std::size_t end;
++        while ((end = data.find('\n', consumed)) != std::string::npos) {
++            agentspeed::json::Document doc; const auto line = data.substr(consumed, end - consumed); consumed = end + 1;
++            if (!doc.parse(line)) continue;
++            const auto root = doc.root();
++            if (root["type"].string() == "snapshot" && !appended) {
++                std::ofstream out(file, std::ios::app);
++                for (int i = 0; i < 3; ++i) message(out, 20 + i, now - 5 + i);
++                appended = true;
++            } else if (root["timezone"].string() == viewer && root["type"].string() == "history") {
++                for (const auto& record : root["perf_records"].elements())
++                    if (record["n"].count() >= 20 && record["day"].string() != stamp(old).substr(0, 10)) history = true;
++            } else if (root["timezone"].string() == viewer && root["type"].string() == "snapshot") {
++                const auto perf = root["agents"].at(0)["perf"];
++                if (perf["n"].count() == 3 && !perf["baseline"].isNull()) baseline = true;
++            }
++        }
++    }
++    close(input[1]); close(output[0]); int status = 0; waitpid(pid, &status, 0);
++    EXPECT_TRUE(history); EXPECT_TRUE(baseline);
++    std::filesystem::remove_all(home);
++}
+diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
+index d826d8c5..e4f004f8 100644
+--- a/linux/tests/collector_test.cpp
++++ b/linux/tests/collector_test.cpp
+@@ -367,3 +367,47 @@ TEST(CollectorHistoryCache, RejectsSymlinkedCacheDirectory) {
+     }
+     std::filesystem::remove_all(root);
+ }
++
++TEST(CollectorProtocol, PreservesPerformanceAndIndependentHistoryRecords) {
++    collector::Protocol protocol;
++    agentspeed::Snapshot snapshot;
++    agentspeed::AgentRow agent;
++    agent.id = "agent";
++    agent.perf.emplace();
++    auto& p = agent.perf->score;
++    p.form = agentspeed::perf::Form::Live;
++    p.n = 3; p.score = 1234.5; p.model = "raw-model";
++    p.components[0].id = agentspeed::perf::Id::T;
++    p.components[0].reason = agentspeed::perf::Reason::FewSamples;
++    agent.perf->workSignals.failed = 2;
++    snapshot.agents.push_back(agent);
++    agentspeed::json::Document doc;
++    const auto wire = protocol.snapshot(snapshot);
++    ASSERT_TRUE(doc.parse(wire));
++    const auto perf = doc.root()["agents"].at(0)["perf"];
++    EXPECT_EQ(perf["form"].string(), "live");
++    EXPECT_EQ(perf["n"].count(), 3);
++    EXPECT_EQ(perf["model"].string(), "raw-model");
++    EXPECT_EQ(perf["components"].at(0)["reason"].string(), "fewSamples");
++    EXPECT_EQ(perf["work_signals"]["failed"].count(), 2);
++    EXPECT_EQ(perf["baseline"].raw(), "null");
++
++    agentspeed::perf::DayRecord record;
++    record.day = "2026-10-19"; record.model = "raw-model";
++    record.record.n = 21; record.record.latencyBins[4] = 7;
++    record.record.toolLnSum = 1.25;
++    auto another = record;
++    another.record.n = 2; another.record.latencyBins[4] = 3; another.record.toolLnSum = 0.5;
++    auto different = record; different.model = "z-other-model";
++    agentspeed::history::Report report;
++    agentspeed::json::Document history;
++    const auto historyWire = collector::Protocol::history({}, report, "UTC", {record, another, different});
++    ASSERT_TRUE(history.parse(historyWire));
++    const auto item = history.root()["perf_records"].at(0);
++    EXPECT_EQ(item["day"].string(), "2026-10-19");
++    EXPECT_EQ(item["model"].string(), "raw-model");
++    EXPECT_EQ(item["n"].count(), 23);
++    EXPECT_EQ(item["latency_bins"].at(4).count(), 10);
++    EXPECT_EQ(item["tool_ln_sum"].raw(), "1.75");
++    EXPECT_EQ(history.root()["perf_records"].elements().size(), 2u);
++}
+diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+index 836af188..b0a36780 100644
+--- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
++++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
+@@ -30,6 +30,57 @@ struct RemoteAgent: Decodable, Identifiable, Sendable {
+     let speed: String?
+     let effortConfigured: Bool?
+     let speedConfigured: Bool?
++    let perf: RemotePerf?
++}
++
++struct RemotePerfComponent: Decodable, Sendable {
++    let id: String
++    let present: Bool
++    let reason: String?
++    let samples: Int
++    let measure: Double?
++    let ratio: Double?
++}
++
++struct RemoteWorkSignals: Decodable, Sendable {
++    let looping: Int?
++    let repeating: Int?
++    let novelty: Double?
++    let failed: Int
++    let recovered: Int
++}
++
++struct RemotePerf: Decodable, Sendable {
++    let form: String
++    let score: Double?
++    let n: Int
++    let tools: Int
++    let activeMs: Int64
++    let spanStartMs: Int64?
++    let model: String?
++    let components: [RemotePerfComponent]
++    let baseline: Double?
++    let workSignals: RemoteWorkSignals?
++}
++
++struct RemotePerfRecord: Decodable, Sendable {
++    let day: String
++    let source: String
++    let model: String
++    let n: Int
++    let outputSum: Int64
++    let durationMsSum: Int64
++    let latencyBins: [Int]
++    let reasonN: Int
++    let reasonOutput: Int64
++    let reasonDurationMsSum: Int64
++    let cacheN: Int
++    let cacheInput: Int64
++    let cacheCached: Int64
++    let toolN: Int
++    let toolLnSum: Double
++    let toolFailed: Int
++    let activeMs: Int64
+ }
+ 
+ struct RemoteDay: Decodable, Identifiable, Sendable {
+@@ -129,6 +180,7 @@ struct RemoteMessage: Decodable, Sendable {
+     let tools: Int?
+     let agents: [RemoteAgent]?
+     let days: [RemoteDay]?
++    let perfRecords: [RemotePerfRecord]?
+     let timezone: String?
+     let responseId: String?
+     let partial: Bool?
+@@ -156,6 +208,7 @@ struct RemoteHostState {
+     var snapshot: RemoteMessage?
+     var connectionID = UUID()
+     var days: [RemoteDay] = []
++    var perfRecords: [RemotePerfRecord]?
+     var historyPartial: Bool?
+     var historyReceivedAt: Date?
+     /// True only after this connection has supplied a history frame.
+@@ -171,6 +224,7 @@ struct RemoteHostState {
+             error = nil
+         } else if message.type == "history", message.timezone == TimeZone.current.identifier, let replacement = message.days {
+             days = replacement
++            perfRecords = message.perfRecords
+             historyPartial = message.partial
+             historyReceivedAt = Date()
+             historyReceivedOnConnection = true
+diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
+index 5396abe7..9d1fdd53 100644
+--- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
++++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
+@@ -106,6 +106,7 @@ extension RemoteHosts {
+                 agent.hostID = host.id
+                 let prefix = "remote:\(host.id.uuidString):\(state.connectionID.uuidString):"
+                 agent.id = prefix + agent.id
++                if agent.intelligence.score.agentId != nil { agent.intelligence.score.agentId = agent.id }
+                 if let parent = agent.parentId { agent.parentId = prefix + parent }
+                 return agent
+             }
+@@ -163,6 +164,15 @@ extension RemoteHosts {
+                     result.sources.append(source)
+                 }
+             }
++            for agent in agents {
++                result.intelligence.add(agent.intelligence)
++                if let index = result.sources.firstIndex(where: { $0.kind == agent.source }) {
++                    result.sources[index].intelligence.add(agent.intelligence)
++                }
++                if let index = result.sourceInstances.firstIndex(where: { $0.hostID == host.id && $0.status.kind == agent.source }) {
++                    result.sourceInstances[index].status.intelligence.add(agent.intelligence)
++                }
++            }
+             if message.partialHistory == true && !result.warnings.contains(.partialHistory) {
+                 result.warnings.append(.partialHistory)
+             }
+@@ -222,6 +232,25 @@ extension RemoteHostState {
+                 parentId: agent.parentId, modes: modes(configured: false))
+             status.liveRateAvailable = agent.liveOutput != nil && agent.liveTotal != nil
+             status.configuredModes = modes(configured: true)
++            if let perf = agent.perf, let form = PerfValueForm(rawValue: perf.form) {
++                let components = perf.components.compactMap { component -> PerfComponent? in
++                    guard let id = PerfComponentId(rawValue: component.id) else { return nil }
++                    return PerfComponent(id: id, samples: component.samples, measure: component.measure,
++                                         ratio: component.present ? component.ratio : nil,
++                                         reason: component.reason.flatMap(PerfAbsence.init(rawValue:)))
++                }
++                status.perf = PerfEvaluation(score: perf.score, n: perf.n, tools: perf.tools, activeMs: perf.activeMs,
++                                             spanStartMs: perf.spanStartMs, model: perf.model,
++                                             components: components, baseline: perf.baseline)
++                status.intelligence.score = PerfSetValue(form: form, score: perf.score, agentId: agent.id,
++                                                        lastLineMs: agent.lastLineMs.map(Int64.init),
++                                                        provisional: status.perf?.provisional ?? false)
++                if let signals = perf.workSignals {
++                    status.signals = WorkSignals(looping: signals.looping, repeating: signals.repeating,
++                                                 novelty: signals.novelty, failed: signals.failed,
++                                                 recovered: signals.recovered)
++                }
++            }
+             return status
+         }
+         return SpeedSnapshot(timestamp: timestamp, state: .running,
+@@ -269,6 +298,28 @@ extension RemoteHostState {
+         }
+         return result
+     }
++
++    var performanceHistory: [PerfDayRecord]? {
++        perfRecords?.compactMap { remote in
++            guard let source = SourceKind(rawValue: remote.source), remote.latencyBins.count == PerfLatency.bucketCount else { return nil }
++            var record = PerfRecord()
++            record.n = remote.n
++            record.outputSum = remote.outputSum
++            record.durationMsSum = remote.durationMsSum
++            record.latencyBins = remote.latencyBins
++            record.reasonN = remote.reasonN
++            record.reasonOutput = remote.reasonOutput
++            record.reasonDurationMsSum = remote.reasonDurationMsSum
++            record.cacheN = remote.cacheN
++            record.cacheInput = remote.cacheInput
++            record.cacheCached = remote.cacheCached
++            record.toolN = remote.toolN
++            record.toolLnSum = remote.toolLnSum
++            record.toolFailed = remote.toolFailed
++            record.activeMs = remote.activeMs
++            return PerfDayRecord(key: PerfRecordKey(day: remote.day, source: source, model: remote.model), record: record)
++        }
++    }
+ }
+ 
+ private func remoteCost(_ cost: Int64?, _ unpriced: Int?) -> CostTally? {
+diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+index 0049d5b5..2f82d34a 100644
+--- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
++++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+@@ -22,8 +22,8 @@ final class HistoryViewModel {
+     let traffic: TrafficStore
+     private let appModel: AppModel?
+     /// Select each machine's history per source, using the same connections for status and data.
+-    private var remoteHistorySelection: (usage: [DailyUsage], states: [RemoteHostState]) {
+-        guard let remote = appModel?.remoteHosts else { return ([], []) }
++    private var remoteHistorySelection: (usage: [DailyUsage], states: [RemoteHostState], perf: [(UUID, String, [PerfDayRecord])]) {
++        guard let remote = appModel?.remoteHosts else { return ([], [], []) }
+         let hosts = remote.hosts.filter(\.enabled).sorted {
+             let left = remote.states[$0.id], right = remote.states[$1.id]
+             let leftFresh = left?.online == true && left?.historyReceivedOnConnection == true
+@@ -36,22 +36,27 @@ final class HistoryViewModel {
+         var contributingMachines: Set<String> = []
+         var selectedStates: [RemoteHostState] = []
+         var usage: [DailyUsage] = []
++        var perf: [(UUID, String, [PerfDayRecord])] = []
+         for host in hosts {
+             let state = remote.states[host.id] ?? RemoteHostState()
+             let identity = state.snapshot?.machineId ?? host.id.uuidString
+             if representatives[identity] == nil { representatives[identity] = state }
+             guard let days = state.historyUsage else { continue }
+-            let sources = Set(days.map(\.source)).subtracting(seen[identity] ?? [])
++            let sources = Set(days.map(\.source) + (state.performanceHistory ?? []).map(\.source))
++                .subtracting(seen[identity] ?? [])
+             guard !sources.isEmpty else { continue }
+             usage.append(contentsOf: days.filter { sources.contains($0.source) })
+             seen[identity, default: []].formUnion(sources)
++            if let records = state.performanceHistory {
++                perf.append((host.id, host.label, records.filter { sources.contains($0.source) }))
++            }
+             contributingMachines.insert(identity)
+             selectedStates.append(state)
+         }
+         selectedStates.append(contentsOf: representatives.compactMap { identity, state in
+             contributingMachines.contains(identity) ? nil : state
+         })
+-        return (usage, selectedStates)
++        return (usage, selectedStates, perf)
+     }
+ 
+     private var enabledRemoteStates: [RemoteHostState] { remoteHistorySelection.states }
+@@ -245,7 +250,16 @@ final class HistoryViewModel {
+             prices: cost.prices.book.current
+         )
+         if next != content { content = next }
+-        let nextPerf = PerfHistoryContent.build(store.perfRecords, range: next.range, source: source, today: today)
++        var nextPerf = PerfHistoryContent.build(store.perfRecords, range: next.range, source: source, today: today)
++        for (hostID, host, records) in remoteHistorySelection.perf {
++            let remotePerf = PerfHistoryContent.build(records, range: next.range, source: source, today: today)
++            nextPerf.rows.append(contentsOf: remotePerf.rows.map { row in
++                var row = row
++                row.hostID = hostID
++                row.host = host
++                return row
++            })
++        }
+         if nextPerf != perf { perf = nextPerf }
+     }
+ 
+diff --git a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryContent.swift b/macos/Sources/AgentSpeed/Perf/History/PerfHistoryContent.swift
+index 5093bb8c..c775b11a 100644
+--- a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryContent.swift
++++ b/macos/Sources/AgentSpeed/Perf/History/PerfHistoryContent.swift
+@@ -6,6 +6,7 @@ import Foundation
+ struct PerfHistoryKey: Hashable, Sendable {
+     var source: SourceKind
+     var model: String
++    var hostID: UUID? = nil
+ }
+ 
+ /// One `(source, model)` of 性能表現 (DESIGN 12, *Usage History: performance*): the values pooled over the range, the
+@@ -13,12 +14,14 @@ struct PerfHistoryKey: Hashable, Sendable {
+ struct PerfHistoryRow: Equatable, Identifiable, Sendable {
+     var source: SourceKind
+     var model: String
++    var hostID: UUID? = nil
++    var host: String? = nil
+     var pooled: PerfPooled
+     /// The baseline behind 比平常 (METRICS 6.11); nil below 20 timed requests in the 14 days before today.
+     var usual: Double?
+     var trend: [PerfHistory.Point]
+ 
+-    var id: PerfHistoryKey { PerfHistoryKey(source: source, model: model) }
++    var id: PerfHistoryKey { PerfHistoryKey(source: source, model: model, hostID: hostID) }
+     var n: Int { pooled.n }
+     var shown: Int? { pooled.shown }
+     var usualShown: Int? { usual.map(perfRoundHalfAway) }
+diff --git a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryTable.swift b/macos/Sources/AgentSpeed/Perf/History/PerfHistoryTable.swift
+index 7581ef52..b6c0eb4d 100644
+--- a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryTable.swift
++++ b/macos/Sources/AgentSpeed/Perf/History/PerfHistoryTable.swift
+@@ -168,11 +168,7 @@ struct PerfHistoryModelCell: View {
+         HStack(spacing: 7) {
+             PerfSourceDot(source: row.source)
+             Group {
+-                if row.model.isEmpty {
+-                    Text(l10n("cost.noModelName")).italic()
+-                } else {
+-                    Text(row.model)
+-                }
++                Text(PerfHistoryText.model(row, l10n)).italic(row.model.isEmpty)
+             }
+             .font(low ? PerfHistoryFont.modelID.weight(.regular) : PerfHistoryFont.modelID)
+             .foregroundStyle(low || row.model.isEmpty ? AnyShapeStyle(.historySecondary) : AnyShapeStyle(.primary))
+diff --git a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryText.swift b/macos/Sources/AgentSpeed/Perf/History/PerfHistoryText.swift
+index 895f2a72..4c014cfb 100644
+--- a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryText.swift
++++ b/macos/Sources/AgentSpeed/Perf/History/PerfHistoryText.swift
+@@ -9,7 +9,8 @@ enum PerfHistoryText {
+     static let minimum = PerfPooled.minimumResponses
+ 
+     static func model(_ row: PerfHistoryRow, _ l10n: Localizer) -> String {
+-        row.model.isEmpty ? l10n("cost.noModelName") : row.model
++        let model = row.model.isEmpty ? l10n("cost.noModelName") : row.model
++        return row.host.map { "\(model) · \($0)" } ?? model
+     }
+ 
+     static func source(_ row: PerfHistoryRow, _ l10n: Localizer) -> String { l10n(row.source.titleKey) }
+diff --git a/macos/Sources/AgentSpeed/Perf/Model/PerfCardModel.swift b/macos/Sources/AgentSpeed/Perf/Model/PerfCardModel.swift
+index 8bff4849..d6038643 100644
+--- a/macos/Sources/AgentSpeed/Perf/Model/PerfCardModel.swift
++++ b/macos/Sources/AgentSpeed/Perf/Model/PerfCardModel.swift
+@@ -35,6 +35,7 @@ struct PerfCardScore: Equatable, Sendable {
+     var vsUsualPercent: Int?
+     var components: [PerfComponent]
+     var signals: WorkSignals
++    var available: Bool = true
+ 
+     func component(_ id: PerfComponentId) -> PerfComponent? { components.first { $0.id == id } }
+ }
+@@ -53,7 +54,7 @@ extension PerfCardModel {
+                                  provisional: evaluation.provisional, n: evaluation.n, tools: evaluation.tools,
+                                  topCount: topCount, baseline: evaluation.baseline,
+                                  vsUsualPercent: evaluation.vsUsualPercent, components: evaluation.components,
+-                                 signals: agent.signals),
++                                 signals: agent.signals, available: agent.perf != nil),
+             facts: facts)
+     }
+ }
+diff --git a/macos/Sources/AgentSpeed/Perf/Model/PerfCardText.swift b/macos/Sources/AgentSpeed/Perf/Model/PerfCardText.swift
+index 4581b1a9..2651226b 100644
+--- a/macos/Sources/AgentSpeed/Perf/Model/PerfCardText.swift
++++ b/macos/Sources/AgentSpeed/Perf/Model/PerfCardText.swift
+@@ -14,6 +14,7 @@ enum PerfCardText {
+ 
+     /// The summary under the scale; `perf.status.none` while there is no score.
+     static func summary(_ score: PerfCardScore, _ l10n: Localizer) -> String {
++        guard score.available else { return l10n("intel.none") }
+         guard let shown = score.shown else { return l10n("perf.status.none", score.n, PerfFormula.minimumSamples) }
+         let tier = l10n(PerfScoreText.tierKey(shown))
+         let ratio = PerfScoreText.ratio(shown)
+@@ -111,7 +112,7 @@ enum PerfCardText {
+ 
+     /// `perf.card.sample` with n, then the row's facts.
+     static func facts(_ model: PerfCardModel, _ l10n: Localizer) -> [String] {
+-        [l10n("perf.card.sample", model.score.n)] + model.facts
++        (model.score.available ? [l10n("perf.card.sample", model.score.n)] : []) + model.facts
+     }
+ 
+     /// The card's content as the row's extra accessibility content, in DESIGN 12's order.
+diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+index 438a4384..e53220ee 100644
+--- a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
+@@ -20,6 +20,82 @@ struct RemoteHostsTests {
+         #expect(message(#"{"version":2,"type":"snapshot"}"#) == nil)
+     }
+ 
++    @Test @MainActor func remotePerformanceIsRealAndMissingStaysUnavailable() throws {
++        let frame = try #require(message(#"{"version":1,"type":"snapshot","agents":[{"id":"a","source":"pi","phase":"generating","subagent":false,"perf":{"form":"live","score":1200,"n":5,"tools":4,"active_ms":2000,"span_start_ms":100,"model":"m","components":[{"id":"T","present":true,"reason":null,"samples":5,"measure":30,"ratio":1.2}],"baseline":1000,"work_signals":{"looping":3,"repeating":null,"novelty":0.5,"failed":1,"recovered":1}}},{"id":"b","source":"pi","phase":"idle","subagent":false}]}"#))
++        var state = RemoteHostState()
++        state.apply(frame)
++        let agents = try #require(state.dashboardSnapshot?.agents)
++        let measured = try #require(agents.first)
++        #expect(measured.perf?.score == 1200)
++        #expect(measured.perf?.baseline == 1000)
++        #expect(measured.perf?.components.first?.ratio == 1.2)
++        #expect(measured.intelligence.score.form == .live)
++        #expect(measured.signals.looping == 3)
++        let missing = try #require(agents.last)
++        #expect(missing.perf == nil)
++        let card = PerfCardModel(agent: missing, facts: [])
++        #expect(!card.score.available)
++        #expect(PerfCardText.facts(card, Localizer(preference: .en)).isEmpty)
++    }
++
++    @Test func remotePerformanceHistoryReplacesAndDoesNotUseUsageTiming() throws {
++        let bins = Array(repeating: "0", count: 64).joined(separator: ",")
++        let history = try #require(message("""
++        {"version":1,"type":"history","partial":false,"days":[],"perf_records":[{"day":"2026-01-01","source":"pi","model":"m","n":7,"output_sum":90,"duration_ms_sum":2000,"latency_bins":[\(bins)],"reason_n":0,"reason_output":0,"reason_duration_ms_sum":0,"cache_n":0,"cache_input":0,"cache_cached":0,"tool_n":0,"tool_ln_sum":0,"tool_failed":0,"active_ms":1500}]}
++        """))
++        var first = RemoteHostState(); var second = RemoteHostState()
++        first.apply(history)
++        #expect(first.performanceHistory?.first?.record.n == 7)
++        #expect(first.performanceHistory?.first?.record.durationMsSum == 2000)
++        #expect(second.performanceHistory == nil)
++        first.apply(try #require(message(#"{"version":1,"type":"history","partial":false,"days":[]}"#)))
++        #expect(first.performanceHistory == nil)
++    }
++
++    @Test @MainActor func performanceHistoryKeepsHostsAndBaselinesSeparate() throws {
++        let suite = "RemotePerfIsolation.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let today = DayKey(Date(), calendar: HistoryDates.calendar)
++        let previous = today.adding(days: -1).description
++        let bins = Array(repeating: "0", count: 64).joined(separator: ",")
++        func record(_ day: String, _ output: Int) -> String {
++            """
++            {"day":"\(day)","source":"pi","model":"same","n":20,"output_sum":\(output),"duration_ms_sum":20000,"latency_bins":[\(bins)],"reason_n":0,"reason_output":0,"reason_duration_ms_sum":0,"cache_n":0,"cache_input":0,"cache_cached":0,"tool_n":0,"tool_ln_sum":0,"tool_failed":0,"active_ms":20000}
++            """
++        }
++        func state(_ machine: String, _ output: Int) throws -> RemoteHostState {
++            var state = RemoteHostState()
++            state.apply(try #require(message(#"{"version":1,"type":"snapshot","machine_id":"\#(machine)"}"#)))
++            state.apply(try #require(message("""
++            {"version":1,"type":"history","partial":false,"days":[],"perf_records":[\(record(today.description, output)),\(record(previous, output))]}
++            """)))
++            return state
++        }
++        let a = RemoteHost(label: "A", destination: "a", enabled: true)
++        let b = RemoteHost(label: "B", destination: "b", enabled: true)
++        defaults.set(try JSONEncoder().encode([a, b]), forKey: "remoteHosts.v1")
++        let hosts = RemoteHosts(defaults: defaults, states: [a.id: try state("a", 2000), b.id: try state("b", 4000)])
++        let store = HistoryStore()
++        var local = PerfRecord()
++        local.n = 20
++        local.outputSum = 1000
++        local.durationMsSum = 20000
++        local.activeMs = 20000
++        store.publish(perfRecords: [today.description, previous].map {
++            PerfDayRecord(key: PerfRecordKey(day: $0, source: .pi, model: "same"), record: local)
++        })
++        let app = AppModel(settings: AppSettings(defaults: defaults), history: store, remoteHosts: hosts)
++        let view = HistoryViewModel(store: store, l10n: app.l10n, accessibility: app.accessibility,
++                                    cost: app.cost, traffic: app.traffic, model: app)
++        view.select(range: .today)
++        let rows = view.perf.rows.filter { $0.model == "same" }
++        #expect(rows.count == 3)
++        #expect(Set(rows.compactMap(\.hostID)) == Set([a.id, b.id]))
++        #expect(rows.allSatisfy { $0.n == 20 && $0.usual != nil })
++        #expect(Set(rows.compactMap(\.usual)).count == 3)
++    }
++
+     @Test func historyReplacementAndIsolation() throws {
+         let first = try #require(message(#"{"version":1,"type":"history","days":[{"day":"2026-01-01","source":"pi","requests":1,"input":10,"cached_input":2,"cache_write_input":0,"output":5,"reasoning":0,"measured_output":5,"measured_ms":1000,"peak":5}]}"#))
+         let empty = try #require(message(#"{"version":1,"type":"history","days":[]}"#))
+diff --git a/spec/METRICS.md b/spec/METRICS.md
+index a87c8283..724ad494 100644
+--- a/spec/METRICS.md
++++ b/spec/METRICS.md
+@@ -15,6 +15,12 @@ inferred when absent from the transcript.
+ Remote history days are aggregated in the viewer's time zone, requested by the client from the collector. Today’s
+ categorized token totals, project paths, traffic and a continuous live curve are not supplied by the collector and must
+ not be inferred from missing fields. Disconnected intervals remain gaps.
++Remote agents may carry the collector's performance score and baseline; remote performance history consists of the
++collector's per-day analysis records (6.11), not reconstructed live snapshots. Rows and baselines are scoped to remote
++host, source and model: never merge one host's baseline or history into another host's or local history. A collector that does not
++send performance data leaves it unavailable, not zero; its other monitoring data remains usable. Network history is
++not supplied, and disconnects do not establish continuous performance measurements.
++
+ 
+ ## 1. Vocabulary
+ 
+@@ -2402,6 +2408,12 @@ sample response (6.9 *Facts*) whose day lies in `[today − 14, today − 1]` (l
+ store last saved them (8: on launch, every 10 minutes, at midnight). None when `Σ n < 20`. Cases: `baseline` and the
+ first `agents` case.
+ 
++For a remote agent, use the baseline supplied by that host's collector, not the viewer's local records or another host's
++records. The collector derives it from its own analyzer history under this same previous-14-days rule, using the
++collector host's local dates. Remote performance history records are sent separately and grouped into days in the
++viewer-requested history time zone, which may differ; do not recompute a collector baseline by pooling those records
++across hosts or assuming their day boundaries match the baseline.
++
+ #### History window
+ 
+ 性能表現 (DESIGN 12) over the window's range [`first`, `last`] — of every source, or only of the one source chosen in
+diff --git a/spec/NETWORK.md b/spec/NETWORK.md
+index 803ab6b0..744c0312 100644
+--- a/spec/NETWORK.md
++++ b/spec/NETWORK.md
+@@ -247,6 +247,23 @@ collector without a matching time-zone tag must not be presented as viewer-local
+ can be measured or live data is incomplete. If global live data is incomplete, each source's live rates and estimated
+ share are also null.
+ 
++Protocol v1 optionally carries an agent `perf` object containing `form`, `score`, `shown`, `provisional`, `n`,
++`tools`, `active_ms`, `span_start_ms`, `model`, `components`, `baseline`, `vs_usual`, `vs_usual_percent` and
++`work_signals`. Each component has `id`, `present`, `reason`, `samples`, `measure`, `ratio` and `sub_score`;
++work signals have `looping`, `repeating`, `novelty`, `failed` and `recovered`. `form` is `none`, `live` or
++`resting`; component IDs are `T`, `L`, `N`, `R`, `H`, `U`, `S`, and `reason` is null, `notRecorded` or
++`fewSamples`. Nullable scalar values are explicitly null and must not be interpreted as zero. Scores and their
++baseline follow METRICS 6.9 and 6.11, using collector measurements rather than manufactured timing or missing log facts.
++The baseline uses collector-host local dates, independently of the viewer-requested history time zone.
++
++History frames optionally carry `perf_records`, replacement per-day aggregates with `day`, `source`, `model`, `n`,
++`output_sum`, `duration_ms_sum`, `latency_bins`, `reason_n`, `reason_output`, `reason_duration_ms_sum`,
++`cache_n`, `cache_input`, `cache_cached`, `tool_n`, `tool_ln_sum`, `tool_failed` and `active_ms` (METRICS 6.11).
++Their days use the requested history time zone, and their host comes from the connection, not the record. They are
++history analysis records, not samples synthesized from live snapshots. A new collector sends an empty array when
++there are no records; an older collector may omit it. Missing performance fields mean unavailable, not empty or zero;
++ordinary snapshot and history data remain usable.
++
+ Each configured host has a stable identity; remote sources are identified by host and source kind. Local sources and
+ all enabled remote sources appear together in the native macOS dashboard. Local diagnostic reports and live reporting
+ contain local data only. Snapshots and history replace the previous host state rather than accumulating on reconnect. The collector
+diff --git a/windows/src/AgentSpeed.Core/Perf/PerfHistory.cs b/windows/src/AgentSpeed.Core/Perf/PerfHistory.cs
+index cdbf306c..acec8b96 100644
+--- a/windows/src/AgentSpeed.Core/Perf/PerfHistory.cs
++++ b/windows/src/AgentSpeed.Core/Perf/PerfHistory.cs
+@@ -7,7 +7,11 @@ namespace AgentSpeed.Core.Perf;
+ public readonly record struct PerfTrendPoint(string Day, double? Score);
+ 
+ /// <summary>One row of the History window's 性能表現 (METRICS 6.11 <i>History window</i>): a source and model over the range.</summary>
+-public sealed record PerfRangeRow(SourceKind Source, string Model, PerfPooled Pooled, IReadOnlyList<PerfTrendPoint> Trend);
++public sealed record PerfRangeRow(SourceKind Source, string Model, PerfPooled Pooled, IReadOnlyList<PerfTrendPoint> Trend)
++{
++    public Guid? HostId { get; init; }
++    public string? HostLabel { get; init; }
++}
+ 
+ /// <summary>
+ /// The baseline of the score card and the History window's rows (METRICS 6.11), over stored day records of every source.
+@@ -39,7 +43,7 @@ public sealed class PerfHistory : IPerfBaselines
+     public double? Baseline(SourceKind source, string model) =>
+         _baselines.GetOrAdd((source, model), key => BaselineOf(_records, key.Item1, key.Item2, Today));
+ 
+-    public static double? BaselineOf(IEnumerable<PerfRecord> records, SourceKind source, string model, string today)
++    public static double? BaselineOf(IEnumerable<PerfRecord> records, SourceKind source, string model, string today, Guid? hostId = null)
+     {
+         ArgumentNullException.ThrowIfNull(records);
+         if (!TryParse(today, out var day))
+@@ -49,7 +53,7 @@ public sealed class PerfHistory : IPerfBaselines
+ 
+         var first = Format(day.AddDays(-PerfFormula.BaselineDays));
+         var last = Format(day.AddDays(-1));
+-        var chosen = records.Where(r => r.Source == source && string.Equals(r.Model, model, StringComparison.Ordinal)
++        var chosen = records.Where(r => r.HostId == hostId && r.Source == source && string.Equals(r.Model, model, StringComparison.Ordinal)
+             && string.CompareOrdinal(r.Day, first) >= 0 && string.CompareOrdinal(r.Day, last) <= 0).Select(r => r.Sums);
+         return PerfPooled.Of(chosen, source).Score;
+     }
+@@ -60,8 +64,8 @@ public sealed class PerfHistory : IPerfBaselines
+     public static IReadOnlyList<PerfRangeRow> RangeOf(IEnumerable<PerfRecord> records, string first, string last, SourceKind? source = null)
+     {
+         ArgumentNullException.ThrowIfNull(records);
+-        var groups = new Dictionary<(SourceKind, string), List<PerfRecord>>();
+-        var order = new List<(SourceKind, string)>();
++        var groups = new Dictionary<(SourceKind, string, Guid?), List<PerfRecord>>();
++        var order = new List<(SourceKind, string, Guid?)>();
+         foreach (var record in records)
+         {
+             if (string.CompareOrdinal(record.Day, first) < 0 || string.CompareOrdinal(record.Day, last) > 0
+@@ -70,7 +74,7 @@ public sealed class PerfHistory : IPerfBaselines
+                 continue;
+             }
+ 
+-            var key = (record.Source, record.Model);
++            var key = (record.Source, record.Model, record.HostId);
+             if (!groups.TryGetValue(key, out var list))
+             {
+                 groups[key] = list = [];
+@@ -92,7 +96,8 @@ public sealed class PerfHistory : IPerfBaselines
+                 trend[i] = new PerfTrendPoint(day, PerfPooled.Of(part.Where(r => r.Day == day).Select(r => r.Sums), key.Item1).Score);
+             }
+ 
+-            rows.Add(new PerfRangeRow(key.Item1, key.Item2, PerfPooled.Of(part.Select(r => r.Sums), key.Item1), trend));
++            rows.Add(new PerfRangeRow(key.Item1, key.Item2, PerfPooled.Of(part.Select(r => r.Sums), key.Item1), trend)
++                { HostId = key.Item3, HostLabel = part[0].HostLabel });
+         }
+ 
+         rows.Sort(static (a, b) =>
+diff --git a/windows/src/AgentSpeed.Core/Perf/PerfRecord.cs b/windows/src/AgentSpeed.Core/Perf/PerfRecord.cs
+index b6f47bd1..3331d04a 100644
+--- a/windows/src/AgentSpeed.Core/Perf/PerfRecord.cs
++++ b/windows/src/AgentSpeed.Core/Perf/PerfRecord.cs
+@@ -5,6 +5,8 @@ namespace AgentSpeed.Core.Perf;
+ /// <summary>One performance history record (METRICS 6.11 <i>Records</i>): a local day, a source and a raw model (empty when unknown).</summary>
+ public sealed record PerfRecord(string Day, SourceKind Source, string Model, PerfSums Sums)
+ {
++    public Guid? HostId { get; init; }
++    public string? HostLabel { get; init; }
+     /// <summary>By day, then source order (METRICS 1), then the model's UTF-8 bytes.</summary>
+     public static int Compare(PerfRecord? a, PerfRecord? b)
+     {
+diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
+index d6974e2d..a22f67cc 100644
+--- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
++++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
+@@ -1,5 +1,6 @@
+ using System.Text.Json;
+ using AgentSpeed.Core.Reporting;
++using AgentSpeed.Core.Perf;
+ 
+ namespace AgentSpeed.Core;
+ 
+@@ -10,6 +11,8 @@ public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string
+     /// <summary>Whether a valid source list has been received, including one filtered to no sources.</summary>
+     public bool SourcesKnown { get; init; }
+     public IReadOnlyList<DailyUsage> Days { get; init; } = [];
++    /// <summary>Performance records sent by this host, or null when its collector does not provide them.</summary>
++    public IReadOnlyList<PerfRecord>? PerfRecords { get; init; }
+     public bool? HistoryPartial { get; init; }
+     public DateTimeOffset? HistoryReceivedAt { get; init; }
+     public bool HistoryCurrent { get; init; }
+@@ -25,6 +28,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+     public string? Error { get; set; }
+     public JsonElement? Snapshot { get; set; }
+     public IReadOnlyList<DailyUsage> Days { get; set; } = [];
++    public IReadOnlyList<PerfRecord>? PerfRecords { get; set; }
+     public string? HistoryTimezone { get; set; }
+     public bool? HistoryPartial { get; set; }
+     public DateTimeOffset? HistoryReceivedAt { get; set; }
+@@ -47,6 +51,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+                     var timezone = root.Text("timezone");
+                     if (timezone != LocalTimezone() || root.Array("days") is not { } days) return null;
+                     Days = days.EnumerateArray().Select(Day).Where(d => d is not null).Cast<DailyUsage>().ToArray();
++                    PerfRecords = RemotePerformance.Records(root)?.Select(r => r with { HostId = Id, HostLabel = Label }).ToArray();
+                     HistoryTimezone = timezone; HistoryPartial = root.Boolean("partial");
+                     HistoryReceivedAt = DateTimeOffset.UtcNow; HistoryCurrent = true;
+                     break;
+@@ -87,7 +92,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+     public RemoteHostStatus Status()
+     {
+         bool sameZone = HistoryTimezone == LocalTimezone();
+-        return new(Id, Label, Online, Error) { MachineId = Snapshot?.Text("machine_id") ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null, Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
++        return new(Id, Label, Online, Error) { MachineId = Snapshot?.Text("machine_id") ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null, Days = sameZone ? Days : [], PerfRecords = sameZone ? PerfRecords : null, HistoryPartial = sameZone ? HistoryPartial : null,
+             HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
+     }
+ 
+diff --git a/windows/src/AgentSpeed.Core/RemotePerformance.cs b/windows/src/AgentSpeed.Core/RemotePerformance.cs
+new file mode 100644
+index 00000000..cb8c4e13
+--- /dev/null
++++ b/windows/src/AgentSpeed.Core/RemotePerformance.cs
+@@ -0,0 +1,63 @@
++using System.Text.Json;
++using AgentSpeed.Core.Perf;
++using AgentSpeed.Core.Work;
++
++namespace AgentSpeed.Core;
++
++internal static class RemotePerformance
++{
++    private static long? Integer(JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out var n) ? n : null;
++    private static int? Int(JsonElement e, string name) => Integer(e, name) is long n && n >= 0 && n <= int.MaxValue ? (int)n : null;
++    private static JsonElement? Object(JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Object ? v : null;
++
++    public static (PerfEvaluation? Evaluation, WorkSignals? Work) Agent(JsonElement agent, SourceKind source)
++    {
++        if (Object(agent, "perf") is not { } p) return (null, null);
++        WorkSignals? work = null;
++        if (Object(p, "work_signals") is { } w && Int(w, "failed") is int failed && Int(w, "recovered") is int recovered)
++            work = new WorkSignals(Int(w, "looping"), Int(w, "repeating"), w.NullableNumber("novelty"), failed, recovered);
++        if (!Enum.TryParse<PerfForm>(p.Text("form"), true, out var form) || Int(p, "n") is not int n ||
++            Int(p, "tools") is not int tools || Integer(p, "active_ms") is not long active || active < 0 || p.Array("components") is not { } array)
++            return (null, work);
++        var components = new PerfComponent[7];
++        var seen = new bool[7];
++        foreach (var c in array.EnumerateArray())
++        {
++            if (!Enum.TryParse<PerfComponentId>(c.Text("id"), false, out var id) || (int)id < 0 || (int)id >= components.Length || seen[(int)id] || Int(c, "samples") is not int samples || c.Boolean("present") is not bool present)
++                return (null, work);
++            var reason = present ? PerfAbsence.None : c.Text("reason") switch { "notRecorded" => PerfAbsence.NotRecorded, "fewSamples" => PerfAbsence.FewSamples, _ => (PerfAbsence)(-1) };
++            var measure = c.NullableNumber("measure");
++            var ratio = c.NullableNumber("ratio");
++            if ((int)reason < 0 || (present && (measure is null || ratio is null))) return (null, work);
++            components[(int)id] = new(id, reason, samples, measure, ratio);
++            seen[(int)id] = true;
++        }
++        if (seen.Any(s => !s)) return (null, work);
++        return (new PerfEvaluation(source, form, p.NullableNumber("score"), n, tools, active, Integer(p, "span_start_ms"), p.Text("model"), components) { Baseline = p.NullableNumber("baseline") }, work);
++    }
++
++    public static IReadOnlyList<PerfRecord>? Records(JsonElement root)
++    {
++        if (root.Array("perf_records") is not { } records) return null;
++        var result = new List<PerfRecord>();
++        foreach (var r in records.EnumerateArray())
++        {
++            if (r.Text("day") is not { } day || RemoteHostData.Kind(r.Text("source")) is not { } source || r.Text("model") is not { } model ||
++                r.Array("latency_bins") is not { } bins || bins.GetArrayLength() != LatencyBins.Count) continue;
++            string[] names = ["n", "output_sum", "duration_ms_sum", "reason_n", "reason_output", "reason_duration_ms_sum", "cache_n", "cache_input", "cache_cached", "tool_n", "tool_failed", "active_ms"];
++            var values = names.Select(name => Integer(r, name)).ToArray();
++            if (values.Any(v => v is null or < 0) || r.NullableNumber("tool_ln_sum") is not double ln) continue;
++            var s = new PerfSums { N = values[0]!.Value, OutputSum = values[1]!.Value, DurationMsSum = values[2]!.Value,
++                ReasonN = values[3]!.Value, ReasonOutput = values[4]!.Value, ReasonDurationMsSum = values[5]!.Value,
++                CacheN = values[6]!.Value, CacheInput = values[7]!.Value, CacheCached = values[8]!.Value,
++                ToolN = values[9]!.Value, ToolLnSum = ln, ToolFailed = values[10]!.Value, ActiveMs = values[11]!.Value };
++            var i = 0;
++            bool valid = true;
++            foreach (var bin in bins.EnumerateArray())
++                if (bin.ValueKind == JsonValueKind.Number && bin.TryGetInt64(out var count) && count >= 0) s.LatencyBins[i++] = count;
++                else { valid = false; break; }
++            if (valid) result.Add(new PerfRecord(day, source, model, s));
++        }
++        return result;
++    }
++}
+diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
+index dabfc6a4..15b7087f 100644
+--- a/windows/src/AgentSpeed.Core/SpeedHub.cs
++++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
+@@ -175,7 +175,8 @@ public sealed class SpeedHub
+         foreach (var host in _remote.Values.OrderByDescending(h => h.Online))
+         {
+             var status = host.Status();
+-            statuses.Add(status with { Days = status.Days.Where(day => _enabledSources.Contains(day.Source)).ToArray() });
++            statuses.Add(status with { Days = status.Days.Where(day => _enabledSources.Contains(day.Source)).ToArray(),
++                PerfRecords = status.PerfRecords?.Where(record => _enabledSources.Contains(record.Source)).ToArray() });
+             if (host.Snapshot is not { } message || message.Array("sources") is not { } remoteSources)
+             {
+                 if (_enabledSources.Count > 0) { complete = false; todayComplete = false; }
+@@ -225,12 +226,22 @@ public sealed class SpeedHub
+                     var lastMs = agent.Number("last_line_ms");
+                     var last = lastMs >= 0 && lastMs <= 253402300799999 ? DateTimeOffset.FromUnixTimeMilliseconds((long)lastMs) : DateTimeOffset.MinValue;
+                     var parent = agent.Text("parent_id");
++                    var (perf, work) = RemotePerformance.Agent(agent, kind.Value);
++                    var score = perf is null ? AgentSpeed.Core.Perf.PerfSetValue.None : AgentSpeed.Core.Perf.PerfSetValue.Of(prefix + id, (long)lastMs, perf);
++                    var intelligence = new AgentSpeed.Core.Intelligence.AgentIntelligence(new AgentSpeed.Core.Intelligence.IntelligenceSums { Score = score }, score);
+                     agents.Add(new AgentStatus(prefix + id, kind.Value, host.Label, agent.Text("model"), phase,
+                         agent.Boolean("subagent") == true, new Rate(agent.Number("live_output"), agent.Number("live_total")), null, last,
+-                        parent is null ? null : prefix + parent) { HostId = host.Id });
++                        parent is null ? null : prefix + parent) { HostId = host.Id, Perf = perf, Work = work ?? AgentSpeed.Core.Work.WorkSignals.None, Intelligence = intelligence });
+                     if (phase == AgentPhase.Generating) generating++;
+                     else if (phase == AgentPhase.Tools) tools++;
+                 }
++            for (int i = 0; i < sources.Count; i++)
++            {
++                if (sources[i].HostId != host.Id) continue;
++                var score = agents.Where(a => a.HostId == host.Id && a.Source == sources[i].Kind)
++                    .Aggregate(AgentSpeed.Core.Perf.PerfSetValue.None, (best, a) => AgentSpeed.Core.Perf.PerfSetValue.Merge(best, a.Intelligence.Score));
++                sources[i] = sources[i] with { Intelligence = sources[i].Intelligence with { Score = score } };
++            }
+         }
+         var second = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+         var instanceHistory = new Dictionary<OrbSourceInstance, IReadOnlyList<HistoryPoint>>(local.InstanceHistory);
+diff --git a/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistoryChart.cs b/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistoryChart.cs
+index a8003619..a3f0939d 100644
+--- a/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistoryChart.cs
++++ b/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistoryChart.cs
+@@ -77,7 +77,7 @@ public sealed record PerfHistoryChart(
+         var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+         foreach (var record in records)
+         {
+-            if (record.Source == key.Source && string.Equals(record.Model, key.Model, StringComparison.Ordinal))
++            if (record.HostId == key.HostId && record.Source == key.Source && string.Equals(record.Model, key.Model, StringComparison.Ordinal))
+             {
+                 counts[record.Day] = counts.GetValueOrDefault(record.Day) + record.Sums.N;
+             }
+@@ -91,4 +91,4 @@ public sealed record PerfHistoryChart(
+ }
+ 
+ /// <summary>A row's identity: a source and a raw model.</summary>
+-public readonly record struct SourceKindModel(AgentSpeed.Core.SourceKind Source, string Model);
++public readonly record struct SourceKindModel(AgentSpeed.Core.SourceKind Source, string Model, Guid? HostId = null);
+diff --git a/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistoryRow.cs b/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistoryRow.cs
+index 747de918..fef528cc 100644
+--- a/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistoryRow.cs
++++ b/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistoryRow.cs
+@@ -33,8 +33,9 @@ public sealed record PerfHistoryRow(
+     IReadOnlyList<PerfTrendPoint> Trend,
+     double? Baseline)
+ {
++    public Guid? HostId { get; init; }
+     /// <summary>The row's identity, kept across ranges for the chart's selection.</summary>
+-    public (SourceKind Source, string Model) Key => (Source, Model);
++    public (SourceKind Source, string Model, Guid? HostId) Key => (Source, Model, HostId);
+ 
+     public bool HasScore => Score is not null;
+ 
+@@ -50,6 +51,7 @@ public sealed record PerfHistoryRow(
+         ArgumentNullException.ThrowIfNull(loc);
+         var pooled = row.Pooled;
+         var sourceName = loc[DisplayText.SourceKey(row.Source)];
++        if (row.HostId is not null) sourceName += " · " + (row.HostLabel ?? row.HostId.ToString());
+         var score = pooled.Shown;
+         var scoreTooltip = score is null ? loc.Format("history.perf.sample.hint", pooled.N, PerfFormula.PooledMinN) : string.Empty;
+         var usual = baseline is { } b ? PerfFormula.Round(b) : (int?)null;
+@@ -92,6 +94,7 @@ public sealed record PerfHistoryRow(
+             row.Trend,
+             baseline)
+         {
++            HostId = row.HostId,
+             PartsSpoken = loc.Format("a11y.history.perf.parts", parts),
+             PresentLine = present,
+         };
+diff --git a/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistorySection.cs b/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistorySection.cs
+index 975b1d7b..7c0b6734 100644
+--- a/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistorySection.cs
++++ b/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistorySection.cs
+@@ -14,6 +14,9 @@ public enum PerfHistoryState
+     /// <summary>No timed request in the range for any source.</summary>
+     Empty,
+ 
++    /// <summary>At least one selected host has not supplied performance history.</summary>
++    Unavailable,
++
+     Rows,
+ }
+ 
+@@ -38,11 +41,12 @@ public sealed record PerfHistorySection(
+         bool analyzing,
+         PerfSort sort,
+         SourceKindModel? selected,
+-        Localizer loc)
++        Localizer loc, bool available = true)
+     {
+         ArgumentNullException.ThrowIfNull(records);
+         ArgumentNullException.ThrowIfNull(sort);
+         ArgumentNullException.ThrowIfNull(loc);
++        if (!available) return new PerfHistorySection(PerfHistoryState.Unavailable, [], null, null, sort);
+         var from = Day(first);
+         var to = Day(last);
+         var todayText = Day(today);
+@@ -52,12 +56,11 @@ public sealed record PerfHistorySection(
+             return new PerfHistorySection(analyzing ? PerfHistoryState.Analyzing : PerfHistoryState.Empty, [], null, null, sort);
+         }
+ 
+-        var history = new PerfHistory(records, todayText);
+-        var rows = range.Select(r => PerfHistoryRow.Of(r, history.Baseline(r.Source, r.Model), loc)).ToList();
++        var rows = range.Select(r => PerfHistoryRow.Of(r, PerfHistory.BaselineOf(records, r.Source, r.Model, todayText, r.HostId), loc)).ToList();
+         var sorted = sort.Apply(rows);
+ 
+         // The default selection is the row with the most timed requests (the fullest trend; ties in the table's order).
+-        var chosen = selected is { } key ? sorted.FirstOrDefault(r => r.Source == key.Source && r.Model == key.Model) : null;
++        var chosen = selected is { } key ? sorted.FirstOrDefault(r => r.Source == key.Source && r.Model == key.Model && r.HostId == key.HostId) : null;
+         chosen ??= sorted.Aggregate((best, r) => r.Timed > best.Timed ? r : best);
+ 
+         IReadOnlyList<PerfChartDay> days;
+@@ -67,13 +70,13 @@ public sealed record PerfHistorySection(
+             // A single-day range shows the 14 days ending on that day.
+             var start = first.AddDays(-(PerfFormula.BaselineDays - 1));
+             var trend = PerfHistory.RangeOf(records, Day(start), to, chosen.Source)
+-                .FirstOrDefault(r => r.Model == chosen.Model)?.Trend ?? chosen.Trend;
+-            days = PerfHistoryChart.DaysOf(trend, records, new SourceKindModel(chosen.Source, chosen.Model));
++                .FirstOrDefault(r => r.Model == chosen.Model && r.HostId == chosen.HostId)?.Trend ?? chosen.Trend;
++            days = PerfHistoryChart.DaysOf(trend, records, new SourceKindModel(chosen.Source, chosen.Model, chosen.HostId));
+             highlighted = first;
+         }
+         else
+         {
+-            days = PerfHistoryChart.DaysOf(chosen.Trend, records, new SourceKindModel(chosen.Source, chosen.Model));
++            days = PerfHistoryChart.DaysOf(chosen.Trend, records, new SourceKindModel(chosen.Source, chosen.Model, chosen.HostId));
+         }
+ 
+         return new PerfHistorySection(PerfHistoryState.Rows, sorted, chosen, PerfHistoryChart.Of(chosen, days, highlighted, loc), sort);
+diff --git a/windows/src/AgentSpeed.Presentation/Perf/PerfCard.cs b/windows/src/AgentSpeed.Presentation/Perf/PerfCard.cs
+index 2f1f50bc..edd1c7c2 100644
+--- a/windows/src/AgentSpeed.Presentation/Perf/PerfCard.cs
++++ b/windows/src/AgentSpeed.Presentation/Perf/PerfCard.cs
+@@ -123,7 +123,17 @@ public sealed record PerfCard(
+     {
+         ArgumentNullException.ThrowIfNull(subject);
+         ArgumentNullException.ThrowIfNull(loc);
+-        var evaluation = subject.Evaluation ?? PerfEvaluation.Empty(subject.Source);
++        if (subject.Evaluation is null)
++        {
++            var unavailable = loc["traffic.unavailable.short"];
++            var metaUnavailable = MetaLine(subject.Model, loc[DisplayText.SourceKey(subject.Source)], subject.SubAgents, loc);
++            var factsUnavailable = subject.FactLines?.Where(l => !string.IsNullOrWhiteSpace(l)).ToArray() ?? [];
++            var signalsUnavailable = SignalLines(subject.Work ?? WorkSignals.None, loc);
++            return new PerfCard(subject.Source, subject.Project, metaUnavailable, false, loc["perf.provisional"], null, PerfNumber.Dash, null,
++                PerfNumberTone.None, null, unavailable, string.Empty, [], loc["perf.signals.title"], signalsUnavailable, factsUnavailable,
++                loc["perf.card.footnote"], HistoryText.JoinParts(new[] { unavailable }.Concat(factsUnavailable), loc));
++        }
++        var evaluation = subject.Evaluation;
+         var sourceName = loc[DisplayText.SourceKey(subject.Source)];
+         var meta = MetaLine(evaluation.Model ?? subject.Model, sourceName, subject.SubAgents, loc);
+         var facts = new List<string> { loc.Format("perf.card.sample", evaluation.N) };
+diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
+index aa900294..12622b8b 100644
+--- a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
++++ b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
+@@ -1,5 +1,6 @@
+ using AgentSpeed.History.Perf;
+ using AgentSpeed.Presentation.History.Perf;
++using AgentSpeed.Core.Perf;
+ 
+ namespace AgentSpeed.History;
+ 
+@@ -23,7 +24,22 @@ internal sealed partial class HistoryViewModel
+ 
+     public void SetPerfAppearance(bool dark, bool highContrast, bool reduceMotion) => Performance.SetAppearance(dark, highContrast, reduceMotion);
+ 
+-    private void UpdatePerformance() => Performance.Update(_hostId is null && !(_allHosts && HasRemoteHosts) ? _hub.PerfRecords : [], Range.Start, Range.End, Today, _source, IsAnalyzing);
++    private void UpdatePerformance()
++    {
++        var records = new List<PerfRecord>();
++        if (_hostId is null) records.AddRange(_hub.PerfRecords);
++        var available = _hostId is null || (_speed?.Snapshot.RemoteHosts.Any(h => h.Id == _hostId) == true);
++        var seen = new HashSet<(string, AgentSpeed.Core.SourceKind)>();
++        foreach (var host in (_speed?.Snapshot.RemoteHosts ?? []).OrderByDescending(h => h.Online))
++        {
++            if (!_allHosts && host.Id != _hostId) continue;
++            if (host.PerfRecords is null) { available = false; continue; }
++            var sources = host.PerfRecords.Select(r => r.Source).Distinct()
++                .Where(source => seen.Add((host.MachineId, source))).ToHashSet();
++            records.AddRange(host.PerfRecords.Where(r => sources.Contains(r.Source)));
++        }
++        Performance.Update(records, Range.Start, Range.End, Today, _source, IsAnalyzing, available);
++    }
+ 
+     private void RelocalizePerformance() => _performance?.Relocalize(_loc);
+ 
+diff --git a/windows/src/AgentSpeed/History/Perf/PerfHistoryViewModel.cs b/windows/src/AgentSpeed/History/Perf/PerfHistoryViewModel.cs
+index e08c1f21..08ca4a75 100644
+--- a/windows/src/AgentSpeed/History/Perf/PerfHistoryViewModel.cs
++++ b/windows/src/AgentSpeed/History/Perf/PerfHistoryViewModel.cs
+@@ -36,6 +36,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+     private DateOnly _today = DateOnly.FromDateTime(DateTime.Today);
+     private SourceKind? _source;
+     private bool _analyzing;
++    private bool _available = true;
+     private PerfSort _sort = PerfSort.Default;
+     private Action<PerfSort>? _sortChanged;
+     private SourceKindModel? _chosen;
+@@ -110,7 +111,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+ 
+     public bool ShowsAnalyzing => State == PerfHistoryState.Analyzing;
+ 
+-    public bool ShowsEmpty => State == PerfHistoryState.Empty;
++    public bool ShowsEmpty => State is PerfHistoryState.Empty or PerfHistoryState.Unavailable;
+ 
+     public bool ShowsData => State == PerfHistoryState.Rows;
+ 
+@@ -191,7 +192,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+     /// <summary>The range's records and the window's choices; call after every recomputation of the window.</summary>
+     /// <param name="source">The window's source picker; null for all sources.</param>
+     /// <param name="analyzing">The history is being re-analysed (<c>history.analyzing</c>).</param>
+-    public void Update(IReadOnlyList<PerfRecord> records, DateOnly first, DateOnly last, DateOnly today, SourceKind? source, bool analyzing)
++    public void Update(IReadOnlyList<PerfRecord> records, DateOnly first, DateOnly last, DateOnly today, SourceKind? source, bool analyzing, bool available = true)
+     {
+         ArgumentNullException.ThrowIfNull(records);
+         _records = records;
+@@ -200,6 +201,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+         _today = today;
+         _source = source;
+         _analyzing = analyzing;
++        _available = available;
+         Rebuild();
+     }
+ 
+@@ -285,7 +287,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+ 
+     private void Rebuild()
+     {
+-        var section = PerfHistorySection.Build(_records, _first, _last, _source, _today, _analyzing, _sort, _chosen, _loc);
++        var section = PerfHistorySection.Build(_records, _first, _last, _source, _today, _analyzing, _sort, _chosen, _loc, _available);
+         Title = _loc["history.perf.title"];
+         Info = _loc["history.perf.info"];
+         InfoLabel = _loc["history.perf.info.a11y"];
+@@ -297,8 +299,8 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+ 
+         Footnote = _loc["history.perf.footnote"];
+         AnalyzingText = _loc["history.perf.analyzing"];
+-        EmptyText = _loc["history.perf.empty"];
+-        EmptyHint = _loc["history.perf.empty.hint"];
++        EmptyText = _loc[section.State == PerfHistoryState.Unavailable ? "traffic.unavailable.short" : "history.perf.empty"];
++        EmptyHint = section.State == PerfHistoryState.Unavailable ? string.Empty : _loc["history.perf.empty.hint"];
+         CopyRow = _loc["win.history.copyRow"];
+         ReferenceLegend = "1000 " + _loc["perf.reference"];
+ 
+@@ -313,7 +315,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+         OnPropertyChanged(nameof(SortDescending));
+         ApplyRows(section.Rows);
+ 
+-        Selected = section.Selected is { } chosen ? Rows.FirstOrDefault(r => r.Source == chosen.Source && r.Model == chosen.Model) : null;
++        Selected = section.Selected is { } chosen ? Rows.FirstOrDefault(r => r.Source == chosen.Source && r.Model == chosen.Model && r.HostId == chosen.HostId) : null;
+         Chart = section.Chart;
+         TrendTitle = section.Chart?.Title ?? string.Empty;
+         ChartSpoken = section.Chart?.Spoken ?? string.Empty;
+@@ -361,10 +363,10 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+         for (var i = 0; i < rows.Count; i++)
+         {
+             var row = rows[i];
+-            var key = new SourceKindModel(row.Source, row.Model);
++            var key = new SourceKindModel(row.Source, row.Model, row.HostId);
+             if (!existing.Remove(key, out var view))
+             {
+-                view = new PerfRowView(row.Source, row.Model);
++                view = new PerfRowView(row.Source, row.Model, row.HostId);
+                 Rows.Insert(Math.Min(i, Rows.Count), view);
+             }
+             else if (Rows.IndexOf(view) is var at && at != i)
+diff --git a/windows/src/AgentSpeed/History/Perf/PerfRowView.cs b/windows/src/AgentSpeed/History/Perf/PerfRowView.cs
+index 46d8f5dd..b5fe3816 100644
+--- a/windows/src/AgentSpeed/History/Perf/PerfRowView.cs
++++ b/windows/src/AgentSpeed/History/Perf/PerfRowView.cs
+@@ -79,19 +79,21 @@ internal sealed class PerfRowView : ObservableObject
+     private string _copyText = string.Empty;
+     private IReadOnlyList<PerfHistoryCell> _parts = [];
+ 
+-    public PerfRowView(SourceKind source, string model)
++    public PerfRowView(SourceKind source, string model, Guid? hostId = null)
+     {
+         Source = source;
+         Model = model;
++        HostId = hostId;
+         Cells = [.. PerfText.CardOrder.Select(id => new PerfCellView(id))];
+         SourceColors = [PerfHistoryAppearance.SourceColor(source)];
+     }
+ 
+     public SourceKind Source { get; }
++    public Guid? HostId { get; }
+ 
+     public string Model { get; }
+ 
+-    public SourceKindModel Key => new(Source, Model);
++    public SourceKindModel Key => new(Source, Model, HostId);
+ 
+     /// <summary>The row's source dot.</summary>
+     public IReadOnlyList<Color> SourceColors { get; }
+diff --git a/windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
+new file mode 100644
+index 00000000..5bc9d978
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
+@@ -0,0 +1,78 @@
++using System.Text.Json;
++
++namespace AgentSpeed.Core.Tests;
++
++public sealed class RemotePerformanceTests
++{
++    private static string Zone => TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana) ? iana : TimeZoneInfo.Local.Id;
++    private static string Snapshot(string machine, bool performance, string baseline = "null")
++    {
++        var components = string.Join(",", new[] { "T", "L", "N", "R", "H", "U", "S" }.Select(id => $$"""{"id":"{{id}}","present":false,"reason":"fewSamples","samples":0,"measure":null,"ratio":null}"""));
++        var perf = performance ? """, "perf":{"form":"live","score":1234,"n":4,"tools":2,"active_ms":3000,"span_start_ms":10,"model":"model-a","components":[__COMPONENTS__],"baseline":__BASELINE__,"work_signals":{"looping":3,"repeating":null,"novelty":0.5,"failed":1,"recovered":0}}""".Replace("__COMPONENTS__", components).Replace("__BASELINE__", baseline) : "";
++        return """{"version":1,"type":"snapshot","machine_id":__MACHINE__,"timezone":__ZONE__,"today_day":"2026-01-15","sources":[{"source":"pi","enabled":true,"available":true,"live_output":1,"live_total":1}],"agents":[{"id":"a","source":"pi","phase":"generating"__PERF__}]}"""
++            .Replace("__MACHINE__", JsonSerializer.Serialize(machine)).Replace("__ZONE__", JsonSerializer.Serialize(Zone)).Replace("__PERF__", perf);
++    }
++
++    private static string History(string timezone, long n)
++    {
++        var bins = string.Join(",", Enumerable.Repeat("0", 64));
++        return $$"""{"version":1,"type":"history","timezone":{{JsonSerializer.Serialize(timezone)}},"days":[{"day":"2026-01-14","source":"pi","measured_ms":99999}],"perf_records":[{"day":"2026-01-14","source":"pi","model":"model-a","n":{{n}},"output_sum":1000,"duration_ms_sum":10000,"latency_bins":[{{bins}}],"reason_n":0,"reason_output":0,"reason_duration_ms_sum":0,"cache_n":0,"cache_input":0,"cache_cached":0,"tool_n":0,"tool_ln_sum":0,"tool_failed":0,"active_ms":10000}]}""";
++    }
++
++    [Fact]
++    public async Task RemoteEvaluationAndWorkReachAgentAndSource()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        hub.UpdateRemoteHost(id, "remote", true, json: Snapshot("one", true));
++        var agent = Assert.Single(hub.Snapshot.Agents, a => a.HostId == id);
++        Assert.Equal(1234, agent.Perf!.Score);
++        Assert.Equal(3, agent.Work.Looping);
++        Assert.Equal(1234, agent.Intelligence.Score.Score);
++        Assert.Equal(1234, Assert.Single(hub.Snapshot.Sources, s => s.HostId == id).Intelligence.Score.Score);
++        hub.UpdateRemoteHost(id, "remote", true, json: Snapshot("one", false));
++        Assert.Null(Assert.Single(hub.Snapshot.Agents, a => a.HostId == id).Perf);
++    }
++
++    [Fact]
++    public async Task HistoryRecordsAreHostScopedAndNeverDerivedFromUsageTiming()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var first = Guid.NewGuid();
++        var second = Guid.NewGuid();
++        hub.UpdateRemoteHost(first, "first", true, json: Snapshot("one", true));
++        hub.UpdateRemoteHost(second, "second", true, json: Snapshot("two", false));
++        hub.UpdateRemoteHost(first, "first", true, json: History(Zone, 7));
++        var hosts = hub.Snapshot.RemoteHosts;
++        var record = Assert.Single(hosts.Single(h => h.Id == first).PerfRecords!);
++        Assert.Equal(7, record.Sums.N);
++        Assert.Equal(10000, record.Sums.DurationMsSum);
++        Assert.Null(hosts.Single(h => h.Id == second).PerfRecords);
++        hub.UpdateRemoteHost(first, "first", true, json: $$"""{"version":1,"type":"history","timezone":{{JsonSerializer.Serialize(Zone)}},"days":[{"day":"2026-01-14","source":"pi","measured_ms":99999}]}""");
++        Assert.Null(hub.Snapshot.RemoteHosts.Single(h => h.Id == first).PerfRecords);
++    }
++
++    [Fact]
++    public async Task ForeignTimezoneHistoryDoesNotReplaceRequestedTimezoneRecords()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        hub.UpdateRemoteHost(id, "remote", true, json: Snapshot("one", true));
++        hub.UpdateRemoteHost(id, "remote", true, json: History(Zone, 7));
++        hub.UpdateRemoteHost(id, "remote", true, json: History(Zone + "-other", 20));
++        Assert.Equal(7, Assert.Single(hub.Snapshot.RemoteHosts.Single(h => h.Id == id).PerfRecords!).Sums.N);
++    }
++
++    [Fact]
++    public async Task CollectorBaselineSurvivesRequestedZoneHistory()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var first = Guid.NewGuid();
++        var second = Guid.NewGuid();
++        hub.UpdateRemoteHost(first, "first", true, json: Snapshot("one", true, "900"));
++        hub.UpdateRemoteHost(second, "second", true, json: Snapshot("two", true, "1100"));
++        hub.UpdateRemoteHost(first, "first", true, json: History(Zone, 20));
++        Assert.Equal(900, hub.Snapshot.Agents.Single(a => a.HostId == first).Perf!.Baseline);
++        Assert.Equal(1100, hub.Snapshot.Agents.Single(a => a.HostId == second).Perf!.Baseline);
++    }
++}
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfCardTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfCardTests.cs
+index 5d19ab02..eebadb8b 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfCardTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfCardTests.cs
+@@ -11,6 +11,15 @@ public sealed class PerfCardTests
+ {
+     private static readonly Localization.Localizer Zh = PerfData.Loc();
+ 
++    [Fact]
++    public void MissingEvaluationDoesNotInventAnEmptySample()
++    {
++        var card = PerfCard.Build(new PerfCardSubject(SourceKind.Pi, "remote", null, null), Zh);
++        Assert.Equal(PerfNumber.Dash, card.Number);
++        Assert.Empty(card.Facts);
++        Assert.Equal(Zh["traffic.unavailable.short"], card.Summary);
++    }
++
+     [Fact]
+     public void NovaReadsLikeThePrototype()
+     {
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs
+index 2f33a624..c03ea038 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs
+@@ -35,6 +35,26 @@ public sealed class PerfHistoryTests
+         Record("2027-01-05", SourceKind.ClaudeCode, "claude-opus-5-5", 40, 70, 60),
+     ];
+ 
++    [Fact]
++    public void IdenticalModelsOnDifferentHostsKeepSeparateRowsBaselinesAndCharts()
++    {
++        var first = Guid.NewGuid();
++        var second = Guid.NewGuid();
++        PerfRecord[] records = [
++            Record("2027-01-12", SourceKind.Codex, "same", 30, 40) with { HostId = first, HostLabel = "first" },
++            Record("2027-01-12", SourceKind.Codex, "same", 10, 80) with { HostId = second, HostLabel = "second" },
++            Record("2027-01-12", SourceKind.Codex, "same", 5, 100),
++        ];
++        var section = PerfHistorySection.Build(records, new DateOnly(2027, 1, 12), new DateOnly(2027, 1, 12), null, Today, false,
++            PerfSort.Default, new SourceKindModel(SourceKind.Codex, "same", second), Zh);
++        Assert.Equal(3, section.Rows.Count);
++        Assert.Equal(10, section.Selected!.Timed);
++        Assert.Null(section.Selected.Baseline);
++        Assert.Contains("second", section.Selected.SourceName);
++        Assert.Equal(10, section.Chart!.Days.Single(d => d.Day == new DateOnly(2027, 1, 12)).Timed);
++        Assert.NotNull(section.Rows.Single(r => r.HostId == first).Baseline);
++    }
++
+     [Fact]
+     public void RowsAreSortedByScoreAndTheFullestRowIsSelected()
+     {
+diff --git a/windows/tests/AgentSpeed.Windows.Tests/PerfPerformanceSectionTests.cs b/windows/tests/AgentSpeed.Windows.Tests/PerfPerformanceSectionTests.cs
+index d2b5b774..122f20e3 100644
+--- a/windows/tests/AgentSpeed.Windows.Tests/PerfPerformanceSectionTests.cs
++++ b/windows/tests/AgentSpeed.Windows.Tests/PerfPerformanceSectionTests.cs
+@@ -91,6 +91,34 @@ public class PerfPerformanceSectionTests
+         Assert.Contains("gpt-6.1-sol", model.TrendTitle, StringComparison.Ordinal);
+     }
+ 
++    [Fact]
++    public void SelectingIdenticalModelsKeepsTheSelectedHost()
++    {
++        using var model = new PerfHistoryViewModel(new Localizer(Table, LanguageCodes.En));
++        var first = Guid.NewGuid();
++        var second = Guid.NewGuid();
++        var sample = PerfCardSamples.Records(Today).First();
++        PerfRecord[] records = [sample with { HostId = first, HostLabel = "first" }, sample with { HostId = second, HostLabel = "second" }];
++        model.Update(records, Today.AddDays(-29), Today, Today, null, analyzing: false);
++        var other = model.Rows.Single(r => r.HostId == second);
++        model.Select(other);
++        Assert.Same(other, model.Selected);
++        Assert.Contains("second", model.TrendTitle, StringComparison.Ordinal);
++    }
++
++    [Fact]
++    public void UnavailableHistoryIsNotAnEmptyHistory()
++    {
++        using var model = new PerfHistoryViewModel(new Localizer(Table, LanguageCodes.En));
++        model.Update([], Today.AddDays(-6), Today, Today, null, analyzing: false, available: false);
++        Assert.Equal(PerfHistoryState.Unavailable, model.State);
++        Assert.True(model.ShowsEmpty);
++        Assert.Equal("Unavailable", model.EmptyText);
++        Assert.Equal(string.Empty, model.EmptyHint);
++        model.Update([], Today.AddDays(-6), Today, Today, null, analyzing: false);
++        Assert.Equal(PerfHistoryState.Empty, model.State);
++    }
++
+     [Fact]
+     public void TheWidthPicksTheLayout()
+     {

@@ -303,5 +303,23 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0027-Connect-remote-performance-and-history-metrics.patch": {
+    "regression": [
+      {
+        "platform": "linux",
+        "run": "cmake -S linux -B build-remote && cmake --build build-remote --target agentspeed_tests -j2 && build-remote/tests/agentspeed_tests --gtest_filter='CollectorProtocol.*:CollectorIntegration.*'"
+      },
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test --filter RemoteHostsTests"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemotePerformanceTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~PerfHistoryTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~PerfCardTests && dotnet test windows/tests/AgentSpeed.Windows.Tests --filter FullyQualifiedName~PerfPerformanceSectionTests"
+      }
+    ],
+    "related": [],
+    "reason": ""
   }
 }
