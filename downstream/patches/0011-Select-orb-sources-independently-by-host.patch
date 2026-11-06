@@ -1,10 +1,10 @@
-From 1ed0b5336c253bbb49bbcd62defb4a2f1d054dd7 Mon Sep 17 00:00:00 2001
+From 27dd786888cc7da892473816efd75b2b0af00d0b Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:50:08 +0800
 Subject: [PATCH 11/15] Select orb sources independently by host
 
 ---
- README.md                                     |   5 +-
+ README.md                                     |   7 +-
  README.zh-CN.md                               |   2 +-
  macos/Sources/AgentSpeed/App/AppModel.swift   |   4 +-
  .../AgentSpeed/App/Orbs/OrbRuntime.swift      |  45 ++++--
@@ -28,17 +28,21 @@ Subject: [PATCH 11/15] Select orb sources independently by host
  windows/src/AgentSpeed.Core/OrbSubset.cs      | 148 +++++++++++++++++-
  .../src/AgentSpeed.Core/RemoteAggregation.cs  |  16 +-
  windows/src/AgentSpeed.Core/SpeedHub.cs       | 128 ++++++++++-----
- .../Boards/BoardFeed.cs                       |   2 +-
+ .../Boards/BoardFeed.cs                       |   7 +-
+ .../Boards/Live/BoardLiveFeed.cs              |  15 +-
+ .../Boards/Scene/BoardHeroNumber.cs           |   2 +-
+ .../Boards/Scene/BoardTick.cs                 |   3 +
  .../History/HistoryAggregator.cs              |   4 +-
- .../AgentSpeed.Presentation/Orb/OrbFeed.cs    |  39 +++--
+ .../AgentSpeed.Presentation/Orb/OrbFeed.cs    |  43 +++--
  .../Settings/Orbs/OrbDefinition.cs            |   4 +
  .../Settings/Orbs/OrbSources.cs               |  15 ++
  .../Settings/Orbs/OrbsJson.cs                 |  31 ++++
  windows/src/AgentSpeed/App/AppController.cs   |  48 +++---
+ .../Boards/Layers/NeonBoardPainter.cs         |   4 +-
  .../Dashboard/DashboardViewModel.cs           |  10 +-
  .../AgentSpeed/Dashboard/DashboardWindow.xaml |   2 +-
  windows/src/AgentSpeed/Dashboard/LiveChart.cs |  18 +++
- windows/src/AgentSpeed/Orb/OrbManager.cs      |  14 +-
+ windows/src/AgentSpeed/Orb/OrbManager.cs      |  22 ++-
  .../src/AgentSpeed/Services/HeroTourDriver.cs |  13 +-
  .../AgentSpeed/Services/PinnedSpeedDriver.cs  |  13 +-
  .../Settings/OrbsPane/OrbsPaneViewModel.cs    |  33 ++++
@@ -46,17 +50,18 @@ Subject: [PATCH 11/15] Select orb sources independently by host
  .../AgentSpeed/Settings/Pages/OrbPage.xaml.cs |   5 +
  .../AgentSpeed.Core.Tests/OrbSubsetTests.cs   |  89 +++++++++++
  .../RemoteConsumerTests.cs                    |  75 +++++++++
- .../OrbFeedTests.cs                           |  76 ++++++++-
+ .../Boards/BoardLiveFeedTests.cs              |  31 ++++
+ .../OrbFeedTests.cs                           | 101 +++++++++++-
  .../OrbSettingsTests.cs                       |  40 +++++
  .../RemoteHistoryCsvTests.cs                  |  37 +++++
- 45 files changed, 1237 insertions(+), 146 deletions(-)
+ 50 files changed, 1325 insertions(+), 157 deletions(-)
  create mode 100644 macos/Tests/AgentSpeedAppTests/OrbHostRuntimeTests.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteCompletionOwnershipTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/OrbHostSelectionTests.swift
  create mode 100644 macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift
 
 diff --git a/README.md b/README.md
-index 7dcdf650..d1cabe55 100644
+index 15817ee1..87352402 100644
 --- a/README.md
 +++ b/README.md
 @@ -54,7 +54,7 @@ Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uni
@@ -68,8 +73,17 @@ index 7dcdf650..d1cabe55 100644
  - **Menu bar / taskbar** — a compact gauge and number that never jitters, right where you look: tok/s, money, or tok/s with the live money rate over today's total, plus optional network speed. On Windows it lives inside the taskbar, next to the clock.
  - **Dashboard** — a glowing line drawing of your current speed title's vehicle moves inside its orb — a walker, a bicycle pushing off, all the way to a rocket at the redline — plus a live chart, per-source speed, every active agent (including sub-agents) with its phase, and today's totals. Click a source to open its history.
  - **Performance score** — a benchmark-style number for every agent's live setup, where 1000 is the reference and there is no upper limit: higher is faster. It combines output throughput, time to first content, thinking speed, tool pace, tool time, tool success and cache hits, and compares it with the same model's usual on your computer (the 14 days before today). It shows on the orbs, the leaderboard boards, the menu bar / taskbar and the dashboard (hover for the breakdown), and the usage history charts each model's daily trend.
-@@ -127,7 +127,8 @@ stale data, not as idle or zero usage; reconnection replaces its snapshot and hi
- On macOS, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
+@@ -115,6 +115,8 @@ and use noninteractive key or SSH agent authentication. Enable each host in Sett
+ enabled remote sources appear together in the native dashboard; source identity includes the host and source kind.
+ On Windows, local source switches do not filter remote sources. Orb host/source exclusions are independent, so
+ excluding a source on one host does not exclude the same source on another host.
++Orb and leaderboard live and daily values use missing placeholders when the selected remote data is incomplete,
++rather than displaying a partial sum as a complete value.
+ Settings → Sources shows each host's online, offline or disabled status and its last connection error until a successful
+ snapshot arrives.
+ Duplicate SSH destinations are rejected when saving; an existing host can keep its own destination while editing.
+@@ -131,7 +133,8 @@ Disabling a host stops its connection and excludes it from displayed totals whil
+ Re-enabling can show that retained history as stale until refreshed; deleting the host or changing its destination clears it.
  When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
  Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
 -response rates use the logged duration. In particular omp commonly writes a response when it completes, so remote
@@ -1199,7 +1213,7 @@ index a573c72c..315883dc 100644
  
      private static List<AgentStatus> Filter(IReadOnlyList<AgentStatus> agents, SourceSet sources)
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-index 5e889900..3d50cbd2 100644
+index 3d6039c6..bfd0dde9 100644
 --- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 @@ -7,8 +7,10 @@ namespace AgentSpeed.Core;
@@ -1215,7 +1229,7 @@ index 5e889900..3d50cbd2 100644
      public IReadOnlyList<DailyUsage> Days { get; init; } = [];
      public bool? HistoryPartial { get; init; }
      public DateTimeOffset? HistoryReceivedAt { get; init; }
-@@ -77,6 +79,9 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -78,6 +80,9 @@ internal sealed class RemoteHostData(Guid id, string label)
          return false;
      }
  
@@ -1225,7 +1239,7 @@ index 5e889900..3d50cbd2 100644
      private DailyUsage? Day(JsonElement d)
      {
          if (d.Text("day") is not { } day || Kind(d.Text("source")) is not { } kind) return null;
-@@ -100,11 +105,8 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -101,11 +106,8 @@ internal sealed class RemoteHostData(Guid id, string label)
      public RemoteHostStatus Status()
      {
          bool sameZone = HistoryTimezone == LocalTimezone();
@@ -1240,7 +1254,7 @@ index 5e889900..3d50cbd2 100644
      }
  
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 5e69e691..8ad6ff86 100644
+index 774a2e4e..13f57214 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
 @@ -10,9 +10,10 @@ public sealed class SpeedHub
@@ -1272,7 +1286,7 @@ index 5e69e691..8ad6ff86 100644
 +    }
 +
      /// <summary>Updates a configured host from a collector frame or connection state.</summary>
-     public (bool Accepted, bool Online, string? Error) UpdateRemoteHost(Guid id, string label, bool online, string? error = null, string? json = null)
+     public (bool Accepted, bool Online, string? Error) UpdateRemoteHost(Guid id, string label, bool online, string? error = null, string? json = null, bool enabled = true)
      {
 @@ -53,7 +66,7 @@ public sealed class SpeedHub
          string? currentError;
@@ -1281,9 +1295,9 @@ index 5e69e691..8ad6ff86 100644
 -            if (!_remote.TryGetValue(id, out var host)) { _remote[id] = host = new RemoteHostData(id, label); _remoteHistory.Clear(); }
 +            if (!_remote.TryGetValue(id, out var host)) _remote[id] = host = new RemoteHostData(id, label);
              host.Label = label;
+             host.Enabled = enabled;
              RemoteCompletion? completion = null;
-             if (json is null)
-@@ -68,16 +81,20 @@ public sealed class SpeedHub
+@@ -69,16 +82,20 @@ public sealed class SpeedHub
              else accepted = host.Apply(json, out completion);
              currentOnline = host.Online;
              currentError = host.Error;
@@ -1292,7 +1306,7 @@ index 5e69e691..8ad6ff86 100644
              {
 -                var machine = host.Snapshot is { } snapshot ? snapshot.Text("machine_id") ?? id.ToString() : id.ToString();
 +                var machine = snapshot.Text("machine_id") ?? id.ToString();
-+                var owner = _remote.Values.OrderByDescending(h => h.Online).FirstOrDefault(h =>
++                var owner = _remote.Values.Where(h => h.Enabled).OrderByDescending(h => h.Online).FirstOrDefault(h =>
 +                    h.Snapshot is { } candidate && (candidate.Text("machine_id") ?? h.Id.ToString()) == machine
 +                    && candidate.Array("sources") is { } sourceList && sourceList.EnumerateArray().Any(source =>
 +                        RemoteHostData.Kind(source.Text("source")) == completion.Source && source.Boolean("enabled") == true));
@@ -1309,7 +1323,7 @@ index 5e69e691..8ad6ff86 100644
                      completionEvent = new SpeedEvent.ResponseCompleted(response);
                  }
              }
-@@ -98,7 +115,13 @@ public sealed class SpeedHub
+@@ -99,7 +116,13 @@ public sealed class SpeedHub
  
      public void RemoveRemoteHost(Guid id)
      {
@@ -1324,7 +1338,7 @@ index 5e69e691..8ad6ff86 100644
          Post(() => { if (!IsPreviewing) Apply(CurrentCombined(), null); });
      }
  
-@@ -163,35 +186,40 @@ public sealed class SpeedHub
+@@ -164,35 +187,40 @@ public sealed class SpeedHub
      // Called under _gate. Collector snapshots replace, rather than accumulate, a host's contribution.
      private SpeedSnapshot Combine(SpeedSnapshot local)
      {
@@ -1345,7 +1359,7 @@ index 5e69e691..8ad6ff86 100644
          int generating = local.GeneratingCount, tools = local.ToolsCount;
          bool complete = true;
          bool todayComplete = true;
-         foreach (var host in _remote.Values.OrderByDescending(h => h.Online))
+         foreach (var host in _remote.Values.Where(h => h.Enabled).OrderByDescending(h => h.Online))
          {
 -            statuses.Add(host.Status());
 +            var status = host.Status();
@@ -1372,7 +1386,7 @@ index 5e69e691..8ad6ff86 100644
                  bool available = host.Online && source.Boolean("available") == true;
                  bool todayAvailable = available && message.Text("timezone") == RemoteHostData.LocalTimezone()
                      && message.Text("today_day") == DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-@@ -202,16 +230,22 @@ public sealed class SpeedHub
+@@ -203,16 +231,22 @@ public sealed class SpeedHub
                  var share = Math.Clamp(source.Number("estimated_share"), 0, 1);
                  var sourceToday = todayAvailable ? RemoteHostData.Totals(source, "today_") : TokenTotals.Zero;
                  var sourceCost = todayAvailable ? new CostTally(source.Integer("today_cost_micro_usd"), source.Integer("unpriced_requests")) : CostTally.Zero;
@@ -1400,15 +1414,15 @@ index 5e69e691..8ad6ff86 100644
              }
              if (!host.Online) continue;
              if (message.Array("agents") is { } remoteAgents)
-@@ -225,38 +259,54 @@ public sealed class SpeedHub
-                     var lastMs = agent.Number("last_line_ms");
-                     var last = lastMs >= 0 && lastMs <= 253402300799999 ? DateTimeOffset.FromUnixTimeMilliseconds((long)lastMs) : DateTimeOffset.MinValue;
-                     var parent = agent.Text("parent_id");
+@@ -236,38 +270,54 @@ public sealed class SpeedHub
+                         scope: speedConfigured ? ExecutionModeScope.Configuration : ExecutionModeScope.Session);
+                     var sessionModes = ExecutionModes.Of(effortConfigured ? null : effort).With(speedConfigured ? null : speed);
+                     var configuredModes = ExecutionModes.Of(effortConfigured ? effort : null).With(speedConfigured ? speed : null);
 -                    agents.Add(new AgentStatus(prefix + id, kind.Value, host.Label, agent.Text("model"), phase,
 +                    var statusAgent = new AgentStatus(prefix + id, kind.Value, host.Label, agent.Text("model"), phase,
                          agent.Boolean("subagent") == true, new Rate(agent.Number("live_output"), agent.Number("live_total")), null, last,
--                        parent is null ? null : prefix + parent) { HostId = host.Id });
-+                        parent is null ? null : prefix + parent) { HostId = host.Id };
+-                        parent is null ? null : prefix + parent) { HostId = host.Id, SessionModes = sessionModes, ConfiguredModes = configuredModes });
++                        parent is null ? null : prefix + parent) { HostId = host.Id, SessionModes = sessionModes, ConfiguredModes = configuredModes };
 +                    if (!owned.Contains(kind.Value)) { alternateAgents.Add(statusAgent); continue; }
 +                    agents.Add(statusAgent);
                      if (phase == AgentPhase.Generating) generating++;
@@ -1475,10 +1489,29 @@ index 5e69e691..8ad6ff86 100644
      }
  
 diff --git a/windows/src/AgentSpeed.Presentation/Boards/BoardFeed.cs b/windows/src/AgentSpeed.Presentation/Boards/BoardFeed.cs
-index e091996d..df36e28e 100644
+index e091996d..40e7792f 100644
 --- a/windows/src/AgentSpeed.Presentation/Boards/BoardFeed.cs
 +++ b/windows/src/AgentSpeed.Presentation/Boards/BoardFeed.cs
-@@ -133,7 +133,7 @@ public sealed class BoardFeed
+@@ -29,6 +29,9 @@ public sealed record BoardData(
+ {
+     public static BoardData Empty { get; } = new(0, SpeedTier.Idle, SpeedTitle.Idle, HeatMath.DefaultRedline, [], [], 0, 0, 0, 0, false);
+ 
++    public bool LiveComplete { get; init; } = true;
++    public bool TodayComplete { get; init; } = true;
++
+     /// <summary>The live intelligence sums of the board's sources (METRICS 6.9 over <c>A</c>).</summary>
+     public Core.Intelligence.IntelligenceSums Intelligence { get; init; }
+ 
+@@ -125,6 +128,8 @@ public sealed class BoardFeed
+         Data = new BoardData(_feed.Value, _feed.Tier, _feed.Title, _feed.Redline, Arrange(groups, _order), events, generating, tools,
+             reading.Today.Output, _feed.PeakToday, newPeak)
+         {
++            LiveComplete = reading.State == SubsetState.Available && reading.LiveComplete,
++            TodayComplete = reading.State == SubsetState.Available && reading.TodayComplete,
+             Intelligence = reading.Intelligence,
+             Score = Highest(reading.Agents),
+             Cost = OrbSubset.Cost(snapshot, _feed.Sources, counted),
+@@ -133,7 +138,7 @@ public sealed class BoardFeed
      }
  
      /// <summary>The all-sources new peak (engine event) for a board tracking every source.</summary>
@@ -1487,6 +1520,79 @@ index e091996d..df36e28e 100644
  
      /// <summary>Advances the tier and title holds without new data; true when either changed.</summary>
      public bool Tick(double nowSeconds)
+diff --git a/windows/src/AgentSpeed.Presentation/Boards/Live/BoardLiveFeed.cs b/windows/src/AgentSpeed.Presentation/Boards/Live/BoardLiveFeed.cs
+index 114a4d72..18233bd9 100644
+--- a/windows/src/AgentSpeed.Presentation/Boards/Live/BoardLiveFeed.cs
++++ b/windows/src/AgentSpeed.Presentation/Boards/Live/BoardLiveFeed.cs
+@@ -1,5 +1,6 @@
+ using AgentSpeed.Core;
+ using AgentSpeed.Presentation.Boards.Scene;
++using AgentSpeed.Presentation.Orb;
+ using AgentSpeed.Presentation.Settings.Boards;
+ 
+ namespace AgentSpeed.Presentation.Boards.Live;
+@@ -68,7 +69,7 @@ public sealed class BoardLiveFeed
+ 
+     /// <summary>The engine's all-sources new peak for a board tracking every source: the last tick once more, with its new peak.</summary>
+     public BoardTick? EnginePeak(SpeedEvent speedEvent) =>
+-        speedEvent is SpeedEvent.NewPeak && _feed.Sources is null && _feed.Accepts(speedEvent) && Last is { } last
++        speedEvent is SpeedEvent.NewPeak && _feed.Sources is null && _feed.Accepts(speedEvent) && _feed.Data.LiveComplete && _feed.Data.TodayComplete && Last is { } last
+             ? last with { NewPeak = true }
+             : null;
+ 
+@@ -100,18 +101,20 @@ public sealed class BoardLiveFeed
+ 
+         var history = new double[BoardTick.HistorySeconds];
+         _feed.CopyHistory(history);
+-        return new BoardTick(data.Value, SpeedFormat.Speed(data.Value), data.Tier, data.Redline, metric, data.Generating > 0, entries, data.Events,
+-            data.NewPeak)
++        return new BoardTick(data.Value, OrbFeed.DisplaySpeed(data.Value, data.LiveComplete), data.Tier, data.Redline, metric, data.Generating > 0, entries, data.Events,
++            data.NewPeak && data.LiveComplete && data.TodayComplete)
+         {
++            LiveComplete = data.LiveComplete,
++            TodayComplete = data.TodayComplete,
+             Title = texts.Title(data.Title),
+             GeneratingCount = data.Generating,
+             ToolsCount = data.Tools,
+             History = history,
+             PeakToday = data.PeakToday,
+             TodayOutput = data.TodayOutput,
+-            TodayText = texts.Today(data.TodayOutput),
+-            CostText = texts.TodayCost(_snapshot, board.TrackedSources),
+-            PeakText = texts.Peak(data.PeakToday),
++            TodayText = texts.Localizer.Format("boards.today", OrbFeed.DisplayToday(data.TodayOutput, data.TodayComplete)),
++            CostText = data.TodayComplete ? texts.TodayCost(_snapshot, board.TrackedSources) : texts.Cost is null ? null : "–",
++            PeakText = texts.Localizer.Format("boards.peak", OrbFeed.DisplaySpeed(data.PeakToday, data.TodayComplete)),
+             Expanded = open,
+             Readouts = readouts,
+             Gauge = gauge,
+diff --git a/windows/src/AgentSpeed.Presentation/Boards/Scene/BoardHeroNumber.cs b/windows/src/AgentSpeed.Presentation/Boards/Scene/BoardHeroNumber.cs
+index 00c8253e..d25960e1 100644
+--- a/windows/src/AgentSpeed.Presentation/Boards/Scene/BoardHeroNumber.cs
++++ b/windows/src/AgentSpeed.Presentation/Boards/Scene/BoardHeroNumber.cs
+@@ -31,7 +31,7 @@ public readonly record struct BoardNumberLook(double RollSeconds, Rgba Hot, doub
+ /// </summary>
+ public sealed class BoardHeroNumber
+ {
+-    public const string Glyphs = "0123456789.kMB";
++    public const string Glyphs = "0123456789.kMB–";
+ 
+     /// <summary>Room around a glyph's advance box in its layer.</summary>
+     public const double GlyphPad = 16;
+diff --git a/windows/src/AgentSpeed.Presentation/Boards/Scene/BoardTick.cs b/windows/src/AgentSpeed.Presentation/Boards/Scene/BoardTick.cs
+index f0e4df78..302515f3 100644
+--- a/windows/src/AgentSpeed.Presentation/Boards/Scene/BoardTick.cs
++++ b/windows/src/AgentSpeed.Presentation/Boards/Scene/BoardTick.cs
+@@ -22,6 +22,9 @@ public sealed record BoardTick(
+     /// <summary>Seconds of <see cref="History"/> a tick carries (the glass sparkline's 60 s).</summary>
+     public const int HistorySeconds = 60;
+ 
++    public bool LiveComplete { get; init; } = true;
++    public bool TodayComplete { get; init; } = true;
++
+     /// <summary>The speed title in the General title theme (DESIGN 1), as the hero draws it.</summary>
+     public string Title { get; init; } = string.Empty;
+ 
 diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs b/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
 index 4d306672..67f7853c 100644
 --- a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
@@ -1503,7 +1609,7 @@ index 4d306672..67f7853c 100644
              var accepted = covered.Distinct()
                  .Where(source => seen.Add((host.MachineId ?? host.Id.ToString(), source))).ToHashSet();
 diff --git a/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs b/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
-index 716848b5..d299bbcc 100644
+index 716848b5..dea21ec3 100644
 --- a/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
 +++ b/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
 @@ -8,7 +8,7 @@ namespace AgentSpeed.Presentation.Orb;
@@ -1532,12 +1638,16 @@ index 716848b5..d299bbcc 100644
      public SpeedMetric Metric { get; private set; } = SpeedMetric.Output;
  
      public double Redline { get; private set; } = HeatMath.DefaultRedline;
-@@ -55,10 +58,10 @@ public sealed class OrbFeed
+@@ -55,10 +58,14 @@ public sealed class OrbFeed
  
      public SpeedTitle Title => _title.Displayed;
  
 -    public bool IsUnavailable => Reading.State != SubsetState.Available;
 +    public bool IsUnavailable => Reading.State != SubsetState.Available || !Reading.LiveComplete;
++
++    public static string DisplaySpeed(double value, bool complete) => complete ? SpeedFormat.Speed(value) : "–";
++
++    public static string DisplayToday(long value, bool complete) => complete ? SpeedFormat.Tokens(value) : "–";
  
      /// <summary>Today's peak output of the orb's sources (METRICS 6.8 <c>peakToday_A</c>).</summary>
 -    public double PeakToday => Sources is null ? Reading.MeasuredPeakOutput ?? 0 : _peak.PeakTodayOutput;
@@ -1545,7 +1655,7 @@ index 716848b5..d299bbcc 100644
  
      public double? NextDeadline => (_tier.NextDeadline, _title.NextDeadline) switch
      {
-@@ -70,10 +73,12 @@ public sealed class OrbFeed
+@@ -70,10 +77,12 @@ public sealed class OrbFeed
      /// Sets the sources, metric and redline. A change of the source set while running restarts the orb's peak and
      /// silences its celebration for 60 s (METRICS 6.8); the first configuration (app start) does not.
      /// </summary>
@@ -1560,7 +1670,7 @@ index 716848b5..d299bbcc 100644
          Metric = metric;
          Redline = HeatMath.ClampRedline(metric, redline);
          if (changed || created)
-@@ -88,16 +93,23 @@ public sealed class OrbFeed
+@@ -88,16 +97,23 @@ public sealed class OrbFeed
      public bool Update(SpeedSnapshot snapshot, double nowSeconds)
      {
          ArgumentNullException.ThrowIfNull(snapshot);
@@ -1587,7 +1697,7 @@ index 716848b5..d299bbcc 100644
          {
              return false;
          }
-@@ -110,7 +122,10 @@ public sealed class OrbFeed
+@@ -110,7 +126,10 @@ public sealed class OrbFeed
  
          _lastNowMs = nowMs;
          var dayStart = snapshot.DayStart == DateTimeOffset.MinValue ? 0 : snapshot.DayStart.ToUnixTimeMilliseconds();
@@ -1599,7 +1709,7 @@ index 716848b5..d299bbcc 100644
      }
  
      private static CostReading PreviewReading(double output) => CostReading.Zero with
-@@ -127,6 +142,8 @@ public sealed class OrbFeed
+@@ -127,6 +146,8 @@ public sealed class OrbFeed
          return tier || title;
      }
  
@@ -1847,6 +1957,28 @@ index e32cba22..886f24b5 100644
  
      /// <summary>Opens a menu for <see cref="DevCapture"/> and returns it (<c>menu-tray</c> or <c>menu-orb</c>).</summary>
      private System.Windows.Controls.ContextMenu? CaptureMenu(string kind)
+diff --git a/windows/src/AgentSpeed/Boards/Layers/NeonBoardPainter.cs b/windows/src/AgentSpeed/Boards/Layers/NeonBoardPainter.cs
+index 5074d505..9bb64e35 100644
+--- a/windows/src/AgentSpeed/Boards/Layers/NeonBoardPainter.cs
++++ b/windows/src/AgentSpeed/Boards/Layers/NeonBoardPainter.cs
+@@ -102,7 +102,7 @@ internal sealed class NeonBoardPainter : BoardStylePainter
+ 
+     // The LED bar's lit segments and today's peak mark.
+     protected override int HistoryLookKey(BoardTick tick) =>
+-        (int)Math.Round(Math.Clamp(tick.Heat, 0, 1) * BoardHeroLayout.Segments) * 64 + HeatKey(HeatMath.Heat(tick.PeakToday, tick.Redline));
++        (int)Math.Round(Math.Clamp(tick.Heat, 0, 1) * BoardHeroLayout.Segments) * 64 + (tick.TodayComplete ? HeatKey(HeatMath.Heat(tick.PeakToday, tick.Redline)) : 0);
+ 
+     protected override bool Shimmers => true;
+ 
+@@ -362,7 +362,7 @@ internal sealed class NeonBoardPainter : BoardStylePainter
+         const int segments = BoardHeroLayout.Segments;
+         const float gap = 2;
+         var lit = (int)Math.Round(Math.Clamp(tick.Heat, 0, 1) * segments);
+-        var peak = Math.Min(segments - 1, (int)Math.Round(HeatMath.Heat(tick.PeakToday, tick.Redline) * segments) - 1);
++        var peak = tick.TodayComplete ? Math.Min(segments - 1, (int)Math.Round(HeatMath.Heat(tick.PeakToday, tick.Redline) * segments) - 1) : -1;
+         var width = ((float)box.Width - (segments - 1) * gap) / segments;
+         var left = (float)box.Left;
+         var top = (float)box.Top;
 diff --git a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
 index 8c47a3b9..b2d709b7 100644
 --- a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
@@ -1946,7 +2078,7 @@ index 9025a8fc..3f49f99b 100644
      }
  
 diff --git a/windows/src/AgentSpeed/Orb/OrbManager.cs b/windows/src/AgentSpeed/Orb/OrbManager.cs
-index 84d2b461..1ad88e7c 100644
+index 84d2b461..05a22c04 100644
 --- a/windows/src/AgentSpeed/Orb/OrbManager.cs
 +++ b/windows/src/AgentSpeed/Orb/OrbManager.cs
 @@ -30,7 +30,7 @@ namespace AgentSpeed.Orb;
@@ -1978,6 +2110,15 @@ index 84d2b461..1ad88e7c 100644
                  if (sourcesChanged)
                  {
                      resourced.Add(orb.Id);
+@@ -416,7 +416,7 @@ internal sealed class OrbManager : IDisposable
+                         : response.Speed ?? entry.Feed.Value;
+                     entry.Window.Surface.Pulse(speed, tokens);
+                     break;
+-                case SpeedEvent.NewPeak:
++                case SpeedEvent.NewPeak when !entry.Feed.IsUnavailable && entry.Feed.Reading.TodayComplete:
+                     entry.Window.Surface.Peak();
+                     break;
+             }
 @@ -626,6 +626,8 @@ internal sealed class OrbManager : IDisposable
      }
  
@@ -2005,6 +2146,23 @@ index 84d2b461..1ad88e7c 100644
          (_loc["a11y.orb.showMenu"], () => _host.ShowOrbMenu(id)),
          (_loc["a11y.orb.moveCorner"], () => MoveToNextCorner(id)),
          (_loc["a11y.orb.toggleUnit"], () => ToggleUnit(id)),
+@@ -775,11 +777,15 @@ internal sealed class OrbManager : IDisposable
+         {
+             unavailableTitle = _loc[reading.State == SubsetState.AllDisabled ? "source.disabled" : "source.notFound"];
+         }
++        else if (!reading.LiveComplete)
++        {
++            unavailableTitle = _loc["source.notFound"];
++        }
+ 
+         // Money (DESIGN 9): the value and hover line change; heat, tiers and titles keep following tokens.
+         var money = unavailableTitle is null ? feed.Money : null;
+         surface.Scene.SetMoney(money);
+-        var info = money?.HoverLine ?? _loc.Format("today.summary", SpeedFormat.Tokens(reading.Today.Output), reading.Agents.Count);
++        var info = money?.HoverLine ?? _loc.Format("today.summary", OrbFeed.DisplayToday(reading.Today.Output, reading.TodayComplete), reading.Agents.Count);
+         surface.SetData(feed.Value, feed.Tier, feed.Title, reading.GeneratingSources, info, unavailableTitle);
+         surface.SetIdentity(orb.TrackedSources?.ToArray(), UnavailableOf(entry));
+         entry.Window.SetDimmed(unavailableTitle is not null);
 diff --git a/windows/src/AgentSpeed/Services/HeroTourDriver.cs b/windows/src/AgentSpeed/Services/HeroTourDriver.cs
 index e4144e7f..95f09128 100644
 --- a/windows/src/AgentSpeed/Services/HeroTourDriver.cs
@@ -2339,8 +2497,50 @@ index 1f362af8..67bbbb96 100644
      [Fact]
      public async Task UnknownRemoteLiveDoesNotProduceLocalOnlyChartBuckets()
      {
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/Boards/BoardLiveFeedTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/Boards/BoardLiveFeedTests.cs
+index eddbc706..10a86b69 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/Boards/BoardLiveFeedTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/Boards/BoardLiveFeedTests.cs
+@@ -53,6 +53,37 @@ public class BoardLiveFeedTests
+         return feed;
+     }
+ 
++    [Fact]
++    public void SelectedRemoteCompletenessControlsBoardReadoutsIndependentlyAndRecovers()
++    {
++        var feed = Feed();
++        var snapshot = Snapshot(1, Agent("a", 300));
++        var remote = snapshot.Sources[0] with
++        {
++            HostId = Guid.NewGuid(), LiveAvailable = false, TodayAvailable = true,
++        };
++        snapshot = snapshot with { Sources = [.. snapshot.Sources, remote] };
++
++        var liveMissing = feed.Update(snapshot, 1, Texts());
++        Assert.Equal("–", liveMissing.ValueText);
++        Assert.NotEqual(En.Format("boards.today", "–"), liveMissing.TodayText);
++        Assert.Contains("–", BoardAccessibility.Board(feed.Board, liveMissing.ValueText, liveMissing.Title, En));
++
++        remote = remote with { LiveAvailable = true, TodayAvailable = false };
++        snapshot = snapshot with { Sources = [.. snapshot.Sources.Take(2), remote] };
++        var todayMissing = feed.Update(snapshot, 2, Texts());
++        Assert.NotEqual("–", todayMissing.ValueText);
++        Assert.Equal(En.Format("boards.today", "–"), todayMissing.TodayText);
++        Assert.Equal(En.Format("boards.peak", "–"), todayMissing.PeakText);
++
++        remote = remote with { TodayAvailable = true };
++        snapshot = snapshot with { Sources = [.. snapshot.Sources.Take(2), remote] };
++        var recovered = feed.Update(snapshot, 3, Texts());
++        Assert.NotEqual("–", recovered.ValueText);
++        Assert.NotEqual(En.Format("boards.today", "–"), recovered.TodayText);
++        Assert.NotEqual(En.Format("boards.peak", "–"), recovered.PeakText);
++    }
++
+     [Fact]
+     public void TheTickCarriesTheBoardsValueTitleCountsAndFooter()
+     {
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs
-index 1a96c198..7b460970 100644
+index 1a96c198..a622d6cb 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs
 @@ -74,17 +74,44 @@ public class OrbFeedTests
@@ -2390,7 +2590,7 @@ index 1a96c198..7b460970 100644
      [Fact]
      public void CompletionsGoToOrbsThatTrackTheirSource()
      {
-@@ -93,7 +120,52 @@ public class OrbFeedTests
+@@ -93,7 +120,77 @@ public class OrbFeedTests
          codex.Configure(SourceSet.Of(SourceKind.Codex), SpeedMetric.Output, 400, 0);
          var claude = new OrbFeed("b");
          claude.Configure(SourceSet.Of(SourceKind.ClaudeCode), SpeedMetric.Output, 400, 0);
@@ -2425,6 +2625,31 @@ index 1a96c198..7b460970 100644
 +        Assert.True(localOnly.Reading.LiveComplete);
 +        Assert.False(remoteOnly.Reading.LiveComplete);
 +        Assert.False(remoteOnly.Reading.TodayComplete);
++    }
++
++    [Fact]
++    public void SelectedRemoteCompletenessControlsOrbDisplayIndependentlyAndRecovers()
++    {
++        var host = Guid.NewGuid();
++        var local = Source(SourceKind.Codex, 100);
++        var remote = Source(SourceKind.Codex, 40) with { HostId = host, LiveAvailable = false };
++        var snapshot = Snapshot(100, 0, 1) with { Sources = [local, remote] };
++        var feed = new OrbFeed("a");
++        feed.Configure(null, SpeedMetric.Output, 400, 0);
++        feed.Update(snapshot, 1);
++        Assert.True(feed.IsUnavailable);
++        Assert.Equal("–", OrbFeed.DisplaySpeed(feed.Value, !feed.IsUnavailable));
++        Assert.NotEqual("–", OrbFeed.DisplayToday(feed.Reading.Today.Output, feed.Reading.TodayComplete));
++
++        remote = remote with { LiveAvailable = true, TodayAvailable = false };
++        feed.Update(snapshot with { Sources = [local, remote] }, 2);
++        Assert.False(feed.IsUnavailable);
++        Assert.NotEqual("–", OrbFeed.DisplaySpeed(feed.Value, !feed.IsUnavailable));
++        Assert.Equal("–", OrbFeed.DisplayToday(feed.Reading.Today.Output, feed.Reading.TodayComplete));
++
++        feed.Update(snapshot with { Sources = [local, remote with { TodayAvailable = true }] }, 3);
++        Assert.False(feed.IsUnavailable);
++        Assert.NotEqual("–", OrbFeed.DisplayToday(feed.Reading.Today.Output, feed.Reading.TodayComplete));
 +    }
 +
 +    [Fact]

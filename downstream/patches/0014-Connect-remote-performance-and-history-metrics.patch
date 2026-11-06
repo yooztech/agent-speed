@@ -1,10 +1,10 @@
-From 7628b3e4c231d907fb31f0033654434b9d125c49 Mon Sep 17 00:00:00 2001
+From 409ce0bb611dfbc36529e79fc6453dd23a352f39 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 14/15] Connect remote performance and history metrics
 
 ---
- README.md                                     |  15 +-
+ README.md                                     |  17 ++-
  linux/collector/main.cpp                      |  32 ++++-
  linux/collector/protocol.cpp                  |  66 ++++++++-
  linux/collector/protocol.hpp                  |   4 +-
@@ -17,8 +17,10 @@ Subject: [PATCH 14/15] Connect remote performance and history metrics
  linux/tests/engine_fixture_test.cpp           |  21 +++
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 ++++++++++
  .../AgentSpeed/App/RemoteSnapshot.swift       |  77 ++++++++++-
- .../AgentSpeed/History/HistoryViewModel.swift |  24 +++-
- .../Perf/History/PerfHistoryContent.swift     |   5 +-
+ .../AgentSpeed/History/HistoryViewModel.swift |  20 ++-
+ .../AgentSpeed/Localization/StringTable.swift |   1 +
+ .../Perf/History/PerfHistoryContent.swift     |  37 ++++-
+ .../Perf/History/PerfHistorySection.swift     |   8 +-
  .../Perf/History/PerfHistoryTable.swift       |   6 +-
  .../Perf/History/PerfHistoryText.swift        |   3 +-
  .../AgentSpeed/Perf/Model/PerfCardModel.swift |   3 +-
@@ -28,10 +30,12 @@ Subject: [PATCH 14/15] Connect remote performance and history metrics
  .../AgentSpeedCore/Engine/SpeedEngine.swift   |   1 +
  macos/Sources/AgentSpeedCore/Models.swift     |   3 +
  .../Monitor/SnapshotBuilder.swift             |   5 +-
+ .../AgentSpeedAppTests/PerfHistoryTests.swift |  23 ++++
  .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 ++++++++++++++++++
  .../EngineBehaviorTests.swift                 |   4 +
  spec/METRICS.md                               |  23 +++-
  spec/NETWORK.md                               |  17 +++
+ spec/strings.json                             |   6 +
  .../src/AgentSpeed.Core/Engine/EngineFrame.cs |   1 +
  .../src/AgentSpeed.Core/Engine/SpeedEngine.cs |   3 +
  .../src/AgentSpeed.Core/Engine/TodayLedger.cs |   7 +
@@ -45,27 +49,28 @@ Subject: [PATCH 14/15] Connect remote performance and history metrics
  windows/src/AgentSpeed.Core/SpeedHub.cs       |  35 ++++-
  .../History/Perf/PerfHistoryChart.cs          |   4 +-
  .../History/Perf/PerfHistoryRow.cs            |   5 +-
- .../History/Perf/PerfHistorySection.cs        |  17 ++-
+ .../History/Perf/PerfHistorySection.cs        |  41 ++++--
  .../Dashboard/DashboardViewModel.cs           |   2 +-
- .../History/HistoryViewModel.Perf.cs          |  18 ++-
- .../History/Perf/PerfHistoryViewModel.cs      |  18 +--
+ .../History/HistoryViewModel.Perf.cs          |   6 +-
+ .../History/Perf/PerfHistoryViewModel.cs      |  24 ++--
+ .../History/Perf/PerfPerformanceSection.xaml  |   4 +
  .../AgentSpeed/History/Perf/PerfRowView.cs    |   6 +-
  .../RemoteConsumerTests.cs                    |  79 ++++++++++-
  .../RemotePerformanceTests.cs                 |  78 +++++++++++
- .../RemoteProtocolLifecycleTests.cs           |   1 +
- .../Perf/PerfHistoryTests.cs                  |  20 +++
+ .../RemoteProtocolLifecycleTests.cs           |   2 +-
+ .../Perf/PerfHistoryTests.cs                  |  55 ++++++++
  .../PerfPerformanceSectionTests.cs            |  28 ++++
- 51 files changed, 1105 insertions(+), 63 deletions(-)
+ 56 files changed, 1231 insertions(+), 63 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/RemotePerformance.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
 
 diff --git a/README.md b/README.md
-index d1cabe55..9be7f440 100644
+index 87352402..ebeefbfb 100644
 --- a/README.md
 +++ b/README.md
-@@ -126,6 +126,9 @@ remote host has its own identity and history, separate from local usage. A disco
- stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
- On macOS, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
+@@ -132,6 +132,9 @@ On macOS and Windows, cached history remains stale after reconnecting until a ne
+ Disabling a host stops its connection and excludes it from displayed totals while retaining its in-memory history.
+ Re-enabling can show that retained history as stale until refreshed; deleting the host or changing its destination clears it.
  When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
 +Combined today's average uses valid measured output and duration for each selected machine and source, not a simple
 +average of host averages. If a required contribution is unavailable, the combined average is unavailable. Remote
@@ -73,7 +78,7 @@ index d1cabe55..9be7f440 100644
  Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
  response rates use the logged duration. On macOS and Windows, the chart's “Estimating” legend remains visible
  whenever the selected range includes a dashed estimated segment, even after that response has completed. In particular omp commonly writes a response when it completes, so remote
-@@ -133,10 +136,14 @@ monitoring cannot measure per-token streaming speed or infer an unrecorded time
+@@ -139,10 +142,16 @@ monitoring cannot measure per-token streaming speed or infer an unrecorded time
  the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
  
  Remote sources and agents appear alongside local sources in the native dashboard and history when available. Remote
@@ -87,6 +92,8 @@ index d1cabe55..9be7f440 100644
 +the client from the collector. Partial log reads are marked as potentially incomplete. Supported collectors provide
 +remote performance scores and host-specific baselines, plus real daily performance history from analyzed logs. A
 +baseline uses the collector host's local dates; history uses the viewer's time zone, so day boundaries can differ.
++If a selected host has no performance history, available records remain visible with an incomplete-data notice.
++A known empty performance history is not treated as missing.
 +Older collectors without performance fields leave it unavailable while their other data remains usable. Remote network
 +history is unavailable, and disconnected intervals remain gaps rather than continuous measurements.
  After the client requests its time zone, snapshot today totals also use that zone. Untagged or null-zone snapshots
@@ -918,27 +925,10 @@ index 5396abe7..8ea864af 100644
  
  private func remoteCost(_ cost: Int64?, _ unpriced: Int?) -> CostTally? {
 diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-index 0049d5b5..2f82d34a 100644
+index 0049d5b5..420de6a8 100644
 --- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 +++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-@@ -22,8 +22,8 @@ final class HistoryViewModel {
-     let traffic: TrafficStore
-     private let appModel: AppModel?
-     /// Select each machine's history per source, using the same connections for status and data.
--    private var remoteHistorySelection: (usage: [DailyUsage], states: [RemoteHostState]) {
--        guard let remote = appModel?.remoteHosts else { return ([], []) }
-+    private var remoteHistorySelection: (usage: [DailyUsage], states: [RemoteHostState], perf: [(UUID, String, [PerfDayRecord])]) {
-+        guard let remote = appModel?.remoteHosts else { return ([], [], []) }
-         let hosts = remote.hosts.filter(\.enabled).sorted {
-             let left = remote.states[$0.id], right = remote.states[$1.id]
-             let leftFresh = left?.online == true && left?.historyReceivedOnConnection == true
-@@ -36,22 +36,27 @@ final class HistoryViewModel {
-         var contributingMachines: Set<String> = []
-         var selectedStates: [RemoteHostState] = []
-         var usage: [DailyUsage] = []
-+        var perf: [(UUID, String, [PerfDayRecord])] = []
-         for host in hosts {
-             let state = remote.states[host.id] ?? RemoteHostState()
+@@ -41,7 +41,8 @@ final class HistoryViewModel {
              let identity = state.snapshot?.machineId ?? host.id.uuidString
              if representatives[identity] == nil { representatives[identity] = state }
              guard let days = state.historyUsage else { continue }
@@ -948,40 +938,44 @@ index 0049d5b5..2f82d34a 100644
              guard !sources.isEmpty else { continue }
              usage.append(contentsOf: days.filter { sources.contains($0.source) })
              seen[identity, default: []].formUnion(sources)
-+            if let records = state.performanceHistory {
-+                perf.append((host.id, host.label, records.filter { sources.contains($0.source) }))
-+            }
-             contributingMachines.insert(identity)
-             selectedStates.append(state)
-         }
-         selectedStates.append(contentsOf: representatives.compactMap { identity, state in
-             contributingMachines.contains(identity) ? nil : state
-         })
--        return (usage, selectedStates)
-+        return (usage, selectedStates, perf)
-     }
- 
-     private var enabledRemoteStates: [RemoteHostState] { remoteHistorySelection.states }
-@@ -245,7 +250,16 @@ final class HistoryViewModel {
+@@ -245,7 +246,22 @@ final class HistoryViewModel {
              prices: cost.prices.book.current
          )
          if next != content { content = next }
 -        let nextPerf = PerfHistoryContent.build(store.perfRecords, range: next.range, source: source, today: today)
-+        var nextPerf = PerfHistoryContent.build(store.perfRecords, range: next.range, source: source, today: today)
-+        for (hostID, host, records) in remoteHistorySelection.perf {
-+            let remotePerf = PerfHistoryContent.build(records, range: next.range, source: source, today: today)
-+            nextPerf.rows.append(contentsOf: remotePerf.rows.map { row in
-+                var row = row
-+                row.hostID = hostID
-+                row.host = host
-+                return row
-+            })
++        let remote = appModel?.remoteHosts
++        let hosts = (remote?.hosts ?? []).filter(\.enabled).sorted {
++            let left = remote?.states[$0.id], right = remote?.states[$1.id]
++            let leftFresh = left?.online == true && left?.historyReceivedOnConnection == true
++            let rightFresh = right?.online == true && right?.historyReceivedOnConnection == true
++            if leftFresh != rightFresh { return leftFresh }
++            return (left?.historyReceivedAt ?? .distantPast) > (right?.historyReceivedAt ?? .distantPast)
 +        }
++        let remotes = hosts.map { host in
++            let state = remote?.states[host.id]
++            return PerfHistoryContent.Remote(id: host.id, name: host.label,
++                                             machine: state?.snapshot?.machineId ?? host.id.uuidString,
++                                             records: state?.performanceHistory)
++        }
++        let nextPerf = PerfHistoryContent.build(local: store.perfRecords, remotes: remotes, selectedHost: nil,
++                                                range: next.range, source: source, today: today)
          if nextPerf != perf { perf = nextPerf }
      }
  
+diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+index 51c968dd..f9eb994d 100644
+--- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
++++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+@@ -212,6 +212,7 @@ enum StringTable {
+         "history.perf.column.toolSuccess": Entry("工具成功", "工具成功", "Tool OK", "ツール成功"),
+         "history.perf.column.toolTime": Entry("工具耗時", "工具耗时", "Tool time", "ツール時間"),
+         "history.perf.column.usual": Entry("平常", "平常", "Usual", "普段"),
++        "history.perf.incomplete": Entry("部分所選主機的性能紀錄無法取得；顯示的資料可能不完整。", "部分所选主机的性能记录无法获取；显示的数据可能不完整。", "Performance history is unavailable for some selected hosts; the data shown may be incomplete.", "選択した一部のホストの性能履歴を取得できないため、表示データは不完全な場合があります。"),
+         "history.perf.empty": Entry("這段期間沒有有效計時的請求", "这段期间没有有效计时的请求", "No timed requests in this period", "この期間に計時できたリクエストはありません"),
+         "history.perf.empty.hint": Entry("性能需要有計時資料的請求。這個版本分析之前紀錄就已刪除的日子，只有用量總計，沒有性能資料。", "性能需要有计时数据的请求。这个版本分析之前记录就已删除的日子，只有用量总计，没有性能数据。", "Performance needs timed requests. Days whose logs were deleted before this version could analyze them keep their totals but have no performance data.", "性能には計時できたリクエストが必要です。このバージョンが分析する前にログが削除された日は、合計だけが残り、性能のデータはありません。"),
+         "history.perf.footnote": Entry("每個來源與模型分開合併計算；每天至少要有 20 個有效計時請求才畫進趨勢。參考值依開發者的實際紀錄校準，不是業界標準。", "每个来源与模型分开合并计算；每天至少要有 20 个有效计时请求才画进趋势。参考值依开发者的实际记录校准，不是业界标准。", "Each source and model is pooled on its own; a day needs 20 timed requests to appear in the trend. The reference values were calibrated on the developer's own logs, not an industry standard.", "ソースとモデルごとにまとめて計算します。推移に表示するには 1 日に計時できたリクエストが 20 件必要です。基準値は開発者の実際のログで調整したもので、業界標準ではありません。"),
 diff --git a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryContent.swift b/macos/Sources/AgentSpeed/Perf/History/PerfHistoryContent.swift
-index 5093bb8c..c775b11a 100644
+index 5093bb8c..69ce0416 100644
 --- a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryContent.swift
 +++ b/macos/Sources/AgentSpeed/Perf/History/PerfHistoryContent.swift
 @@ -6,6 +6,7 @@ import Foundation
@@ -1008,6 +1002,70 @@ index 5093bb8c..c775b11a 100644
      var n: Int { pooled.n }
      var shown: Int? { pooled.shown }
      var usualShown: Int? { usual.map(perfRoundHalfAway) }
+@@ -40,6 +43,38 @@ struct PerfHistoryContent: Equatable, Sendable {
+     var trendDays: DayRange
+     /// The single day of a one-day range, tinted in the trend.
+     var singleDay: DayKey?
++    /// At least one selected machine has not supplied performance history.
++    var incomplete = false
++
++    struct Remote {
++        var id: UUID
++        var name: String
++        var machine: String
++        var records: [PerfDayRecord]?
++    }
++
++    static func build(local: [PerfDayRecord], remotes: [Remote], selectedHost: UUID?, range: DayRange,
++                      source: SourceKind?, today: DayKey) -> PerfHistoryContent {
++        let selected = remotes.filter { selectedHost == nil || $0.id == selectedHost }
++        var result = build(selectedHost == nil ? local : [], range: range, source: source, today: today)
++        let availableMachines = Set(selected.filter { $0.records != nil }.map(\.machine))
++        result.incomplete = (selectedHost != nil && selected.isEmpty)
++            || selected.contains { !availableMachines.contains($0.machine) }
++        var seen: [String: Set<SourceKind>] = [:]
++        for remote in selected {
++            guard let records = remote.records else { continue }
++            let sources = Set(records.map(\.source)).subtracting(seen[remote.machine] ?? [])
++            seen[remote.machine, default: []].formUnion(sources)
++            let content = build(records.filter { sources.contains($0.source) }, range: range, source: source, today: today)
++            result.rows.append(contentsOf: content.rows.map { row in
++                var row = row
++                row.hostID = remote.id
++                row.host = remote.name
++                return row
++            })
++        }
++        return result
++    }
+ 
+     static let singleDayTrend = 14
+ 
+diff --git a/macos/Sources/AgentSpeed/Perf/History/PerfHistorySection.swift b/macos/Sources/AgentSpeed/Perf/History/PerfHistorySection.swift
+index 0760c4ad..5a95bc5f 100644
+--- a/macos/Sources/AgentSpeed/Perf/History/PerfHistorySection.swift
++++ b/macos/Sources/AgentSpeed/Perf/History/PerfHistorySection.swift
+@@ -19,13 +19,19 @@ struct PerfHistorySection: View {
+         let layout = PerfHistoryWidth(width: width)
+         VStack(alignment: .leading, spacing: 0) {
+             PerfHistoryHeader(l10n: l10n)
++            if content.incomplete {
++                Text(l10n("history.perf.incomplete"))
++                    .font(.caption)
++                    .foregroundStyle(.secondary)
++                    .padding(.top, 12)
++            }
+             Group {
+                 switch mode {
+                 case .analyzing:
+                     PerfHistoryPlaceholder(chartHeight: layout.chartHeight, l10n: l10n)
+                         .padding(.top, 14)
+                 case .empty:
+-                    PerfHistoryEmptyState(l10n: l10n)
++                    if !content.incomplete { PerfHistoryEmptyState(l10n: l10n) }
+                 case .rows:
+                     rows(content, layout)
+                 }
 diff --git a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryTable.swift b/macos/Sources/AgentSpeed/Perf/History/PerfHistoryTable.swift
 index 7581ef52..b6c0eb4d 100644
 --- a/macos/Sources/AgentSpeed/Perf/History/PerfHistoryTable.swift
@@ -1165,6 +1223,40 @@ index bde5aeb8..1f8d5e19 100644
          }
          return SpeedSnapshot(
              timestamp: date(output.nowMs),
+diff --git a/macos/Tests/AgentSpeedAppTests/PerfHistoryTests.swift b/macos/Tests/AgentSpeedAppTests/PerfHistoryTests.swift
+index 02917c51..9b7c4ed6 100644
+--- a/macos/Tests/AgentSpeedAppTests/PerfHistoryTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/PerfHistoryTests.swift
+@@ -25,6 +25,29 @@ struct PerfHistoryTests {
+ 
+     // MARK: Content
+ 
++    @Test func remotePerformanceCompletenessAndRecovery() {
++        let missingID = UUID(), otherID = UUID()
++        let missing = PerfHistoryContent.Remote(id: missingID, name: "Missing", machine: "one", records: nil)
++        let available = PerfHistoryContent.Remote(id: otherID, name: "Available", machine: "two", records: Self.records)
++        func build(_ remotes: [PerfHistoryContent.Remote], _ selected: UUID? = nil) -> PerfHistoryContent {
++            PerfHistoryContent.build(local: Self.records, remotes: remotes, selectedHost: selected,
++                                     range: Self.range, source: nil, today: Self.today)
++        }
++        let partial = build([missing, available])
++        #expect(partial.incomplete)
++        #expect(partial.rows.count == Self.content().rows.count * 2)
++        let onlyMissing = build([missing, available], missingID)
++        #expect(onlyMissing.incomplete && onlyMissing.rows.isEmpty)
++        let recovered = PerfHistoryContent.Remote(id: missingID, name: "Missing", machine: "one", records: [])
++        #expect(!build([recovered, available]).incomplete)
++        let duplicate = PerfHistoryContent.Remote(id: otherID, name: "Available", machine: "one", records: Self.records)
++        let duplicateResult = build([missing, duplicate])
++        #expect(!duplicateResult.incomplete)
++        #expect(duplicateResult.rows.count == Self.content().rows.count * 2)
++        #expect(build([missing, duplicate], missingID).incomplete)
++    }
++
++
+     @Test func everySourceAndModelWithATimedRequestHasARow() throws {
+         let content = Self.content()
+         #expect(content.rows.count == 6)
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
 index 438a4384..fc2b1e2e 100644
 --- a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
@@ -1404,6 +1496,23 @@ index 803ab6b0..744c0312 100644
  Each configured host has a stable identity; remote sources are identified by host and source kind. Local sources and
  all enabled remote sources appear together in the native macOS dashboard. Local diagnostic reports and live reporting
  contain local data only. Snapshots and history replace the previous host state rather than accumulating on reconnect. The collector
+diff --git a/spec/strings.json b/spec/strings.json
+index f3b0992c..771f6c56 100644
+--- a/spec/strings.json
++++ b/spec/strings.json
+@@ -5640,6 +5640,12 @@
+     "en": "Performance",
+     "ja": "性能"
+   },
++  "history.perf.incomplete": {
++    "zh-Hant": "部分所選主機的性能紀錄無法取得；顯示的資料可能不完整。",
++    "zh-Hans": "部分所选主机的性能记录无法获取；显示的数据可能不完整。",
++    "en": "Performance history is unavailable for some selected hosts; the data shown may be incomplete.",
++    "ja": "選択した一部のホストの性能履歴を取得できないため、表示データは不完全な場合があります。"
++  },
+   "history.perf.info": {
+     "zh-Hant": "性能是 Agent Speed 依回應與工具紀錄算出的跑分：1000 是參考水準，沒有上限，越高越快。這裡把所選期間每個來源與模型的紀錄合併後計算，至少要有 20 個有效計時請求才有分數；每日趨勢只畫有 20 個以上的日子。參考值依開發者的實際紀錄校準，不是業界標準。",
+     "zh-Hans": "性能是 Agent Speed 依响应与工具记录算出的跑分：1000 是参考水平，没有上限，越高越快。这里把所选期间每个来源与模型的记录合并后计算，至少要有 20 个有效计时请求才有分数；每日趋势只画有 20 个以上的日子。参考值依开发者的实际记录校准，不是业界标准。",
 diff --git a/windows/src/AgentSpeed.Core/Engine/EngineFrame.cs b/windows/src/AgentSpeed.Core/Engine/EngineFrame.cs
 index 993eacdf..cd8db689 100644
 --- a/windows/src/AgentSpeed.Core/Engine/EngineFrame.cs
@@ -1620,7 +1729,7 @@ index b6f47bd1..3331d04a 100644
      public static int Compare(PerfRecord? a, PerfRecord? b)
      {
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-index 3d50cbd2..37c92c80 100644
+index bfd0dde9..35c60075 100644
 --- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 @@ -1,5 +1,6 @@
@@ -1639,7 +1748,7 @@ index 3d50cbd2..37c92c80 100644
      public bool? HistoryPartial { get; init; }
      public DateTimeOffset? HistoryReceivedAt { get; init; }
      public bool HistoryCurrent { get; init; }
-@@ -29,6 +32,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -30,6 +33,7 @@ internal sealed class RemoteHostData(Guid id, string label)
      private string? _machineId;
      private string? _historyMachineId;
      public IReadOnlyList<DailyUsage> Days { get; set; } = [];
@@ -1647,7 +1756,7 @@ index 3d50cbd2..37c92c80 100644
      public string? HistoryTimezone { get; set; }
      public bool? HistoryPartial { get; set; }
      public DateTimeOffset? HistoryReceivedAt { get; set; }
-@@ -58,6 +62,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -59,6 +63,7 @@ internal sealed class RemoteHostData(Guid id, string label)
                      { Error = "Invalid collector history row"; return false; }
                      Days = days.EnumerateArray().Select(Day).Where(d => d is not null).Cast<DailyUsage>().ToArray();
                      _historyMachineId = _machineId;
@@ -1655,7 +1764,7 @@ index 3d50cbd2..37c92c80 100644
                      HistoryTimezone = timezone; HistoryPartial = root.Boolean("partial");
                      HistoryReceivedAt = DateTimeOffset.UtcNow; HistoryCurrent = true;
                      return true;
-@@ -106,7 +111,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -107,7 +112,7 @@ internal sealed class RemoteHostData(Guid id, string label)
      {
          bool sameZone = HistoryTimezone == LocalTimezone();
          return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null,
@@ -1664,7 +1773,7 @@ index 3d50cbd2..37c92c80 100644
              HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
      }
  
-@@ -120,6 +125,12 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -121,6 +126,12 @@ internal sealed class RemoteHostData(Guid id, string label)
      internal static CostTally? Cost(JsonElement e) => e.NullableNumber("cost_micro_usd") is not null && e.NullableNumber("unpriced_requests") is not null
          ? new CostTally(e.Integer("cost_micro_usd"), e.Integer("unpriced_requests")) : null;
      internal static TokenTotals Totals(JsonElement e, string prefix = "") => new(e.Integer(prefix + "requests"), e.Integer(prefix + "input"), e.Integer(prefix + "cached_input"), e.Integer(prefix + "cache_write_input"), e.Integer(prefix + "output"), e.Integer(prefix + "reasoning"));
@@ -1747,11 +1856,11 @@ index 00000000..cb8c4e13
 +    }
 +}
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 8ad6ff86..adf58604 100644
+index 13f57214..09b805ce 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
-@@ -204,7 +204,8 @@ public sealed class SpeedHub
-         foreach (var host in _remote.Values.OrderByDescending(h => h.Online))
+@@ -205,7 +205,8 @@ public sealed class SpeedHub
+         foreach (var host in _remote.Values.Where(h => h.Enabled).OrderByDescending(h => h.Online))
          {
              var status = host.Status();
 -            statuses.Add(status with { Days = status.Days.Where(day => host.IsSourceEnabled(day.Source)).ToArray() });
@@ -1760,7 +1869,7 @@ index 8ad6ff86..adf58604 100644
              if (host.Snapshot is not { } message || message.Array("sources") is not { } remoteSources)
              {
                  complete = false; todayComplete = false;
-@@ -221,8 +222,14 @@ public sealed class SpeedHub
+@@ -222,8 +223,14 @@ public sealed class SpeedHub
                  if (isOwner) owned.Add(kind.Value);
                  if (source.Boolean("available") != false) added.Add(kind.Value);
                  bool available = host.Online && source.Boolean("available") == true;
@@ -1776,7 +1885,7 @@ index 8ad6ff86..adf58604 100644
                  var output = source.NullableNumber("live_output");
                  var total = source.NullableNumber("live_total");
                  bool liveAvailable = available && output.HasValue && total.HasValue;
-@@ -232,7 +239,8 @@ public sealed class SpeedHub
+@@ -233,7 +240,8 @@ public sealed class SpeedHub
                  var sourceCost = todayAvailable ? new CostTally(source.Integer("today_cost_micro_usd"), source.Integer("unpriced_requests")) : CostTally.Zero;
                  var sourceStatus = new SourceStatus(kind.Value, true, "", available, (int)source.Integer("sessions"), rate,
                      sourceToday, available ? (int)source.Integer("active_agents") : 0, new Rate(rate.Output * share, rate.Total * share))
@@ -1786,17 +1895,22 @@ index 8ad6ff86..adf58604 100644
                  if (!isOwner) { alternateSources.Add(sourceStatus); continue; }
                  sources.Add(sourceStatus);
                  todayCost += sourceCost;
-@@ -259,14 +267,31 @@ public sealed class SpeedHub
+@@ -260,6 +268,9 @@ public sealed class SpeedHub
                      var lastMs = agent.Number("last_line_ms");
                      var last = lastMs >= 0 && lastMs <= 253402300799999 ? DateTimeOffset.FromUnixTimeMilliseconds((long)lastMs) : DateTimeOffset.MinValue;
                      var parent = agent.Text("parent_id");
 +                    var (perf, work) = RemotePerformance.Agent(agent, kind.Value);
 +                    var score = perf is null ? AgentSpeed.Core.Perf.PerfSetValue.None : AgentSpeed.Core.Perf.PerfSetValue.Of(prefix + id, (long)lastMs, perf);
 +                    var intelligence = new AgentSpeed.Core.Intelligence.AgentIntelligence(RemoteHostData.Intelligence(agent) with { Score = score }, score);
+                     var effortConfigured = agent.Boolean("effort_configured") == true;
+                     var speedConfigured = agent.Boolean("speed_configured") == true;
+                     var effort = ExecutionModeFact.Create(ExecutionModeKind.Effort, agent.Text("effort"),
+@@ -272,12 +283,26 @@ public sealed class SpeedHub
+                     var configuredModes = ExecutionModes.Of(effortConfigured ? effort : null).With(speedConfigured ? speed : null);
                      var statusAgent = new AgentStatus(prefix + id, kind.Value, host.Label, agent.Text("model"), phase,
                          agent.Boolean("subagent") == true, new Rate(agent.Number("live_output"), agent.Number("live_total")), null, last,
--                        parent is null ? null : prefix + parent) { HostId = host.Id };
-+                        parent is null ? null : prefix + parent) { HostId = host.Id, Perf = perf, Work = work ?? AgentSpeed.Core.Work.WorkSignals.None, Intelligence = intelligence };
+-                        parent is null ? null : prefix + parent) { HostId = host.Id, SessionModes = sessionModes, ConfiguredModes = configuredModes };
++                        parent is null ? null : prefix + parent) { HostId = host.Id, Perf = perf, Work = work ?? AgentSpeed.Core.Work.WorkSignals.None, Intelligence = intelligence, SessionModes = sessionModes, ConfiguredModes = configuredModes };
                      if (!owned.Contains(kind.Value)) { alternateAgents.Add(statusAgent); continue; }
                      agents.Add(statusAgent);
                      if (phase == AgentPhase.Generating) generating++;
@@ -1819,7 +1933,7 @@ index 8ad6ff86..adf58604 100644
          }
          var second = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
          var instanceHistory = new Dictionary<OrbSourceInstance, IReadOnlyList<HistoryPoint>>(local.InstanceHistory);
-@@ -305,7 +330,7 @@ public sealed class SpeedHub
+@@ -316,7 +341,7 @@ public sealed class SpeedHub
              history.Add(available ? new HistoryPoint(point.Time, measured, estimate) : point with { IsAvailable = false });
          }
          return local with { Live = live, LiveEstimatedShare = live.Output > 0 ? estimated / live.Output : 0,
@@ -1879,10 +1993,40 @@ index 747de918..fef528cc 100644
              PresentLine = present,
          };
 diff --git a/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistorySection.cs b/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistorySection.cs
-index 975b1d7b..7c0b6734 100644
+index 975b1d7b..4e14fccb 100644
 --- a/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistorySection.cs
 +++ b/windows/src/AgentSpeed.Presentation/History/Perf/PerfHistorySection.cs
-@@ -14,6 +14,9 @@ public enum PerfHistoryState
+@@ -5,6 +5,29 @@ using AgentSpeed.Presentation.Localization;
+ 
+ namespace AgentSpeed.Presentation.History.Perf;
+ 
++/// <summary>Selected performance records and whether every selected machine supplied history.</summary>
++public sealed record PerfHistorySources(IReadOnlyList<PerfRecord> Records, bool Complete)
++{
++    public static PerfHistorySources Select(IReadOnlyList<PerfRecord> local, IEnumerable<RemoteHostStatus> remotes, Guid? hostId, bool allHosts)
++    {
++        var hosts = remotes.Where(h => allHosts || h.Id == hostId)
++            .OrderByDescending(h => h.Online).ThenByDescending(h => h.HistoryCurrent).ToList();
++        var complete = (hostId is null || hosts.Count > 0)
++            && hosts.GroupBy(h => h.MachineId).All(group => group.Any(h => h.PerfRecords is not null));
++        var records = new List<PerfRecord>();
++        if (hostId is null) records.AddRange(local);
++        var seen = new HashSet<(string, SourceKind)>();
++        foreach (var host in hosts)
++        {
++            if (host.PerfRecords is null) continue;
++            var sources = host.PerfRecords.Select(r => r.Source).Distinct()
++                .Where(source => seen.Add((host.MachineId, source))).ToHashSet();
++            records.AddRange(host.PerfRecords.Where(r => sources.Contains(r.Source)));
++        }
++        return new(records, complete);
++    }
++}
++
+ /// <summary>What the section shows (DESIGN 12, <i>States</i>).</summary>
+ public enum PerfHistoryState
+ {
+@@ -14,6 +37,9 @@ public enum PerfHistoryState
      /// <summary>No timed request in the range for any source.</summary>
      Empty,
  
@@ -1892,7 +2036,7 @@ index 975b1d7b..7c0b6734 100644
      Rows,
  }
  
-@@ -38,11 +41,12 @@ public sealed record PerfHistorySection(
+@@ -38,7 +64,7 @@ public sealed record PerfHistorySection(
          bool analyzing,
          PerfSort sort,
          SourceKindModel? selected,
@@ -1901,13 +2045,12 @@ index 975b1d7b..7c0b6734 100644
      {
          ArgumentNullException.ThrowIfNull(records);
          ArgumentNullException.ThrowIfNull(sort);
-         ArgumentNullException.ThrowIfNull(loc);
-+        if (!available) return new PerfHistorySection(PerfHistoryState.Unavailable, [], null, null, sort);
-         var from = Day(first);
-         var to = Day(last);
-         var todayText = Day(today);
-@@ -52,12 +56,11 @@ public sealed record PerfHistorySection(
-             return new PerfHistorySection(analyzing ? PerfHistoryState.Analyzing : PerfHistoryState.Empty, [], null, null, sort);
+@@ -49,15 +75,14 @@ public sealed record PerfHistorySection(
+         var range = PerfHistory.RangeOf(records, from, to, source);
+         if (range.Count == 0)
+         {
+-            return new PerfHistorySection(analyzing ? PerfHistoryState.Analyzing : PerfHistoryState.Empty, [], null, null, sort);
++            return new PerfHistorySection(!available ? PerfHistoryState.Unavailable : analyzing ? PerfHistoryState.Analyzing : PerfHistoryState.Empty, [], null, null, sort);
          }
  
 -        var history = new PerfHistory(records, todayText);
@@ -1921,7 +2064,7 @@ index 975b1d7b..7c0b6734 100644
          chosen ??= sorted.Aggregate((best, r) => r.Timed > best.Timed ? r : best);
  
          IReadOnlyList<PerfChartDay> days;
-@@ -67,13 +70,13 @@ public sealed record PerfHistorySection(
+@@ -67,13 +92,13 @@ public sealed record PerfHistorySection(
              // A single-day range shows the 14 days ending on that day.
              var start = first.AddDays(-(PerfFormula.BaselineDays - 1));
              var trend = PerfHistory.RangeOf(records, Day(start), to, chosen.Source)
@@ -1952,42 +2095,24 @@ index b2d709b7..d41a3e9f 100644
          var peakAvailable = metric == SpeedMetric.Output ? snapshot.PeakTodayOutputAvailable : snapshot.PeakTodayTotalAvailable;
          PeakText = snapshot.RemoteHosts.Count == 0 && peakAvailable ? $"{SpeedFormat.Speed(peak)} {unit}" : "—";
 diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
-index aa900294..12622b8b 100644
+index aa900294..d92e557c 100644
 --- a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
 +++ b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
-@@ -1,5 +1,6 @@
- using AgentSpeed.History.Perf;
- using AgentSpeed.Presentation.History.Perf;
-+using AgentSpeed.Core.Perf;
- 
- namespace AgentSpeed.History;
- 
-@@ -23,7 +24,22 @@ internal sealed partial class HistoryViewModel
+@@ -23,7 +23,11 @@ internal sealed partial class HistoryViewModel
  
      public void SetPerfAppearance(bool dark, bool highContrast, bool reduceMotion) => Performance.SetAppearance(dark, highContrast, reduceMotion);
  
 -    private void UpdatePerformance() => Performance.Update(_hostId is null && !(_allHosts && HasRemoteHosts) ? _hub.PerfRecords : [], Range.Start, Range.End, Today, _source, IsAnalyzing);
 +    private void UpdatePerformance()
 +    {
-+        var records = new List<PerfRecord>();
-+        if (_hostId is null) records.AddRange(_hub.PerfRecords);
-+        var available = _hostId is null || (_speed?.Snapshot.RemoteHosts.Any(h => h.Id == _hostId) == true);
-+        var seen = new HashSet<(string, AgentSpeed.Core.SourceKind)>();
-+        foreach (var host in (_speed?.Snapshot.RemoteHosts ?? []).OrderByDescending(h => h.Online))
-+        {
-+            if (!_allHosts && host.Id != _hostId) continue;
-+            if (host.PerfRecords is null) { available = false; continue; }
-+            var sources = host.PerfRecords.Select(r => r.Source).Distinct()
-+                .Where(source => seen.Add((host.MachineId, source))).ToHashSet();
-+            records.AddRange(host.PerfRecords.Where(r => sources.Contains(r.Source)));
-+        }
-+        Performance.Update(records, Range.Start, Range.End, Today, _source, IsAnalyzing, available);
++        var selected = PerfHistorySources.Select(_hub.PerfRecords, _speed?.Snapshot.RemoteHosts ?? [], _hostId, _allHosts);
++        Performance.Update(selected.Records, Range.Start, Range.End, Today, _source, IsAnalyzing, selected.Complete);
 +    }
  
      private void RelocalizePerformance() => _performance?.Relocalize(_loc);
  
 diff --git a/windows/src/AgentSpeed/History/Perf/PerfHistoryViewModel.cs b/windows/src/AgentSpeed/History/Perf/PerfHistoryViewModel.cs
-index e08c1f21..08ca4a75 100644
+index e08c1f21..e3150441 100644
 --- a/windows/src/AgentSpeed/History/Perf/PerfHistoryViewModel.cs
 +++ b/windows/src/AgentSpeed/History/Perf/PerfHistoryViewModel.cs
 @@ -36,6 +36,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
@@ -1998,7 +2123,7 @@ index e08c1f21..08ca4a75 100644
      private PerfSort _sort = PerfSort.Default;
      private Action<PerfSort>? _sortChanged;
      private SourceKindModel? _chosen;
-@@ -110,7 +111,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+@@ -110,10 +111,14 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
  
      public bool ShowsAnalyzing => State == PerfHistoryState.Analyzing;
  
@@ -2007,7 +2132,14 @@ index e08c1f21..08ca4a75 100644
  
      public bool ShowsData => State == PerfHistoryState.Rows;
  
-@@ -191,7 +192,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
++    public bool ShowsIncomplete => !_available;
++
++    public string IncompleteText => _loc["history.perf.incomplete"];
++
+     public bool ShowsTable => ShowsData && Width != PerfHistoryWidth.Narrow;
+ 
+     public bool ShowsList => ShowsData && Width == PerfHistoryWidth.Narrow;
+@@ -191,7 +196,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
      /// <summary>The range's records and the window's choices; call after every recomputation of the window.</summary>
      /// <param name="source">The window's source picker; null for all sources.</param>
      /// <param name="analyzing">The history is being re-analysed (<c>history.analyzing</c>).</param>
@@ -2016,24 +2148,26 @@ index e08c1f21..08ca4a75 100644
      {
          ArgumentNullException.ThrowIfNull(records);
          _records = records;
-@@ -200,6 +201,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+@@ -200,6 +205,8 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
          _today = today;
          _source = source;
          _analyzing = analyzing;
 +        _available = available;
++        OnPropertyChanged(nameof(ShowsIncomplete));
          Rebuild();
      }
  
-@@ -285,7 +287,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+@@ -285,7 +292,8 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
  
      private void Rebuild()
      {
 -        var section = PerfHistorySection.Build(_records, _first, _last, _source, _today, _analyzing, _sort, _chosen, _loc);
 +        var section = PerfHistorySection.Build(_records, _first, _last, _source, _today, _analyzing, _sort, _chosen, _loc, _available);
++        OnPropertyChanged(nameof(IncompleteText));
          Title = _loc["history.perf.title"];
          Info = _loc["history.perf.info"];
          InfoLabel = _loc["history.perf.info.a11y"];
-@@ -297,8 +299,8 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+@@ -297,8 +305,8 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
  
          Footnote = _loc["history.perf.footnote"];
          AnalyzingText = _loc["history.perf.analyzing"];
@@ -2044,7 +2178,7 @@ index e08c1f21..08ca4a75 100644
          CopyRow = _loc["win.history.copyRow"];
          ReferenceLegend = "1000 " + _loc["perf.reference"];
  
-@@ -313,7 +315,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+@@ -313,7 +321,7 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
          OnPropertyChanged(nameof(SortDescending));
          ApplyRows(section.Rows);
  
@@ -2053,7 +2187,7 @@ index e08c1f21..08ca4a75 100644
          Chart = section.Chart;
          TrendTitle = section.Chart?.Title ?? string.Empty;
          ChartSpoken = section.Chart?.Spoken ?? string.Empty;
-@@ -361,10 +363,10 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
+@@ -361,10 +369,10 @@ internal sealed class PerfHistoryViewModel : ObservableObject, IDisposable
          for (var i = 0; i < rows.Count; i++)
          {
              var row = rows[i];
@@ -2066,6 +2200,21 @@ index e08c1f21..08ca4a75 100644
                  Rows.Insert(Math.Min(i, Rows.Count), view);
              }
              else if (Rows.IndexOf(view) is var at && at != i)
+diff --git a/windows/src/AgentSpeed/History/Perf/PerfPerformanceSection.xaml b/windows/src/AgentSpeed/History/Perf/PerfPerformanceSection.xaml
+index f2adfc2a..ad6d7f73 100644
+--- a/windows/src/AgentSpeed/History/Perf/PerfPerformanceSection.xaml
++++ b/windows/src/AgentSpeed/History/Perf/PerfPerformanceSection.xaml
+@@ -64,6 +64,10 @@
+             </Border>
+         </Popup>
+ 
++        <TextBlock Text="{Binding IncompleteText}" Visibility="{Binding ShowsIncomplete, Converter={StaticResource Visible}}"
++                   Margin="0,12,0,0" FontSize="12" TextWrapping="Wrap"
++                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" AutomationProperties.LiveSetting="Polite" />
++
+         <Grid x:Name="Body">
+             <!-- Re-analysing: static placeholders in the track color where the chart and the rows will be. -->
+             <StackPanel Visibility="{Binding ShowsAnalyzing, Converter={StaticResource Visible}}">
 diff --git a/windows/src/AgentSpeed/History/Perf/PerfRowView.cs b/windows/src/AgentSpeed/History/Perf/PerfRowView.cs
 index 46d8f5dd..b5fe3816 100644
 --- a/windows/src/AgentSpeed/History/Perf/PerfRowView.cs
@@ -2290,19 +2439,20 @@ index 00000000..5bc9d978
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs
-index c58b4962..16f9b8eb 100644
+index 27721e20..84f37861 100644
 --- a/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs
-@@ -63,6 +63,7 @@ public sealed class RemoteProtocolLifecycleTests
+@@ -63,7 +63,7 @@ public sealed class RemoteProtocolLifecycleTests
          Assert.False(result.Online);
          var host = Assert.Single(hub.Snapshot.RemoteHosts);
          Assert.False(host.Online);
-+        Assert.False(host.SourcesKnown);
+-
++        Assert.True(host.SourcesKnown);
          Assert.Equal("disconnected", host.Error);
-         Assert.DoesNotContain(hub.Snapshot.Sources, source => source.HostId == id);
+         Assert.False(Assert.Single(hub.Snapshot.Sources, source => source.HostId == id).LiveAvailable);
      }
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs
-index 2f33a624..c03ea038 100644
+index 2f33a624..78e39c06 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs
 @@ -35,6 +35,26 @@ public sealed class PerfHistoryTests
@@ -2331,6 +2481,48 @@ index 2f33a624..c03ea038 100644
 +
      [Fact]
      public void RowsAreSortedByScoreAndTheFullestRowIsSelected()
+     {
+@@ -78,6 +98,41 @@ public sealed class PerfHistoryTests
+         Assert.Contains("截至", chart.Title, StringComparison.Ordinal);
+     }
+ 
++    [Fact]
++    public void SelectedHostsTrackMissingHistoryWithoutDiscardingKnownRecords()
++    {
++        var missingId = Guid.NewGuid();
++        var otherId = Guid.NewGuid();
++        var missing = new RemoteHostStatus(missingId, "Missing", false, null) { MachineId = "one" };
++        var available = new RemoteHostStatus(otherId, "Available", true, null) { MachineId = "two", PerfRecords = Records };
++        var partial = PerfHistorySources.Select(Records, [missing, available], null, true);
++        Assert.False(partial.Complete);
++        Assert.Equal(Records.Count * 2, partial.Records.Count);
++        var onlyMissing = PerfHistorySources.Select(Records, [missing, available], missingId, false);
++        Assert.False(onlyMissing.Complete);
++        Assert.Empty(onlyMissing.Records);
++        var recovered = missing with { PerfRecords = [] };
++        Assert.True(PerfHistorySources.Select(Records, [recovered, available], null, true).Complete);
++        var duplicate = available with { MachineId = "one" };
++        var deduplicated = PerfHistorySources.Select(Records, [missing, duplicate], null, true);
++        Assert.True(deduplicated.Complete);
++        Assert.Equal(Records.Count * 2, deduplicated.Records.Count);
++        Assert.False(PerfHistorySources.Select(Records, [missing, duplicate], missingId, false).Complete);
++    }
++
++    [Fact]
++    public void MissingHostDoesNotHideKnownRowsAndRecoveryRestoresEmptyState()
++    {
++        var partial = PerfHistorySection.Build(Records, new DateOnly(2027, 1, 1), Today, null, Today,
++            false, PerfSort.Default, null, Zh, available: false);
++        Assert.Equal(PerfHistoryState.Rows, partial.State);
++        Assert.NotEmpty(partial.Rows);
++        var missing = PerfHistorySection.Build([], Today, Today, null, Today, false, PerfSort.Default, null, Zh, available: false);
++        Assert.Equal(PerfHistoryState.Unavailable, missing.State);
++        var recovered = PerfHistorySection.Build([], Today, Today, null, Today, false, PerfSort.Default, null, Zh, available: true);
++        Assert.Equal(PerfHistoryState.Empty, recovered.State);
++    }
++
+     [Fact]
+     public void AnalyzingAndEmpty()
      {
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/PerfPerformanceSectionTests.cs b/windows/tests/AgentSpeed.Windows.Tests/PerfPerformanceSectionTests.cs
 index d2b5b774..122f20e3 100644

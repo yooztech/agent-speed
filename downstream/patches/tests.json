@@ -121,6 +121,10 @@
       {
         "platform": "macos",
         "run": "python3 macos/scripts/test-update-relaunch.py"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter 'FullyQualifiedName~RemoteExecutionModeTests|FullyQualifiedName~RemoteProtocolLifecycleTests' && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~RemoteHostSettingsTests"
       }
     ],
     "related": [],
@@ -165,6 +169,10 @@
       {
         "platform": "windows",
         "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemoteConsumerTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~OrbFeedTests && dotnet test windows/tests/AgentSpeed.Windows.Tests --filter FullyQualifiedName~DashboardRemoteCompletenessTests"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter 'FullyQualifiedName~OrbFeedTests|FullyQualifiedName~BoardLiveFeedTests'"
       }
     ],
     "related": [],
@@ -207,6 +215,10 @@
       {
         "platform": "windows",
         "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName=AgentSpeed.Presentation.Tests.EffortCapsuleTests.TheNoteStaysOnTheCardAndOutOfWhatTheRowSays"
+      },
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test --filter PerfHistoryTests"
       }
     ],
     "related": [
@@ -234,6 +246,10 @@
       {
         "platform": "windows",
         "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~HistoryTrafficTests"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~RemoteHistoryCsvTests"
       }
     ],
     "related": [],

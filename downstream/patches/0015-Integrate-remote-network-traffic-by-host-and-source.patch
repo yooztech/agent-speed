@@ -1,9 +1,10 @@
-From e8b3c5b2504f66a26a629d3d5e3fcb6bcb1bcf48 Mon Sep 17 00:00:00 2001
+From ed8be9afec73a24d87033c7792c090d194140ada Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 15/15] Integrate remote network traffic by host and source
 
 ---
+ README.md                                     |   2 +
  linux/collector/main.cpp                      |   6 +-
  linux/collector/protocol.cpp                  |  46 +++++-
  linux/collector/protocol.hpp                  |   3 +-
@@ -18,7 +19,7 @@ Subject: [PATCH 15/15] Integrate remote network traffic by host and source
  .../AgentSpeed/App/RemoteSnapshot.swift       |   3 +-
  .../AgentSpeed/App/RemoteTraffic.swift        |  72 ++++++++
  .../Dashboard/Traffic/TrafficSection.swift    |  66 ++++++--
- .../AgentSpeed/History/HistoryViewModel.swift |  47 +++++-
+ .../AgentSpeed/History/HistoryViewModel.swift |  44 ++++-
  .../History/HistoryWindowController.swift     |   4 +-
  .../History/Model/HistoryTraffic.swift        |   7 +-
  .../History/Views/HistoryView.swift           |   6 +
@@ -29,25 +30,39 @@ Subject: [PATCH 15/15] Integrate remote network traffic by host and source
  windows/src/AgentSpeed.Core/SpeedHub.cs       |   9 +-
  .../AgentSpeed.Core/Traffic/TrafficTypes.cs   |   8 +
  .../Formatting/DashboardTraffic.cs            |  22 ++-
+ .../History/HistoryCsv.cs                     |  22 +++
  .../History/HistoryTraffic.cs                 |  27 ++-
  .../Settings/Orbs/OrbTraffic.cs               |  28 ++++
  windows/src/AgentSpeed/App/AppController.cs   |   9 +-
  .../Dashboard/DashboardViewModel.Traffic.cs   |  11 +-
  .../Dashboard/DashboardWindow.xaml.cs         |   4 +-
  .../AgentSpeed/History/HistoryController.cs   |   4 +-
- .../History/HistoryViewModel.Perf.cs          |   2 +-
- .../History/HistoryViewModel.Traffic.cs       |  10 +-
- .../AgentSpeed/History/HistoryViewModel.cs    |   7 +
+ .../History/HistoryViewModel.Traffic.cs       |  25 ++-
+ .../AgentSpeed/History/HistoryViewModel.cs    |  26 ++-
  windows/src/AgentSpeed/Orb/OrbManager.cs      |   9 +-
  .../src/AgentSpeed/Traffic/TrafficService.cs  |   9 +-
  .../RemoteConsumerTests.cs                    |  93 +++++++++--
  .../HistoryTrafficTests.cs                    |  33 ++++
+ .../RemoteHistoryCsvTests.cs                  |  37 +++++
  .../TrafficSurfaceTests.cs                    |  54 ++++++
- 39 files changed, 923 insertions(+), 83 deletions(-)
+ 41 files changed, 1001 insertions(+), 95 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteTraffic.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
  create mode 100644 windows/src/AgentSpeed.Core/RemoteTraffic.cs
 
+diff --git a/README.md b/README.md
+index ebeefbfb..1d424596 100644
+--- a/README.md
++++ b/README.md
+@@ -144,6 +144,8 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
+ Remote sources and agents appear alongside local sources in the native dashboard and history when available. Remote
+ data does not include categorized today's token totals, project paths or a continuous live chart; unavailable
+ values, including missing price data, remain unknown. Network traffic is reported when the collector can observe it.
++Windows remote-host and all-host CSV exports include each host's own daily traffic when traffic columns are visible;
++missing traffic stays blank rather than being exported as zero.
+ History is aggregated in the viewer's time zone, requested by
+ the client from the collector. Partial log reads are marked as potentially incomplete. Supported collectors provide
+ remote performance scores and host-specific baselines, plus real daily performance history from analyzed logs. A
 diff --git a/linux/collector/main.cpp b/linux/collector/main.cpp
 index 4048ce12..1245d5a2 100644
 --- a/linux/collector/main.cpp
@@ -597,10 +612,10 @@ index efeaf4e3..cf55e452 100644
          .accessibilityAddTraits(.isButton)
      }
 diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-index 2f82d34a..71d5046c 100644
+index 420de6a8..949d021f 100644
 --- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 +++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-@@ -76,6 +76,11 @@ final class HistoryViewModel {
+@@ -72,6 +72,11 @@ final class HistoryViewModel {
      /// Pointer, keyboard and selection state, kept apart so hovering never rebuilds the content.
      let interaction = HistoryInteraction()
  
@@ -612,7 +627,7 @@ index 2f82d34a..71d5046c 100644
      private(set) var source: SourceKind?
      private(set) var rangeKind: HistoryRangeKind = .days30
      private(set) var customRange: DayRange?
-@@ -147,6 +152,15 @@ final class HistoryViewModel {
+@@ -143,6 +148,15 @@ final class HistoryViewModel {
  
      var motion: Animation? { accessibility.reduceMotion ? nil : HistoryMotion.chart }
  
@@ -628,7 +643,7 @@ index 2f82d34a..71d5046c 100644
      /// Also when the source is already selected: opening the window applies the traffic rule below again.
      func select(source: SourceKind?) {
          if source != self.source {
-@@ -242,16 +256,17 @@ final class HistoryViewModel {
+@@ -238,11 +252,11 @@ final class HistoryViewModel {
          let options = HistoryCostOptions(
              marked: cost.settings.subscriptionSources, includeSubscriptions: includeSubscriptions, metric: chartMetric
          )
@@ -642,15 +657,16 @@ index 2f82d34a..71d5046c 100644
              prices: cost.prices.book.current
          )
          if next != content { content = next }
--        var nextPerf = PerfHistoryContent.build(store.perfRecords, range: next.range, source: source, today: today)
--        for (hostID, host, records) in remoteHistorySelection.perf {
-+        let localPerf = hostID == nil ? store.perfRecords : []
-+        var nextPerf = PerfHistoryContent.build(localPerf, range: next.range, source: source, today: today)
-+        for (hostID, host, records) in remoteHistorySelection.perf where self.hostID == nil || self.hostID == hostID {
-             let remotePerf = PerfHistoryContent.build(records, range: next.range, source: source, today: today)
-             nextPerf.rows.append(contentsOf: remotePerf.rows.map { row in
-                 var row = row
-@@ -269,8 +284,30 @@ final class HistoryViewModel {
+@@ -260,7 +274,7 @@ final class HistoryViewModel {
+                                              machine: state?.snapshot?.machineId ?? host.id.uuidString,
+                                              records: state?.performanceHistory)
+         }
+-        let nextPerf = PerfHistoryContent.build(local: store.perfRecords, remotes: remotes, selectedHost: nil,
++        let nextPerf = PerfHistoryContent.build(local: store.perfRecords, remotes: remotes, selectedHost: hostID,
+                                                 range: next.range, source: source, today: today)
+         if nextPerf != perf { perf = nextPerf }
+     }
+@@ -271,8 +285,30 @@ final class HistoryViewModel {
                         includeTools: settings.trafficIncludeTools, bits: settings.trafficUnit == .bits)
      }
  
@@ -914,7 +930,7 @@ index 744c0312..c3b1abce 100644
  `tools`, `active_ms`, `span_start_ms`, `model`, `components`, `baseline`, `vs_usual`, `vs_usual_percent` and
  `work_signals`. Each component has `id`, `present`, `reason`, `samples`, `measure`, `ratio` and `sub_score`;
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-index 37c92c80..e57527bf 100644
+index 35c60075..f8ceece2 100644
 --- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 @@ -15,6 +15,7 @@ public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string
@@ -925,7 +941,7 @@ index 37c92c80..e57527bf 100644
      public bool? HistoryPartial { get; init; }
      public DateTimeOffset? HistoryReceivedAt { get; init; }
      public bool HistoryCurrent { get; init; }
-@@ -33,6 +34,16 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -34,6 +35,16 @@ internal sealed class RemoteHostData(Guid id, string label)
      private string? _historyMachineId;
      public IReadOnlyList<DailyUsage> Days { get; set; } = [];
      public IReadOnlyList<PerfRecord>? PerfRecords { get; set; }
@@ -942,7 +958,7 @@ index 37c92c80..e57527bf 100644
      public string? HistoryTimezone { get; set; }
      public bool? HistoryPartial { get; set; }
      public DateTimeOffset? HistoryReceivedAt { get; set; }
-@@ -54,6 +65,9 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -55,6 +66,9 @@ internal sealed class RemoteHostData(Guid id, string label)
                      { Error = "Invalid collector sources"; return false; }
                      Snapshot = root.Clone(); Online = true; Error = null;
                      _machineId = root.Text("machine_id");
@@ -952,7 +968,7 @@ index 37c92c80..e57527bf 100644
                      return true;
                  case "history":
                      var timezone = root.Text("timezone");
-@@ -111,7 +125,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -112,7 +126,7 @@ internal sealed class RemoteHostData(Guid id, string label)
      {
          bool sameZone = HistoryTimezone == LocalTimezone();
          return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null,
@@ -1122,10 +1138,10 @@ index 00000000..1d92d44b
 +    }
 +}
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index adf58604..810bde60 100644
+index 09b805ce..ff3b346f 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
-@@ -73,6 +73,7 @@ public sealed class SpeedHub
+@@ -74,6 +74,7 @@ public sealed class SpeedHub
              {
                  if (!online)
                  {
@@ -1133,8 +1149,8 @@ index adf58604..810bde60 100644
                      host.Online = false;
                      host.HistoryCurrent = false;
                  }
-@@ -204,8 +205,12 @@ public sealed class SpeedHub
-         foreach (var host in _remote.Values.OrderByDescending(h => h.Online))
+@@ -205,8 +206,12 @@ public sealed class SpeedHub
+         foreach (var host in _remote.Values.Where(h => h.Enabled).OrderByDescending(h => h.Online))
          {
              var status = host.Status();
 -            statuses.Add(status with { Days = status.Days.Where(day => host.IsSourceEnabled(day.Source)).ToArray(),
@@ -1237,6 +1253,39 @@ index 0c5f6db6..34f7acfe 100644
          }
  
          rows.Sort((a, b) => b.TodayBytes != a.TodayBytes ? b.TodayBytes.CompareTo(a.TodayBytes) : a.Source.CompareTo(b.Source));
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs b/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs
+index e2ab0e10..fdb3dc39 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryCsv.cs
+@@ -59,6 +59,28 @@ public static class HistoryCsv
+         _ => "unknown",
+     };
+ 
++    /// <summary>Export usage per host and source, attaching only that host's traffic for each day.</summary>
++    public static string BuildHosts(
++        IEnumerable<(string Id, IReadOnlyList<DailyUsage> Days, HistoryTraffic Traffic)> hosts,
++        SourceKind? source, DayRange range, SourceSet excluded, HistoryColumn sortColumn, bool descending,
++        HistoryMoney? money, bool traffic, DateOnly today, DateTimeOffset now, string emptyHostId)
++    {
++        var csv = new StringBuilder();
++        foreach (var (id, usage, hostTraffic) in hosts)
++        {
++            var sources = source is { } selected ? new[] { selected } : HistoryAggregator.SourcesWithHistory(usage);
++            foreach (var kind in sources)
++            {
++                var rows = HistoryAggregator.Daily(usage, kind, range, excluded)
++                    .Select(row => row with { Traffic = traffic ? hostTraffic.Day(row.Day, kind, today, now) : null });
++                var part = Build(HistoryTable.Sort(rows, sortColumn, descending), kind, money, traffic, id, countedCosts: true);
++                csv.Append(csv.Length == 0 ? part : part[(part.IndexOf("\r\n", StringComparison.Ordinal) + 2)..]);
++            }
++        }
++
++        return csv.Length == 0 ? Build([], source, money, traffic, emptyHostId) : csv.ToString();
++    }
++
+     /// <summary>
+     /// The rows as CSV. Costs are every source's by default; <paramref name="countedCosts"/> exports costs after
+     /// subscription exclusion. <c>cost_usd</c> is exact with 6 decimals, empty for a day without cost data; <c>cost_&lt;code&gt;</c> has the currency's digits + 2 at the rate
 diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryTraffic.cs b/windows/src/AgentSpeed.Presentation/History/HistoryTraffic.cs
 index a313e907..abd87d2d 100644
 --- a/windows/src/AgentSpeed.Presentation/History/HistoryTraffic.cs
@@ -1476,21 +1525,8 @@ index f72cc493..7419ed9d 100644
          if (traffic)
          {
              _model.SetMetric(Presentation.History.HistoryChartMetric.Traffic);
-diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
-index 12622b8b..edc936ed 100644
---- a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
-+++ b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
-@@ -30,7 +30,7 @@ internal sealed partial class HistoryViewModel
-         if (_hostId is null) records.AddRange(_hub.PerfRecords);
-         var available = _hostId is null || (_speed?.Snapshot.RemoteHosts.Any(h => h.Id == _hostId) == true);
-         var seen = new HashSet<(string, AgentSpeed.Core.SourceKind)>();
--        foreach (var host in (_speed?.Snapshot.RemoteHosts ?? []).OrderByDescending(h => h.Online))
-+        foreach (var host in (_speed?.Snapshot.RemoteHosts ?? []).OrderByDescending(h => h.Online).ThenByDescending(h => h.HistoryCurrent))
-         {
-             if (!_allHosts && host.Id != _hostId) continue;
-             if (host.PerfRecords is null) { available = false; continue; }
 diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs
-index 8f95cf96..e2dea96c 100644
+index 8f95cf96..2db987e7 100644
 --- a/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs
 +++ b/windows/src/AgentSpeed/History/HistoryViewModel.Traffic.cs
 @@ -100,11 +100,19 @@ internal sealed partial class HistoryViewModel
@@ -1514,8 +1550,30 @@ index 8f95cf96..e2dea96c 100644
          var key = (hub.Days, hub.Since, IncludeTools: _includeTools(), Enabled: _enabledSources());
          if (_trafficKey is not { } last || !ReferenceEquals(last.Days, key.Days) || last.Since != key.Since || last.IncludeTools != key.IncludeTools
              || last.Enabled != key.Enabled)
+@@ -116,6 +124,21 @@ internal sealed partial class HistoryViewModel
+         return _traffic;
+     }
+ 
++    private HistoryTraffic ExportTraffic(string hostId)
++    {
++        if (hostId == "local")
++        {
++            return _trafficHub is { } hub
++                ? new HistoryTraffic(TrafficVisibility.Days(hub.Days, _enabledSources()), hub.Since, _includeTools())
++                : HistoryTraffic.None;
++        }
++
++        var remote = (_speed?.Snapshot.RemoteHosts ?? []).FirstOrDefault(host => host.Id.ToString() == hostId);
++        return remote?.Traffic is { } traffic
++            ? new HistoryTraffic(traffic.Days, null, _includeTools(), sparse: true)
++            : HistoryTraffic.None;
++    }
++
+     /// <summary>Gives every day its traffic, refreshes the traffic texts, and returns the days.</summary>
+     private IReadOnlyList<DaySummary> ApplyTraffic(IReadOnlyList<DaySummary> days)
+     {
 diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.cs b/windows/src/AgentSpeed/History/HistoryViewModel.cs
-index de55ad97..51d47034 100644
+index de55ad97..153700b4 100644
 --- a/windows/src/AgentSpeed/History/HistoryViewModel.cs
 +++ b/windows/src/AgentSpeed/History/HistoryViewModel.cs
 @@ -197,6 +197,13 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
@@ -1532,8 +1590,34 @@ index de55ad97..51d47034 100644
      public bool HasRemoteHosts => HostOptions.Count > 2;
  
      public IReadOnlyList<SummaryCardView> Cards { get; }
+@@ -453,20 +460,11 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+             return (name, HistoryCsv.Encode(HistoryCsv.Build(Rows, _source, Money, ShowsTraffic)));
+         }
+ 
+-        var csv = new System.Text.StringBuilder();
+-        foreach (var (id, usage) in ExportHosts())
+-        {
+-            var sources = _source is { } source ? new[] { source } : HistoryAggregator.SourcesWithHistory(usage);
+-            foreach (var kind in sources)
+-            {
+-                var excluded = new HistoryCostOptions(_cost.Settings.Subscriptions, _includeSubscriptions, _metric).Excluded(_source);
+-                var rows = HistoryTable.Sort(HistoryAggregator.Daily(usage, kind, Range, excluded), _sortColumn, _sortDescending);
+-                AppendCsv(csv, HistoryCsv.Build(rows, kind, Money, hostId: id, countedCosts: true));
+-            }
+-        }
+-
+-        if (csv.Length == 0) csv.Append(HistoryCsv.Build([], _source, Money, hostId: _hostId?.ToString() ?? "local"));
+-        return (_hostId is { } host ? $"{host}-{name}" : name, HistoryCsv.Encode(csv.ToString()));
++        var excluded = new HistoryCostOptions(_cost.Settings.Subscriptions, _includeSubscriptions, _metric).Excluded(_source);
++        var hosts = ExportHosts().Select(host => (host.Id, host.Days, Traffic: ExportTraffic(host.Id)));
++        var csv = HistoryCsv.BuildHosts(hosts, _source, Range, excluded, _sortColumn, _sortDescending, Money,
++            ShowsTraffic, Today, DateTimeOffset.Now, _hostId?.ToString() ?? "local");
++        return (_hostId is { } host ? $"{host}-{name}" : name, HistoryCsv.Encode(csv));
+     }
+ 
+     public (string FileName, byte[] Bytes) ExportModesCsv()
 diff --git a/windows/src/AgentSpeed/Orb/OrbManager.cs b/windows/src/AgentSpeed/Orb/OrbManager.cs
-index 1ad88e7c..d8385521 100644
+index 05a22c04..1668fc65 100644
 --- a/windows/src/AgentSpeed/Orb/OrbManager.cs
 +++ b/windows/src/AgentSpeed/Orb/OrbManager.cs
 @@ -373,9 +373,12 @@ internal sealed class OrbManager : IDisposable
@@ -1759,6 +1843,60 @@ index d5135123..57447251 100644
 +        Assert.NotNull(traffic.Day(new DateOnly(2026, 1, 3), null, new DateOnly(2026, 1, 3), DateTimeOffset.Now));
 +    }
  }
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
+index 6eeba75e..c98a9085 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
+@@ -1,5 +1,6 @@
+ using AgentSpeed.Core;
+ using AgentSpeed.Presentation.History;
++using AgentSpeed.Core.Traffic;
+ 
+ namespace AgentSpeed.Presentation.Tests;
+ 
+@@ -75,6 +76,42 @@ public sealed class RemoteHistoryCsvTests
+         Assert.Contains(",pi,", remoteLines[1], StringComparison.Ordinal);
+     }
+ 
++    [Fact]
++    public void HostExportUsesEachHostsSourceAndDayTrafficAndLeavesMissingUnknown()
++    {
++        DailyUsage Usage(string day, SourceKind source) => new(day, source, new TokenTotals(1, 0, 0, 0, 10), 10, 1000, 0, 1, null, []);
++        var first = new HistoryTraffic([new TrafficDay("2026-10-24", "pi", 11, 12, 13, 14, 1000)], null, true, sparse: true);
++        var second = new HistoryTraffic([new TrafficDay("2026-10-24", "pi", 21, 22, 23, 24, 1000)], null, true, sparse: true);
++        var hosts = new (string Id, IReadOnlyList<DailyUsage> Days, HistoryTraffic Traffic)[]
++        {
++            ("local", [Usage("2026-10-24", SourceKind.Pi)], HistoryTraffic.None),
++            ("remote-a", [Usage("2026-10-24", SourceKind.Pi), Usage("2026-10-25", SourceKind.Pi), Usage("2026-10-24", SourceKind.Codex)], first),
++            ("remote-b", [Usage("2026-10-24", SourceKind.Pi)], second),
++        };
++        var day = new DateOnly(2026, 10, 25);
++        string Export(IEnumerable<(string Id, IReadOnlyList<DailyUsage> Days, HistoryTraffic Traffic)> selected, bool visible) =>
++            HistoryCsv.BuildHosts(selected, null, new(new(2026, 10, 24), day), default, HistoryColumn.Date, false,
++                null, visible, day, DateTimeOffset.Now, "local");
++        var lines = Export(hosts, true).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
++        var header = lines[0].Split(',');
++        Assert.Equal("traffic_rx_bytes", header[^4]);
++        var rows = lines[1..].Select(line => line.Split(',')).ToArray();
++        Assert.All(rows, row => Assert.Equal(header.Length, row.Length));
++        string[] Row(string host, string date, string source) => Assert.Single(rows, row => row[0] == host && row[1] == date && row[2] == source);
++        Assert.Equal(new[] { "11", "12", "13", "14" }, Row("remote-a", "2026-10-24", "pi")[^4..]);
++        Assert.Equal(new[] { "21", "22", "23", "24" }, Row("remote-b", "2026-10-24", "pi")[^4..]);
++        Assert.All(Row("local", "2026-10-24", "pi")[^4..], value => Assert.Empty(value));
++        Assert.All(Row("remote-a", "2026-10-25", "pi")[^4..], value => Assert.Empty(value));
++        Assert.All(Row("remote-a", "2026-10-24", "codex")[^4..], value => Assert.Empty(value));
++
++        var remoteOnly = Export(hosts.Skip(1).Take(1), true);
++        Assert.Contains("remote-a,2026-10-24,pi,", remoteOnly, StringComparison.Ordinal);
++        Assert.DoesNotContain("remote-b,", remoteOnly, StringComparison.Ordinal);
++        var hidden = Export(hosts, false).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
++        Assert.DoesNotContain("traffic_rx_bytes", hidden[0], StringComparison.Ordinal);
++        Assert.All(hidden[1..], row => Assert.Equal(hidden[0].Split(',').Length, row.Split(',').Length));
++    }
++
+     [Fact]
+     public void ModeCsvAddsHostIdentityWithoutChangingModeColumns()
+     {
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs
 index 5286eee1..fa753050 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs

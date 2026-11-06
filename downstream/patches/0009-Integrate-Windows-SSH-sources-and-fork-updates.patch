@@ -1,10 +1,10 @@
-From 86515e7c69dc8ca0c3d0a79b2ce31e2d9dab3be6 Mon Sep 17 00:00:00 2001
+From c452048d94cf3fbf3a98c1a2a9f50b95b2e7b209 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:28 +0800
 Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
 
 ---
- README.md                                     |   4 +-
+ README.md                                     |  10 +-
  linux/app/src/network_service.cpp             |  44 ++--
  linux/app/src/update_release.hpp              |  71 ++++++
  linux/tests/CMakeLists.txt                    |   1 +
@@ -18,13 +18,13 @@ Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
  spec/UPDATES.md                               |  32 ++-
  windows/src/AgentSpeed.Core/History.cs        |   2 +
  windows/src/AgentSpeed.Core/Models.cs         |  21 +-
- .../src/AgentSpeed.Core/RemoteAggregation.cs  | 125 ++++++++++
- windows/src/AgentSpeed.Core/SpeedHub.cs       | 171 ++++++++++++-
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  | 126 ++++++++++
+ windows/src/AgentSpeed.Core/SpeedHub.cs       | 182 +++++++++++++-
  .../History/ExecutionModeCsv.cs               |   4 +-
  .../History/HistoryCsv.cs                     |   9 +-
  .../Localization/Strings.Windows.json         |  36 +++
  .../Settings/AppSettings.cs                   |   2 +
- .../Settings/RemoteHost.cs                    |  29 +++
+ .../Settings/RemoteHost.cs                    |  38 +++
  .../Settings/SettingsSerializer.cs            |  30 +++
  .../Updates/ReleaseFeed.cs                    |   4 +-
  .../Updates/ReleaseInfo.cs                    |   4 +-
@@ -41,21 +41,22 @@ Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
  .../AgentSpeed/History/HistoryViewModel.cs    | 162 +++++++++++-
  .../src/AgentSpeed/History/HistoryWindow.xaml |   4 +
  windows/src/AgentSpeed/Orb/OrbManager.cs      |   4 +-
- .../Services/RemoteConnectionManager.cs       | 236 ++++++++++++++++++
+ .../Services/RemoteConnectionManager.cs       | 231 ++++++++++++++++++
  .../AgentSpeed/Services/RemoteSshWorker.cs    | 203 +++++++++++++++
  .../Settings/Pages/SourcesPage.xaml           |  26 ++
- .../AgentSpeed/Settings/SettingsViewModel.cs  | 153 ++++++++++++
+ .../AgentSpeed/Settings/SettingsViewModel.cs  | 157 ++++++++++++
  .../src/AgentSpeed/Updates/ExecutableSwap.cs  |  49 +++-
  .../RemoteConsumerTests.cs                    | 189 ++++++++++++++
- .../RemoteProtocolLifecycleTests.cs           | 102 ++++++++
+ .../RemoteExecutionModeTests.cs               |  64 +++++
+ .../RemoteProtocolLifecycleTests.cs           | 138 +++++++++++
  .../ReleaseFeedTests.cs                       |  53 ++--
  .../RemoteHistoryCsvTests.cs                  |  37 +++
- .../RemoteHostSettingsTests.cs                |  42 ++++
+ .../RemoteHostSettingsTests.cs                |  67 +++++
  .../RemoteHostStatusTextTests.cs              |  16 ++
  .../UpdatePackageTests.cs                     |  45 +++-
  .../UpdateScheduleTests.cs                    |  48 ++--
  .../UpdateSourceTests.cs                      |   2 +-
- 51 files changed, 2040 insertions(+), 182 deletions(-)
+ 52 files changed, 2190 insertions(+), 183 deletions(-)
  create mode 100644 linux/app/src/update_release.hpp
  create mode 100644 linux/tests/update_release_test.cpp
  create mode 100644 windows/src/AgentSpeed.Core/RemoteAggregation.cs
@@ -63,16 +64,17 @@ Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
  create mode 100644 windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
  create mode 100644 windows/src/AgentSpeed/Services/RemoteSshWorker.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemoteExecutionModeTests.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHostStatusTextTests.cs
 
 diff --git a/README.md b/README.md
-index cf9664f4..7dcdf650 100644
+index cf9664f4..15817ee1 100644
 --- a/README.md
 +++ b/README.md
-@@ -107,12 +107,14 @@ The full, testable specification lives in [`spec/METRICS.md`](spec/METRICS.md).
+@@ -107,14 +107,18 @@ The full, testable specification lives in [`spec/METRICS.md`](spec/METRICS.md).
  
  Ordinary Claude Desktop chat conversations are not stored on your computer, so they cannot be measured; WorkBuddy conversations that run in the cloud are not counted either.
  
@@ -87,7 +89,22 @@ index cf9664f4..7dcdf650 100644
 +excluding a source on one host does not exclude the same source on another host.
  Settings → Sources shows each host's online, offline or disabled status and its last connection error until a successful
  snapshot arrives.
++Duplicate SSH destinations are rejected when saving; an existing host can keep its own destination while editing.
++Remote effort and speed retain their configured or selected status when provided by the collector.
  Local diagnostic reports and live reporting contain local data only, not remote data. Remote SSH is independent of the
+ network switch: disable the host to stop it. The app selects its bundled collector for the host architecture, uploads
+ it over SSH and runs it over SSH standard streams. There is no HTTP service, listening port, Python runtime or sudo.
+@@ -122,7 +126,9 @@ it over SSH and runs it over SSH standard streams. There is no HTTP service, lis
+ The Linux collector reuses the native measurement core, including omp parsing and parent/child deduplication. The
+ remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
+ stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
+-On macOS, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
++On macOS and Windows, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
++Disabling a host stops its connection and excludes it from displayed totals while retaining its in-memory history.
++Re-enabling can show that retained history as stale until refreshed; deleting the host or changing its destination clears it.
+ When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
+ Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
+ response rates use the logged duration. In particular omp commonly writes a response when it completes, so remote
 diff --git a/linux/app/src/network_service.cpp b/linux/app/src/network_service.cpp
 index f0dec53e..666001ad 100644
 --- a/linux/app/src/network_service.cpp
@@ -674,10 +691,10 @@ index 2d3ed0d4..92eba8a6 100644
      /// (METRICS 6.8), keyed by the requested set: the maximum 3-bucket trailing average of the enabled members' summed
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 new file mode 100644
-index 00000000..4b7d2cda
+index 00000000..bc9c67ce
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,126 @@
 +using System.Text.Json;
 +using AgentSpeed.Core.Reporting;
 +
@@ -699,6 +716,7 @@ index 00000000..4b7d2cda
 +{
 +    public Guid Id { get; } = id;
 +    public string Label { get; set; } = label;
++    public bool Enabled { get; set; } = true;
 +    public bool Online { get; set; }
 +    public string? Error { get; set; }
 +    public JsonElement? Snapshot { get; set; }
@@ -804,7 +822,7 @@ index 00000000..4b7d2cda
 +    internal static bool? Boolean(this JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False) ? v.GetBoolean() : null;
 +}
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 3a2cd893..93ca2e4d 100644
+index 3a2cd893..58309d3c 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
 @@ -9,6 +9,11 @@ public sealed class SpeedHub
@@ -819,12 +837,12 @@ index 3a2cd893..93ca2e4d 100644
      private Reporting.ReportPerfWatch _perfWatch = Reporting.ReportPerfWatch.Off;
  
      public SpeedHub(SynchronizationContext? context = null)
-@@ -39,6 +44,65 @@ public sealed class SpeedHub
+@@ -39,6 +44,66 @@ public sealed class SpeedHub
      /// <summary>Every live snapshot, on the UI context, also while a preview is displayed (live reporting, METRICS 11).</summary>
      public event EventHandler<SpeedSnapshot>? LivePublished;
  
 +    /// <summary>Updates a configured host from a collector frame or connection state.</summary>
-+    public (bool Accepted, bool Online, string? Error) UpdateRemoteHost(Guid id, string label, bool online, string? error = null, string? json = null)
++    public (bool Accepted, bool Online, string? Error) UpdateRemoteHost(Guid id, string label, bool online, string? error = null, string? json = null, bool enabled = true)
 +    {
 +        SpeedEvent? completionEvent = null;
 +        bool accepted = false;
@@ -834,6 +852,7 @@ index 3a2cd893..93ca2e4d 100644
 +        {
 +            if (!_remote.TryGetValue(id, out var host)) { _remote[id] = host = new RemoteHostData(id, label); _remoteHistory.Clear(); }
 +            host.Label = label;
++            host.Enabled = enabled;
 +            RemoteCompletion? completion = null;
 +            if (json is null)
 +            {
@@ -865,12 +884,12 @@ index 3a2cd893..93ca2e4d 100644
 +        return (accepted, currentOnline, currentError);
 +    }
 +
-+    /// <summary>Begins a new connection without reusing the preceding session's snapshot.</summary>
++    /// <summary>Begins a new connection with retained data marked stale until fresh frames arrive.</summary>
 +    public void ResetRemoteHostSession(Guid id)
 +    {
 +        lock (_gate)
 +        {
-+            if (_remote.TryGetValue(id, out var host)) host.Snapshot = null;
++            if (_remote.TryGetValue(id, out var host)) { host.Online = false; host.HistoryCurrent = false; }
 +        }
 +        Post(() => { if (!IsPreviewing) Apply(CurrentCombined(), null); });
 +    }
@@ -885,7 +904,7 @@ index 3a2cd893..93ca2e4d 100644
      /// <summary>Called by <see cref="LiveMonitor"/> from any thread.</summary>
      public void PublishLive(SpeedSnapshot snapshot, IReadOnlyList<SpeedEvent>? events = null)
      {
-@@ -55,7 +119,7 @@ public sealed class SpeedHub
+@@ -55,7 +120,7 @@ public sealed class SpeedHub
                  return;
              }
  
@@ -894,7 +913,7 @@ index 3a2cd893..93ca2e4d 100644
          });
      }
  
-@@ -84,13 +148,116 @@ public sealed class SpeedHub
+@@ -84,13 +149,126 @@ public sealed class SpeedHub
          SpeedSnapshot live;
          lock (_gate)
          {
@@ -927,7 +946,7 @@ index 3a2cd893..93ca2e4d 100644
 +        int generating = local.GeneratingCount, tools = local.ToolsCount;
 +        bool complete = true;
 +        bool todayComplete = true;
-+        foreach (var host in _remote.Values.OrderByDescending(h => h.Online))
++        foreach (var host in _remote.Values.Where(h => h.Enabled).OrderByDescending(h => h.Online))
 +        {
 +            statuses.Add(host.Status());
 +            if (host.Snapshot is not { } message || message.Array("sources") is not { } remoteSources)
@@ -975,9 +994,19 @@ index 3a2cd893..93ca2e4d 100644
 +                    var lastMs = agent.Number("last_line_ms");
 +                    var last = lastMs >= 0 && lastMs <= 253402300799999 ? DateTimeOffset.FromUnixTimeMilliseconds((long)lastMs) : DateTimeOffset.MinValue;
 +                    var parent = agent.Text("parent_id");
++                    var effortConfigured = agent.Boolean("effort_configured") == true;
++                    var speedConfigured = agent.Boolean("speed_configured") == true;
++                    var effort = ExecutionModeFact.Create(ExecutionModeKind.Effort, agent.Text("effort"),
++                        effortConfigured ? ExecutionModeEvidence.Configured : ExecutionModeEvidence.Selected,
++                        scope: effortConfigured ? ExecutionModeScope.Configuration : ExecutionModeScope.Session);
++                    var speed = ExecutionModeFact.Create(ExecutionModeKind.ServiceTier, agent.Text("speed"),
++                        speedConfigured ? ExecutionModeEvidence.Configured : ExecutionModeEvidence.Selected,
++                        scope: speedConfigured ? ExecutionModeScope.Configuration : ExecutionModeScope.Session);
++                    var sessionModes = ExecutionModes.Of(effortConfigured ? null : effort).With(speedConfigured ? null : speed);
++                    var configuredModes = ExecutionModes.Of(effortConfigured ? effort : null).With(speedConfigured ? speed : null);
 +                    agents.Add(new AgentStatus(prefix + id, kind.Value, host.Label, agent.Text("model"), phase,
 +                        agent.Boolean("subagent") == true, new Rate(agent.Number("live_output"), agent.Number("live_total")), null, last,
-+                        parent is null ? null : prefix + parent) { HostId = host.Id });
++                        parent is null ? null : prefix + parent) { HostId = host.Id, SessionModes = sessionModes, ConfiguredModes = configuredModes });
 +                    if (phase == AgentPhase.Generating) generating++;
 +                    else if (phase == AgentPhase.Tools) tools++;
 +                }
@@ -1133,10 +1162,10 @@ index b0874889..491527f3 100644
      public AppLanguage Language { get; init; } = AppLanguage.System;
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs b/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
 new file mode 100644
-index 00000000..e769fcfd
+index 00000000..82229bf3
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,38 @@
 +using System.Text;
 +
 +namespace AgentSpeed.Presentation.Settings;
@@ -1154,6 +1183,15 @@ index 00000000..e769fcfd
 +            return true;
 +        }
 +    }
++
++    /// <summary>Checks for an existing destination after trimming editor whitespace.</summary>
++    public bool DuplicatesDestination(IEnumerable<RemoteHost> hosts, Guid? editingId) =>
++        hosts.Any(host => host.Id != editingId &&
++            string.Equals(host.Destination.Trim(), Destination.Trim(), StringComparison.Ordinal));
++
++    /// <summary>Checks whether a normalized editor draft can be saved.</summary>
++    public bool CanSave(IEnumerable<RemoteHost> hosts, Guid? editingId) =>
++        ValidDestination && !DuplicatesDestination(hosts, editingId);
 +}
 +
 +/// <summary>Formats the connection state shown alongside an SSH host.</summary>
@@ -1933,10 +1971,10 @@ index 8fa0e3da..84d2b461 100644
                      entry.Window.Surface.Pulse(speed, tokens);
 diff --git a/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
 new file mode 100644
-index 00000000..9e5864fe
+index 00000000..67b73d1b
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,231 @@
 +using System.Diagnostics;
 +using System.Windows.Threading;
 +using AgentSpeed.Core;
@@ -2123,13 +2161,8 @@ index 00000000..9e5864fe
 +        worker?.Stop();
 +    }
 +
-+    private void Publish(Connection connection)
-+    {
-+        if (connection.Host.Enabled)
-+            _hub.UpdateRemoteHost(connection.Host.Id, connection.Host.Label, connection.Online, connection.Error);
-+        else
-+            _hub.RemoveRemoteHost(connection.Host.Id);
-+    }
++    private void Publish(Connection connection) =>
++        _hub.UpdateRemoteHost(connection.Host.Id, connection.Host.Label, connection.Online, connection.Error, enabled: connection.Host.Enabled);
 +
 +    private void OnTimezoneTimer(object? sender, EventArgs e)
 +    {
@@ -2420,7 +2453,7 @@ index faf7aff5..d4488f14 100644
          <controls:SettingsCard Header="{loc:Loc source.codex}" Icon="&#xE8B7;" Description="{Binding CodexPath}">
              <StackPanel Orientation="Horizontal">
 diff --git a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
-index caeac5be..61dac736 100644
+index caeac5be..d12e66f9 100644
 --- a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
 +++ b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
 @@ -1,4 +1,5 @@
@@ -2484,13 +2517,13 @@ index caeac5be..61dac736 100644
  
 +        EditRemoteHostCommand = new RelayCommand(parameter => EditRemoteHost(parameter as RemoteHostSettingsRow));
 +        RemoveRemoteHostCommand = new RelayCommand(parameter => RemoveRemoteHost(parameter as RemoteHostSettingsRow));
-+        SaveRemoteHostCommand = new RelayCommand(SaveRemoteHost, () => RemoteHostDraft.ValidDestination);
++        SaveRemoteHostCommand = new RelayCommand(SaveRemoteHost, CanSaveRemoteHost);
 +        CancelRemoteHostCommand = new RelayCommand(CancelRemoteHost);
 +
          PreviewCommand = new RelayCommand(StartPreview, () => !_preview.IsRunning);
          ChangeCodexCommand = new RelayCommand(() => ChangeFolder(CodexPath, (s, path) => s with { CodexRoot = path }));
          ChangeClaudeCommand = new RelayCommand(() => ChangeFolder(ClaudePath, (s, path) => s with { ClaudeRoot = path }));
-@@ -220,6 +261,27 @@ internal sealed class SettingsViewModel : ObservableObject
+@@ -220,6 +261,30 @@ internal sealed class SettingsViewModel : ObservableObject
      public ObservableCollection<NavItem> Pages { get; } = new();
  
      public ObservableCollection<SourceSettingsRow> Sources { get; } = new();
@@ -2512,13 +2545,16 @@ index caeac5be..61dac736 100644
 +    }
 +    public string RemoteHostEditorTitle => _editingRemoteHost.HasValue ? "Edit SSH host" : "Add SSH host";
 +    public string RemoteHostSaveText => _editingRemoteHost.HasValue ? "Save" : "Add host";
-+    public string RemoteHostValidation => RemoteHostDestination.Length > 0 && !RemoteHostDraft.ValidDestination
-+        ? "Enter an SSH alias or user@host using letters, numbers, ., _, -, @ or :." : string.Empty;
++    public string RemoteHostValidation => RemoteHostDestination.Length == 0 ? string.Empty
++        : !RemoteHostDraft.ValidDestination ? "Enter an SSH alias or user@host using letters, numbers, ., _, -, @ or :."
++        : RemoteHostDraft.DuplicatesDestination(S.RemoteHosts, _editingRemoteHost) ? "This SSH destination is already added."
++        : string.Empty;
 +    private RemoteHost RemoteHostDraft => new(_editingRemoteHost ?? Guid.Empty, RemoteHostLabel.Trim(), RemoteHostDestination.Trim(), false);
++    private bool CanSaveRemoteHost() => RemoteHostDraft.CanSave(S.RemoteHosts, _editingRemoteHost);
  
      /// <summary>Settings → Cost (DESIGN 9) and the taskbar page's live value unit.</summary>
      public CostPaneViewModel Cost { get; }
-@@ -767,6 +829,7 @@ internal sealed class SettingsViewModel : ObservableObject
+@@ -767,6 +832,7 @@ internal sealed class SettingsViewModel : ObservableObject
          {
              row.Status = StatusFor(row.Kind);
          }
@@ -2526,7 +2562,7 @@ index caeac5be..61dac736 100644
  
          OnPropertyChanged(nameof(CodexStatus));
          OnPropertyChanged(nameof(ClaudeStatus));
-@@ -839,6 +902,94 @@ internal sealed class SettingsViewModel : ObservableObject
+@@ -839,6 +905,95 @@ internal sealed class SettingsViewModel : ObservableObject
          _settings.Update(change);
      }
  
@@ -2558,7 +2594,7 @@ index caeac5be..61dac736 100644
 +    private void SaveRemoteHost()
 +    {
 +        var draft = RemoteHostDraft;
-+        if (!draft.ValidDestination) return;
++        if (!CanSaveRemoteHost()) return;
 +        if (_editingRemoteHost is { } id)
 +        {
 +            var existing = S.RemoteHosts.FirstOrDefault(host => host.Id == id);
@@ -2606,6 +2642,7 @@ index caeac5be..61dac736 100644
 +                if (row.Host != host) row.Update(host);
 +            }
 +        }
++        RefreshRemoteHostDraft();
 +        RefreshRemoteHostStatuses();
 +    }
 +
@@ -2621,7 +2658,7 @@ index caeac5be..61dac736 100644
      private void Sync()
      {
          _syncing = true;
-@@ -848,6 +999,8 @@ internal sealed class SettingsViewModel : ObservableObject
+@@ -848,6 +1003,8 @@ internal sealed class SettingsViewModel : ObservableObject
              {
                  row.Enabled = S.IsSourceEnabled(row.Kind);
              }
@@ -2914,12 +2951,82 @@ index 00000000..3225b7fb
 +        Assert.Equal(42, hub.Snapshot.Today.Output);
 +    }
 +}
+diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteExecutionModeTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteExecutionModeTests.cs
+new file mode 100644
+index 00000000..85dab780
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Core.Tests/RemoteExecutionModeTests.cs
+@@ -0,0 +1,64 @@
++namespace AgentSpeed.Core.Tests;
++
++public sealed class RemoteExecutionModeTests
++{
++    private static async Task<AgentStatus> Agent(string fields)
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        var snapshot = $$"""
++            {"version":1,"type":"snapshot","machine_id":"remote","sources":[{"source":"pi","enabled":true,"available":true}],"agents":[{"source":"pi","id":"agent",{{fields}}}]}
++            """;
++        Assert.True(hub.UpdateRemoteHost(id, "remote", true, json: snapshot).Accepted);
++        return Assert.Single(hub.Snapshot.Agents, agent => agent.HostId == id);
++    }
++
++    [Theory]
++    [InlineData(true, false)]
++    [InlineData(false, true)]
++    [InlineData(true, true)]
++    [InlineData(false, false)]
++    public async Task RemoteModesPreserveIndependentEvidenceAndScope(bool effortConfigured, bool speedConfigured)
++    {
++        var agent = await Agent($"\"effort\":\"High\",\"speed\":\"priority\",\"effort_configured\":{effortConfigured.ToString().ToLowerInvariant()},\"speed_configured\":{speedConfigured.ToString().ToLowerInvariant()}");
++        Assert.Empty(agent.Modes.Facts);
++        AssertFact(agent, ExecutionModeKind.Effort, "high", "High", effortConfigured);
++        AssertFact(agent, ExecutionModeKind.ServiceTier, "priority", "priority", speedConfigured);
++    }
++
++    private static void AssertFact(AgentStatus agent, ExecutionModeKind kind, string value, string raw, bool configured)
++    {
++        var expected = new ExecutionModeFact(kind, value, raw,
++            configured ? ExecutionModeEvidence.Configured : ExecutionModeEvidence.Selected, null,
++            configured ? ExecutionModeScope.Configuration : ExecutionModeScope.Session);
++        var present = configured ? agent.ConfiguredModes : agent.SessionModes;
++        var absent = configured ? agent.SessionModes : agent.ConfiguredModes;
++        Assert.Equal(expected, Assert.Single(present.Facts, fact => fact.Kind == kind));
++        Assert.DoesNotContain(absent.Facts, fact => fact.Kind == kind);
++    }
++
++    [Theory]
++    [InlineData("\"effort\":null,\"speed\":null")]
++    [InlineData("\"effort\":12,\"speed\":false")]
++    [InlineData("\"effort\":\"not valid\",\"speed\":\"\"")]
++    [InlineData("\"unrelated\":true")]
++    public async Task MissingOrInvalidValuesDoNotProduceFacts(string fields)
++    {
++        var agent = await Agent(fields);
++        Assert.Empty(agent.SessionModes.Facts);
++        Assert.Empty(agent.ConfiguredModes.Facts);
++    }
++
++    [Fact]
++    public async Task MissingOrInvalidFlagsAreSelectedAndInvalidValueDoesNotHideOtherMode()
++    {
++        var agent = await Agent("\"effort\":\"high\",\"speed\":\"bad value\",\"effort_configured\":\"true\",\"speed_configured\":true");
++        AssertFact(agent, ExecutionModeKind.Effort, "high", "high", false);
++        Assert.Single(agent.SessionModes.Facts);
++        Assert.Empty(agent.ConfiguredModes.Facts);
++        agent = await Agent("\"effort\":null,\"speed\":\"fast\"");
++        AssertFact(agent, ExecutionModeKind.ServiceTier, "fast", "fast", false);
++        Assert.Single(agent.SessionModes.Facts);
++        Assert.Empty(agent.ConfiguredModes.Facts);
++    }
++}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs
 new file mode 100644
-index 00000000..c58b4962
+index 00000000..27721e20
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteProtocolLifecycleTests.cs
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,138 @@
 +namespace AgentSpeed.Core.Tests;
 +
 +public sealed class RemoteProtocolLifecycleTests
@@ -2974,7 +3081,7 @@ index 00000000..c58b4962
 +    }
 +
 +    [Fact]
-+    public async Task ReconnectCannotReusePreviousSnapshot()
++    public async Task ReconnectRetainsPreviousSnapshotOnlyAsOffline()
 +    {
 +        var hub = await Task.Run(() => new SpeedHub());
 +        var id = Guid.NewGuid();
@@ -2985,8 +3092,9 @@ index 00000000..c58b4962
 +        Assert.False(result.Online);
 +        var host = Assert.Single(hub.Snapshot.RemoteHosts);
 +        Assert.False(host.Online);
++
 +        Assert.Equal("disconnected", host.Error);
-+        Assert.DoesNotContain(hub.Snapshot.Sources, source => source.HostId == id);
++        Assert.False(Assert.Single(hub.Snapshot.Sources, source => source.HostId == id).LiveAvailable);
 +    }
 +    [Fact]
 +    public async Task ReconnectRetainsHistoryIdentityAndRejectsMalformedHistory()
@@ -3019,6 +3127,41 @@ index 00000000..c58b4962
 +        Assert.Equal("remote", reconnected.MachineId);
 +        Assert.Equal(42, Assert.Single(reconnected.Days).Totals.Output);
 +        Assert.False(reconnected.HistoryCurrent);
++    }
++
++    [Fact]
++    public async Task DisabledHostIsExcludedButRestoredStaleUntilFreshFramesAndRemovalClearsIt()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        var zone = TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana) ? iana : TimeZoneInfo.Local.Id;
++        var history = $$"""
++            {"version":1,"type":"history","timezone":{{System.Text.Json.JsonSerializer.Serialize(zone)}},"partial":false,"days":[{"day":"2026-01-01","source":"pi","output":42}]}
++            """;
++        hub.UpdateRemoteHost(id, "remote", false, json: Snapshot);
++        hub.UpdateRemoteHost(id, "remote", true, json: history);
++        hub.UpdateRemoteHost(id, "remote", false, enabled: false);
++        Assert.Empty(hub.Snapshot.RemoteHosts);
++        Assert.DoesNotContain(hub.Snapshot.Sources, source => source.HostId == id);
++        Assert.DoesNotContain(hub.Snapshot.Agents, agent => agent.HostId == id);
++
++        hub.UpdateRemoteHost(id, "remote", false);
++        hub.ResetRemoteHostSession(id);
++        var stale = Assert.Single(hub.Snapshot.RemoteHosts);
++        Assert.False(stale.Online);
++        Assert.False(stale.HistoryCurrent);
++        Assert.True(stale.SourcesKnown);
++        Assert.Equal(42, Assert.Single(stale.Days).Totals.Output);
++
++        hub.UpdateRemoteHost(id, "remote", false, json: Snapshot);
++        Assert.False(Assert.Single(hub.Snapshot.RemoteHosts).HistoryCurrent);
++        hub.UpdateRemoteHost(id, "remote", true, json: history);
++        Assert.True(Assert.Single(hub.Snapshot.RemoteHosts).HistoryCurrent);
++        hub.RemoveRemoteHost(id);
++        hub.UpdateRemoteHost(id, "new destination", false);
++        var replacement = Assert.Single(hub.Snapshot.RemoteHosts);
++        Assert.False(replacement.SourcesKnown);
++        Assert.Empty(replacement.Days);
 +    }
 +
 +}
@@ -3197,10 +3340,10 @@ index 00000000..b80075a0
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs
 new file mode 100644
-index 00000000..010e28f6
+index 00000000..70f0c748
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,67 @@
 +using System.Collections.Immutable;
 +using AgentSpeed.Presentation.Settings;
 +
@@ -3228,6 +3371,31 @@ index 00000000..010e28f6
 +    public void DestinationRejectsOptionsAndShellMetacharacters(string destination)
 +    {
 +        Assert.False(new RemoteHost(Guid.NewGuid(), "Host", destination, true).ValidDestination);
++    }
++
++    [Fact]
++    public void SaveEligibilityRejectsDuplicateNormalizedDestinationsIncludingDisabledHosts()
++    {
++        var existing = new RemoteHost(Guid.NewGuid(), "Existing", "  alice@example.org  ", false);
++        var draft = new RemoteHost(Guid.Empty, "New", "alice@example.org", false);
++
++        Assert.True(draft.DuplicatesDestination(new[] { existing }, null));
++        Assert.False(draft.CanSave(new[] { existing }, null));
++        Assert.True((draft with { Destination = "other@example.org" }).CanSave(new[] { existing }, null));
++        Assert.False((draft with { Destination = "bad host" }).CanSave(new[] { existing }, null));
++    }
++
++    [Fact]
++    public void SaveEligibilityExcludesOnlyTheHostBeingEdited()
++    {
++        var first = new RemoteHost(Guid.NewGuid(), "First", "server", true);
++        var second = new RemoteHost(Guid.NewGuid(), "Second", "backup", true);
++        var hosts = new[] { first, second };
++
++        Assert.True(first.CanSave(hosts, first.Id));
++        Assert.False((first with { Destination = "backup" }).CanSave(hosts, first.Id));
++        Assert.True((first with { Destination = "third" }).CanSave(hosts, first.Id));
++        Assert.False(first.CanSave(hosts, null));
 +    }
 +
 +    [Fact]

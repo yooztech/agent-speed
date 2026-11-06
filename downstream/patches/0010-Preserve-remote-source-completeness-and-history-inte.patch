@@ -1,4 +1,4 @@
-From b7744b80f5827f1456e141d1d121fba7cc33671e Mon Sep 17 00:00:00 2001
+From b33bb8fb3a859f061cdd0e21e2e33d92f8b9cf46 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:49:37 +0800
 Subject: [PATCH 10/15] Preserve remote source completeness and history
@@ -40,7 +40,7 @@ index 92eba8a6..3a10726f 100644
  /// <param name="Id">Absolute transcript path.</param>
  /// <param name="RecentSpeed">Output tok/s of the agent's recent responses (METRICS 6.2).</param>
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-index 4b7d2cda..5e889900 100644
+index bc9c67ce..3d6039c6 100644
 --- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 @@ -7,6 +7,8 @@ namespace AgentSpeed.Core;
@@ -52,7 +52,7 @@ index 4b7d2cda..5e889900 100644
      public IReadOnlyList<DailyUsage> Days { get; init; } = [];
      public bool? HistoryPartial { get; init; }
      public DateTimeOffset? HistoryReceivedAt { get; init; }
-@@ -98,7 +100,11 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -99,7 +101,11 @@ internal sealed class RemoteHostData(Guid id, string label)
      public RemoteHostStatus Status()
      {
          bool sameZone = HistoryTimezone == LocalTimezone();
@@ -66,10 +66,10 @@ index 4b7d2cda..5e889900 100644
      }
  
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 93ca2e4d..5e69e691 100644
+index 58309d3c..774a2e4e 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
-@@ -193,7 +193,8 @@ public sealed class SpeedHub
+@@ -194,7 +194,8 @@ public sealed class SpeedHub
                  if (kind is null || source.Boolean("enabled") != true || !seen.Add(machine + ":" + kind)) continue;
                  added.Add(kind.Value);
                  bool available = host.Online && source.Boolean("available") == true;
@@ -79,7 +79,7 @@ index 93ca2e4d..5e69e691 100644
                  var output = source.NullableNumber("live_output");
                  var total = source.NullableNumber("live_total");
                  bool liveAvailable = available && output.HasValue && total.HasValue;
-@@ -212,7 +213,7 @@ public sealed class SpeedHub
+@@ -213,7 +214,7 @@ public sealed class SpeedHub
                  if (!liveAvailable) complete = false;
                  if (!todayAvailable) todayComplete = false;
              }
@@ -88,7 +88,7 @@ index 93ca2e4d..5e69e691 100644
              if (message.Array("agents") is { } remoteAgents)
                  foreach (var agent in remoteAgents.EnumerateArray())
                  {
-@@ -232,7 +233,7 @@ public sealed class SpeedHub
+@@ -243,7 +244,7 @@ public sealed class SpeedHub
                  }
          }
          var second = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -97,7 +97,7 @@ index 93ca2e4d..5e69e691 100644
          {
              var remoteOutput = Math.Max(0, live.Output - local.Live.Output);
              var remoteTotal = Math.Max(0, live.Total - local.Live.Total);
-@@ -241,14 +242,18 @@ public sealed class SpeedHub
+@@ -252,14 +253,18 @@ public sealed class SpeedHub
              _remoteHistory[second] = new HistoryPoint(DateTimeOffset.FromUnixTimeSeconds(second),
                  new Rate(remoteOutput - estimatedRate.Output, remoteTotal - estimatedRate.Total), estimatedRate);
          }

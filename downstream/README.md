@@ -68,6 +68,23 @@ speed uses measured output and time, with each machine/source counted once; miss
 Duplicate connections prefer current online history over stale history. An unavailable traffic sample has an unknown
 rate, distinct from the zero live rate of a disconnected host; last known totals remain visible when available.
 
+### Remote parity corrections (unreleased)
+
+- Windows orb and leaderboard values use missing placeholders when their selected live or daily data is incomplete.
+- Windows remote agents preserve configured versus selected effort and speed. Duplicate SSH destinations are rejected
+  when saving, while editing a host without changing its own destination remains valid.
+- Disabling a host retains its in-memory history but excludes it from current views and totals. Re-enabling uses it only
+  as stale data until refreshed; deletion or a destination change clears the old host state.
+- Both platforms keep available performance-history rows visible and show an incomplete-data notice when another
+  selected host has not supplied performance history. Known empty histories remain distinct from missing histories.
+- Windows remote-host and all-host CSV exports include host-specific daily traffic when the traffic columns are visible;
+  unavailable traffic is blank, not zero.
+
+Focused Linux verification covers the portable Core and Presentation consumers plus the protocol-to-CSV smoke path.
+The Windows application cross-compiles on Linux; native Windows/macOS rendering, macOS compilation, and real SSH
+disable/reconnect behavior still require target-platform validation. These checks do not replace the Release gate.
+
+
 ## CI and releases
 
 The GitHub workflows check out the maintenance repository and prepare an
