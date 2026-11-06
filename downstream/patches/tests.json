@@ -339,5 +339,15 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0029-Fix-Windows-remote-traffic-assertion-analyzer.patch": {
+    "regression": [
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~HistoryTrafficTests"
+      }
+    ],
+    "related": [],
+    "reason": ""
   }
 }

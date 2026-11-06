@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise release selection and race safeguards with local Git remotes."""
+from contextlib import nullcontext
 import importlib.util
 import json
 from pathlib import Path
@@ -84,6 +85,55 @@ class ReleaseDriverTests(unittest.TestCase):
         self.baseline = "a" * 40
         (self.root / "downstream/config.json").write_text(json.dumps({
             "upstream_version": "1.2.3", "upstream_commit": self.baseline}))
+        (self.root / "downstream/manage.py").write_text(textwrap.dedent('''\
+            import os, pathlib, sys
+            assert sys.argv[1] == "prepare"
+            tree = pathlib.Path(sys.argv[2])
+            assert not tree.exists()
+            with open(os.environ["PREFLIGHT_LOG"], "a") as log:
+                log.write("prepare " + str(tree) + "\\n")
+            if os.environ.get("PREFLIGHT_FAIL") == "prepare":
+                sys.exit(1)
+            for directory in ("windows", "linux", "macos"):
+                (tree / directory).mkdir(parents=True)
+            (tree / "windows/AgentSpeed.slnx").write_text("fixture")
+        '''))
+        self.sdk = Path(self.tmp.name) / "sdk"
+        self.sdk.mkdir()
+        dotnet = self.sdk / "dotnet"
+        dotnet.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+            import os, pathlib, sys
+            with open(os.environ["PREFLIGHT_LOG"], "a") as log:
+                log.write("dotnet " + " ".join(sys.argv[1:]) + " cwd=" + os.getcwd() + "\\n")
+            if sys.argv[1:] == ["--list-sdks"]:
+                print("10.0.100 [/sdk]")
+            elif sys.argv[1] == "build":
+                assert sys.argv[1:] == ["build", "windows/AgentSpeed.slnx", "-c", "Release", "-p:EnableWindowsTargeting=true"]
+                assert pathlib.Path("windows/AgentSpeed.slnx").is_file()
+                if os.environ.get("PREFLIGHT_FAIL") == "build":
+                    sys.exit(1)
+            else:
+                assert sys.argv[1] == "test"
+                assert sys.argv[2] in ("windows/tests/AgentSpeed.Core.Tests", "windows/tests/AgentSpeed.Presentation.Tests")
+                assert sys.argv[3:8] == ["-c", "Release", "-f", "net10.0", "--no-build"]
+                assert len(sys.argv) == 8 or (len(sys.argv) == 10 and sys.argv[8] == "--filter")
+                if os.environ.get("PREFLIGHT_FAIL") == pathlib.Path(sys.argv[2]).name:
+                    sys.exit(1)
+        '''))
+        dotnet.chmod(0o755)
+        for tool in ("cmake", "ctest", "swift"):
+            executable = self.sdk / tool
+            executable.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+                import os, sys
+                tool = os.path.basename(sys.argv[0])
+                with open(os.environ["PREFLIGHT_LOG"], "a") as log:
+                    log.write(tool + " " + " ".join(sys.argv[1:]) + " cwd=" + os.getcwd() + "\\n")
+                stage = tool + ("-build" if sys.argv[1:2] == ["--build"] else "")
+                if os.environ.get("PREFLIGHT_FAIL") == stage:
+                    sys.exit(1)
+            '''))
+            executable.chmod(0o755)
+        self.preflight_log = Path(self.tmp.name) / "preflight.log"
         (self.root / "file").write_text("old\n")
         git(self.root, "add", ".")
         git(self.root, "commit", "-m", "Old")
@@ -104,18 +154,22 @@ class ReleaseDriverTests(unittest.TestCase):
     def remote_sha(self, tag):
         return git(self.remote, "rev-parse", "refs/tags/" + tag)
 
-    def launch(self, api, plan=False):
+    def launch(self, api, plan=False, fail=None, missing_sdk=False, host="Linux"):
         observed = []
         head = git(self.root, "rev-parse", "HEAD")
         status = git(self.root, "status", "--porcelain", "--untracked-files=all")
         files = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*")
                  if p.is_file() and ".git" not in p.relative_to(self.root).parts}
+        env = {"DOTNET_ROOT": str(self.sdk if not missing_sdk else self.sdk / "missing"),
+               "PATH": str(self.sdk) + os.pathsep + os.environ.get("PATH", ""),
+               "PREFLIGHT_LOG": str(self.preflight_log), "PREFLIGHT_FAIL": fail or ""}
         try:
-            with patch.object(driver, "ROOT", self.root), patch.object(driver, "api", api), \
-                 patch.object(driver, "verify_origin"), \
-                 patch.object(driver, "watch", side_effect=lambda *args: observed.append(args)), \
-                 patch.object(sys, "argv", ["release.py"] + (["--plan"] if plan else [])):
-                driver.main()
+            with patch.dict(os.environ, env), patch.object(driver, "ROOT", self.root), patch.object(driver, "api", api), \
+                 patch.object(driver, "verify_origin"), patch.object(driver.platform, "system", return_value=host), \
+                 (patch.object(driver.shutil, "which", side_effect=lambda name: None if name == "dotnet" else str(self.sdk / name)) if missing_sdk else nullcontext()):
+                with patch.object(driver, "watch", side_effect=lambda *args: observed.append(args)), \
+                     patch.object(sys, "argv", ["release.py"] + (["--plan"] if plan else [])):
+                    driver.main()
         finally:
             self.assertEqual(git(self.root, "rev-parse", "HEAD"), head)
             self.assertEqual(git(self.root, "status", "--porcelain", "--untracked-files=all"), status)
@@ -196,6 +250,95 @@ class ReleaseDriverTests(unittest.TestCase):
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), self.latest)
         self.assertFalse(any(method == "DELETE" for method, _ in api.calls))
 
+    def test_preflight_failures_preserve_candidate_and_remote_state(self):
+        for host, failure in (("Linux", "prepare"), ("Linux", "build"),
+                              ("Linux", "missing_sdk"),
+                              ("Linux", "AgentSpeed.Core.Tests"),
+                              ("Linux", "AgentSpeed.Presentation.Tests"),
+                              ("Linux", "cmake"), ("Linux", "cmake-build"),
+                              ("Linux", "ctest"), ("Darwin", "swift")):
+            with self.subTest(host=host, failure=failure):
+                self.preflight_log.unlink(missing_ok=True)
+                api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()], active=True)
+                with self.assertRaisesRegex(RuntimeError, "preflight|.NET 10 SDK"):
+                    self.launch(api, fail=failure, missing_sdk=failure == "missing_sdk", host=host)
+                self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.old)
+                self.assertEqual(git(self.root, "rev-parse", "refs/tags/v1.2.3-fork.2"), self.old)
+                self.assertTrue(all(method == "GET" for method, _ in api.calls))
+                self.assertEqual(len(api.releases), 2)
+                if self.preflight_log.exists():
+                    for line in self.preflight_log.read_text().splitlines():
+                        if line.startswith("prepare "):
+                            self.assertFalse(Path(line[8:]).exists())
+
+    def test_preflight_runs_host_commands_in_one_prepared_tree(self):
+        for host in ("Linux", "Darwin"):
+            with self.subTest(host=host):
+                self.preflight_log.unlink(missing_ok=True)
+                env = {"DOTNET_ROOT": str(self.sdk),
+                       "PATH": str(self.sdk) + os.pathsep + os.environ.get("PATH", ""),
+                       "PREFLIGHT_LOG": str(self.preflight_log), "PREFLIGHT_FAIL": ""}
+                with patch.dict(os.environ, env), patch.object(driver, "ROOT", self.root), \
+                     patch.object(driver.platform, "system", return_value=host):
+                    driver.preflight()
+                lines = self.preflight_log.read_text().splitlines()
+                prepares = [line for line in lines if line.startswith("prepare ")]
+                self.assertEqual(len(prepares), 1)
+                tree = Path(prepares[0][8:])
+                self.assertFalse(tree.exists())
+                commands = [line for line in lines if not line.startswith("prepare ")]
+                self.assertEqual(sum(line.startswith("dotnet build ") for line in commands), 1)
+                tests = [line for line in commands if line.startswith("dotnet test ")]
+                self.assertEqual(len(tests), 2)
+                core_filter = "&".join("FullyQualifiedName!=AgentSpeed.Core.Tests." + name for name in (
+                    "HermesLiveTests.HistoryFollowsLogsByIdentityAndCountsASessionOnceAcrossFiles",
+                    "HermesFixtureTests.RotationFollowsFilesAcrossRenames",
+                    "DroidLiveTests.ALowerSidecarAddsNothingAndAReplacedTranscriptStartsOverWithoutCountingTwice",
+                    "DroidFixtureTests.ScriptedReadCyclesMatchTheReference"))
+                core_options = f" --filter {core_filter}" if host == "Linux" else ""
+                self.assertIn(f"dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --no-build{core_options} cwd={tree}", tests)
+                self.assertIn(f"dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --no-build cwd={tree}", tests)
+                self.assertTrue(all(f"cwd={tree}" in line for line in commands
+                                    if line.startswith(("dotnet build ", "dotnet test "))))
+                cmake = [line for line in commands if line.startswith("cmake ")]
+                ctest = [line for line in commands if line.startswith("ctest ")]
+                swift = [line for line in commands if line.startswith("swift ")]
+                if host == "Linux":
+                    self.assertEqual(len(cmake), 2)
+                    self.assertTrue(cmake[0].startswith("cmake -S linux -B "))
+                    self.assertIn("-DAGENTSPEED_BUILD_APP=OFF", cmake[0])
+                    build = cmake[0].split(" -B ", 1)[1].split()[0]
+                    self.assertEqual(cmake[1], f"cmake --build {build} --parallel 2 cwd={tree}")
+                    self.assertEqual(ctest, [f"ctest --test-dir {build} --output-on-failure cwd={tree}"])
+                    self.assertEqual(swift, [])
+                elif host == "Darwin":
+                    self.assertEqual(swift, [f"swift test cwd={tree / 'macos'}"])
+                    self.assertEqual(cmake, [])
+                    self.assertEqual(ctest, [])
+
+    def test_unknown_host_fails_without_remote_mutation(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()], active=True)
+        with self.assertRaises(RuntimeError):
+            self.launch(api, host="Windows")
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.old)
+        self.assertEqual(git(self.root, "rev-parse", "refs/tags/v1.2.3-fork.2"), self.old)
+        self.assertTrue(all(method == "GET" for method, _ in api.calls))
+        self.assertEqual(len(api.releases), 2)
+
+    def test_preflight_finishes_and_cleans_up_before_remote_mutations(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()], active=True)
+        def checked_api(path, method="GET"):
+            if method != "GET":
+                lines = self.preflight_log.read_text().splitlines()
+                self.assertTrue(any(line.startswith("dotnet build ") for line in lines))
+                tree = Path(next(line[8:] for line in lines if line.startswith("prepare ")))
+                self.assertFalse(tree.exists())
+                self.assertTrue(any("cwd=" + str(tree) in line for line in lines))
+            return api(path, method)
+        self.launch(checked_api)
+        self.assertTrue(any(method == "POST" for method, _ in api.calls))
+        self.assertTrue(any(method == "DELETE" for method, _ in api.calls))
+
     def test_api_failure_never_removes_candidate_tag(self):
         api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()],
                       fail="/actions/workflows/")
@@ -208,6 +351,7 @@ class ReleaseDriverTests(unittest.TestCase):
     def test_plan_is_read_only_and_published_numbers_are_not_reused(self):
         api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
         self.assertEqual(self.launch(api, plan=True), [])
+        self.assertFalse(self.preflight_log.exists())
         self.assertEqual(self.remote_sha("v1.2.3-fork.1"), self.old)
         self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.old)
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), self.latest)
@@ -215,6 +359,16 @@ class ReleaseDriverTests(unittest.TestCase):
         self.assertEqual(driver.select([self.published, {"tag_name": "v1.2.3-fork.4",
                          "draft": False, "prerelease": False}, self.draft], "1.2.3"),
                          "v1.2.3-fork.5")
+
+    def test_plan_skips_preflight_on_every_host(self):
+        for host in ("Linux", "Darwin", "Windows"):
+            with self.subTest(host=host):
+                api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+                with patch.object(driver, "preflight") as preflight:
+                    self.assertEqual(self.launch(api, plan=True, host=host), [])
+                preflight.assert_not_called()
+                self.assertTrue(all(method == "GET" for method, _ in api.calls))
+                self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.old)
 
     def test_prerelease_number_is_not_reused(self):
         prerelease = {"tag_name": "v1.2.3-fork.7", "draft": False, "prerelease": True}

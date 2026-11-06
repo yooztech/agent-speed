@@ -26,3 +26,4 @@
 0026-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch
 0027-Connect-remote-performance-and-history-metrics.patch
 0028-Integrate-remote-network-traffic-by-host-and-source.patch
+0029-Fix-Windows-remote-traffic-assertion-analyzer.patch

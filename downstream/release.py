@@ -6,9 +6,12 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import platform
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import quote
 
@@ -19,6 +22,15 @@ UPSTREAM = 'zoefix/agent-speed'
 GH = os.environ.get('RELEASE_GH', 'gh')
 TIMEOUT = 4 * 60 * 60
 
+# Windows Core cannot track file identity on Linux. These tests exercise rename or
+# replacement identity; the native Windows Release job still runs them all.
+LINUX_IDENTITY_TESTS = (
+    'AgentSpeed.Core.Tests.HermesLiveTests.HistoryFollowsLogsByIdentityAndCountsASessionOnceAcrossFiles',
+    'AgentSpeed.Core.Tests.HermesFixtureTests.RotationFollowsFilesAcrossRenames',
+    'AgentSpeed.Core.Tests.DroidLiveTests.ALowerSidecarAddsNothingAndAReplacedTranscriptStartsOverWithoutCountingTwice',
+    'AgentSpeed.Core.Tests.DroidFixtureTests.ScriptedReadCyclesMatchTheReference',
+)
+
 
 def command(args, *, capture=True):
     return subprocess.run(args, cwd=ROOT, check=True, text=True,
@@ -27,6 +39,62 @@ def command(args, *, capture=True):
 
 def git(*args):
     return command(['git', *args]).strip()
+
+
+def preflight():
+    host = platform.system()
+    if host not in ('Linux', 'Darwin'):
+        raise RuntimeError(f'release preflight does not support host platform {host}')
+    required = ('cmake', 'ctest') if host == 'Linux' else ('swift',)
+    for tool in required:
+        if not shutil.which(tool):
+            raise RuntimeError(f'{tool} is required for release preflight on {host}')
+    print(f'Release preflight on {host}: Windows cross-platform build and tests; '
+          + ('Linux headless core build and tests.' if host == 'Linux' else 'native macOS Swift tests.'),
+          flush=True)
+    print('Native UI tests and platform packaging remain Release workflow checks; '
+          'other platforms are not validated locally.', flush=True)
+    if host == 'Linux':
+        print('Linux skips 4 Windows Core file-identity tests (unsupported on Linux); '
+              'native Windows Release runs them:', flush=True)
+        for test in LINUX_IDENTITY_TESTS:
+            print(f'  {test}', flush=True)
+    dotnet_root = os.environ.get('DOTNET_ROOT')
+    candidate = Path(dotnet_root) / ('dotnet.exe' if os.name == 'nt' else 'dotnet') if dotnet_root else None
+    dotnet = str(candidate) if candidate and candidate.is_file() else shutil.which('dotnet')
+    if not dotnet:
+        raise RuntimeError('.NET 10 SDK is required for release preflight; install it and set DOTNET_ROOT or PATH')
+    try:
+        sdks = subprocess.run([dotnet, '--list-sdks'], check=True, text=True,
+                              stdout=subprocess.PIPE).stdout
+        if not re.search(r'^10\.\d+\.\d+\S*\s', sdks, re.MULTILINE):
+            raise RuntimeError('.NET 10 SDK is required for release preflight; install it and set DOTNET_ROOT or PATH')
+        with tempfile.TemporaryDirectory(prefix='agent-speed-release-') as temp:
+            tree = Path(temp) / 'source'
+            subprocess.run([sys.executable, str(ROOT / 'downstream/manage.py'), 'prepare', str(tree)],
+                           cwd=ROOT, check=True)
+            subprocess.run([dotnet, 'build', 'windows/AgentSpeed.slnx', '-c', 'Release',
+                            '-p:EnableWindowsTargeting=true'], cwd=tree, check=True)
+            for project in ('AgentSpeed.Core.Tests', 'AgentSpeed.Presentation.Tests'):
+                args = [dotnet, 'test', f'windows/tests/{project}', '-c', 'Release',
+                        '-f', 'net10.0', '--no-build']
+                if host == 'Linux' and project == 'AgentSpeed.Core.Tests':
+                    args += ['--filter', '&'.join(f'FullyQualifiedName!={test}' for test in LINUX_IDENTITY_TESTS)]
+                subprocess.run(args, cwd=tree, check=True)
+            if host == 'Linux':
+                build = Path(temp) / 'linux-build'
+                configure = ['cmake', '-S', 'linux', '-B', str(build),
+                             '-DAGENTSPEED_BUILD_APP=OFF']
+                googletest = Path('/usr/src/googletest')
+                if (googletest / 'CMakeLists.txt').is_file():
+                    configure.append(f'-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST={googletest}')
+                subprocess.run(configure, cwd=tree, check=True)
+                subprocess.run(['cmake', '--build', str(build), '--parallel', '2'], cwd=tree, check=True)
+                subprocess.run(['ctest', '--test-dir', str(build), '--output-on-failure'], cwd=tree, check=True)
+            else:
+                subprocess.run(['swift', 'test'], cwd=tree / 'macos', check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError(f'release preflight failed: {exc}') from exc
 
 
 def check_checkout(commit):
@@ -214,6 +282,7 @@ def main():
         print(f'Candidate {tag}, branch {current}, existing tag {old_tag or "none"}', flush=True)
         if args.plan:
             return
+        preflight()
         cancel_and_wait(tag)
         check_checkout(current)
         draft = ensure_unpublished(tag)

@@ -88,6 +88,37 @@ releases, drafts, and Actions, including permission to write releases and
 Actions. It queries the latest upstream release and its tag commit; if that
 commit does not match `downstream/config.json`, it stops rather than silently
 building a stale pin. First migrate the pin and patch queue, then retry.
+Before any cancellation, draft deletion or tag mutation, the wrapper prepares
+the complete patch queue once in a temporary tree and runs a local preflight
+against that tree. On Linux and macOS it requires the .NET 10 SDK (discoverable
+through `DOTNET_ROOT` or `PATH`), builds `windows/AgentSpeed.slnx` in Release
+with Windows targeting enabled, and runs the Windows Core and Presentation
+tests targeting `net10.0` with `--no-build`. These are cross-platform tests of
+Windows project code, not validation of the native Windows UI.
+
+On Linux, the Windows Core test run excludes four tests that depend on
+`FileIdentity`, which is unsupported on Linux:
+
+- `HermesLiveTests.HistoryFollowsLogsByIdentityAndCountsASessionOnceAcrossFiles`
+- `HermesFixtureTests.RotationFollowsFilesAcrossRenames`
+- `DroidLiveTests.ALowerSidecarAddsNothingAndAReplacedTranscriptStartsOverWithoutCountingTwice`
+- `DroidFixtureTests.ScriptedReadCyclesMatchTheReference`
+
+The macOS preflight does not apply these exclusions; the native Windows
+`Release` job runs all four tests.
+
+The host also determines which native core tests run: Linux requires CMake,
+CTest, a C++ toolchain and the Linux core's build dependencies; it configures
+and builds the headless core and runs CTest. GoogleTest may be supplied from
+`/usr/src/googletest`; otherwise CMake fetches it, requiring network access.
+macOS requires Swift and runs `swift test`. A Linux host does not validate the
+macOS build, and a macOS host does not validate the Linux build. Preparation,
+missing prerequisites, build or test failures stop the release; there is no
+bypass. `--plan` does not prepare a tree or require these toolchains.
+
+The local preflight is not the full release gate: native UI validation, tests
+on other platforms, and release packaging remain the responsibility of
+`Release`.
 The wrapper tags the latest already-committed `downstream/patch-build`; it
 does not stamp versions, create commits, or modify the patch queue or docs.
 Make and commit any needed queue or documentation changes before launching it.
@@ -151,6 +182,9 @@ Release: Release owns those checks and blocks publication on failure. Use
 only focused checks needed to resolve a concrete problem. UI, real remote
 end-to-end, disconnect/reconnect and performance checks require appropriate
 environments and are not established by successful compilation.
+Windows xUnit analyzer warnings are errors; use predicate assertion overloads
+instead of filtering a collection before `Assert.Single`.
+
 
 The current registry runs the Linux CMake build and CTest suite, and `swift
 test` on macOS. Linux needs a C++ toolchain, CMake, and the dependencies used
