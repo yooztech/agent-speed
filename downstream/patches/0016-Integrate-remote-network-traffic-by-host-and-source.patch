@@ -1,7 +1,7 @@
-From 41f1de37e3bfad4534165e22bac02dd1f8a3baec Mon Sep 17 00:00:00 2001
+From 648ea5f0db7813af8d53742e1a9d24eaf516c71f Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
-Date: Fri, 6 Nov 2026 13:48:38 +0800
-Subject: [PATCH 16/16] Integrate remote network traffic by host and source
+Date: Fri, 6 Nov 2026 14:43:10 +0800
+Subject: [PATCH] Integrate remote network traffic by host and source
 
 ---
  linux/collector/main.cpp                      |   6 +-
@@ -9,7 +9,9 @@ Subject: [PATCH 16/16] Integrate remote network traffic by host and source
  linux/collector/protocol.hpp                  |   3 +-
  linux/core/include/agentspeed/monitor.hpp     |   1 +
  .../include/agentspeed/traffic_service.hpp    |   1 +
+ linux/core/src/traffic.cpp                    |  11 +-
  linux/tests/collector_test.cpp                |  50 ++++++++
+ linux/tests/traffic_test.cpp                  |  21 ++++
  .../Sources/AgentSpeed/App/AppDelegate.swift  |   6 +
  macos/Sources/AgentSpeed/App/AppModel.swift   |   1 +
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  10 ++
@@ -31,7 +33,7 @@ Subject: [PATCH 16/16] Integrate remote network traffic by host and source
  .../src/AgentSpeed/Traffic/TrafficService.cs  |   9 +-
  .../RemoteConsumerTests.cs                    |  24 ++++
  .../HistoryTrafficTests.cs                    |   8 ++
- 27 files changed, 565 insertions(+), 40 deletions(-)
+ 29 files changed, 595 insertions(+), 42 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteTraffic.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
  create mode 100644 windows/src/AgentSpeed.Core/RemoteTraffic.cs
@@ -69,7 +71,7 @@ index 4048ce12..1245d5a2 100644
          }
          stopping = true;
 diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
-index 5e592cc0..a26360e4 100644
+index 59392499..8b946cce 100644
 --- a/linux/collector/protocol.cpp
 +++ b/linux/collector/protocol.cpp
 @@ -31,6 +31,12 @@ template<class T> void optionalNumber(std::ostream& out, const std::optional<T>&
@@ -177,11 +179,33 @@ index ea610f28..f588a128 100644
      void restore(const std::vector<HistoryRow>& rows);
  
  private:
+diff --git a/linux/core/src/traffic.cpp b/linux/core/src/traffic.cpp
+index 31d6d904..59ef90a8 100644
+--- a/linux/core/src/traffic.cpp
++++ b/linux/core/src/traffic.cpp
+@@ -309,8 +309,15 @@ void ProcessTable::refresh(const std::vector<Process>& processes) {
+     };
+     std::vector<const Process*> order;
+     for (const auto& p : processes) order.push_back(&p);
+-    std::stable_sort(order.begin(), order.end(), [](const Process* a, const Process* b) {
+-        return a->start != b->start ? a->start < b->start : a->pid < b->pid;
++    const auto depth = [&](const Process* p) {
++        std::set<Key> seen{{p->pid, p->start}};
++        std::size_t result = 0;
++        for (auto* parent = parentOf(*p); parent && seen.insert({parent->pid, parent->start}).second; parent = parentOf(*parent)) ++result;
++        return result;
++    };
++    std::stable_sort(order.begin(), order.end(), [&](const Process* a, const Process* b) {
++        if (a->start != b->start) return a->start < b->start;
++        return depth(a) < depth(b);
+     });
+     for (const auto* p : order) {
+         const Key key{p->pid, p->start};
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
-index e4f004f8..bb2f0d90 100644
+index 3feaf96e..769479c0 100644
 --- a/linux/tests/collector_test.cpp
 +++ b/linux/tests/collector_test.cpp
-@@ -81,6 +81,56 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
+@@ -97,6 +97,56 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
      EXPECT_EQ(protocol.snapshot(snapshot), wire);
  }
  
@@ -238,6 +262,35 @@ index e4f004f8..bb2f0d90 100644
  TEST(CollectorProtocol, ConnectionIdsAreStableAndIndependent) {
      collector::Protocol first, second;
      agentspeed::Snapshot snapshot;
+diff --git a/linux/tests/traffic_test.cpp b/linux/tests/traffic_test.cpp
+index 7cde87b7..3ce43154 100644
+--- a/linux/tests/traffic_test.cpp
++++ b/linux/tests/traffic_test.cpp
+@@ -226,3 +226,24 @@ TEST(TrafficSampler, ReadsThisMachine) {
+     const auto first = counters.sample({{self->pid, self->start}});
+     EXPECT_EQ(first.stream, "test");
+ }
++
++TEST(Traffic, AttributesEqualStartProcessesInParentOrder) {
++    ProcessTable table(Env{});
++    Process root{500, 1, 100, "/home/dev/.local/bin/omp", {"omp", "--mode", "rpc-ui"}};
++    Process worker{400, 500, 100, "/home/dev/.local/bin/omp", {"/home/dev/.local/bin/omp", "__omp_worker_daemon_broker"}};
++    Process tool{300, 400, 100, "/usr/bin/curl", {"curl"}};
++    table.refresh({tool, worker, root});
++    const Key rootKey{500, 100};
++    const auto* rootClass = table.classify(rootKey);
++    const auto* workerClass = table.classify({400, 100});
++    const auto* toolClass = table.classify({300, 100});
++    ASSERT_NE(rootClass, nullptr);
++    ASSERT_NE(workerClass, nullptr);
++    ASSERT_NE(toolClass, nullptr);
++    EXPECT_EQ(rootClass->role, Classification::Role::Agent);
++    EXPECT_EQ(rootClass->source, SourceKind::Omp);
++    EXPECT_EQ(workerClass->role, Classification::Role::Self);
++    EXPECT_EQ(workerClass->root, rootKey);
++    EXPECT_EQ(toolClass->role, Classification::Role::Tool);
++    EXPECT_EQ(toolClass->root, rootKey);
++}
 diff --git a/macos/Sources/AgentSpeed/App/AppDelegate.swift b/macos/Sources/AgentSpeed/App/AppDelegate.swift
 index bb27bede..fa300736 100644
 --- a/macos/Sources/AgentSpeed/App/AppDelegate.swift
@@ -268,10 +321,10 @@ index a3ee4ecf..9cc19883 100644
      func setOrbsVisible(_ visible: Bool)
      func resetOrbPosition(_ id: String)
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index b0a36780..ca244bc0 100644
+index 4d69ef88..31588eb8 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-@@ -171,6 +171,7 @@ struct RemoteMessage: Decodable, Sendable {
+@@ -189,6 +189,7 @@ struct RemoteMessage: Decodable, Sendable {
      let todayUnpricedRequests: Int?
      let partialHistory: Bool?
      let sources: [RemoteSource]?
@@ -279,7 +332,7 @@ index b0a36780..ca244bc0 100644
      let todayRequests: Int?
      let todayAverage: Double?
      let liveOutput: Double?
-@@ -216,9 +217,18 @@ struct RemoteHostState {
+@@ -234,9 +235,18 @@ struct RemoteHostState {
      var completions: [RemoteCompletion] = []
      var error: String?
      var seenCompletionIDs: Set<String> = []
@@ -299,7 +352,7 @@ index b0a36780..ca244bc0 100644
              online = true
              error = nil
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-index 9d1fdd53..22654ae4 100644
+index 8ea864af..c7b00c86 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 @@ -9,7 +9,7 @@ struct RemoteCapabilities {
@@ -311,7 +364,7 @@ index 9d1fdd53..22654ae4 100644
      let todayBreakdown = false
      let chart = false
      let agentProject = false
-@@ -191,6 +191,7 @@ extension RemoteHostState {
+@@ -211,6 +211,7 @@ extension RemoteHostState {
              result.peak = snapshot.peakToday != nil
              result.cost = snapshot.todayCostMicroUsd != nil && snapshot.todayUnpricedRequests != nil
              result.todayStart = snapshot.todayStartMs != nil
@@ -456,7 +509,7 @@ index efeaf4e3..2cc6fcba 100644
          }
 -        .sorted { $0.today.total(includeTools: includeTools).sum > $1.today.total(includeTools: includeTools).sum }
 +        for instance in instances {
-+            guard let hostID = instance.hostID, instance.status.enabled, enabled.contains(instance.status.kind),
++            guard let hostID = instance.hostID, instance.status.enabled,
 +                  let host = hosts.first(where: { $0.id == hostID && $0.enabled }),
 +                  let state = states[hostID], let remote = state.snapshot?.traffic,
 +                  remote.enabled, let source = remote.sources?[instance.status.kind.rawValue] else { continue }
@@ -587,19 +640,30 @@ index 2f82d34a..6151b828 100644
              let remotePerf = PerfHistoryContent.build(records, range: next.range, source: source, today: today)
              nextPerf.rows.append(contentsOf: remotePerf.rows.map { row in
                  var row = row
-@@ -269,8 +284,19 @@ final class HistoryViewModel {
+@@ -269,8 +284,30 @@ final class HistoryViewModel {
                         includeTools: settings.trafficIncludeTools, bits: settings.trafficUnit == .bits)
      }
  
-+    private var selectedTraffic: HistoryTraffic {
-+        guard let hostID else { return Self.historyTraffic(traffic, settings: cost.settings) }
-+        let rows = appModel?.remoteHosts.states[hostID]?.trafficHistory.values.map { row in
++    static func remoteHistoryTraffic(host: RemoteHost?, state: RemoteHostState?, includeTools: Bool, bits: Bool) -> HistoryTraffic {
++        let enabled: SourceSet
++        if host?.enabled == true, state?.snapshot?.traffic?.enabled == true {
++            enabled = SourceSet(state?.dashboardSnapshot?.sources.filter(\.enabled).map(\.kind) ?? [])
++        } else {
++            enabled = SourceSet(rawValue: 0)
++        }
++        let rows = state?.trafficHistory.values.map { row in
 +            TrafficDay(day: row.day, key: row.key, rx: row.rx, tx: row.tx, rxTools: row.rxTools,
 +                       txTools: row.txTools, sampledMs: row.sampledMs)
 +        } ?? []
-+        return HistoryTraffic(days: TrafficVisibility.days(rows.filter { !$0.isMachine }, enabled: SourceSet(cost.settings.enabledSources)),
-+                              since: nil, includeTools: cost.settings.trafficIncludeTools,
-+                              bits: cost.settings.trafficUnit == .bits, requiresRecordedRows: true)
++        return HistoryTraffic(days: TrafficVisibility.days(rows.filter { !$0.isMachine }, enabled: enabled),
++                              since: nil, includeTools: includeTools, bits: bits, requiresRecordedRows: true)
++    }
++
++    private var selectedTraffic: HistoryTraffic {
++        guard let hostID else { return Self.historyTraffic(traffic, settings: cost.settings) }
++        return Self.remoteHistoryTraffic(host: appModel?.remoteHosts.hosts.first { $0.id == hostID },
++                                         state: appModel?.remoteHosts.states[hostID],
++                                         includeTools: cost.settings.trafficIncludeTools, bits: cost.settings.trafficUnit == .bits)
 +    }
 +
      /// The metric control offers traffic while measuring is on or traffic history exists (DESIGN 10).
@@ -684,7 +748,7 @@ new file mode 100644
 index 00000000..df0405c7
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,110 @@
 +import AgentSpeedCore
 +import Foundation
 +import Testing
@@ -712,24 +776,52 @@ index 00000000..df0405c7
 +    }
 +
 +    @Test @MainActor func rowsKeepHostsSeparateAndHonorSourceFilter() throws {
-+        let frame = try decode(#"{"version":1,"type":"snapshot","sources":[{"source":"codex","enabled":true,"available":true,"sessions":0,"active_agents":0,"today_input":0,"today_output":0,"today_requests":0}],"traffic":{"enabled":true,"available":true,"sources":{"codex":{"self_rate":{"rx":4,"tx":2},"with_tools_rate":{"rx":6,"tx":3},"today":{"rx_self":100,"tx_self":50,"rx_tools":20,"tx_tools":10}}},"history":[]}}"#)
++        let frame = try decode(#"{"version":1,"type":"snapshot","sources":[{"source":"codex","enabled":true,"available":true,"sessions":0,"active_agents":0,"today_input":0,"today_output":0,"today_requests":0},{"source":"omp","enabled":true,"available":true,"sessions":0,"active_agents":0,"today_input":0,"today_output":0,"today_requests":0}],"traffic":{"enabled":true,"available":true,"sources":{"codex":{"self_rate":{"rx":4,"tx":2},"with_tools_rate":{"rx":6,"tx":3},"today":{"rx_self":100,"tx_self":50,"rx_tools":20,"tx_tools":10}},"omp":{"self_rate":{"rx":12,"tx":3},"with_tools_rate":{"rx":12,"tx":3},"today":{"rx_self":200,"tx_self":30,"rx_tools":0,"tx_tools":0}}},"history":[]}}"#)
 +        var state = RemoteHostState()
 +        state.apply(frame)
 +        let host = RemoteHost(label: "Server", destination: "server", enabled: true)
-+        let status = try #require(state.dashboardSnapshot?.sources.first)
-+        let instances = [SourceInstance(hostID: host.id, status: status)]
++        let statuses = try #require(state.dashboardSnapshot?.sources)
++        let instances = statuses.map { SourceInstance(hostID: host.id, status: $0) }
 +        let local = TrafficSnapshot(timestamp: Date(), enabled: true, processState: .standby,
 +            sources: [.codex: SourceTraffic(source: .codex, today: TrafficSplit(own: TrafficBytes(rx: 7, tx: 8)))])
-+        let rows = TrafficSection.rows(local, instances: instances, hosts: [host], states: [host.id: state], enabled: .everything, includeTools: true)
-+        #expect(rows.count == 2)
-+        #expect(rows.first(where: { $0.hostID == host.id })?.traffic.today.own.rx == 100)
++        let rows = TrafficSection.rows(local, instances: instances, hosts: [host], states: [host.id: state], enabled: SourceSet(.codex), includeTools: true)
++        #expect(rows.count == 3)
++        #expect(rows.first(where: { $0.hostID == host.id && $0.traffic.source == .codex })?.traffic.today.own.rx == 100)
++        #expect(rows.first(where: { $0.hostID == host.id && $0.traffic.source == .omp })?.traffic.today.own.rx == 200)
++        #expect(rows.first(where: { $0.hostID == host.id && $0.traffic.source == .omp })?.traffic.liveOwn == TrafficRate(rx: 12, tx: 3))
 +        #expect(rows.first(where: { $0.hostID == nil })?.traffic.today.own.rx == 7)
 +        let hidden = TrafficSection.rows(TrafficSnapshot(timestamp: Date(), enabled: true, processState: .standby), instances: instances, hosts: [host], states: [host.id: state], enabled: SourceSet(rawValue: 0), includeTools: true)
-+        #expect(hidden.isEmpty)
++        #expect(hidden.count == 2 && hidden.allSatisfy { $0.hostID == host.id })
 +        state.disconnected()
 +        let offline = TrafficSection.rows(local, instances: instances, hosts: [host], states: [host.id: state], enabled: .everything, includeTools: true)
-+        #expect(offline.first(where: { $0.hostID == host.id })?.traffic.liveOwn == .zero)
-+        #expect(offline.first(where: { $0.hostID == host.id })?.traffic.today.own.rx == 100)
++        #expect(offline.first(where: { $0.hostID == host.id && $0.traffic.source == .codex })?.traffic.liveOwn == .zero)
++        #expect(offline.first(where: { $0.hostID == host.id && $0.traffic.source == .codex })?.traffic.today.own.rx == 100)
++    }
++
++    @Test @MainActor func remoteHistoryAndRowsUseRemoteSourceEnablement() throws {
++        let json = #"{"version":1,"type":"snapshot","sources":[{"source":"omp","enabled":true,"available":true,"sessions":0,"active_agents":0,"today_input":0,"today_output":0,"today_requests":0}],"traffic":{"enabled":true,"available":true,"sources":{"omp":{"self_rate":{"rx":12,"tx":3},"with_tools_rate":{"rx":12,"tx":3},"today":{"rx_self":200,"tx_self":30,"rx_tools":0,"tx_tools":0}}},"history":[{"day":"2026-01-01","key":"omp","rx":200,"tx":30,"rx_tools":0,"tx_tools":0,"sampled_ms":1000}]}}"#
++        let host = RemoteHost(label: "Server", destination: "server", enabled: true)
++        var state = RemoteHostState()
++        state.apply(try decode(json))
++        let day = try #require(DayKey("2026-01-01"))
++        let local = TrafficSnapshot(timestamp: Date(), enabled: true, processState: .standby,
++            sources: [.codex: SourceTraffic(source: .codex, today: TrafficSplit(own: TrafficBytes(rx: 7, tx: 8))),
++                      .omp: SourceTraffic(source: .omp, today: TrafficSplit(own: TrafficBytes(rx: 9, tx: 10)))])
++        func rows() throws -> [TrafficDisplayRow] {
++            let statuses = try #require(state.dashboardSnapshot?.sources)
++            return TrafficSection.rows(local, instances: statuses.map { SourceInstance(hostID: host.id, status: $0) },
++                hosts: [host], states: [host.id: state], enabled: SourceSet(.codex), includeTools: true)
++        }
++        let visible = try rows()
++        #expect(visible.contains { $0.hostID == host.id && $0.traffic.source == .omp })
++        #expect(visible.contains { $0.hostID == nil && $0.traffic.source == .codex })
++        #expect(!visible.contains { $0.hostID == nil && $0.traffic.source == .omp })
++        let history = HistoryViewModel.remoteHistoryTraffic(host: host, state: state, includeTools: true, bits: false)
++        #expect(history.day(day, source: .omp, today: day, now: Date(), calendar: .current)?.own.rx == 200)
++        state.apply(try decode(json.replacingOccurrences(of: #""source":"omp","enabled":true"#, with: #""source":"omp","enabled":false"#)))
++        #expect(!(try rows()).contains { $0.hostID == host.id && $0.traffic.source == .omp })
++        let hidden = HistoryViewModel.remoteHistoryTraffic(host: host, state: state, includeTools: true, bits: false)
++        #expect(hidden.day(day, source: .omp, today: day, now: Date(), calendar: .current) == nil)
 +    }
 +
 +    @Test func collectorRestartsAccumulateOnlyOnce() throws {
@@ -782,7 +874,7 @@ index 744c0312..d0e018e0 100644
  After the client requests its time zone, `today_day`, `today_start_ms` and snapshot today totals use that zone;
  `today_day` is in `YYYY-MM-DD` form or null if conversion fails. Untagged or null-zone snapshots retain collector-local
  compatibility behavior. Snapshot and history frames identify their aggregation time zone; history from an older
-@@ -247,6 +247,14 @@ collector without a matching time-zone tag must not be presented as viewer-local
+@@ -247,6 +247,16 @@ collector without a matching time-zone tag must not be presented as viewer-local
  can be measured or live data is incomplete. If global live data is incomplete, each source's live rates and estimated
  share are also null.
  
@@ -793,12 +885,14 @@ index 744c0312..d0e018e0 100644
 +`rx`, `tx`, `rx_tools`, `tx_tools`, and `sampled_ms`; absent dates are not reconstructed. Traffic days use the
 +collector's local time zone, independently of the requested token-history zone. Older collectors omit `traffic`.
 +On disconnect, clients retain cumulative counts and set live rates to zero.
++On macOS, the network dashboard and its remote traffic history use the remote host's enabled source statuses;
++the local Data Sources selection filters local traffic only and does not hide another host's sources.
 +
  Protocol v1 optionally carries an agent `perf` object containing `form`, `score`, `shown`, `provisional`, `n`,
  `tools`, `active_ms`, `span_start_ms`, `model`, `components`, `baseline`, `vs_usual`, `vs_usual_percent` and
  `work_signals`. Each component has `id`, `present`, `reason`, `samples`, `measure`, `ratio` and `sub_score`;
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-index a22f67cc..ff11ebd4 100644
+index 331870ef..f8e54fa5 100644
 --- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 @@ -13,6 +13,7 @@ public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string
@@ -965,7 +1059,7 @@ index 00000000..9906ee52
 +    }
 +}
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 15b7087f..961a7d2a 100644
+index 8a672b50..70d0e669 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
 @@ -65,6 +65,7 @@ public sealed class SpeedHub
@@ -1090,10 +1184,10 @@ index 1c2b6165..cc7c1b71 100644
  
              return _visible;
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
-index 67bbbb96..a09ea811 100644
+index 4dbe01a4..e00ca8b6 100644
 --- a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
-@@ -307,4 +307,28 @@ public sealed class RemoteConsumerTests
+@@ -326,4 +326,28 @@ public sealed class RemoteConsumerTests
          hub.UpdateRemoteHost(id, "host", true, json: "{\"version\":2,\"type\":\"snapshot\",\"sources\":[]}");
          Assert.Equal(42, hub.Snapshot.Today.Output);
      }

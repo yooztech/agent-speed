@@ -1,54 +1,81 @@
-From b6834cc69afa239523527c2a1045c991e19fbc93 Mon Sep 17 00:00:00 2001
-From: Agent Speed Contributors <contributors@localhost>
-Date: Fri, 6 Nov 2026 11:00:29 +0800
-Subject: [PATCH 15/16] Connect remote performance and history metrics
+From bc432360cfec76879cad30c72de8781b81b991e1 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 6 Nov 2026 14:43:10 +0800
+Subject: [PATCH] Connect remote performance and history metrics
 
 ---
- README.md                                     |   7 +-
+ README.md                                     |  15 +-
  linux/collector/main.cpp                      |  32 ++++-
- linux/collector/protocol.cpp                  |  59 ++++++++-
+ linux/collector/protocol.cpp                  |  66 ++++++++-
  linux/collector/protocol.hpp                  |   4 +-
- linux/tests/collector_integration_test.cpp    | 123 ++++++++++++++++++
- linux/tests/collector_test.cpp                |  44 +++++++
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  54 ++++++++
- .../AgentSpeed/App/RemoteSnapshot.swift       |  51 ++++++++
+ linux/core/include/agentspeed/engine.hpp      |   5 +
+ linux/core/include/agentspeed/snapshot.hpp    |   3 +
+ linux/core/src/engine.cpp                     |   7 +-
+ linux/core/src/monitor_snapshot.cpp           |   9 ++
+ linux/tests/collector_integration_test.cpp    | 123 +++++++++++++++++
+ linux/tests/collector_test.cpp                |  60 ++++++++
+ linux/tests/engine_fixture_test.cpp           |  21 +++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 ++++++++++
+ .../AgentSpeed/App/RemoteSnapshot.swift       |  77 ++++++++++-
  .../AgentSpeed/History/HistoryViewModel.swift |  24 +++-
  .../Perf/History/PerfHistoryContent.swift     |   5 +-
  .../Perf/History/PerfHistoryTable.swift       |   6 +-
  .../Perf/History/PerfHistoryText.swift        |   3 +-
  .../AgentSpeed/Perf/Model/PerfCardModel.swift |   3 +-
  .../AgentSpeed/Perf/Model/PerfCardText.swift  |   3 +-
- .../AgentSpeedAppTests/RemoteHostsTests.swift |  76 +++++++++++
- spec/METRICS.md                               |  12 ++
+ .../AgentSpeedCore/Engine/DayLedger.swift     |   5 +
+ .../AgentSpeedCore/Engine/EngineTypes.swift   |   1 +
+ .../AgentSpeedCore/Engine/SpeedEngine.swift   |   1 +
+ macos/Sources/AgentSpeedCore/Models.swift     |   3 +
+ .../Monitor/SnapshotBuilder.swift             |   5 +-
+ .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 ++++++++++++++++++
+ .../EngineBehaviorTests.swift                 |   4 +
+ spec/METRICS.md                               |  23 +++-
  spec/NETWORK.md                               |  17 +++
  .../src/AgentSpeed.Core/Perf/PerfHistory.cs   |  19 ++-
  .../src/AgentSpeed.Core/Perf/PerfRecord.cs    |   2 +
- .../src/AgentSpeed.Core/RemoteAggregation.cs  |   7 +-
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  |  13 +-
  .../src/AgentSpeed.Core/RemotePerformance.cs  |  63 +++++++++
- windows/src/AgentSpeed.Core/SpeedHub.cs       |  15 ++-
+ windows/src/AgentSpeed.Core/SpeedHub.cs       |  18 ++-
  .../History/Perf/PerfHistoryChart.cs          |   4 +-
  .../History/Perf/PerfHistoryRow.cs            |   5 +-
  .../History/Perf/PerfHistorySection.cs        |  17 ++-
  .../History/HistoryViewModel.Perf.cs          |  18 ++-
  .../History/Perf/PerfHistoryViewModel.cs      |  18 +--
  .../AgentSpeed/History/Perf/PerfRowView.cs    |   6 +-
+ .../RemoteConsumerTests.cs                    |  19 +++
  .../RemotePerformanceTests.cs                 |  78 +++++++++++
  .../Perf/PerfHistoryTests.cs                  |  20 +++
  .../PerfPerformanceSectionTests.cs            |  28 ++++
- 31 files changed, 773 insertions(+), 50 deletions(-)
+ 43 files changed, 997 insertions(+), 58 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/RemotePerformance.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
 
 diff --git a/README.md b/README.md
-index 71b051dc..75ca6946 100644
+index 71b051dc..baecc4be 100644
 --- a/README.md
 +++ b/README.md
-@@ -133,8 +133,11 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
+@@ -124,6 +124,9 @@ remote host has its own identity and history, separate from local usage. A disco
+ stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
+ On macOS, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
+ When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
++Combined today's average uses valid measured output and duration for each selected machine and source, not a simple
++average of host averages. If a required contribution is unavailable, the combined average is unavailable. Remote
++live reasoning readings use the same semantics as local readings when provided by the collector.
+ Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
+ response rates use the logged duration. On macOS and Windows, the chart's “Contains estimates” legend remains visible
+ whenever the selected range includes a dashed estimated segment, even after that response has completed. In particular omp commonly writes a response when it completes, so remote
+@@ -131,10 +134,14 @@ monitoring cannot measure per-token streaming speed or infer an unrecorded time
+ the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
+ 
  Remote sources and agents appear alongside local sources in the native dashboard and history when available. Remote
- data does not include categorized today's token totals, project paths, traffic or a continuous live chart; unavailable
- values, including missing price data, remain unknown. History is aggregated in the viewer's time zone, requested by
+-data does not include categorized today's token totals, project paths, traffic or a continuous live chart; unavailable
+-values, including missing price data, remain unknown. History is aggregated in the viewer's time zone, requested by
 -the client from the collector. Partial log reads are marked as potentially incomplete. Remote network and performance
 -history are unavailable; disconnected intervals remain gaps rather than continuous measurements.
++data does not include categorized today's token totals, project paths or a continuous live chart; unavailable
++values, including missing price data, remain unknown. Network traffic is reported when the collector can observe it.
++History is aggregated in the viewer's time zone, requested by
 +the client from the collector. Partial log reads are marked as potentially incomplete. Supported collectors provide
 +remote performance scores and host-specific baselines, plus real daily performance history from analyzed logs. A
 +baseline uses the collector host's local dates; history uses the viewer's time zone, so day boundaries can differ.
@@ -122,7 +149,7 @@ index 8f7364f0..4048ce12 100644
              for (const auto& event : monitor->takeCompletions()) emit(collector::Protocol::completion(event));
          }
 diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
-index 7889436b..5e592cc0 100644
+index 7889436b..59392499 100644
 --- a/linux/collector/protocol.cpp
 +++ b/linux/collector/protocol.cpp
 @@ -8,6 +8,7 @@
@@ -133,7 +160,27 @@ index 7889436b..5e592cc0 100644
  #include <type_traits>
  
  namespace collector {
-@@ -120,13 +121,46 @@ std::string Protocol::snapshot(const agentspeed::Snapshot& v, const std::optiona
+@@ -90,6 +91,10 @@ std::string Protocol::snapshot(const agentspeed::Snapshot& v, const std::optiona
+         if (s.liveRateComplete) number(o, s.liveOutput); else o << "null";
+         o << ",\"live_total\":"; if (s.liveRateComplete) number(o, s.liveTotal); else o << "null";
+         o << ",\"estimated_share\":"; if (s.liveRateComplete) number(o, s.liveEstimatedShare); else o << "null";
++        o << ",\"intelligence\":{\"output\":"; number(o, s.intelligenceOutput);
++        o << ",\"thinking\":"; number(o, s.intelligenceThinking);
++        o << ",\"thinking_base\":"; number(o, s.intelligenceThinkingBase); o << '}';
++        o << ",\"measured_output\":" << s.measuredOutput << ",\"measured_ms\":" << s.measuredMs;
+         o << ",\"today_input\":" << s.todayInput << ",\"today_output\":" << s.todayOutput;
+         o << ",\"today_cached_input\":";
+         if (s.enabled && s.available) o << s.todayCachedInput; else o << "null";
+@@ -114,19 +119,55 @@ std::string Protocol::snapshot(const agentspeed::Snapshot& v, const std::optiona
+         o << ",\"live_total\":"; if (a.liveRateComplete) number(o, a.liveTotal); else o << "null";
+         o << ",\"subagent\":" << (a.subagent ? "true" : "false") << ",\"parent_id\":";
+         if (a.parentId) text(o, id(*a.parentId)); else o << "null";
++        o << ",\"intelligence\":{\"output\":"; number(o, a.intelligenceOutput);
++        o << ",\"thinking\":"; number(o, a.liveThinking);
++        o << ",\"thinking_base\":"; number(o, a.intelligenceThinkingBase); o << '}';
+         o << ",\"last_line_ms\":";
+         if (a.lastLineMs) o << *a.lastLineMs; else o << "null";
+         o << ",\"depth\":" << a.depth << ",\"effort\":"; optionalText(o, a.effort);
          o << ",\"speed\":"; optionalText(o, a.speed);
          o << ",\"effort_configured\":" << (a.effortConfigured ? "true" : "false")
            << ",\"speed_configured\":" << (a.speedConfigured ? "true" : "false");
@@ -181,7 +228,7 @@ index 7889436b..5e592cc0 100644
      auto o = stream();
      o << "{\"version\":1,\"type\":\"history\",\"timezone\":"; optionalText(o, timezone);
      o << ",\"partial\":" << (report.filesUnreadable ? "true" : "false") << ",\"days\":[";
-@@ -183,6 +217,29 @@ std::string Protocol::history(const std::vector<agentspeed::history::DailyUsage>
+@@ -183,6 +224,29 @@ std::string Protocol::history(const std::vector<agentspeed::history::DailyUsage>
          o << ']';
          o << '}';
      }
@@ -233,6 +280,114 @@ index 23e6006e..9ea0c9d4 100644
      static std::string completion(const agentspeed::Completion& value);
  private:
      std::string id(const std::string& raw);
+diff --git a/linux/core/include/agentspeed/engine.hpp b/linux/core/include/agentspeed/engine.hpp
+index c57c1d38..dd7d5c2f 100644
+--- a/linux/core/include/agentspeed/engine.hpp
++++ b/linux/core/include/agentspeed/engine.hpp
+@@ -83,6 +83,8 @@ struct TodayStats {
+     std::int64_t cachedInput = 0;
+     std::int64_t cacheWriteInput = 0;
+     std::int64_t reasoning = 0;
++    std::int64_t measuredOutput = 0;
++    std::int64_t measuredMs = 0;
+     std::int64_t unfinalized = 0;
+     std::optional<double> average;
+     double peak = 0;
+@@ -102,11 +104,14 @@ struct ThinkingWindow {
+     void add(SourceKind source, double w, double r);
+     void merge(const ThinkingWindow& other);
+     double liveThinking() const { return reasoning / (static_cast<double>(kWindowMs) / 1000.0); }
++    double outputRate() const { return weight / (static_cast<double>(kWindowMs) / 1000.0); }
++    double thinkingBaseRate() const { return reasoningWeight / (static_cast<double>(kWindowMs) / 1000.0); }
+     double thinkingShare() const { return reasoningWeight > 0 ? reasoning / reasoningWeight : 0.0; }
+ };
+ struct Thinking {
+     ThinkingWindow total;
+     std::map<std::string, ThinkingWindow> perAgent;
++    std::map<SourceKind, ThinkingWindow> perSource;
+     std::map<std::string, ThinkingWindow> perModel;
+ };
+ Thinking thinking(const std::vector<Response>& responses, const std::vector<Agent>& agents, std::int64_t now);
+diff --git a/linux/core/include/agentspeed/snapshot.hpp b/linux/core/include/agentspeed/snapshot.hpp
+index 4fa70e58..1227b36c 100644
+--- a/linux/core/include/agentspeed/snapshot.hpp
++++ b/linux/core/include/agentspeed/snapshot.hpp
+@@ -43,6 +43,7 @@ struct AgentRow {
+     // METRICS 6.9 Live thinking: this agent's reasoning tokens per second and share.
+     double liveThinking = 0;
+     double thinkingShare = 0;
++    double intelligenceOutput = 0, intelligenceThinkingBase = 0;
+ };
+ 
+ // 性能 and 思考 of one set of sources (METRICS 6.9 Sets and groups, Live thinking): an orb, the tray, a board.
+@@ -78,6 +79,8 @@ struct SourceRow {
+     double liveOutput = 0;
+     double liveTotal = 0;
+     bool liveRateComplete = true;
++    double intelligenceOutput = 0, intelligenceThinking = 0, intelligenceThinkingBase = 0;
++    std::int64_t measuredOutput = 0, measuredMs = 0;
+     double liveEstimatedShare = 0;
+     bool enabled = true;
+     // METRICS 2: detected (its root exists) and the root shown in settings.
+diff --git a/linux/core/src/engine.cpp b/linux/core/src/engine.cpp
+index 87f0a6f1..f02c25fa 100644
+--- a/linux/core/src/engine.cpp
++++ b/linux/core/src/engine.cpp
+@@ -311,7 +311,11 @@ TodayStats todayStats(const std::vector<Response>& responses, std::int64_t today
+         } else {
+             stats.unpricedRequests += r.requestCount;
+         }
+-        if (interval(r) && r.final) valid.push_back(&r);
++        if (const auto iv = interval(r); iv && r.final) {
++            valid.push_back(&r);
++            stats.measuredOutput += r.output;
++            stats.measuredMs += iv->second - iv->first;
++        }
+     }
+     if (auto sp = speedOf(valid); sp && !valid.empty()) stats.average = sp->output;
+     stats.buckets = buckets(today, todayStart, now);
+@@ -365,6 +369,7 @@ Thinking thinking(const std::vector<Response>& responses, const std::vector<Agen
+                          const std::optional<std::string>& model) {
+         out.total.add(source, weight, reasoning);
+         out.perAgent[agentId].add(source, weight, reasoning);
++        out.perSource[source].add(source, weight, reasoning);
+         out.perModel[model.value_or("")].add(source, weight, reasoning);
+     };
+     const std::int64_t w0 = now - kWindowMs;
+diff --git a/linux/core/src/monitor_snapshot.cpp b/linux/core/src/monitor_snapshot.cpp
+index 90417d3f..a35c9c74 100644
+--- a/linux/core/src/monitor_snapshot.cpp
++++ b/linux/core/src/monitor_snapshot.cpp
+@@ -50,6 +50,8 @@ void Monitor::scoreAgents(Snapshot& snap, const std::vector<engine::Response>& r
+         if (const auto it = thinking.perAgent.find(row.id); it != thinking.perAgent.end()) {
+             row.liveThinking = it->second.liveThinking();
+             row.thinkingShare = it->second.thinkingShare();
++            row.intelligenceOutput = it->second.outputRate();
++            row.intelligenceThinkingBase = it->second.thinkingBaseRate();
+         }
+         const auto& info = agents_.at(row.id);
+         const auto* reader = actionsOf(row.id);
+@@ -268,6 +270,11 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
+         row.available = available;
+         row.sessions = sessionCount(kind, todayStartMs);
+         if (row.enabled) {
++            if (const auto it = lastThinking_.perSource.find(kind); it != lastThinking_.perSource.end()) {
++                row.intelligenceOutput = it->second.outputRate();
++                row.intelligenceThinking = it->second.liveThinking();
++                row.intelligenceThinkingBase = it->second.thinkingBaseRate();
++            }
+             std::vector<engine::Response> own, ownToday;
+             for (const auto& r : responses) {
+                 if (r.source != kind) continue;
+@@ -281,6 +288,8 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
+             row.todayCacheWriteInput = stats.cacheWriteInput;
+             row.todayReasoning = stats.reasoning;
+             row.todayRequests = stats.requests;
++            row.measuredOutput = stats.measuredOutput;
++            row.measuredMs = stats.measuredMs;
+             row.todayCostMicroUsd = stats.costMicroUsd;
+             row.unpricedRequests = stats.unpricedRequests;
+             std::vector<engine::Agent> ownAgents;
 diff --git a/linux/tests/collector_integration_test.cpp b/linux/tests/collector_integration_test.cpp
 index 6eca14f2..f70a18a2 100644
 --- a/linux/tests/collector_integration_test.cpp
@@ -365,10 +520,47 @@ index 6eca14f2..f70a18a2 100644
 +    std::filesystem::remove_all(home);
 +}
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
-index d826d8c5..e4f004f8 100644
+index d826d8c5..3feaf96e 100644
 --- a/linux/tests/collector_test.cpp
 +++ b/linux/tests/collector_test.cpp
-@@ -367,3 +367,47 @@ TEST(CollectorHistoryCache, RejectsSymlinkedCacheDirectory) {
+@@ -39,6 +39,11 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
+     source.todayCachedInput = 3;
+     source.todayCacheWriteInput = 4;
+     source.todayReasoning = 5;
++    source.intelligenceOutput = 12;
++    source.intelligenceThinking = 3;
++    source.intelligenceThinkingBase = 10;
++    source.measuredOutput = 200;
++    source.measuredMs = 4000;
+     source.available = true;
+     snapshot.sources.push_back(source);
+     agentspeed::AgentRow row;
+@@ -49,6 +54,9 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
+     row.phase = agentspeed::Phase::Generating;
+     row.effort = "high";
+     row.effortConfigured = true;
++    row.intelligenceOutput = 8;
++    row.liveThinking = 2;
++    row.intelligenceThinkingBase = 8;
+     snapshot.agents.push_back(row);
+     auto wire = protocol.snapshot(snapshot);
+     EXPECT_EQ(wire.find("/secret"), std::string::npos);
+@@ -71,6 +79,14 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
+     EXPECT_EQ(root["sources"].at(0)["today_cached_input"].raw(), "3");
+     EXPECT_EQ(root["sources"].at(0)["today_cache_write_input"].raw(), "4");
+     EXPECT_EQ(root["sources"].at(0)["today_reasoning"].raw(), "5");
++    EXPECT_EQ(root["sources"].at(0)["intelligence"]["output"].raw(), "12");
++    EXPECT_EQ(root["sources"].at(0)["intelligence"]["thinking"].raw(), "3");
++    EXPECT_EQ(root["sources"].at(0)["intelligence"]["thinking_base"].raw(), "10");
++    EXPECT_EQ(root["sources"].at(0)["measured_output"].raw(), "200");
++    EXPECT_EQ(root["sources"].at(0)["measured_ms"].raw(), "4000");
++    EXPECT_EQ(root["agents"].at(0)["intelligence"]["output"].raw(), "8");
++    EXPECT_EQ(root["agents"].at(0)["intelligence"]["thinking"].raw(), "2");
++    EXPECT_EQ(root["agents"].at(0)["intelligence"]["thinking_base"].raw(), "8");
+     EXPECT_EQ(root["sources"].at(0)["today_output"].raw(), "17");
+     EXPECT_EQ(root["sources"].at(0)["available"].raw(), "true");
+     EXPECT_EQ(root["agents"].at(0)["effort"].string(), "high");
+@@ -367,3 +383,47 @@ TEST(CollectorHistoryCache, RejectsSymlinkedCacheDirectory) {
      }
      std::filesystem::remove_all(root);
  }
@@ -416,15 +608,69 @@ index d826d8c5..e4f004f8 100644
 +    EXPECT_EQ(item["tool_ln_sum"].raw(), "1.75");
 +    EXPECT_EQ(history.root()["perf_records"].elements().size(), 2u);
 +}
+diff --git a/linux/tests/engine_fixture_test.cpp b/linux/tests/engine_fixture_test.cpp
+index 8121f0bb..9421b2e5 100644
+--- a/linux/tests/engine_fixture_test.cpp
++++ b/linux/tests/engine_fixture_test.cpp
+@@ -30,6 +30,27 @@ TEST(Engine, TodayTokenBreakdownUsesTheSameDayBoundaryAsTotals) {
+     EXPECT_EQ(stats.reasoning, 14);
+ }
+ 
++TEST(Engine, TodayMeasuredTotalsUseFinalValidWidenedIntervals) {
++    Response first;
++    first.startMs = 1000;
++    first.endMs = 1100;
++    first.output = 100;
++    first.final = true;
++    Response second = first;
++    second.startMs = 1000;
++    second.endMs = 3000;
++    second.output = 50;
++    Response unfinished = first;
++    unfinished.final = false;
++    Response untimed = first;
++    untimed.startMs.reset();
++    const auto stats = todayStats({first, second, unfinished, untimed}, 1000, 3000);
++    EXPECT_EQ(stats.measuredOutput, 150);
++    EXPECT_EQ(stats.measuredMs, 2500);
++    ASSERT_TRUE(stats.average);
++    EXPECT_DOUBLE_EQ(*stats.average, 60);
++}
++
+ namespace {
+ 
+ constexpr double kTolerance = 1e-6;
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index 836af188..b0a36780 100644
+index 836af188..4d69ef88 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-@@ -30,6 +30,57 @@ struct RemoteAgent: Decodable, Identifiable, Sendable {
+@@ -15,6 +15,20 @@ struct RemoteHost: Codable, Identifiable, Equatable {
+     }
+ }
+ 
++struct RemoteIntelligence: Decodable, Sendable {
++    let output: Double
++    let thinking: Double
++    let thinkingBase: Double
++
++    var sums: IntelligenceSums {
++        var value = IntelligenceSums()
++        value.output = output
++        value.thinking = thinking
++        value.thinkingBase = thinkingBase
++        return value
++    }
++}
++
+ struct RemoteAgent: Decodable, Identifiable, Sendable {
+     let id: String
+     let source: String
+@@ -30,6 +44,58 @@ struct RemoteAgent: Decodable, Identifiable, Sendable {
      let speed: String?
      let effortConfigured: Bool?
      let speedConfigured: Bool?
 +    let perf: RemotePerf?
++    let intelligence: RemoteIntelligence?
 +}
 +
 +struct RemotePerfComponent: Decodable, Sendable {
@@ -478,7 +724,17 @@ index 836af188..b0a36780 100644
  }
  
  struct RemoteDay: Decodable, Identifiable, Sendable {
-@@ -129,6 +180,7 @@ struct RemoteMessage: Decodable, Sendable {
+@@ -96,6 +162,9 @@ struct RemoteSource: Decodable, Sendable {
+     let todayInput: Int
+     let todayOutput: Int
+     let todayRequests: Int
++    let intelligence: RemoteIntelligence?
++    let measuredOutput: Int?
++    let measuredMs: Int64?
+     let todayCachedInput: Int?
+     let todayCacheWriteInput: Int?
+     let todayReasoning: Int?
+@@ -129,6 +198,7 @@ struct RemoteMessage: Decodable, Sendable {
      let tools: Int?
      let agents: [RemoteAgent]?
      let days: [RemoteDay]?
@@ -486,7 +742,7 @@ index 836af188..b0a36780 100644
      let timezone: String?
      let responseId: String?
      let partial: Bool?
-@@ -156,6 +208,7 @@ struct RemoteHostState {
+@@ -156,6 +226,7 @@ struct RemoteHostState {
      var snapshot: RemoteMessage?
      var connectionID = UUID()
      var days: [RemoteDay] = []
@@ -494,7 +750,7 @@ index 836af188..b0a36780 100644
      var historyPartial: Bool?
      var historyReceivedAt: Date?
      /// True only after this connection has supplied a history frame.
-@@ -171,6 +224,7 @@ struct RemoteHostState {
+@@ -171,6 +242,7 @@ struct RemoteHostState {
              error = nil
          } else if message.type == "history", message.timezone == TimeZone.current.identifier, let replacement = message.days {
              days = replacement
@@ -503,9 +759,25 @@ index 836af188..b0a36780 100644
              historyReceivedAt = Date()
              historyReceivedOnConnection = true
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-index 5396abe7..9d1fdd53 100644
+index 5396abe7..8ea864af 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
+@@ -65,6 +65,7 @@ extension RemoteHosts {
+                         source.liveRateAvailable = false
+                         source.liveCostRateAvailable = false
+                         source.todayAvailable = false
++                        source.intelligence = .zero
+                         result.sourceInstances.append(SourceInstance(hostID: host.id, status: source))
+                         if case .noSources = result.state { result.state = .running }
+                         if let index = result.sources.firstIndex(where: { $0.kind == source.kind }) {
+@@ -98,7 +99,6 @@ extension RemoteHosts {
+             result.timestamp = max(result.timestamp, remote.timestamp)
+             result.peakTodayAvailable = false
+             result.liveCostRateAvailable = false
+-            result.averageToday = nil
+             result.sourceInstances += sources.map { SourceInstance(hostID: host.id, status: $0) }
+             if case .noSources = result.state { result.state = .running }
+             let agents = remote.agents.filter { kinds.contains($0.source) }.map { agent in
 @@ -106,6 +106,7 @@ extension RemoteHosts {
                  agent.hostID = host.id
                  let prefix = "remote:\(host.id.uuidString):\(state.connectionID.uuidString):"
@@ -514,25 +786,77 @@ index 5396abe7..9d1fdd53 100644
                  if let parent = agent.parentId { agent.parentId = prefix + parent }
                  return agent
              }
-@@ -163,6 +164,15 @@ extension RemoteHosts {
+@@ -113,6 +114,7 @@ extension RemoteHosts {
+             result.generatingCount += agents.filter { $0.phase == .generating }.count
+             result.toolsCount += agents.filter { $0.phase == .tools }.count
+             for source in sources {
++                result.intelligence.add(source.intelligence)
+                 result.liveRateAvailable = result.liveRateAvailable && source.liveRateAvailable
+                 if source.available {
+                     result.todayAvailable = result.todayAvailable && source.todayAvailable
+@@ -135,6 +137,7 @@ extension RemoteHosts {
+                     let existingAvailable = result.sources[index].available
+                     result.sources[index].enabled = result.sources[index].enabled || source.enabled
+                     result.sources[index].available = result.sources[index].available || source.available
++                    result.sources[index].intelligence.add(source.intelligence)
+                     result.sources[index].sessionCount += source.sessionCount
+                     result.sources[index].activeAgents += source.activeAgents
+                     if source.available {
+@@ -163,10 +166,37 @@ extension RemoteHosts {
                      result.sources.append(source)
                  }
              }
 +            for agent in agents {
-+                result.intelligence.add(agent.intelligence)
++                var score = IntelligenceSums()
++                score.score = agent.intelligence.score
++                result.intelligence.add(score)
 +                if let index = result.sources.firstIndex(where: { $0.kind == agent.source }) {
-+                    result.sources[index].intelligence.add(agent.intelligence)
++                    result.sources[index].intelligence.add(score)
 +                }
 +                if let index = result.sourceInstances.firstIndex(where: { $0.hostID == host.id && $0.status.kind == agent.source }) {
-+                    result.sourceInstances[index].status.intelligence.add(agent.intelligence)
++                    result.sourceInstances[index].status.intelligence.add(score)
 +                }
 +            }
              if message.partialHistory == true && !result.warnings.contains(.partialHistory) {
                  result.warnings.append(.partialHistory)
              }
-@@ -222,6 +232,25 @@ extension RemoteHostState {
+         }
++        if result.sourceInstances.contains(where: { $0.hostID != nil }) {
++            let sources = result.sourceInstances.map(\.status).filter { $0.enabled && $0.available }
++            var output = 0.0
++            var duration = 0.0
++            var complete = result.todayAvailable
++            for source in sources {
++                guard source.todayAvailable, let measuredOutput = source.measuredOutput,
++                      let measuredMs = source.measuredMs else {
++                    complete = false
++                    continue
++                }
++                output += Double(measuredOutput)
++                duration += Double(measuredMs)
++            }
++            result.averageToday = complete && duration > 0 ? output * 1000 / duration : nil
++        }
+         result.liveEstimatedShare = result.live.output > 0 ? estimated / result.live.output : 0
+         return result
+     }
+@@ -199,8 +229,11 @@ extension RemoteHostState {
+                 activeAgents: source.activeAgents,
+                 liveEstimated: Rate(output: live.output * share, total: live.total * share),
+                 todayCost: CostTally(costMicroUsd: source.todayCostMicroUsd ?? 0, unpricedRequests: source.unpricedRequests ?? source.todayRequests))
++            status.measuredOutput = source.measuredOutput
++            status.measuredMs = source.measuredMs
+             status.todayAvailable = message.timezone == TimeZone.current.identifier && source.todayCachedInput != nil && source.todayCacheWriteInput != nil && source.todayReasoning != nil
+             status.liveRateAvailable = source.liveOutput != nil && source.liveTotal != nil
++            status.intelligence = source.intelligence?.sums ?? .zero
+             status.liveCostRateAvailable = false
+             return status
+         }
+@@ -221,7 +254,27 @@ extension RemoteHostState {
+                 recentSpeed: nil, lastActivity: agent.lastLineMs.map { Date(timeIntervalSince1970: $0 / 1000) } ?? timestamp,
                  parentId: agent.parentId, modes: modes(configured: false))
              status.liveRateAvailable = agent.liveOutput != nil && agent.liveTotal != nil
++            status.intelligence = agent.intelligence?.sums ?? .zero
              status.configuredModes = modes(configured: true)
 +            if let perf = agent.perf, let form = PerfValueForm(rawValue: perf.form) {
 +                let components = perf.components.compactMap { component -> PerfComponent? in
@@ -556,7 +880,7 @@ index 5396abe7..9d1fdd53 100644
              return status
          }
          return SpeedSnapshot(timestamp: timestamp, state: .running,
-@@ -269,6 +298,28 @@ extension RemoteHostState {
+@@ -269,6 +322,28 @@ extension RemoteHostState {
          }
          return result
      }
@@ -749,14 +1073,121 @@ index 4581b1a9..2651226b 100644
      }
  
      /// The card's content as the row's extra accessibility content, in DESIGN 12's order.
+diff --git a/macos/Sources/AgentSpeedCore/Engine/DayLedger.swift b/macos/Sources/AgentSpeedCore/Engine/DayLedger.swift
+index 37746e2d..5b60c4d8 100644
+--- a/macos/Sources/AgentSpeedCore/Engine/DayLedger.swift
++++ b/macos/Sources/AgentSpeedCore/Engine/DayLedger.swift
+@@ -19,6 +19,7 @@ struct DayLedger: Sendable {
+     private(set) var unpricedFacts: [SourceKind: [UnpricedFactKey: Int]] = [:]
+     private var validOutput = 0
+     private var validDurationMs: Int64 = 0
++    private(set) var measuredBySource: [SourceKind: (output: Int, durationMs: Int64)] = [:]
+     private var outputBuckets: [Double]
+     private var totalBuckets: [Double]
+     private var cachedPeak: MeasuredPeak?
+@@ -68,6 +69,10 @@ struct DayLedger: Sendable {
+             unpricedFacts[record.source, default: [:]][fact] = count == 0 ? nil : count
+         }
+         guard record.isFinal, let timed = TimedResponse(record) else { return }
++        var measured = measuredBySource[record.source] ?? (output: 0, durationMs: 0)
++        measured.output = measured.output.saturatingAdd(sign * record.usage.output)
++        measured.durationMs += Int64(sign) * timed.durationMs
++        measuredBySource[record.source] = measured
+         validOutput = validOutput.saturatingAdd(sign * record.usage.output)
+         validDurationMs += Int64(sign) * timed.durationMs
+         let lastSecond = firstSecond + Int64(Self.capacitySeconds) - 1
+diff --git a/macos/Sources/AgentSpeedCore/Engine/EngineTypes.swift b/macos/Sources/AgentSpeedCore/Engine/EngineTypes.swift
+index b2f7391d..a0e37ad6 100644
+--- a/macos/Sources/AgentSpeedCore/Engine/EngineTypes.swift
++++ b/macos/Sources/AgentSpeedCore/Engine/EngineTypes.swift
+@@ -126,6 +126,7 @@ struct EngineOutput: Sendable {
+     var history: [HistoryPoint]
+     var today: TokenTotals
+     var todayBySource: [SourceKind: TokenTotals]
++    var measuredBySource: [SourceKind: (output: Int, durationMs: Int64)]
+     var averageToday: Double?
+     /// Today's responses whose final usage was never written.
+     var unfinalizedToday: Int
+diff --git a/macos/Sources/AgentSpeedCore/Engine/SpeedEngine.swift b/macos/Sources/AgentSpeedCore/Engine/SpeedEngine.swift
+index 8da17299..4149880b 100644
+--- a/macos/Sources/AgentSpeedCore/Engine/SpeedEngine.swift
++++ b/macos/Sources/AgentSpeedCore/Engine/SpeedEngine.swift
+@@ -177,6 +177,7 @@ struct SpeedEngine: Sendable {
+             history: history,
+             today: ledger?.totals ?? TokenTotals(),
+             todayBySource: ledger?.bySource ?? [:],
++            measuredBySource: ledger?.measuredBySource ?? [:],
+             averageToday: ledger?.average,
+             unfinalizedToday: ledger?.unfinalized ?? 0,
+             todayCost: ledger?.cost ?? .zero,
+diff --git a/macos/Sources/AgentSpeedCore/Models.swift b/macos/Sources/AgentSpeedCore/Models.swift
+index 2bbb390c..56282624 100644
+--- a/macos/Sources/AgentSpeedCore/Models.swift
++++ b/macos/Sources/AgentSpeedCore/Models.swift
+@@ -194,6 +194,9 @@ public struct SourceStatus: Identifiable, Equatable, Sendable {
+     public var today: TokenTotals
+     /// False when today's totals are incomplete.
+     public var todayAvailable: Bool = true
++    /// Final, timed responses contributing to today's weighted average; nil when unavailable.
++    public var measuredOutput: Int? = nil
++    public var measuredMs: Int64? = nil
+     public var activeAgents: Int
+     /// The estimated part of `live` (unmeasured responses and in-flight requests, METRICS 6.3), in the same units.
+     public var liveEstimated: Rate
+diff --git a/macos/Sources/AgentSpeedCore/Monitor/SnapshotBuilder.swift b/macos/Sources/AgentSpeedCore/Monitor/SnapshotBuilder.swift
+index bde5aeb8..1f8d5e19 100644
+--- a/macos/Sources/AgentSpeedCore/Monitor/SnapshotBuilder.swift
++++ b/macos/Sources/AgentSpeedCore/Monitor/SnapshotBuilder.swift
+@@ -89,7 +89,7 @@ enum SnapshotBuilder {
+         }
+         let sources = SourceKind.allCases.map { kind in
+             let info = context.sources[kind]
+-            return SourceStatus(
++            var status = SourceStatus(
+                 kind: kind,
+                 enabled: info?.enabled ?? false,
+                 rootPath: info?.rootPath ?? "",
+@@ -106,6 +106,9 @@ enum SnapshotBuilder {
+                 intelligence: output.sourceIntelligence[kind] ?? .zero,
+                 unpricedFacts: output.todayUnpricedFacts[kind] ?? []
+             )
++            status.measuredOutput = output.measuredBySource[kind]?.output ?? 0
++            status.measuredMs = output.measuredBySource[kind]?.durationMs ?? 0
++            return status
+         }
+         return SpeedSnapshot(
+             timestamp: date(output.nowMs),
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
-index 438a4384..e53220ee 100644
+index 438a4384..fc2b1e2e 100644
 --- a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
-@@ -20,6 +20,82 @@ struct RemoteHostsTests {
+@@ -20,6 +20,105 @@ struct RemoteHostsTests {
          #expect(message(#"{"version":2,"type":"snapshot"}"#) == nil)
      }
  
++    @Test @MainActor func remoteThinkingUsesSourceWindowsAndResetsOffline() throws {
++        let suite = "RemoteThinking.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let id = UUID()
++        defaults.set(try JSONEncoder().encode([RemoteHost(id: id, label: "A", destination: "a", enabled: true)]), forKey: "remoteHosts.v1")
++        let frame = try #require(message(#"{"version":1,"type":"snapshot","machine_id":"m","sources":[{"source":"pi","enabled":true,"available":true,"sessions":1,"active_agents":1,"live_output":10,"live_total":10,"today_input":0,"today_output":0,"today_requests":0,"intelligence":{"output":12,"thinking":3,"thinking_base":10}}],"agents":[{"id":"a","source":"pi","phase":"generating","subagent":false,"intelligence":{"output":8,"thinking":2,"thinking_base":8}}]}"#))
++        var remote = RemoteHostState(); remote.apply(frame)
++        var empty = RemoteHostState(); empty.apply(try #require(message(#"{"version":1,"type":"snapshot","sources":[],"agents":[]}"#)))
++        let local = try #require(empty.dashboardSnapshot)
++        let hosts = RemoteHosts(defaults: defaults, states: [id: remote])
++        let merged = hosts.combinedSnapshot(local)
++        #expect(merged.intelligence.output == 12)
++        #expect(merged.intelligence.thinking == 3)
++        #expect(merged.intelligence.thinkingBase == 10)
++        #expect(merged.agents.first?.intelligence.thinking == 2)
++        #expect(merged.sourceInstances.first { $0.hostID == id }?.status.intelligence.thinking == 3)
++        remote.disconnected()
++        let offline = RemoteHosts(defaults: defaults, states: [id: remote]).combinedSnapshot(local)
++        #expect(offline.intelligence.thinking == 0)
++        #expect(offline.sourceInstances.first { $0.hostID == id }?.status.intelligence.thinking == 0)
++    }
++
 +    @Test @MainActor func remotePerformanceIsRealAndMissingStaysUnavailable() throws {
 +        let frame = try #require(message(#"{"version":1,"type":"snapshot","agents":[{"id":"a","source":"pi","phase":"generating","subagent":false,"perf":{"form":"live","score":1200,"n":5,"tools":4,"active_ms":2000,"span_start_ms":100,"model":"m","components":[{"id":"T","present":true,"reason":null,"samples":5,"measure":30,"ratio":1.2}],"baseline":1000,"work_signals":{"looping":3,"repeating":null,"novelty":0.5,"failed":1,"recovered":1}}},{"id":"b","source":"pi","phase":"idle","subagent":false}]}"#))
 +        var state = RemoteHostState()
@@ -836,14 +1267,85 @@ index 438a4384..e53220ee 100644
      @Test func historyReplacementAndIsolation() throws {
          let first = try #require(message(#"{"version":1,"type":"history","days":[{"day":"2026-01-01","source":"pi","requests":1,"input":10,"cached_input":2,"cache_write_input":0,"output":5,"reasoning":0,"measured_output":5,"measured_ms":1000,"peak":5}]}"#))
          let empty = try #require(message(#"{"version":1,"type":"history","days":[]}"#))
+@@ -87,6 +186,37 @@ struct RemoteHostsTests {
+         #expect(hosts.states[id]?.historyReceivedOnConnection == false)
+     }
+ 
++    @Test @MainActor func combinedAverageUsesDeduplicatedMeasurementsAndRequiresCompleteData() throws {
++        let suite = "RemoteAverage.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        func state(machine: String, source: String, fields: String, enabled: Bool = true) throws -> RemoteHostState {
++            let wire = #"{"version":1,"type":"snapshot","machine_id":"\#(machine)","timezone":"\#(TimeZone.current.identifier)","sources":[{"source":"\#(source)","enabled":\#(enabled),"available":true,"sessions":1,"active_agents":0,"live_output":0,"live_total":0,"today_input":0,"today_cached_input":0,"today_cache_write_input":0,"today_reasoning":0,"today_output":100,"today_requests":1\#(fields)}],"agents":[]}"#
++            var result = RemoteHostState()
++            result.apply(try #require(message(wire)))
++            return result
++        }
++        let local = try #require(state(machine: "local", source: "codex", fields: #", "measured_output":100,"measured_ms":1000"#).dashboardSnapshot)
++        let a = UUID(), alias = UUID(), b = UUID()
++        defaults.set(try JSONEncoder().encode([
++            RemoteHost(id: a, label: "A", destination: "a", enabled: true),
++            RemoteHost(id: alias, label: "Alias", destination: "alias", enabled: true),
++            RemoteHost(id: b, label: "B", destination: "b", enabled: true)
++        ]), forKey: "remoteHosts.v1")
++        let first = try state(machine: "remote", source: "codex", fields: #", "measured_output":50,"measured_ms":2000"#)
++        let second = try state(machine: "remote", source: "pi", fields: #", "measured_output":0,"measured_ms":0"#)
++        let hosts = RemoteHosts(defaults: defaults, states: [a: first, alias: first, b: second])
++        #expect(hosts.combinedSnapshot(local).averageToday == 50)
++        let missing = try state(machine: "remote", source: "pi", fields: "")
++        let incomplete = RemoteHosts(defaults: defaults, states: [a: first, alias: first, b: missing])
++        #expect(incomplete.combinedSnapshot(local).averageToday == nil)
++        let filtered = try state(machine: "remote", source: "pi", fields: "", enabled: false)
++        #expect(RemoteHosts(defaults: defaults, states: [a: first, alias: first, b: filtered]).combinedSnapshot(local).averageToday == 50)
++        var disconnected = second
++        disconnected.disconnected()
++        #expect(RemoteHosts(defaults: defaults, states: [a: first, alias: first, b: disconnected]).combinedSnapshot(local).averageToday == nil)
++    }
++
+     @Test @MainActor func combinedSnapshotDeduplicatesAndPreservesAvailability() throws {
+         let suite = "RemoteCombined.\(UUID().uuidString)"
+         let defaults = try #require(UserDefaults(suiteName: suite))
+diff --git a/macos/Tests/AgentSpeedCoreTests/EngineBehaviorTests.swift b/macos/Tests/AgentSpeedCoreTests/EngineBehaviorTests.swift
+index 0b834f9e..61738b70 100644
+--- a/macos/Tests/AgentSpeedCoreTests/EngineBehaviorTests.swift
++++ b/macos/Tests/AgentSpeedCoreTests/EngineBehaviorTests.swift
+@@ -18,6 +18,8 @@ struct EngineBehaviorTests {
+         engine.upsert(Self.record("r1", start: dayTwo - 5000, end: dayTwo - 1000, input: 50, output: 400), project: "p", isCompletion: true, emitsEvents: false)
+         let before = engine.advance(nowMs: dayTwo - 500, todayStartMs: dayOne, emitsEvents: false)
+         #expect(before.today.requests == 1)
++        #expect(before.measuredBySource[.codex]?.output == 400)
++        #expect(before.measuredBySource[.codex]?.durationMs == 4000)
+         #expect(before.peakToday.output > 0)
+ 
+         engine.upsert(Self.record("r2", start: dayTwo - 200, end: dayTwo + 800, output: 10), project: "p", isCompletion: true, emitsEvents: false)
+@@ -25,6 +27,8 @@ struct EngineBehaviorTests {
+         #expect(after.today.requests == 1)
+         #expect(after.today.output == 10)
+         #expect(after.averageToday == 10)
++        #expect(after.measuredBySource[.codex]?.output == 10)
++        #expect(after.measuredBySource[.codex]?.durationMs == 1000)
+         #expect(after.peakToday.output < before.peakToday.output)
+     }
+ 
 diff --git a/spec/METRICS.md b/spec/METRICS.md
-index a87c8283..724ad494 100644
+index a87c8283..00b00cd5 100644
 --- a/spec/METRICS.md
 +++ b/spec/METRICS.md
-@@ -15,6 +15,12 @@ inferred when absent from the transcript.
+@@ -13,8 +13,21 @@ transcripts generally record a complete response after it finishes, and do not e
+ end-to-end rate includes the wait for the first token. No routing, account cooldown or retry information can be
+ inferred when absent from the transcript.
  Remote history days are aggregated in the viewer's time zone, requested by the client from the collector. Today’s
- categorized token totals, project paths, traffic and a continuous live curve are not supplied by the collector and must
- not be inferred from missing fields. Disconnected intervals remain gaps.
+-categorized token totals, project paths, traffic and a continuous live curve are not supplied by the collector and must
+-not be inferred from missing fields. Disconnected intervals remain gaps.
++categorized token totals, project paths and a continuous live curve are not supplied by the collector and must
++not be inferred from missing fields. Remote network traffic is reported only when observed. Disconnected intervals remain gaps.
++For a combined local and remote today average, sum the measured output and valid measured duration per selected
++machine and source, counting duplicate connections once, then divide total output by total duration. A missing
++contributor or incomplete day leaves the combined average unavailable; host averages cannot be simply averaged.
++Snapshots optionally carry per-source `measured_output` and `measured_ms`, and source and agent `intelligence`
++objects with `output`, `thinking` and `thinking_base` rates in tokens per second. Source values use the full
++source thinking window rather than a sum over listed agents. Live remote reasoning metrics follow local semantics;
++omitted fields are unavailable, and disconnected agents do not contribute live rates.
 +Remote agents may carry the collector's performance score and baseline; remote performance history consists of the
 +collector's per-day analysis records (6.11), not reconstructed live snapshots. Rows and baselines are scoped to remote
 +host, source and model: never merge one host's baseline or history into another host's or local history. A collector that does not
@@ -853,7 +1355,7 @@ index a87c8283..724ad494 100644
  
  ## 1. Vocabulary
  
-@@ -2402,6 +2408,12 @@ sample response (6.9 *Facts*) whose day lies in `[today − 14, today − 1]` (l
+@@ -2402,6 +2415,12 @@ sample response (6.9 *Facts*) whose day lies in `[today − 14, today − 1]` (l
  store last saved them (8: on launch, every 10 minutes, at midnight). None when `Σ n < 20`. Cases: `baseline` and the
  first `agents` case.
  
@@ -973,7 +1475,7 @@ index b6f47bd1..3331d04a 100644
      public static int Compare(PerfRecord? a, PerfRecord? b)
      {
 diff --git a/windows/src/AgentSpeed.Core/RemoteAggregation.cs b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
-index d6974e2d..a22f67cc 100644
+index d6974e2d..331870ef 100644
 --- a/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteAggregation.cs
 @@ -1,5 +1,6 @@
@@ -1017,6 +1519,19 @@ index d6974e2d..a22f67cc 100644
              HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
      }
  
+@@ -101,6 +106,12 @@ internal sealed class RemoteHostData(Guid id, string label)
+     internal static CostTally? Cost(JsonElement e) => e.NullableNumber("cost_micro_usd") is not null && e.NullableNumber("unpriced_requests") is not null
+         ? new CostTally(e.Integer("cost_micro_usd"), e.Integer("unpriced_requests")) : null;
+     internal static TokenTotals Totals(JsonElement e, string prefix = "") => new(e.Integer(prefix + "requests"), e.Integer(prefix + "input"), e.Integer(prefix + "cached_input"), e.Integer(prefix + "cache_write_input"), e.Integer(prefix + "output"), e.Integer(prefix + "reasoning"));
++    internal static AgentSpeed.Core.Intelligence.IntelligenceSums Intelligence(JsonElement e)
++    {
++        if (!e.TryGetProperty("intelligence", out var value) || value.ValueKind != JsonValueKind.Object) return AgentSpeed.Core.Intelligence.IntelligenceSums.Zero;
++        var seconds = Engine.SpeedEngine.WindowMs / 1000.0;
++        return new AgentSpeed.Core.Intelligence.IntelligenceSums(value.Number("output") * seconds, value.Number("thinking") * seconds, value.Number("thinking_base") * seconds);
++    }
+ }
+ 
+ internal static class RemoteJson
 diff --git a/windows/src/AgentSpeed.Core/RemotePerformance.cs b/windows/src/AgentSpeed.Core/RemotePerformance.cs
 new file mode 100644
 index 00000000..cb8c4e13
@@ -1087,7 +1602,7 @@ index 00000000..cb8c4e13
 +    }
 +}
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index dabfc6a4..15b7087f 100644
+index dabfc6a4..8a672b50 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
 @@ -175,7 +175,8 @@ public sealed class SpeedHub
@@ -1100,13 +1615,23 @@ index dabfc6a4..15b7087f 100644
              if (host.Snapshot is not { } message || message.Array("sources") is not { } remoteSources)
              {
                  if (_enabledSources.Count > 0) { complete = false; todayComplete = false; }
-@@ -225,12 +226,22 @@ public sealed class SpeedHub
+@@ -200,7 +201,8 @@ public sealed class SpeedHub
+                 var sourceCost = todayAvailable ? new CostTally(source.Integer("today_cost_micro_usd"), source.Integer("unpriced_requests")) : CostTally.Zero;
+                 sources.Add(new SourceStatus(kind.Value, true, "", available, (int)source.Integer("sessions"), rate,
+                     sourceToday, available ? (int)source.Integer("active_agents") : 0, new Rate(rate.Output * share, rate.Total * share))
+-                    { HostId = host.Id, NotDetected = source.Boolean("available") == false, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost });
++                    { HostId = host.Id, NotDetected = source.Boolean("available") == false, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost,
++                      Intelligence = available ? RemoteHostData.Intelligence(source) : AgentSpeed.Core.Intelligence.IntelligenceSums.Zero });
+                 todayCost += sourceCost;
+                 live = new Rate(live.Output + rate.Output, live.Total + rate.Total);
+                 estimated += rate.Output * share;
+@@ -225,12 +227,22 @@ public sealed class SpeedHub
                      var lastMs = agent.Number("last_line_ms");
                      var last = lastMs >= 0 && lastMs <= 253402300799999 ? DateTimeOffset.FromUnixTimeMilliseconds((long)lastMs) : DateTimeOffset.MinValue;
                      var parent = agent.Text("parent_id");
 +                    var (perf, work) = RemotePerformance.Agent(agent, kind.Value);
 +                    var score = perf is null ? AgentSpeed.Core.Perf.PerfSetValue.None : AgentSpeed.Core.Perf.PerfSetValue.Of(prefix + id, (long)lastMs, perf);
-+                    var intelligence = new AgentSpeed.Core.Intelligence.AgentIntelligence(new AgentSpeed.Core.Intelligence.IntelligenceSums { Score = score }, score);
++                    var intelligence = new AgentSpeed.Core.Intelligence.AgentIntelligence(RemoteHostData.Intelligence(agent) with { Score = score }, score);
                      agents.Add(new AgentStatus(prefix + id, kind.Value, host.Label, agent.Text("model"), phase,
                          agent.Boolean("subagent") == true, new Rate(agent.Number("live_output"), agent.Number("live_total")), null, last,
 -                        parent is null ? null : prefix + parent) { HostId = host.Id });
@@ -1377,6 +1902,36 @@ index 46d8f5dd..b5fe3816 100644
  
      /// <summary>The row's source dot.</summary>
      public IReadOnlyList<Color> SourceColors { get; }
+diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+index 67bbbb96..4dbe01a4 100644
+--- a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
++++ b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
+@@ -15,6 +15,25 @@ public sealed class RemoteConsumerTests
+     private static string LocalTimezone => TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana)
+         ? iana : TimeZoneInfo.Local.Id;
+ 
++    [Fact]
++    public async Task RemoteThinkingUsesSourceWindowsAndClearsWhenOffline()
++    {
++        var hub = await Task.Run(() => new SpeedHub());
++        var id = Guid.NewGuid();
++        const string frame = """
++            {"version":1,"type":"snapshot","machine_id":"m","sources":[{"source":"pi","enabled":true,"available":true,"live_output":10,"live_total":10,"intelligence":{"output":12,"thinking":3,"thinking_base":10}}],"agents":[{"id":"a","source":"pi","phase":"generating","intelligence":{"output":8,"thinking":2,"thinking_base":8}}]}
++            """;
++        hub.UpdateRemoteHost(id, "remote", true, json: frame);
++        var source = Assert.Single(hub.Snapshot.Sources, s => s.HostId == id);
++        Assert.Equal(3, source.Intelligence.LiveThinking);
++        Assert.Equal(0.3, source.Intelligence.ThinkingShare, 6);
++        var agent = Assert.Single(hub.Snapshot.Agents, a => a.HostId == id);
++        Assert.Equal(2, agent.Intelligence.Sums.LiveThinking);
++        hub.UpdateRemoteHost(id, "remote", false);
++        source = Assert.Single(hub.Snapshot.Sources, s => s.HostId == id);
++        Assert.Equal(0, source.Intelligence.LiveThinking);
++    }
++
+     [Fact]
+     public async Task HostsKeepIdentityAndDeduplicateSameMachineWithoutMergingDifferentMachines()
+     {
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
 new file mode 100644
 index 00000000..5bc9d978
