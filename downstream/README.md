@@ -90,8 +90,11 @@ commit does not match `downstream/config.json`, it stops rather than silently
 building a stale pin. First migrate the pin and patch queue, then retry.
 Before any cancellation, draft deletion or tag mutation, the wrapper prepares
 the complete patch queue once in a temporary tree and runs a local preflight
-against that tree. On Linux and macOS it requires the .NET 10 SDK (discoverable
-through `DOTNET_ROOT` or `PATH`), builds `windows/AgentSpeed.slnx` in Release
+against that tree. On Linux and macOS it requires the .NET 10 SDK. It probes
+`DOTNET_ROOT`, then each `dotnet` on `PATH`, then `~/.dotnet/dotnet`, selecting
+the first installation whose `--list-sdks` reports a 10.x SDK. The selected
+installation is used for all .NET build and test subprocesses; the wrapper does
+not install SDKs. It builds `windows/AgentSpeed.slnx` in Release
 with Windows targeting enabled, and runs the Windows Core and Presentation
 tests targeting `net10.0` with `--no-build`. These are cross-platform tests of
 Windows project code, not validation of the native Windows UI.

@@ -71,6 +71,36 @@ class FakeAPI:
         raise AssertionError(f"unexpected API request: {method} {path}")
 
 
+class DotnetDiscoveryTests(unittest.TestCase):
+    def test_precedence_fallback_and_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            explicit, first, second, local = (home / name for name in ('explicit', 'first', 'second', '.dotnet'))
+            for directory in (explicit, first, second, local):
+                directory.mkdir()
+                executable = directory / 'dotnet'
+                executable.write_text(f'#!{sys.executable}\nimport os\n'
+                                      'assert os.environ["DOTNET_ROOT"] == os.path.dirname(__file__)\n'
+                                      'assert os.environ["PATH"].split(os.pathsep)[0] == os.path.dirname(__file__)\n'
+                                      'print("10.0.403 [/sdk]")\n')
+                executable.chmod(0o755)
+            env = {'HOME': tmp, 'DOTNET_ROOT': str(explicit), 'PATH': os.pathsep.join((str(first), str(second)))}
+            with patch.dict(os.environ, env, clear=True):
+                chosen, child_env = driver.find_dotnet_sdk()
+                self.assertEqual(chosen, str(explicit / 'dotnet'))
+                self.assertEqual(child_env['DOTNET_ROOT'], str(explicit))
+                self.assertEqual(child_env['PATH'].split(os.pathsep)[0], str(explicit))
+                (explicit / 'dotnet').write_text(f'#!{sys.executable}\nprint("7.0.109 [/sdk]")\n')
+                self.assertEqual(driver.find_dotnet_sdk()[0], str(first / 'dotnet'))
+                (first / 'dotnet').unlink()
+                self.assertEqual(driver.find_dotnet_sdk()[0], str(second / 'dotnet'))
+                (second / 'dotnet').unlink()
+                self.assertEqual(driver.find_dotnet_sdk()[0], str(local / 'dotnet'))
+                (local / 'dotnet').unlink()
+                with self.assertRaisesRegex(RuntimeError, r'\.NET 10 SDK is required'):
+                    driver.find_dotnet_sdk()
+
+
 class ReleaseDriverTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -103,6 +133,8 @@ class ReleaseDriverTests(unittest.TestCase):
         dotnet = self.sdk / "dotnet"
         dotnet.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
             import os, pathlib, sys
+            assert os.environ["DOTNET_ROOT"] == str(pathlib.Path(__file__).resolve().parent)
+            assert os.environ["PATH"].split(os.pathsep)[0] == os.environ["DOTNET_ROOT"]
             with open(os.environ["PREFLIGHT_LOG"], "a") as log:
                 log.write("dotnet " + " ".join(sys.argv[1:]) + " cwd=" + os.getcwd() + "\\n")
             if sys.argv[1:] == ["--list-sdks"]:
@@ -166,7 +198,7 @@ class ReleaseDriverTests(unittest.TestCase):
         try:
             with patch.dict(os.environ, env), patch.object(driver, "ROOT", self.root), patch.object(driver, "api", api), \
                  patch.object(driver, "verify_origin"), patch.object(driver.platform, "system", return_value=host), \
-                 (patch.object(driver.shutil, "which", side_effect=lambda name: None if name == "dotnet" else str(self.sdk / name)) if missing_sdk else nullcontext()):
+                 (patch.object(driver, 'find_dotnet_sdk', side_effect=RuntimeError('.NET 10 SDK is required')) if missing_sdk else nullcontext()):
                 with patch.object(driver, "watch", side_effect=lambda *args: observed.append(args)), \
                      patch.object(sys, "argv", ["release.py"] + (["--plan"] if plan else [])):
                     driver.main()
@@ -275,7 +307,7 @@ class ReleaseDriverTests(unittest.TestCase):
         for host in ("Linux", "Darwin"):
             with self.subTest(host=host):
                 self.preflight_log.unlink(missing_ok=True)
-                env = {"DOTNET_ROOT": str(self.sdk),
+                env = {"DOTNET_ROOT": str(self.sdk / "missing"),
                        "PATH": str(self.sdk) + os.pathsep + os.environ.get("PATH", ""),
                        "PREFLIGHT_LOG": str(self.preflight_log), "PREFLIGHT_FAIL": ""}
                 with patch.dict(os.environ, env), patch.object(driver, "ROOT", self.root), \

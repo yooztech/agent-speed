@@ -41,6 +41,33 @@ def git(*args):
     return command(['git', *args]).strip()
 
 
+def find_dotnet_sdk():
+    """Select a .NET 10 installation in explicit, PATH, then user-local order."""
+    name = 'dotnet.exe' if os.name == 'nt' else 'dotnet'
+    root = os.environ.get('DOTNET_ROOT')
+    candidates = ([Path(root) / name] if root else [])
+    for directory in os.get_exec_path():
+        candidates.append(Path(directory) / name)
+    candidates.append(Path.home() / '.dotnet' / name)
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen or not candidate.is_file():
+            continue
+        seen.add(candidate)
+        env = os.environ.copy()
+        env['DOTNET_ROOT'] = str(candidate.parent)
+        env['PATH'] = str(candidate.parent) + os.pathsep + env.get('PATH', '')
+        try:
+            result = subprocess.run([str(candidate), '--list-sdks'], check=True, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        except (OSError, subprocess.CalledProcessError):
+            continue
+        if re.search(r'^10\.\d+\.\d+\S*\s', result.stdout, re.MULTILINE):
+            return str(candidate), env
+    raise RuntimeError('.NET 10 SDK is required for release preflight; install it and set DOTNET_ROOT or PATH, or install it in ~/.dotnet')
+
+
 def preflight():
     host = platform.system()
     if host not in ('Linux', 'Darwin'):
@@ -59,28 +86,20 @@ def preflight():
               'native Windows Release runs them:', flush=True)
         for test in LINUX_IDENTITY_TESTS:
             print(f'  {test}', flush=True)
-    dotnet_root = os.environ.get('DOTNET_ROOT')
-    candidate = Path(dotnet_root) / ('dotnet.exe' if os.name == 'nt' else 'dotnet') if dotnet_root else None
-    dotnet = str(candidate) if candidate and candidate.is_file() else shutil.which('dotnet')
-    if not dotnet:
-        raise RuntimeError('.NET 10 SDK is required for release preflight; install it and set DOTNET_ROOT or PATH')
+    dotnet, dotnet_env = find_dotnet_sdk()
     try:
-        sdks = subprocess.run([dotnet, '--list-sdks'], check=True, text=True,
-                              stdout=subprocess.PIPE).stdout
-        if not re.search(r'^10\.\d+\.\d+\S*\s', sdks, re.MULTILINE):
-            raise RuntimeError('.NET 10 SDK is required for release preflight; install it and set DOTNET_ROOT or PATH')
         with tempfile.TemporaryDirectory(prefix='agent-speed-release-') as temp:
             tree = Path(temp) / 'source'
             subprocess.run([sys.executable, str(ROOT / 'downstream/manage.py'), 'prepare', str(tree)],
                            cwd=ROOT, check=True)
             subprocess.run([dotnet, 'build', 'windows/AgentSpeed.slnx', '-c', 'Release',
-                            '-p:EnableWindowsTargeting=true'], cwd=tree, check=True)
+                            '-p:EnableWindowsTargeting=true'], cwd=tree, check=True, env=dotnet_env)
             for project in ('AgentSpeed.Core.Tests', 'AgentSpeed.Presentation.Tests'):
                 args = [dotnet, 'test', f'windows/tests/{project}', '-c', 'Release',
                         '-f', 'net10.0', '--no-build']
                 if host == 'Linux' and project == 'AgentSpeed.Core.Tests':
                     args += ['--filter', '&'.join(f'FullyQualifiedName!={test}' for test in LINUX_IDENTITY_TESTS)]
-                subprocess.run(args, cwd=tree, check=True)
+                subprocess.run(args, cwd=tree, check=True, env=dotnet_env)
             if host == 'Linux':
                 build = Path(temp) / 'linux-build'
                 configure = ['cmake', '-S', 'linux', '-B', str(build),
