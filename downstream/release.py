@@ -189,7 +189,8 @@ def main():
     common = Path(git('rev-parse', '--git-common-dir'))
     if not common.is_absolute():
         common = ROOT / common
-    lock_context = nullcontext(None) if args.plan else (common / 'downstream-release.lock').open('a')
+    # Reuse an existing Git file: releasing must not create workspace or lock files.
+    lock_context = nullcontext(None) if args.plan else (common / 'config').open('rb')
     with lock_context as lock:
         if lock is not None:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
