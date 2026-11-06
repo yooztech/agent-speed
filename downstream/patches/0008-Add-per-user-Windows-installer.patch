@@ -1,22 +1,22 @@
-From 8b6b83a03ecef62bd009bbcd7c258e4114bf5b92 Mon Sep 17 00:00:00 2001
-From: yooztech <service@yooztech.com>
-Date: Thu, 5 Nov 2026 18:36:25 +0800
-Subject: [PATCH 12/14] Add per-user Windows installer
+From 223d137d01c2a849adbd858d84168446526de829 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 6 Nov 2026 13:48:23 +0800
+Subject: [PATCH 08/16] Add per-user Windows installer
 
 ---
  README.ja.md                                  |  14 +-
- README.md                                     |  16 ++-
+ README.md                                     |  16 +-
  README.zh-CN.md                               |  14 +-
  README.zh-TW.md                               |  14 +-
- install.ps1                                   | 105 +++++++++-----
+ install.ps1                                   | 105 +++++++----
  install.sh                                    |   4 +-
- windows/scripts/installer.iss                 | 132 ++++++++++++++++++
- windows/scripts/publish.ps1                   |  28 +++-
- windows/scripts/publish.sh                    |  40 +++++-
- windows/scripts/test-installer.ps1            |  70 ++++++++++
- .../src/AgentSpeed/Updates/UninstallEntry.cs  |  47 +++++--
- .../UninstallEntryTests.cs                    |  80 +++++++++++
- 12 files changed, 484 insertions(+), 80 deletions(-)
+ windows/scripts/installer.iss                 | 174 ++++++++++++++++++
+ windows/scripts/publish.ps1                   |  28 ++-
+ windows/scripts/publish.sh                    |  40 +++-
+ windows/scripts/test-installer.ps1            |  82 +++++++++
+ .../src/AgentSpeed/Updates/UninstallEntry.cs  |  47 +++--
+ .../UninstallEntryTests.cs                    |  80 ++++++++
+ 12 files changed, 538 insertions(+), 80 deletions(-)
  create mode 100644 windows/scripts/installer.iss
  create mode 100644 windows/scripts/test-installer.ps1
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/UninstallEntryTests.cs
@@ -394,10 +394,10 @@ index 12708283..3a87ec34 100644
  ASSET="AgentSpeed-macOS.zip"
 diff --git a/windows/scripts/installer.iss b/windows/scripts/installer.iss
 new file mode 100644
-index 00000000..055c2fe8
+index 00000000..e2cb986b
 --- /dev/null
 +++ b/windows/scripts/installer.iss
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,174 @@
 +#ifndef AppVersion
 +  #error AppVersion is required
 +#endif
@@ -453,13 +453,55 @@ index 00000000..055c2fe8
 +const
 +  RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
 +
-+procedure InitializeWizard;
++var
++  StartupDefaultApplied: Boolean;
++
++function StartupSpecifiedOnCommandLine: Boolean;
++var
++  I, P: Integer;
++  Arg, Tasks, Task: String;
++begin
++  Result := False;
++  for I := 1 to ParamCount do
++  begin
++    Arg := Lowercase(ParamStr(I));
++    { /TASKS replaces all defaults, including startup. }
++    if Pos('/tasks=', Arg) = 1 then
++    begin
++      Result := True;
++      Exit;
++    end;
++    { /MERGETASKS only overrides the named tasks. }
++    if Pos('/mergetasks=', Arg) = 1 then
++    begin
++      Tasks := Copy(Arg, Length('/mergetasks=') + 1, Length(Arg)) + ',';
++      while Tasks <> '' do
++      begin
++        P := Pos(',', Tasks);
++        Task := Trim(Copy(Tasks, 1, P - 1));
++        Delete(Tasks, 1, P);
++        if (Task = 'startup') or (Task = '*startup') or (Task = '!startup') then
++        begin
++          Result := True;
++          Exit;
++        end;
++      end;
++    end;
++  end;
++end;
++
++procedure CurPageChanged(CurPageID: Integer);
 +var
 +  RunValue: String;
 +begin
-+  if (RegQueryStringValue(HKCU, RunKey, 'AgentSpeed', RunValue) and (Trim(RunValue) <> '')) or
-+     FileExists(ExpandConstant('{userstartup}\Agent Speed.lnk')) then
-+    WizardSelectTasks('startup');
++  if (CurPageID = wpSelectTasks) and not StartupDefaultApplied then
++  begin
++    StartupDefaultApplied := True;
++    if not StartupSpecifiedOnCommandLine and
++       ((RegQueryStringValue(HKCU, RunKey, 'AgentSpeed', RunValue) and (Trim(RunValue) <> '')) or
++        FileExists(ExpandConstant('{userstartup}\Agent Speed.lnk'))) then
++      WizardSelectTasks('startup');
++  end;
 +end;
 +
 +procedure CurStepChanged(CurStep: TSetupStep);
@@ -666,10 +708,10 @@ index 251dcaff..6318f6fe 100755
  done
 diff --git a/windows/scripts/test-installer.ps1 b/windows/scripts/test-installer.ps1
 new file mode 100644
-index 00000000..a7c1802f
+index 00000000..b03faafb
 --- /dev/null
 +++ b/windows/scripts/test-installer.ps1
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,82 @@
 +param([ValidateSet('x64', 'arm64')][string] $Architecture = 'x64')
 +
 +$ErrorActionPreference = 'Stop'
@@ -710,6 +752,18 @@ index 00000000..a7c1802f
 +    $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installDir`"") -Wait -PassThru
 +    if ($process.ExitCode -ne 0) { throw "Installer upgrade failed: $($process.ExitCode)" }
 +    if ((Get-Item $runKey).GetValue('AgentSpeed') -ne $expectedRun) { throw 'Startup choice was not preserved on upgrade' }
++    $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/MERGETASKS=!startup', "/DIR=`"$installDir`"") -Wait -PassThru
++    if ($process.ExitCode -ne 0) { throw "Installer startup disable failed: $($process.ExitCode)" }
++    if ((Get-Item $runKey).GetValue('AgentSpeed')) { throw 'Explicit startup disable was ignored' }
++    $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installDir`"") -Wait -PassThru
++    if ($process.ExitCode -ne 0) { throw "Installer disabled startup upgrade failed: $($process.ExitCode)" }
++    if ((Get-Item $runKey).GetValue('AgentSpeed')) { throw 'Disabled startup choice was not preserved' }
++    $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=startup', "/DIR=`"$installDir`"") -Wait -PassThru
++    if ($process.ExitCode -ne 0) { throw "Installer startup enable failed: $($process.ExitCode)" }
++    if ((Get-Item $runKey).GetValue('AgentSpeed') -ne $expectedRun) { throw 'Explicit startup enable was ignored' }
++    $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/MERGETASKS=desktopicon', "/DIR=`"$installDir`"") -Wait -PassThru
++    if ($process.ExitCode -ne 0) { throw "Installer merged tasks upgrade failed: $($process.ExitCode)" }
++    if ((Get-Item $runKey).GetValue('AgentSpeed') -ne $expectedRun) { throw 'Unrelated merged task lost startup choice' }
 +    $asset = "AgentSpeed-Windows-$Architecture.zip"
 +    $hash = (Get-FileHash (Join-Path $root "dist/$asset") -Algorithm SHA256).Hash.ToLowerInvariant()
 +    Set-Content -Path (Join-Path $root 'dist/SHA256SUMS.txt') -Value "$hash  $asset" -Encoding ascii
@@ -909,6 +963,3 @@ index 00000000..7b5a88d9
 +        public void Dispose() => Registry.CurrentUser.DeleteSubKeyTree(Path, throwOnMissingSubKey: false);
 +    }
 +}
--- 
-2.41.0
-

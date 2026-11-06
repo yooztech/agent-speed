@@ -1,7 +1,7 @@
-From 75a01158378e135fb8ecefd167749faead49e691 Mon Sep 17 00:00:00 2001
-From: yooztech <service@yooztech.com>
-Date: Thu, 5 Nov 2026 13:24:46 +0800
-Subject: [PATCH] Add SSH remote agent monitoring
+From f054ca942c175afc51cfebe59e8de7cc66973f39 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 6 Nov 2026 13:48:10 +0800
+Subject: [PATCH 01/16] Add SSH remote agent monitoring
 
 ---
  README.md                                     |  65 ++++-
@@ -27,7 +27,7 @@ Subject: [PATCH] Add SSH remote agent monitoring
  macos/Sources/AgentSpeed/App/AppModel.swift   |   3 +
  .../Sources/AgentSpeed/App/RemoteHosts.swift  | 243 ++++++++++++++++++
  .../AgentSpeed/Dashboard/DashboardView.swift  |  24 +-
- .../Dashboard/RemoteHostsView.swift           | 129 ++++++++++
+ .../Dashboard/RemoteHostsView.swift           | 131 ++++++++++
  .../SettingsWindow/Panes/SourcesPane.swift    |   1 +
  .../AgentSpeedAppTests/RemoteHostsTests.swift |  92 +++++++
  macos/scripts/build-app.sh                    |  28 ++
@@ -35,7 +35,7 @@ Subject: [PATCH] Add SSH remote agent monitoring
  spec/DESIGN.md                                |   7 +
  spec/METRICS.md                               |   9 +
  spec/NETWORK.md                               |  46 +++-
- 31 files changed, 1524 insertions(+), 39 deletions(-)
+ 31 files changed, 1526 insertions(+), 39 deletions(-)
  create mode 100644 linux/collector/CMakeLists.txt
  create mode 100644 linux/collector/history_cache.cpp
  create mode 100644 linux/collector/history_cache.hpp
@@ -1562,10 +1562,10 @@ index 9a2da884..af677edc 100644
                      .padding(.top, DashboardLayout.sectionSpacing)
 diff --git a/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
 new file mode 100644
-index 00000000..7cfa4c63
+index 00000000..676db1d2
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,131 @@
 +import SwiftUI
 +
 +/// Remote data is deliberately presented separately from the local dashboard and its history.
@@ -1670,7 +1670,7 @@ index 00000000..7cfa4c63
 +    @State private var label = ""
 +    @State private var destination = ""
 +    var body: some View {
-+        Section("Remote hosts") {
++        Section {
 +            ForEach(remote.hosts) { host in
 +                HStack {
 +                    VStack(alignment: .leading) {
@@ -1690,6 +1690,8 @@ index 00000000..7cfa4c63
 +                remote.save(RemoteHost(label: label, destination: destination))
 +                label = ""; destination = ""
 +            }.disabled(!RemoteHost(label: label, destination: destination).validDestination)
++        } header: {
++            Text("Remote hosts")
 +        } footer: {
 +            Text("Remote monitoring is off until enabled. SSH uses your existing configuration, trusted host keys and non-interactive authentication; no passwords are stored. Remote metrics and history remain separate from this Mac.")
 +        }

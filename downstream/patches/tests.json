@@ -13,17 +13,7 @@
     "related": [],
     "reason": ""
   },
-  "0002-Fix-macOS-remote-hosts-section-initializer.patch": {
-    "regression": [
-      {
-        "platform": "macos",
-        "run": "cd macos && swift test"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0003-Stamp-fork-release-version.patch": {
+  "0002-Stamp-v1.6.1-fork.3-release-version.patch": {
     "regression": [
       {
         "platform": "linux",
@@ -42,7 +32,7 @@
     ],
     "reason": ""
   },
-  "0004-Unify-remote-monitoring-target-statistics.patch": {
+  "0003-Unify-remote-monitoring-target-statistics.patch": {
     "regression": [
       {
         "platform": "linux",
@@ -56,21 +46,7 @@
     "related": [],
     "reason": ""
   },
-  "0005-Fix-remote-history-freshness-and-source-rate-complet.patch": {
-    "regression": [
-      {
-        "platform": "linux",
-        "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote -j2 && ctest --test-dir build-remote --output-on-failure"
-      },
-      {
-        "platform": "macos",
-        "run": "cd macos && swift test"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0006-Drive-scheduled-stream-wakeups-in-Windows-end-to-end.patch": {
+  "0004-Drive-scheduled-stream-wakeups-in-Windows-end-to-end.patch": {
     "regression": [
       {
         "platform": "windows",
@@ -80,7 +56,7 @@
     "related": [],
     "reason": ""
   },
-  "0007-Integrate-remote-sources-into-native-dashboard.patch": {
+  "0005-Integrate-remote-sources-into-native-dashboard.patch": {
     "regression": [
       {
         "platform": "linux",
@@ -94,7 +70,7 @@
     "related": [],
     "reason": ""
   },
-  "0008-Fix-native-remote-source-availability-and-diagnostic.patch": {
+  "0006-Make-traffic-clear-test-account-for-elapsed-time.patch": {
     "regression": [
       {
         "platform": "macos",
@@ -104,7 +80,7 @@
     "related": [],
     "reason": ""
   },
-  "0009-Fix-remote-history-test-fixtures.patch": {
+  "0007-Clear-restored-traffic-ledger-before-first-sample.patch": {
     "regression": [
       {
         "platform": "macos",
@@ -114,144 +90,12 @@
     "related": [],
     "reason": ""
   },
-  "0010-Make-traffic-clear-test-account-for-elapsed-time.patch": {
-    "regression": [
-      {
-        "platform": "macos",
-        "run": "cd macos && swift test"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0011-Clear-restored-traffic-ledger-before-first-sample.patch": {
-    "regression": [
-      {
-        "platform": "macos",
-        "run": "cd macos && swift test"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0012-Add-per-user-Windows-installer.patch": {
+  "0008-Add-per-user-Windows-installer.patch": {
     "regression": [
       {
         "platform": "windows",
         "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0013-Integrate-Windows-SSH-sources-and-fork-updates.patch": {
-    "regression": [
-      {
-        "platform": "linux",
-        "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote -j2 && ctest --test-dir build-remote --output-on-failure"
       },
-      {
-        "platform": "macos",
-        "run": "cd macos && swift test"
-      },
-      {
-        "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0014-Stamp-fork.2-release-version.patch": {
-    "regression": [
-      {
-        "platform": "linux",
-        "run": "python3 tests/test_release_version.py"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0015-Preserve-remote-source-completeness-and-history-inte.patch": {
-    "regression": [
-      {
-        "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests && dotnet test windows/tests/AgentSpeed.Windows.Tests"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0016-Select-orb-sources-independently-by-host.patch": {
-    "regression": [
-      {
-        "platform": "macos",
-        "run": "cd macos && swift test"
-      },
-      {
-        "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests && dotnet test windows/tests/AgentSpeed.Windows.Tests"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0017-Fix-orb-host-selection-and-peak-regressions.patch": {
-    "regression": [
-      {
-        "platform": "macos",
-        "run": "cd macos && swift test"
-      },
-      {
-        "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests && dotnet test windows/tests/AgentSpeed.Windows.Tests"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0018-Fix-remote-snapshot-return-syntax.patch": {
-    "regression": [
-      {
-        "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0019-Fix-remote-and-updater-regression-tests.patch": {
-    "regression": [
-      {
-        "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0020-Fix-fork-release-feed-boundary-fixture.patch": {
-    "regression": [
-      {
-        "platform": "macos",
-        "run": "cd macos && swift test"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0021-Fix-fork-update-relaunch-integration-fixture.patch": {
-    "regression": [
-      {
-        "platform": "macos",
-        "run": "python3 macos/scripts/test-update-relaunch.py"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0022-Preserve-Windows-installer-startup-choice.patch": {
-    "regression": [
       {
         "platform": "windows",
         "run": "./windows/scripts/test-installer.ps1"
@@ -260,7 +104,47 @@
     "related": [],
     "reason": ""
   },
-  "0023-Fix-source-selection-and-estimate-visibility.patch": {
+  "0009-Integrate-Windows-SSH-sources-and-fork-updates.patch": {
+    "regression": [
+      {
+        "platform": "linux",
+        "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote -j2 && ctest --test-dir build-remote --output-on-failure"
+      },
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests"
+      },
+      {
+        "platform": "macos",
+        "run": "python3 macos/scripts/test-update-relaunch.py"
+      }
+    ],
+    "related": [],
+    "reason": ""
+  },
+  "0010-Preserve-remote-source-completeness-and-history-inte.patch": {
+    "regression": [
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests && dotnet test windows/tests/AgentSpeed.Windows.Tests"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests"
+      }
+    ],
+    "related": [],
+    "reason": ""
+  },
+  "0011-Clarify-estimated-chart-values.patch": {
     "regression": [
       {
         "platform": "macos",
@@ -274,17 +158,33 @@
     "related": [],
     "reason": ""
   },
-  "0024-Stamp-v1.6.1-fork.3-release-version.patch": {
+  "0012-Select-orb-sources-independently-by-host.patch": {
     "regression": [
       {
-        "platform": "linux",
-        "run": "python3 tests/test_release_version.py"
+        "platform": "macos",
+        "run": "cd macos && swift test"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests && dotnet test windows/tests/AgentSpeed.Windows.Tests"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests && dotnet test windows/tests/AgentSpeed.Presentation.Tests"
+      },
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test --filter LiveChartAvailabilityTests"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemoteConsumerTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~OrbFeedTests && dotnet test windows/tests/AgentSpeed.Windows.Tests --filter FullyQualifiedName~DashboardRemoteCompletenessTests"
       }
     ],
     "related": [],
     "reason": ""
   },
-  "0025-Synchronize-history-clear-test-with-rescan-publicati.patch": {
+  "0013-Synchronize-history-clear-test-with-rescan-publicati.patch": {
     "regression": [
       {
         "platform": "macos",
@@ -294,7 +194,7 @@
     "related": [],
     "reason": ""
   },
-  "0026-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch": {
+  "0014-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch": {
     "regression": [
       {
         "platform": "macos",
@@ -304,7 +204,7 @@
     "related": [],
     "reason": ""
   },
-  "0027-Connect-remote-performance-and-history-metrics.patch": {
+  "0015-Connect-remote-performance-and-history-metrics.patch": {
     "regression": [
       {
         "platform": "linux",
@@ -317,12 +217,21 @@
       {
         "platform": "windows",
         "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemotePerformanceTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~PerfHistoryTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~PerfCardTests && dotnet test windows/tests/AgentSpeed.Windows.Tests --filter FullyQualifiedName~PerfPerformanceSectionTests"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName=AgentSpeed.Presentation.Tests.EffortCapsuleTests.TheNoteStaysOnTheCardAndOutOfWhatTheRowSays"
       }
     ],
-    "related": [],
+    "related": [
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter 'FullyQualifiedName~PerfCardTests|FullyQualifiedName~EffortCapsuleTests'"
+      }
+    ],
     "reason": ""
   },
-  "0028-Integrate-remote-network-traffic-by-host-and-source.patch": {
+  "0016-Integrate-remote-network-traffic-by-host-and-source.patch": {
     "regression": [
       {
         "platform": "linux",
@@ -335,13 +244,7 @@
       {
         "platform": "windows",
         "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemoteConsumerTests && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~HistoryTrafficTests"
-      }
-    ],
-    "related": [],
-    "reason": ""
-  },
-  "0029-Fix-Windows-remote-traffic-assertion-analyzer.patch": {
-    "regression": [
+      },
       {
         "platform": "windows",
         "run": "dotnet test windows/tests/AgentSpeed.Core.Tests --filter FullyQualifiedName~RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart && dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter FullyQualifiedName~HistoryTrafficTests"

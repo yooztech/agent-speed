@@ -1,33 +1,36 @@
-From 2c19efccae8c0b27c52f3558836eb4f379029f6f Mon Sep 17 00:00:00 2001
-From: yooztech <service@yooztech.com>
-Date: Thu, 5 Nov 2026 15:58:20 +0800
-Subject: [PATCH] Unify remote monitoring target statistics
+From 503a0aa007504ceb330d4f0386b6fade06d997e3 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 6 Nov 2026 13:48:17 +0800
+Subject: [PATCH 03/16] Unify remote monitoring target statistics
 
 ---
- README.md                                     |  16 +-
- linux/collector/protocol.cpp                  |  77 +++++++++-
- linux/tests/collector_test.cpp                |  66 ++++++++
+ README.md                                     |  17 +-
+ linux/collector/protocol.cpp                  |  77 +++++++-
+ linux/core/include/agentspeed/snapshot.hpp    |   1 +
+ linux/core/src/monitor_snapshot.cpp           |   1 +
+ linux/tests/collector_integration_test.cpp    |  20 ++-
+ linux/tests/collector_test.cpp                | 101 +++++++++++
  macos/Sources/AgentSpeed/App/AppModel.swift   |  15 +-
  .../AgentSpeed/App/HeroFrameHarness.swift     |   2 +-
  .../AgentSpeed/App/MotionHarness.swift        |   2 +-
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  73 ++++++++-
- .../AgentSpeed/App/RemoteSnapshot.swift       | 116 ++++++++++++++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  86 ++++++++-
+ .../AgentSpeed/App/RemoteSnapshot.swift       | 116 ++++++++++++
  .../App/Traffic/TrafficController.swift       |   2 +-
- .../AgentSpeed/Dashboard/DashboardView.swift  |  35 ++++-
- .../Dashboard/RemoteDashboard.swift           | 143 ++++++++++++++++++
+ .../AgentSpeed/Dashboard/DashboardView.swift  |  35 +++-
+ .../Dashboard/RemoteDashboard.swift           | 143 +++++++++++++++
  .../Dashboard/RemoteHostsView.swift           |  11 +-
  .../AgentSpeed/Dashboard/TodayCostRow.swift   |   4 +-
  .../AgentSpeed/History/HistoryContent.swift   |   1 +
  .../AgentSpeed/History/HistoryToolbar.swift   |   2 +-
- .../AgentSpeed/History/HistoryViewModel.swift |  57 ++++++-
+ .../AgentSpeed/History/HistoryViewModel.swift |  58 +++++-
  .../History/HistoryWindowController.swift     |   8 +-
  .../History/Model/HistoryText.swift           |  15 +-
  .../History/Views/DailyTableView.swift        |   8 +-
  .../History/Views/HistoryBreakdownView.swift  |   6 +-
  .../History/Views/HistoryChartLayers.swift    |   2 +-
- .../History/Views/HistoryChartView.swift      |  18 ++-
+ .../History/Views/HistoryChartView.swift      |  18 +-
  .../History/Views/HistoryTooltip.swift        |   2 +-
- .../History/Views/HistoryView.swift           |  61 ++++++--
+ .../History/Views/HistoryView.swift           |  61 +++++--
  .../AgentSpeed/Localization/StringTable.swift |   3 +
  .../MenuBar/StatusItemAccessibility.swift     |   8 +-
  .../MenuBar/StatusItemIntelligence.swift      |   2 +-
@@ -39,19 +42,19 @@ Subject: [PATCH] Unify remote monitoring target statistics
  .../SettingsWindow/Panes/CostPane.swift       |   4 +-
  .../AgentSpeed/Support/BoardMenus.swift       |   2 +-
  .../Sources/AgentSpeed/Support/OrbMenus.swift |   2 +-
- .../AgentSpeedAppTests/RemoteHostsTests.swift | 125 +++++++++++++++
+ .../AgentSpeedAppTests/RemoteHostsTests.swift | 165 ++++++++++++++++++
  spec/DESIGN.md                                |  16 +-
  spec/METRICS.md                               |   2 +
  spec/NETWORK.md                               |  16 +-
- 39 files changed, 847 insertions(+), 87 deletions(-)
+ 42 files changed, 956 insertions(+), 90 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
  create mode 100644 macos/Sources/AgentSpeed/Dashboard/RemoteDashboard.swift
 
 diff --git a/README.md b/README.md
-index 5f30dd9b..16d5d5ba 100644
+index 5f30dd9b..d1186168 100644
 --- a/README.md
 +++ b/README.md
-@@ -110,9 +110,11 @@ Ordinary Claude Desktop chat conversations are not stored on your computer, so t
+@@ -110,18 +110,29 @@ Ordinary Claude Desktop chat conversations are not stored on your computer, so t
  Remote monitoring is opt-in and separate from local monitoring and live reporting. Configure an SSH host alias in
  `~/.ssh/config` for the Linux account that owns the agent logs, including its user, port and identity as needed. Use
  normal SSH host-key verification, pre-trust the host key, and use noninteractive key or SSH agent authentication.
@@ -66,7 +69,10 @@ index 5f30dd9b..16d5d5ba 100644
  
  The Linux collector reuses the native measurement core, including omp parsing and parent/child deduplication. The
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
-@@ -122,6 +124,14 @@ response rates use the logged duration. In particular omp commonly writes a resp
+ stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
++On macOS, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
+ Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
+ response rates use the logged duration. In particular omp commonly writes a response when it completes, so remote
  monitoring cannot measure per-token streaming speed or infer an unrecorded time to first token. End-to-end speed includes
  the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
  
@@ -82,7 +88,7 @@ index 5f30dd9b..16d5d5ba 100644
  An exclusive lock allows one collector to use it; concurrent collectors or an unsafe or unavailable cache use memory
  instead. Changes to the monitored source configuration reset the cache. On reconnect, history is refreshed from the
 diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
-index fc28c519..d35f7c45 100644
+index fc28c519..fcd22a9f 100644
 --- a/linux/collector/protocol.cpp
 +++ b/linux/collector/protocol.cpp
 @@ -2,10 +2,12 @@
@@ -133,9 +139,9 @@ index fc28c519..d35f7c45 100644
 +        o << "{\"source\":"; text(o, agentspeed::sourceId(s.source));
 +        o << ",\"enabled\":" << (s.enabled ? "true" : "false") << ",\"available\":" << (s.available ? "true" : "false")
 +          << ",\"sessions\":" << s.sessions << ",\"active_agents\":" << s.activeAgents << ",\"live_output\":";
-+        if (v.liveRateComplete) number(o, s.liveOutput); else o << "null";
-+        o << ",\"live_total\":"; if (v.liveRateComplete) number(o, s.liveTotal); else o << "null";
-+        o << ",\"estimated_share\":"; if (v.liveRateComplete) number(o, s.liveEstimatedShare); else o << "null";
++        if (s.liveRateComplete) number(o, s.liveOutput); else o << "null";
++        o << ",\"live_total\":"; if (s.liveRateComplete) number(o, s.liveTotal); else o << "null";
++        o << ",\"estimated_share\":"; if (s.liveRateComplete) number(o, s.liveEstimatedShare); else o << "null";
 +        o << ",\"today_input\":" << s.todayInput << ",\"today_output\":" << s.todayOutput
 +          << ",\"today_requests\":" << s.todayRequests << ",\"today_cost_micro_usd\":" << s.todayCostMicroUsd
 +          << ",\"unpriced_requests\":" << s.unpricedRequests << '}';
@@ -201,8 +207,70 @@ index fc28c519..d35f7c45 100644
          o << '}';
      }
      o << "]}";
+diff --git a/linux/core/include/agentspeed/snapshot.hpp b/linux/core/include/agentspeed/snapshot.hpp
+index 54297547..383702a1 100644
+--- a/linux/core/include/agentspeed/snapshot.hpp
++++ b/linux/core/include/agentspeed/snapshot.hpp
+@@ -75,6 +75,7 @@ struct SourceRow {
+     std::int64_t todayOutput = 0;
+     double liveOutput = 0;
+     double liveTotal = 0;
++    bool liveRateComplete = true;
+     double liveEstimatedShare = 0;
+     bool enabled = true;
+     // METRICS 2: detected (its root exists) and the root shown in settings.
+diff --git a/linux/core/src/monitor_snapshot.cpp b/linux/core/src/monitor_snapshot.cpp
+index b2d08b50..9462bbc1 100644
+--- a/linux/core/src/monitor_snapshot.cpp
++++ b/linux/core/src/monitor_snapshot.cpp
+@@ -284,6 +284,7 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
+             const auto ownRate = engine::liveRate(own, ownAgents, nowMs);
+             row.liveOutput = ownRate.output;
+             row.liveTotal = ownRate.total;
++            row.liveRateComplete = ownRate.complete;
+             row.liveEstimatedShare = ownRate.estimatedShare;
+             const auto ownCost = engine::liveCost(own, ownAgents, nowMs);
+             row.liveCost = ownCost.microUsdPerSecond;
+diff --git a/linux/tests/collector_integration_test.cpp b/linux/tests/collector_integration_test.cpp
+index 7a2293ef..9a072c82 100644
+--- a/linux/tests/collector_integration_test.cpp
++++ b/linux/tests/collector_integration_test.cpp
+@@ -33,7 +33,7 @@ TEST(CollectorIntegration, GrokWithoutInFlightStartHasUnknownLiveRates) {
+     settings.grokBuild = sessions.string();
+     agentspeed::MonitorConfig config;
+     config.locations = agentspeed::SourceLocations::resolve(settings, agentspeed::processEnvironment(), "/nonexistent-home");
+-    config.enabled = {agentspeed::SourceKind::GrokBuild};
++    config.enabled = {agentspeed::SourceKind::GrokBuild, agentspeed::SourceKind::Codex};
+     agentspeed::Monitor monitor(std::move(config));
+     monitor.start(base + 1000, dayStart);
+     std::ofstream(dir / "updates.jsonl", std::ios::app)
+@@ -55,6 +55,24 @@ TEST(CollectorIntegration, GrokWithoutInFlightStartHasUnknownLiveRates) {
+     EXPECT_EQ(root["agents"].at(0)["phase"].string(), "generating");
+     EXPECT_TRUE(root["agents"].at(0)["live_output"].isNull());
+     EXPECT_TRUE(root["agents"].at(0)["live_total"].isNull());
++    bool foundGrok = false, foundCodex = false;
++    const auto sources = root["sources"];
++    for (std::size_t i = 0; i < sources.size(); ++i) {
++        const auto source = sources.at(i);
++        if (source["source"].string() == agentspeed::sourceId(agentspeed::SourceKind::GrokBuild)) {
++            foundGrok = true;
++            EXPECT_TRUE(source["live_output"].isNull());
++            EXPECT_TRUE(source["live_total"].isNull());
++            EXPECT_TRUE(source["estimated_share"].isNull());
++        } else if (source["source"].string() == agentspeed::sourceId(agentspeed::SourceKind::Codex)) {
++            foundCodex = true;
++            EXPECT_EQ(source["live_output"].raw(), "0");
++            EXPECT_EQ(source["live_total"].raw(), "0");
++            EXPECT_EQ(source["estimated_share"].raw(), "0");
++        }
++    }
++    EXPECT_TRUE(foundGrok);
++    EXPECT_TRUE(foundCodex);
+     std::filesystem::remove_all(home);
+ }
+ 
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
-index 479b9263..73b10038 100644
+index 479b9263..22848da4 100644
 --- a/linux/tests/collector_test.cpp
 +++ b/linux/tests/collector_test.cpp
 @@ -16,12 +16,21 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
@@ -305,11 +373,12 @@ index 479b9263..73b10038 100644
      agentspeed::Completion event;
      event.output = 10;
      agentspeed::json::Document completion;
-@@ -80,14 +142,18 @@ TEST(CollectorProtocol, UnknownGeneratingRateIsNull) {
+@@ -80,14 +142,53 @@ TEST(CollectorProtocol, UnknownGeneratingRateIsNull) {
      row.phase = agentspeed::Phase::Generating;
      row.liveRateComplete = rate.complete;
      snapshot.agents.push_back(row);
 +    snapshot.sources.emplace_back();
++    snapshot.sources.back().liveRateComplete = rate.complete;
      collector::Protocol protocol;
      const auto wire = protocol.snapshot(snapshot);
      agentspeed::json::Document doc;
@@ -321,6 +390,40 @@ index 479b9263..73b10038 100644
      EXPECT_TRUE(doc.root()["agents"].at(0)["live_total"].isNull());
 +    EXPECT_TRUE(doc.root()["sources"].at(0)["live_output"].isNull());
 +    EXPECT_TRUE(doc.root()["sources"].at(0)["estimated_share"].isNull());
++    EXPECT_TRUE(doc.root()["sources"].at(0)["live_total"].isNull());
++}
++
++TEST(CollectorProtocol, SourceRatesUseTheirOwnCompleteness) {
++    agentspeed::Snapshot snapshot;
++    snapshot.liveRateComplete = false;
++    agentspeed::SourceRow known;
++    known.liveOutput = 4;
++    known.liveTotal = 6;
++    known.liveEstimatedShare = 0.5;
++    agentspeed::SourceRow unknown;
++    unknown.liveRateComplete = false;
++    snapshot.sources = {known, unknown};
++    collector::Protocol protocol;
++    agentspeed::json::Document doc;
++    const auto wire = protocol.snapshot(snapshot);
++    ASSERT_TRUE(doc.parse(wire));
++    const auto root = doc.root();
++    EXPECT_TRUE(root["live_output"].isNull());
++    const auto sources = root["sources"];
++    EXPECT_EQ(sources.at(0)["live_output"].raw(), "4");
++    EXPECT_EQ(sources.at(0)["live_total"].raw(), "6");
++    EXPECT_EQ(sources.at(0)["estimated_share"].raw(), "0.5");
++    EXPECT_TRUE(sources.at(1)["live_output"].isNull());
++    EXPECT_TRUE(sources.at(1)["live_total"].isNull());
++    EXPECT_TRUE(sources.at(1)["estimated_share"].isNull());
++
++    snapshot.liveRateComplete = true;
++    agentspeed::json::Document inverse;
++    const auto inverseWire = protocol.snapshot(snapshot);
++    ASSERT_TRUE(inverse.parse(inverseWire));
++    EXPECT_TRUE(inverse.root()["sources"].at(1)["live_output"].isNull());
++    EXPECT_TRUE(inverse.root()["sources"].at(1)["live_total"].isNull());
++    EXPECT_TRUE(inverse.root()["sources"].at(1)["estimated_share"].isNull());
  }
  
  TEST(CollectorProtocol, HistoryTimezoneFollowsEnvironment) {
@@ -395,7 +498,7 @@ index 776d03d1..d53847b4 100644
              summary += describe(name, samples.filter { $0.phase == name })
          }
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index 242462d6..3550b53b 100644
+index 242462d6..7a0c5215 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 @@ -1,5 +1,6 @@
@@ -491,23 +594,36 @@ index 242462d6..3550b53b 100644
      let todayRequests: Int?
      let todayAverage: Double?
      let liveOutput: Double?
-@@ -81,6 +147,7 @@ struct RemoteHostState {
+@@ -81,6 +147,9 @@ struct RemoteHostState {
      var snapshot: RemoteMessage?
      var days: [RemoteDay] = []
      var historyPartial: Bool?
 +    var historyReceivedAt: Date?
++    /// True only after this connection has supplied a history frame.
++    var historyReceivedOnConnection = false
      var completions: [RemoteCompletion] = []
      var error: String?
  
-@@ -92,6 +159,7 @@ struct RemoteHostState {
+@@ -92,11 +161,18 @@ struct RemoteHostState {
          } else if message.type == "history", let replacement = message.days {
              days = replacement
              historyPartial = message.partial
 +            historyReceivedAt = Date()
++            historyReceivedOnConnection = true
          } else if message.type == "completion", let source = message.source, let output = message.output {
              completions.insert(RemoteCompletion(source: source, output: output, speed: message.speed), at: 0)
              if completions.count > 10 { completions.removeLast() }
-@@ -109,8 +177,9 @@ final class RemoteHosts {
+         }
+     }
++
++    mutating func disconnected() {
++        online = false
++        historyReceivedOnConnection = false
++    }
+ }
+ 
+ /// Each connection replaces its own snapshot and history; no remote values enter local accounting.
+@@ -109,8 +185,9 @@ final class RemoteHosts {
      @ObservationIgnored private var reconnects: [UUID: Task<Void, Never>] = [:]
      private static let key = "remoteHosts.v1"
  
@@ -518,7 +634,7 @@ index 242462d6..3550b53b 100644
          hosts = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([RemoteHost].self, from: $0) } ?? []
      }
  
-@@ -118,10 +187,12 @@ final class RemoteHosts {
+@@ -118,10 +195,12 @@ final class RemoteHosts {
  
      func save(_ host: RemoteHost) {
          guard host.validDestination else { return }
@@ -531,6 +647,32 @@ index 242462d6..3550b53b 100644
          if host.enabled { connect(host) }
      }
  
+@@ -137,7 +216,7 @@ final class RemoteHosts {
+     private func disconnect(_ id: UUID) {
+         reconnects.removeValue(forKey: id)?.cancel()
+         workers.removeValue(forKey: id)?.stop()
+-        states[id, default: RemoteHostState()].online = false
++        states[id, default: RemoteHostState()].disconnected()
+     }
+ 
+     private func connect(_ host: RemoteHost) {
+@@ -146,6 +225,7 @@ final class RemoteHosts {
+             Task { @MainActor [weak self] in self?.receive(event, host: host) }
+         }
+         workers[host.id] = worker
++        states[host.id, default: RemoteHostState()].historyReceivedOnConnection = false
+         states[host.id, default: RemoteHostState()].error = nil
+         worker.start()
+     }
+@@ -157,7 +237,7 @@ final class RemoteHosts {
+             states[host.id, default: RemoteHostState()].apply(message)
+         case .ended(let reason):
+             workers.removeValue(forKey: host.id)
+-            states[host.id, default: RemoteHostState()].online = false
++            states[host.id, default: RemoteHostState()].disconnected()
+             states[host.id, default: RemoteHostState()].error = reason
+             reconnects[host.id] = Task { [weak self] in
+                 try? await Task.sleep(for: .seconds(10))
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 new file mode 100644
 index 00000000..08989fad
@@ -970,10 +1112,10 @@ index eeb88eb3..bdf6d92e 100644
          _ = model.accessibility.reduceMotion
      }
 diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-index 5f792f5e..49e64638 100644
+index 5f792f5e..20aaef52 100644
 --- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 +++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-@@ -20,6 +20,29 @@ final class HistoryViewModel {
+@@ -20,6 +20,30 @@ final class HistoryViewModel {
      let cost: CostDisplay
      /// Stored traffic days (METRICS 10.9).
      let traffic: TrafficStore
@@ -994,7 +1136,8 @@ index 5f792f5e..49e64638 100644
 +    var remoteHistoryStale: Bool {
 +        guard let id = appModel?.selectedRemoteHostID else { return false }
 +        return appModel?.remoteHosts.hosts.first(where: { $0.id == id })?.enabled != true ||
-+            appModel?.remoteHosts.states[id]?.online != true
++            appModel?.remoteHosts.states[id]?.online != true ||
++            appModel?.remoteHosts.states[id]?.historyReceivedOnConnection != true
 +    }
 +    var remoteHistoryReceivedAt: Date? {
 +        guard let id = appModel?.selectedRemoteHostID else { return nil }
@@ -1003,7 +1146,7 @@ index 5f792f5e..49e64638 100644
      /// Pointer, keyboard and selection state, kept apart so hovering never rebuilds the content.
      let interaction = HistoryInteraction()
  
-@@ -49,12 +72,15 @@ final class HistoryViewModel {
+@@ -49,12 +73,15 @@ final class HistoryViewModel {
      @ObservationIgnored private var dataLoop: ObservationLoop?
      @ObservationIgnored private var observers: [NSObjectProtocol] = []
  
@@ -1020,7 +1163,7 @@ index 5f792f5e..49e64638 100644
          let stored = cost.settings.storage.object(forKey: Self.includeSubscriptionsKey) as? Bool
          let include = stored ?? cost.settings.includeSubscriptions
          includeSubscriptions = include
-@@ -78,6 +104,17 @@ final class HistoryViewModel {
+@@ -78,6 +105,17 @@ final class HistoryViewModel {
              _ = self.cost.settings.subscriptionSources
              _ = (self.traffic.days, self.traffic.since, self.cost.settings.trafficIncludeTools, self.cost.settings.trafficUnit)
              _ = self.cost.settings.enabledSources
@@ -1038,7 +1181,7 @@ index 5f792f5e..49e64638 100644
              self.rebuild()
          }
          let center = NotificationCenter.default
-@@ -127,7 +164,7 @@ final class HistoryViewModel {
+@@ -127,7 +165,7 @@ final class HistoryViewModel {
  
      /// The chart's (and a single day's breakdown's) metric: output or cost.
      func select(metric: HistoryChartMetric) {
@@ -1047,7 +1190,7 @@ index 5f792f5e..49e64638 100644
          chartMetric = metric
          interaction.hover(nil, from: .chart)
          rebuild()
-@@ -162,6 +199,7 @@ final class HistoryViewModel {
+@@ -162,6 +200,7 @@ final class HistoryViewModel {
      }
  
      func refresh() {
@@ -1055,7 +1198,7 @@ index 5f792f5e..49e64638 100644
          store.refresh()
      }
  
-@@ -172,6 +210,7 @@ final class HistoryViewModel {
+@@ -172,6 +211,7 @@ final class HistoryViewModel {
  
      /// Re-reads today's logs without the analysing progress, so the live day updates in place.
      func refreshToday() {
@@ -1063,7 +1206,7 @@ index 5f792f5e..49e64638 100644
          store.refresh(showsProgress: false)
      }
  
-@@ -181,17 +220,21 @@ final class HistoryViewModel {
+@@ -181,17 +221,21 @@ final class HistoryViewModel {
              return
          }
          needsRebuild = false
@@ -1089,7 +1232,7 @@ index 5f792f5e..49e64638 100644
          if nextPerf != perf { perf = nextPerf }
      }
  
-@@ -202,7 +245,7 @@ final class HistoryViewModel {
+@@ -202,7 +246,7 @@ final class HistoryViewModel {
      }
  
      /// The metric control offers traffic while measuring is on or traffic history exists (DESIGN 10).
@@ -1624,7 +1767,7 @@ index 071a5745..17736db1 100644
              let tracked = !orb.sources.isAll && orb.sources.tracks(source)
              let entry = ActionMenuItem(l10n(source.titleKey), state: tracked ? .on : .off) { [weak model] in
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
-index 19d5f0ae..609a0f45 100644
+index 19d5f0ae..361377c9 100644
 --- a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
 @@ -1,3 +1,4 @@
@@ -1632,7 +1775,7 @@ index 19d5f0ae..609a0f45 100644
  import Foundation
  import Testing
  @testable import AgentSpeed
-@@ -34,6 +35,130 @@ struct RemoteHostsTests {
+@@ -34,6 +35,170 @@ struct RemoteHostsTests {
          #expect(a.days.isEmpty)
      }
  
@@ -1686,6 +1829,46 @@ index 19d5f0ae..609a0f45 100644
 +        var state = RemoteHostState()
 +        state.apply(try #require(message(#"{"version":1,"type":"history","days":[{"day":"2026-01-01","source":"pi","requests":1,"input":10,"cached_input":0,"cache_write_input":0,"output":5,"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null}]}"#)))
 +        #expect(state.historyUsage == nil)
++    }
++
++    @Test @MainActor func historyStaysStaleUntilCurrentConnectionReceivesHistory() throws {
++        let suite = "RemoteHistoryFreshness.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let id = UUID()
++        let host = RemoteHost(id: id, label: "Remote", destination: "remote", enabled: true)
++        defaults.set(try JSONEncoder().encode([host]), forKey: "remoteHosts.v1")
++        let today = DayKey(Date(), calendar: HistoryDates.calendar).description
++        let snapshot = try #require(message(#"{"version":1,"type":"snapshot","today_day":"\#(today)"}"#))
++        let history = try #require(message(#"{"version":1,"type":"history","partial":false,"days":[]}"#))
++        let malformedHistory = try #require(message(#"{"version":1,"type":"history"}"#))
++        var state = RemoteHostState()
++
++        func check(_ state: RemoteHostState, stale: Bool, available: Bool) {
++            let hosts = RemoteHosts(defaults: defaults, states: [id: state])
++            let store = HistoryStore()
++            let app = AppModel(settings: AppSettings(defaults: defaults), history: store, remoteHosts: hosts)
++            app.selectedRemoteHostID = id
++            let view = HistoryViewModel(store: store, l10n: app.l10n, accessibility: app.accessibility,
++                                        cost: app.cost, traffic: app.traffic, model: app)
++            #expect(view.remoteHistoryStale == stale)
++            #expect(view.remoteHistoryAvailable == available)
++        }
++
++        state.apply(snapshot)
++        check(state, stale: true, available: false)
++        state.apply(history)
++        let receivedAt = state.historyReceivedAt
++        check(state, stale: false, available: true)
++        state.disconnected()
++        check(state, stale: true, available: true)
++        state.apply(snapshot)
++        state.apply(snapshot)
++        state.apply(malformedHistory)
++        #expect(state.historyReceivedAt == receivedAt)
++        check(state, stale: true, available: true)
++        state.apply(history)
++        check(state, stale: false, available: true)
 +    }
 +
 +    @Test @MainActor func switchingTargetsKeepsDashboardHistoryAndExportIsolated() async throws {
@@ -1830,6 +2013,3 @@ index d3e50987..17ab5cb0 100644
  remote host, in an owned mode-0700 directory with a mode-0600 database. A nonblocking exclusive `flock` on `history.lock`
  is held for the collector's lifetime; concurrent collectors and unsafe or unavailable caches fall back to memory.
  Changes to the source configuration reset the cache; analyzer version, time zone and pricing changes also invalidate
--- 
-2.41.0
-

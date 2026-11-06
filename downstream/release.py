@@ -227,9 +227,17 @@ def assets_expected(version):
             'SHA256SUMS-Linux-x86_64.txt', 'SHA256SUMS-Linux-aarch64.txt', 'SHA256SUMS.txt'}
 
 
+def describe_status(item):
+    status = item['status']
+    return f"{status} ({item['conclusion']})" if status == 'completed' and item.get('conclusion') else status
+
+
 def watch(tag, sha, old_ids):
-    deadline = time.monotonic() + TIMEOUT
+    started = time.monotonic()
+    deadline = started + TIMEOUT
+    print(f'Waiting for GitHub Actions Release run for {tag}...', flush=True)
     run_id = None
+    announced = False
     while time.monotonic() < deadline:
         matching = [r for r in runs(tag) if r['id'] not in old_ids and r['head_branch'] == tag and r['head_sha'] == sha]
         if len(matching) > 1:
@@ -239,6 +247,21 @@ def watch(tag, sha, old_ids):
             if run_id is not None and run_id != run['id']:
                 raise RuntimeError('release run changed while watching')
             run_id = run['id']
+            if not announced:
+                print(f"Found Release run {run_id}: {run.get('html_url') or f'https://github.com/{REPO}/actions/runs/{run_id}'}", flush=True)
+                announced = True
+            jobs = pages(f'repos/{REPO}/actions/runs/{run_id}/jobs', 'jobs')
+            elapsed = int(time.monotonic() - started)
+            print(f'[{elapsed}s] Run {run_id}: {describe_status(run)}', flush=True)
+            if not jobs:
+                print('  No jobs reported yet.', flush=True)
+            for job in jobs:
+                steps = job.get('steps', [])
+                current = next((step for step in steps if step['status'] == 'in_progress'), None)
+                if current is None:
+                    current = next((step for step in reversed(steps) if step['status'] == 'completed'), None)
+                detail = f"; step {current['name']}: {describe_status(current)}" if current else ''
+                print(f"  {job['name']}: {describe_status(job)}{detail}", flush=True)
             if run['status'] == 'completed':
                 if run['conclusion'] != 'success':
                     raise RuntimeError(f"Release run {run_id} ended: {run['conclusion']}")
@@ -254,7 +277,9 @@ def watch(tag, sha, old_ids):
                     raise RuntimeError('published release is missing assets: ' + ', '.join(sorted(missing)))
                 print(f'Published {tag} with all expected assets (run {run_id}).')
                 return
-        time.sleep(15)
+        else:
+            print(f'[{int(time.monotonic() - started)}s] Waiting for Release run to appear...', flush=True)
+        time.sleep(10)
     raise RuntimeError('timed out watching the Release workflow; inspect Actions before retrying')
 
 

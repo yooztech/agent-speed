@@ -1,7 +1,8 @@
-From 74cb6bd01ce47665269c707d357bf0d83e894332 Mon Sep 17 00:00:00 2001
+From 53701f4367216433cf74f4e9b950b578bc80e9ef Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Thu, 5 Nov 2026 16:23:19 +0800
-Subject: [PATCH] Drive scheduled stream wakeups in Windows end-to-end test
+Subject: [PATCH 04/16] Drive scheduled stream wakeups in Windows end-to-end
+ test
 
 ---
  .../Reporting/ReportStreamEndToEndTests.cs               | 9 +++++++++
@@ -48,6 +49,3 @@ index 3590a8e0..db69258e 100644
                      if (condition())
                      {
                          return;
--- 
-2.41.0
-

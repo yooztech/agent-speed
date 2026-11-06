@@ -12,9 +12,12 @@ the upstream URL, and the relevant platform toolchain are required.
 
 `patches/series` is the sole application order. Each entry names one numbered
 `git format-patch` mail patch in the same directory. `patches/tests.json` has
-exactly the same keys. The queue carries remote monitoring, native multi-host
-integration, fork release and updater changes, and platform fixes. Never place
-credentials in this repository or a patch.
+exactly the same keys. Patches are grouped by independently meaningful
+features; corrections and regression-test fixes for a downstream feature belong
+in that feature's patch rather than a later corrective patch. The queue carries
+remote monitoring, native multi-host integration, fork release and updater
+changes, and platform fixes. Never place credentials in this repository or a
+patch.
 
 ## Single maintenance branch
 
@@ -127,6 +130,12 @@ automation or administrators, may manually publish the same tag: a concurrent
 publication can race that check. Published releases must never be replaced.
 The wrapper reports success only after publication and all release assets are
 ready. `--plan` performs queries without changing anything.
+After pushing the tag, the wrapper immediately announces that it is looking for
+the Actions run. It prints the run URL once found and reports the run, jobs and
+current or most recently completed steps every 10 seconds, including elapsed time
+when nothing changes. These are ordinary lines suitable for redirected logs;
+GitHub API failures and the existing workflow timeout still terminate with an error.
+
 The focused maintenance checks in `python3 downstream/test-release.py` cover
 the publication workflow's paginated release lookup and its handling of absent,
 draft, published, and failed API responses without contacting GitHub.

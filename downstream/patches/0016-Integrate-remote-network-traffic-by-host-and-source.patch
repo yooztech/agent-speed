@@ -1,7 +1,7 @@
-From df3c5e88f14b50b0824737769c0657964dbd4e60 Mon Sep 17 00:00:00 2001
+From 41f1de37e3bfad4534165e22bac02dd1f8a3baec Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
-Date: Fri, 6 Nov 2026 11:23:03 +0800
-Subject: [PATCH] Integrate remote network traffic by host and source
+Date: Fri, 6 Nov 2026 13:48:38 +0800
+Subject: [PATCH 16/16] Integrate remote network traffic by host and source
 
 ---
  linux/collector/main.cpp                      |   6 +-
@@ -1090,7 +1090,7 @@ index 1c2b6165..cc7c1b71 100644
  
              return _visible;
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
-index 67bbbb96..3d72f21c 100644
+index 67bbbb96..a09ea811 100644
 --- a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
 @@ -307,4 +307,28 @@ public sealed class RemoteConsumerTests
@@ -1118,7 +1118,7 @@ index 67bbbb96..3d72f21c 100644
 +        hub.UpdateRemoteHost(id, "host", true, json: frame);
 +        var restarted = Assert.Single(hub.Snapshot.RemoteHosts).Traffic!;
 +        Assert.Equal(200, restarted.Snapshot.MachineToday.Rx);
-+        Assert.Equal(200, Assert.Single(restarted.Days.Where(d => d.IsMachine)).Rx);
++        Assert.Equal(200, Assert.Single(restarted.Days, d => d.IsMachine).Rx);
 +    }
 +
  }

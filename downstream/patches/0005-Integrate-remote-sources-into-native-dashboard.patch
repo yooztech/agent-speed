@@ -1,13 +1,13 @@
-From dbd3aee2cec62be13f084506c7f9f95a44f49f86 Mon Sep 17 00:00:00 2001
-From: yooztech <service@yooztech.com>
-Date: Thu, 5 Nov 2026 17:01:18 +0800
-Subject: [PATCH] Integrate remote sources into native dashboard
+From 38c472a258e1a001aa534c07a90eb80a0df1b483 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 6 Nov 2026 13:48:20 +0800
+Subject: [PATCH 05/16] Integrate remote sources into native dashboard
 
 ---
  .github/release-notes.md                      |   2 +-
- README.md                                     |  28 +--
- linux/collector/main.cpp                      | 128 ++++++++++--
- linux/collector/protocol.cpp                  |  45 +++-
+ README.md                                     |  31 +-
+ linux/collector/main.cpp                      | 128 ++++++--
+ linux/collector/protocol.cpp                  |  45 ++-
  linux/collector/protocol.hpp                  |  13 +-
  linux/core/include/agentspeed/engine.hpp      |   4 +
  .../core/include/agentspeed/monitor_store.hpp |   2 +
@@ -15,34 +15,34 @@ Subject: [PATCH] Integrate remote sources into native dashboard
  linux/core/src/engine.cpp                     |   3 +
  linux/core/src/history_analyzer.cpp           |   1 +
  linux/core/src/monitor_snapshot.cpp           |   6 +
- linux/tests/collector_integration_test.cpp    |  48 +++++
- linux/tests/collector_test.cpp                | 116 +++++++++++
+ linux/tests/collector_integration_test.cpp    |  48 +++
+ linux/tests/collector_test.cpp                | 116 +++++++
  linux/tests/engine_fixture_test.cpp           |  22 ++
- linux/tests/monitor_test.cpp                  |  57 ++++++
- macos/Sources/AgentSpeed/App/AppModel.swift   |  41 +++-
+ linux/tests/monitor_test.cpp                  |  57 ++++
+ macos/Sources/AgentSpeed/App/AppModel.swift   |  41 ++-
  .../AgentSpeed/App/Orbs/OrbRuntime.swift      |  19 +-
  .../AgentSpeed/App/Orbs/OrbsController.swift  |   9 +-
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  59 +++++-
- .../AgentSpeed/App/RemoteSnapshot.swift       | 142 ++++++++++++-
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  60 +++-
+ .../AgentSpeed/App/RemoteSnapshot.swift       | 150 ++++++++-
  .../AgentSpeed/Board/Live/BoardRuntime.swift  |  12 +-
  .../Sources/AgentSpeed/Cost/CostDisplay.swift |  10 +
  .../AgentSpeed/Dashboard/AgentRow.swift       |  15 +-
- .../Dashboard/ChartAccessibility.swift        |  23 ++-
- .../AgentSpeed/Dashboard/ChartPlot.swift      |  65 +++---
- .../AgentSpeed/Dashboard/ChartSeries.swift    |  33 ++-
- .../AgentSpeed/Dashboard/DashboardView.swift  |  53 +----
- .../AgentSpeed/Dashboard/HeroSection.swift    |  27 ++-
+ .../Dashboard/ChartAccessibility.swift        |  23 +-
+ .../AgentSpeed/Dashboard/ChartPlot.swift      |  65 ++--
+ .../AgentSpeed/Dashboard/ChartSeries.swift    |  33 +-
+ .../AgentSpeed/Dashboard/DashboardView.swift  |  53 +---
+ .../AgentSpeed/Dashboard/HeroSection.swift    |  27 +-
  .../Dashboard/LiveChartSection.swift          |   5 +-
- .../Dashboard/RemoteDashboard.swift           | 143 -------------
- .../Dashboard/RemoteHostsView.swift           | 102 ---------
+ .../Dashboard/RemoteDashboard.swift           | 143 ---------
+ .../Dashboard/RemoteHostsView.swift           | 112 +------
  .../AgentSpeed/Dashboard/SourcesSection.swift |  13 +-
- .../AgentSpeed/Dashboard/TodaySection.swift   |  38 ++--
+ .../AgentSpeed/Dashboard/TodaySection.swift   |  38 ++-
  .../AgentSpeed/History/HistoryToolbar.swift   |   2 +-
- .../AgentSpeed/History/HistoryViewModel.swift |  96 +++++----
+ .../AgentSpeed/History/HistoryViewModel.swift |  90 +++---
  .../History/HistoryWindowController.swift     |   6 +-
  .../History/Views/EffortHistorySection.swift  |   2 +-
  .../History/Views/HistoryFooter.swift         |   3 +-
- .../History/Views/HistoryView.swift           |  40 ++--
+ .../History/Views/HistoryView.swift           |  40 +--
  .../History/Views/UnpricedPopover.swift       |   6 +-
  .../MenuBar/StatusItemAccessibility.swift     |  11 +-
  .../MenuBar/StatusItemIntelligence.swift      |   2 +-
@@ -54,24 +54,26 @@ Subject: [PATCH] Integrate remote sources into native dashboard
  macos/Sources/AgentSpeed/Orb/OrbFeed.swift    |   4 +
  macos/Sources/AgentSpeed/Orb/OrbView.swift    |   4 +-
  .../OrbPane/OrbListSection.swift              |   2 +-
- .../AgentSpeedCore/CombinedLiveHistory.swift  |  30 +++
+ .../AgentSpeedCore/CombinedLiveHistory.swift  |  30 ++
  .../AgentSpeedCore/Engine/OrbSubset.swift     |  21 ++
- macos/Sources/AgentSpeedCore/Models.swift     |  34 ++-
+ macos/Sources/AgentSpeedCore/Models.swift     |  34 +-
  macos/Sources/AgentSpeedCore/SpeedStore.swift |  12 +-
- .../Board/Live/BoardLive.swift                |  23 ++-
+ .../Board/Live/BoardLive.swift                |  23 +-
  .../BoardLiveMetricsTests.swift               |  19 ++
- .../LiveChartAvailabilityTests.swift          |  55 +++++
- .../AgentSpeedAppTests/RemoteHostsTests.swift | 193 ++++++++++++------
- .../CombinedLiveHistoryTests.swift            |  41 ++++
- .../SpeedStoreDisplayTests.swift              |  35 ++++
- .../BoardLiveTests.swift                      |  27 +++
+ .../LiveChartAvailabilityTests.swift          |  55 ++++
+ .../RemoteHostStatusTests.swift               |  30 ++
+ .../AgentSpeedAppTests/RemoteHostsTests.swift | 293 ++++++++++++++----
+ .../CombinedLiveHistoryTests.swift            |  41 +++
+ .../SpeedStoreDisplayTests.swift              |  35 +++
+ .../BoardLiveTests.swift                      |  27 ++
  spec/DESIGN.md                                |  20 +-
  spec/METRICS.md                               |   5 +-
  spec/NETWORK.md                               |  19 +-
- 64 files changed, 1394 insertions(+), 635 deletions(-)
+ 65 files changed, 1536 insertions(+), 639 deletions(-)
  delete mode 100644 macos/Sources/AgentSpeed/Dashboard/RemoteDashboard.swift
  create mode 100644 macos/Sources/AgentSpeedCore/CombinedLiveHistory.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/LiveChartAvailabilityTests.swift
+ create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteHostStatusTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/CombinedLiveHistoryTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/SpeedStoreDisplayTests.swift
 
@@ -86,10 +88,10 @@ index f5f98d67..d0cc9f1b 100644
 -Agent Speed {{VERSION}} reads local logs from 13 supported agent sources. Conversation content is never uploaded. Live reporting and profile sharing are optional; Settings → About → Network Access controls all network features.
 +Agent Speed {{VERSION}} reads local logs from supported agent sources. Conversation content is never uploaded. Live reporting and profile sharing are optional; Settings → About → Network Access controls HTTP network features. On macOS, opt-in remote Linux sources use SSH independently of that switch and appear alongside local sources in the native dashboard. History is aggregated in the viewer's time zone; local diagnostic reports and live reporting exclude remote data.
 diff --git a/README.md b/README.md
-index d1186168..19ac5351 100644
+index d1186168..021305e2 100644
 --- a/README.md
 +++ b/README.md
-@@ -107,14 +107,13 @@ Ordinary Claude Desktop chat conversations are not stored on your computer, so t
+@@ -107,31 +107,34 @@ Ordinary Claude Desktop chat conversations are not stored on your computer, so t
  
  ## Remote Linux monitoring on macOS
  
@@ -105,13 +107,19 @@ index d1186168..19ac5351 100644
 +logs, including its user, port and identity as needed. Use normal SSH host-key verification, pre-trust the host key,
 +and use noninteractive key or SSH agent authentication. Enable each host in Settings → Sources. Local sources and all
 +enabled remote sources appear together in the native dashboard; source identity includes the host and source kind.
++Settings → Sources shows each host's online, offline or disabled status and its last connection error until a successful
++snapshot arrives.
 +Local diagnostic reports and live reporting contain local data only, not remote data. Remote SSH is independent of the
 +network switch: disable the host to stop it. The app selects its bundled collector for the host architecture, uploads
 +it over SSH and runs it over SSH standard streams. There is no HTTP service, listening port, Python runtime or sudo.
  
  The Linux collector reuses the native measurement core, including omp parsing and parent/child deduplication. The
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
-@@ -125,13 +124,14 @@ response rates use the logged duration. In particular omp commonly writes a resp
+ stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
+ On macOS, cached history remains stale after reconnecting until a new history frame arrives, even if live snapshots resume.
++When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
+ Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
+ response rates use the logged duration. In particular omp commonly writes a response when it completes, so remote
  monitoring cannot measure per-token streaming speed or infer an unrecorded time to first token. End-to-end speed includes
  the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
  
@@ -1100,7 +1108,7 @@ index bef80ad6..caace5c7 100644
          loops.forEach { $0.cancel() }
          loops.removeAll()
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index 7a0c5215..6c454927 100644
+index 7a0c5215..cd5e8a66 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 @@ -96,6 +96,9 @@ struct RemoteSource: Decodable, Sendable {
@@ -1206,15 +1214,17 @@ index 7a0c5215..6c454927 100644
          let destinationChanged = hosts.first(where: { $0.id == host.id }).map { $0.destination != host.destination } ?? false
          if let index = hosts.firstIndex(where: { $0.id == host.id }) { hosts[index] = host }
          else { hosts.append(host) }
-@@ -225,6 +256,7 @@ final class RemoteHosts {
+@@ -225,8 +256,8 @@ final class RemoteHosts {
              Task { @MainActor [weak self] in self?.receive(event, host: host) }
          }
          workers[host.id] = worker
 +        states[host.id, default: RemoteHostState()].connectionID = UUID()
          states[host.id, default: RemoteHostState()].historyReceivedOnConnection = false
-         states[host.id, default: RemoteHostState()].error = nil
+-        states[host.id, default: RemoteHostState()].error = nil
          worker.start()
-@@ -235,6 +267,11 @@ final class RemoteHosts {
+     }
+ 
+@@ -235,6 +266,11 @@ final class RemoteHosts {
          switch event.payload {
          case .message(let message):
              states[host.id, default: RemoteHostState()].apply(message)
@@ -1226,7 +1236,7 @@ index 7a0c5215..6c454927 100644
          case .ended(let reason):
              workers.removeValue(forKey: host.id)
              states[host.id, default: RemoteHostState()].disconnected()
-@@ -259,6 +296,7 @@ final class RemoteSSHWorker: @unchecked Sendable {
+@@ -259,6 +295,7 @@ final class RemoteSSHWorker: @unchecked Sendable {
      private let lock = NSLock()
      private var process: Process?
      private var stopped = false
@@ -1234,7 +1244,7 @@ index 7a0c5215..6c454927 100644
  
      init(destination: String, callback: @escaping @Sendable (Event) -> Void) {
          self.destination = destination
-@@ -269,6 +307,13 @@ final class RemoteSSHWorker: @unchecked Sendable {
+@@ -269,6 +306,13 @@ final class RemoteSSHWorker: @unchecked Sendable {
          lock.lock(); stopped = true; let running = process; lock.unlock()
          if running?.isRunning == true { running?.terminate() }
      }
@@ -1248,7 +1258,7 @@ index 7a0c5215..6c454927 100644
      static func arguments(destination: String, command: String) -> [String] {
          ["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", destination, command]
      }
-@@ -284,11 +329,15 @@ final class RemoteSSHWorker: @unchecked Sendable {
+@@ -284,11 +328,15 @@ final class RemoteSSHWorker: @unchecked Sendable {
          do { try p.run() } catch { lock.unlock(); throw error }
          lock.unlock()
          if let input { try stdin.fileHandleForWriting.write(contentsOf: input); try stdin.fileHandleForWriting.close() }
@@ -1266,10 +1276,10 @@ index 7a0c5215..6c454927 100644
          }
          do {
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-index 08989fad..a5957faf 100644
+index 08989fad..45e278d0 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-@@ -16,6 +16,137 @@ struct RemoteCapabilities {
+@@ -16,6 +16,145 @@ struct RemoteCapabilities {
      let liveCost = false
  }
  
@@ -1306,6 +1316,7 @@ index 08989fad..a5957faf 100644
 +                        source.liveCostRateAvailable = false
 +                        source.todayAvailable = false
 +                        result.sourceInstances.append(SourceInstance(hostID: host.id, status: source))
++                        if case .noSources = result.state { result.state = .running }
 +                        if let index = result.sources.firstIndex(where: { $0.kind == source.kind }) {
 +                            result.sources[index].liveRateAvailable = false
 +                            result.sources[index].liveCostRateAvailable = false
@@ -1353,7 +1364,9 @@ index 08989fad..a5957faf 100644
 +            result.toolsCount += agents.filter { $0.phase == .tools }.count
 +            for source in sources {
 +                result.liveRateAvailable = result.liveRateAvailable && source.liveRateAvailable
-+                result.todayAvailable = result.todayAvailable && source.todayAvailable
++                if source.available {
++                    result.todayAvailable = result.todayAvailable && source.todayAvailable
++                }
 +                if source.liveRateAvailable {
 +                    result.live.output += source.live.output
 +                    result.live.total += source.live.total
@@ -1369,11 +1382,16 @@ index 08989fad..a5957faf 100644
 +                    result.todayCost.add(source.todayCost)
 +                }
 +                if let index = result.sources.firstIndex(where: { $0.kind == source.kind }) {
++                    let existingAvailable = result.sources[index].available
 +                    result.sources[index].enabled = result.sources[index].enabled || source.enabled
 +                    result.sources[index].available = result.sources[index].available || source.available
 +                    result.sources[index].sessionCount += source.sessionCount
 +                    result.sources[index].activeAgents += source.activeAgents
-+                    result.sources[index].todayAvailable = result.sources[index].todayAvailable && source.todayAvailable
++                    if source.available {
++                        result.sources[index].todayAvailable = existingAvailable
++                            ? result.sources[index].todayAvailable && source.todayAvailable
++                            : source.todayAvailable
++                    }
 +                    result.sources[index].liveRateAvailable = result.sources[index].liveRateAvailable && source.liveRateAvailable
 +                    result.sources[index].liveCostRateAvailable = false
 +                    if source.liveRateAvailable {
@@ -1407,7 +1425,7 @@ index 08989fad..a5957faf 100644
  extension RemoteHostState {
      var capabilities: RemoteCapabilities {
          var result = RemoteCapabilities()
-@@ -37,12 +168,16 @@ extension RemoteHostState {
+@@ -37,12 +176,16 @@ extension RemoteHostState {
              guard let kind = SourceKind(rawValue: source.source) else { return nil }
              let live = Rate(output: source.liveOutput ?? 0, total: source.liveTotal ?? 0)
              let share = source.estimatedShare ?? 0
@@ -1426,7 +1444,7 @@ index 08989fad..a5957faf 100644
          }
          let agents = (message.agents ?? []).compactMap { agent -> AgentStatus? in
              guard let source = SourceKind(rawValue: agent.source), let phase = AgentPhase(rawValue: agent.phase) else { return nil }
-@@ -60,6 +195,7 @@ extension RemoteHostState {
+@@ -60,6 +203,7 @@ extension RemoteHostState {
                  isSubagent: agent.subagent, live: Rate(output: agent.liveOutput ?? 0, total: agent.liveTotal ?? 0),
                  recentSpeed: nil, lastActivity: agent.lastLineMs.map { Date(timeIntervalSince1970: $0 / 1000) } ?? timestamp,
                  parentId: agent.parentId, modes: modes(configured: false))
@@ -1434,7 +1452,7 @@ index 08989fad..a5957faf 100644
              status.configuredModes = modes(configured: true)
              return status
          }
-@@ -68,7 +204,7 @@ extension RemoteHostState {
+@@ -68,7 +212,7 @@ extension RemoteHostState {
              liveEstimatedShare: message.estimatedShare ?? 0,
              peakToday: Rate(output: message.peakToday ?? 0), peakTodayAt: nil,
              averageToday: message.todayAverage,
@@ -2112,10 +2130,10 @@ index 2c1f4493..00000000
 -    }
 -}
 diff --git a/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
-index 93e5d91e..d24adea4 100644
+index 93e5d91e..c978e721 100644
 --- a/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
 +++ b/macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
-@@ -1,107 +1,5 @@
+@@ -1,104 +1,14 @@
  import SwiftUI
  
 -/// Remote cards select the target shown in the dashboard and history.
@@ -2137,7 +2155,11 @@ index 93e5d91e..d24adea4 100644
 -        }
 -    }
 -}
--
++enum RemoteHostConnectionStatus: String {
++    case disabled = "Disabled"
++    case online = "Online"
++    case offline = "Offline"
+ 
 -private struct RemoteHostCard: View {
 -    let host: RemoteHost
 -    let state: RemoteHostState
@@ -2217,12 +2239,26 @@ index 93e5d91e..d24adea4 100644
 -        }
 -        .padding(10)
 -        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
--    }
--}
--
- struct RemoteHostSettings: View {
-     let remote: RemoteHosts
-     @State private var label = ""
++    init(host: RemoteHost, state: RemoteHostState?) {
++        if !host.enabled { self = .disabled }
++        else if state?.online == true { self = .online }
++        else { self = .offline }
+     }
+ }
+ 
+@@ -113,6 +23,12 @@ struct RemoteHostSettings: View {
+                     VStack(alignment: .leading) {
+                         Text(host.label.isEmpty ? host.destination : host.label)
+                         Text(host.destination).font(.caption).foregroundStyle(.secondary)
++                        Text(RemoteHostConnectionStatus(host: host, state: remote.states[host.id]).rawValue)
++                            .font(.caption).foregroundStyle(.secondary)
++                        if host.enabled, let error = remote.states[host.id]?.error, !error.isEmpty {
++                            Text(error).font(.caption).foregroundStyle(.secondary)
++                                .textSelection(.enabled)
++                        }
+                     }
+                     Spacer()
+                     Toggle("Enabled", isOn: Binding(get: { host.enabled }, set: { enabled in
 diff --git a/macos/Sources/AgentSpeed/Dashboard/SourcesSection.swift b/macos/Sources/AgentSpeed/Dashboard/SourcesSection.swift
 index 7383e488..4cb86689 100644
 --- a/macos/Sources/AgentSpeed/Dashboard/SourcesSection.swift
@@ -2336,10 +2372,10 @@ index bdf6d92e..eeb88eb3 100644
          _ = model.accessibility.reduceMotion
      }
 diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-index 20aaef52..e380d873 100644
+index 20aaef52..0049d5b5 100644
 --- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 +++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-@@ -21,29 +21,59 @@ final class HistoryViewModel {
+@@ -21,29 +21,53 @@ final class HistoryViewModel {
      /// Stored traffic days (METRICS 10.9).
      let traffic: TrafficStore
      private let appModel: AppModel?
@@ -2351,33 +2387,9 @@ index 20aaef52..e380d873 100644
 -        guard let state = appModel?.remoteHosts.states[id],
 -              let day = state.snapshot?.todayDay, DayKey(day) != nil else { return false }
 -        return state.historyUsage != nil
-+    private var enabledRemoteStates: [RemoteHostState] {
-+        guard let remote = appModel?.remoteHosts else { return [] }
-+        let states = remote.hosts.filter(\.enabled).map { remote.states[$0.id] ?? RemoteHostState() }
-+        var machines: [String: RemoteHostState] = [:]
-+        var unidentified: [RemoteHostState] = []
-+        for state in states {
-+            guard let id = state.snapshot?.machineId else { unidentified.append(state); continue }
-+            if let previous = machines[id] {
-+                let fresh = state.online && state.historyReceivedOnConnection
-+                let previousFresh = previous.online && previous.historyReceivedOnConnection
-+                if fresh != previousFresh {
-+                    if fresh { machines[id] = state }
-+                } else if (state.historyReceivedAt ?? .distantPast) > (previous.historyReceivedAt ?? .distantPast) {
-+                    machines[id] = state
-+                }
-+            } else {
-+                machines[id] = state
-+            }
-+        }
-+        return unidentified + Array(machines.values)
-     }
--    var remoteHistoryPartial: Bool {
--        guard let id = appModel?.selectedRemoteHostID else { return false }
--        return appModel?.remoteHosts.states[id]?.historyPartial == true
-+
-+    var combinedUsage: [DailyUsage] {
-+        guard let remote = appModel?.remoteHosts else { return store.days }
++    /// Select each machine's history per source, using the same connections for status and data.
++    private var remoteHistorySelection: (usage: [DailyUsage], states: [RemoteHostState]) {
++        guard let remote = appModel?.remoteHosts else { return ([], []) }
 +        let hosts = remote.hosts.filter(\.enabled).sorted {
 +            let left = remote.states[$0.id], right = remote.states[$1.id]
 +            let leftFresh = left?.online == true && left?.historyReceivedOnConnection == true
@@ -2386,39 +2398,57 @@ index 20aaef52..e380d873 100644
 +            return (left?.historyReceivedAt ?? .distantPast) > (right?.historyReceivedAt ?? .distantPast)
 +        }
 +        var seen: [String: Set<SourceKind>] = [:]
-+        var usage = store.days
++        var representatives: [String: RemoteHostState] = [:]
++        var contributingMachines: Set<String> = []
++        var selectedStates: [RemoteHostState] = []
++        var usage: [DailyUsage] = []
 +        for host in hosts {
-+            guard let state = remote.states[host.id], let days = state.historyUsage else { continue }
++            let state = remote.states[host.id] ?? RemoteHostState()
 +            let identity = state.snapshot?.machineId ?? host.id.uuidString
++            if representatives[identity] == nil { representatives[identity] = state }
++            guard let days = state.historyUsage else { continue }
 +            let sources = Set(days.map(\.source)).subtracting(seen[identity] ?? [])
++            guard !sources.isEmpty else { continue }
 +            usage.append(contentsOf: days.filter { sources.contains($0.source) })
 +            seen[identity, default: []].formUnion(sources)
++            contributingMachines.insert(identity)
++            selectedStates.append(state)
 +        }
-+        return usage
++        selectedStates.append(contentsOf: representatives.compactMap { identity, state in
++            contributingMachines.contains(identity) ? nil : state
++        })
++        return (usage, selectedStates)
      }
--    var remoteHistoryStale: Bool {
+-    var remoteHistoryPartial: Bool {
 -        guard let id = appModel?.selectedRemoteHostID else { return false }
--        return appModel?.remoteHosts.hosts.first(where: { $0.id == id })?.enabled != true ||
--            appModel?.remoteHosts.states[id]?.online != true ||
--            appModel?.remoteHosts.states[id]?.historyReceivedOnConnection != true
+-        return appModel?.remoteHosts.states[id]?.historyPartial == true
++
++    private var enabledRemoteStates: [RemoteHostState] { remoteHistorySelection.states }
++
++    var combinedUsage: [DailyUsage] { store.days + remoteHistorySelection.usage }
 +
 +    var localUnpricedDiagnostics: UnpricedView {
 +        HistoryAggregator.unpriced(store.days, source: source, rangeKind: rangeKind, range: content.range,
 +                                   excluded: content.costOptions.excluded(for: source), table: cost.prices.book.current)
      }
++
++    var remoteHistoryPartial: Bool { enabledRemoteStates.contains { $0.historyPartial == true } }
+     var remoteHistoryStale: Bool {
+-        guard let id = appModel?.selectedRemoteHostID else { return false }
+-        return appModel?.remoteHosts.hosts.first(where: { $0.id == id })?.enabled != true ||
+-            appModel?.remoteHosts.states[id]?.online != true ||
+-            appModel?.remoteHosts.states[id]?.historyReceivedOnConnection != true
+-    }
 -    var remoteHistoryReceivedAt: Date? {
 -        guard let id = appModel?.selectedRemoteHostID else { return nil }
 -        return appModel?.remoteHosts.states[id]?.historyReceivedAt
-+
-+    var remoteHistoryPartial: Bool { enabledRemoteStates.contains { $0.historyPartial == true } }
-+    var remoteHistoryStale: Bool {
 +        enabledRemoteStates.contains { !$0.online || !$0.historyReceivedOnConnection }
      }
 +    var remoteHistoryReceivedAt: Date? { enabledRemoteStates.compactMap(\.historyReceivedAt).min() }
      /// Pointer, keyboard and selection state, kept apart so hovering never rebuilds the content.
      let interaction = HistoryInteraction()
  
-@@ -81,7 +111,6 @@ final class HistoryViewModel {
+@@ -81,7 +105,6 @@ final class HistoryViewModel {
          self.cost = cost
          self.traffic = traffic
          self.appModel = model
@@ -2426,7 +2456,7 @@ index 20aaef52..e380d873 100644
          let stored = cost.settings.storage.object(forKey: Self.includeSubscriptionsKey) as? Bool
          let include = stored ?? cost.settings.includeSubscriptions
          includeSubscriptions = include
-@@ -105,17 +134,8 @@ final class HistoryViewModel {
+@@ -105,17 +128,8 @@ final class HistoryViewModel {
              _ = self.cost.settings.subscriptionSources
              _ = (self.traffic.days, self.traffic.since, self.cost.settings.trafficIncludeTools, self.cost.settings.trafficUnit)
              _ = self.cost.settings.enabledSources
@@ -2446,7 +2476,7 @@ index 20aaef52..e380d873 100644
              self.rebuild()
          }
          let center = NotificationCenter.default
-@@ -200,7 +220,6 @@ final class HistoryViewModel {
+@@ -200,7 +214,6 @@ final class HistoryViewModel {
      }
  
      func refresh() {
@@ -2454,7 +2484,7 @@ index 20aaef52..e380d873 100644
          store.refresh()
      }
  
-@@ -211,7 +230,6 @@ final class HistoryViewModel {
+@@ -211,7 +224,6 @@ final class HistoryViewModel {
  
      /// Re-reads today's logs without the analysing progress, so the live day updates in place.
      func refreshToday() {
@@ -2462,7 +2492,7 @@ index 20aaef52..e380d873 100644
          store.refresh(showsProgress: false)
      }
  
-@@ -221,21 +239,19 @@ final class HistoryViewModel {
+@@ -221,21 +233,19 @@ final class HistoryViewModel {
              return
          }
          needsRebuild = false
@@ -2488,7 +2518,7 @@ index 20aaef52..e380d873 100644
          if nextPerf != perf { perf = nextPerf }
      }
  
-@@ -246,7 +262,7 @@ final class HistoryViewModel {
+@@ -246,7 +256,7 @@ final class HistoryViewModel {
      }
  
      /// The metric control offers traffic while measuring is on or traffic history exists (DESIGN 10).
@@ -3300,8 +3330,44 @@ index 00000000..7f1198fe
 +        #expect(series.live?.total == 8)
 +    }
 +}
+diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostStatusTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostStatusTests.swift
+new file mode 100644
+index 00000000..05e31ad8
+--- /dev/null
++++ b/macos/Tests/AgentSpeedAppTests/RemoteHostStatusTests.swift
+@@ -0,0 +1,30 @@
++import Foundation
++import Testing
++@testable import AgentSpeed
++
++@Suite("Remote host connection status")
++struct RemoteHostStatusTests {
++    @Test func statusReflectsEnabledAndConnectionState() {
++        var host = RemoteHost(label: "Server", destination: "server")
++        var state = RemoteHostState()
++        state.online = true
++        #expect(RemoteHostConnectionStatus(host: host, state: state) == .disabled)
++        host.enabled = true
++        #expect(RemoteHostConnectionStatus(host: host, state: nil) == .offline)
++        #expect(RemoteHostConnectionStatus(host: host, state: state) == .online)
++        state.disconnected()
++        state.error = "SSH authentication failed"
++        #expect(RemoteHostConnectionStatus(host: host, state: state) == .offline)
++        host.enabled = false
++        #expect(RemoteHostConnectionStatus(host: host, state: state) == .disabled)
++    }
++
++    @Test func successfulSnapshotClearsConnectionError() throws {
++        var state = RemoteHostState()
++        state.error = "SSH authentication failed"
++        let message = try #require(RemoteMessage.decode(Data(#"{"version":1,"type":"snapshot"}"#.utf8)))
++        state.apply(message)
++        #expect(state.online)
++        #expect(state.error == nil)
++    }
++}
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
-index 361377c9..73489f07 100644
+index 361377c9..438a4384 100644
 --- a/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
 @@ -5,7 +5,11 @@ import Testing
@@ -3317,7 +3383,7 @@ index 361377c9..73489f07 100644
  
      @Test func protocolVersionAndUnknownValues() throws {
          let snapshot = try #require(message(#"{"version":1,"type":"snapshot","now_ms":42,"today_average":null,"live_output":null,"agents":[{"id":"1","source":"pi","model":null,"phase":"generating","live_output":null,"live_total":0,"subagent":false,"parent_id":null,"last_line_ms":null}]}"#))
-@@ -55,6 +59,96 @@ struct RemoteHostsTests {
+@@ -55,6 +59,132 @@ struct RemoteHostsTests {
          #expect(a.online && b.online)
          #expect(a.snapshot?.todayOutput == 101 && b.snapshot?.todayOutput == 202)
          #expect(a.days.first?.output == 101 && b.days.first?.output == 202)
@@ -3401,6 +3467,42 @@ index 361377c9..73489f07 100644
 +        let offlineInstance = try #require(offline.sourceInstances.first { $0.hostID == offlineID })
 +        #expect(!offlineInstance.status.todayAvailable && !offlineInstance.status.liveRateAvailable)
 +
++        var noLocalSources = local
++        noLocalSources.state = .noSources
++        noLocalSources.sources = []
++        let offlineOnly = RemoteHosts(defaults: defaults, states: [offlineID: disconnected]).combinedSnapshot(noLocalSources)
++        if case .running = offlineOnly.state {} else { Issue.record("Cached remote sources must keep the dashboard running") }
++        let cachedSource = try #require(offlineOnly.sources.first { $0.kind == .codex })
++        #expect(!cachedSource.liveRateAvailable && !cachedSource.liveCostRateAvailable && !cachedSource.todayAvailable)
++        let cachedInstance = try #require(offlineOnly.sourceInstances.first { $0.hostID == offlineID })
++        #expect(!cachedInstance.status.liveRateAvailable && !cachedInstance.status.liveCostRateAvailable && !cachedInstance.status.todayAvailable)
++        #expect(!offlineOnly.liveRateAvailable && !offlineOnly.todayAvailable)
++
++        func collectorState(ompTodayKnown: Bool) throws -> RemoteHostState {
++            let sources: [[String: Any]] = SourceKind.allCases.map { kind in
++                let installed = kind == .omp
++                let todayKnown = installed && ompTodayKnown
++                return ["source": kind.rawValue, "enabled": true, "available": installed,
++                        "sessions": 0, "active_agents": 0, "live_output": 0, "live_total": 0,
++                        "today_input": 0, "today_output": installed ? 12 : 0, "today_requests": 0,
++                        "today_cached_input": todayKnown ? (0 as Any) : NSNull(),
++                        "today_cache_write_input": todayKnown ? (0 as Any) : NSNull(),
++                        "today_reasoning": todayKnown ? (0 as Any) : NSNull()]
++            }
++            let payload: [String: Any] = ["version": 1, "type": "snapshot", "machine_id": "collector",
++                                          "timezone": zone, "sources": sources]
++            var state = RemoteHostState()
++            state.apply(try #require(RemoteMessage.decode(JSONSerialization.data(withJSONObject: payload))))
++            return state
++        }
++        let collector = RemoteHosts(defaults: defaults, states: [offlineID: try collectorState(ompTodayKnown: true)])
++            .combinedSnapshot(noLocalSources)
++        #expect(collector.todayAvailable)
++        #expect(collector.today.output == noLocalSources.today.output + 12)
++        let unknownCollector = RemoteHosts(defaults: defaults, states: [offlineID: try collectorState(ompTodayKnown: false)])
++            .combinedSnapshot(noLocalSources)
++        #expect(!unknownCollector.todayAvailable)
++
 +        defaults.set(try JSONEncoder().encode([
 +            RemoteHost(id: a, label: "Lower", destination: "alice@host", enabled: true),
 +            RemoteHost(id: b, label: "Upper", destination: "Alice@host", enabled: true),
@@ -3414,7 +3516,7 @@ index 361377c9..73489f07 100644
      }
  
      @Test @MainActor func remoteHistoryConversionAndExportPreserveUnknowns() throws {
-@@ -94,109 +188,86 @@ struct RemoteHostsTests {
+@@ -94,109 +224,127 @@ struct RemoteHostsTests {
          let id = UUID()
          let host = RemoteHost(id: id, label: "Remote", destination: "remote", enabled: true)
          defaults.set(try JSONEncoder().encode([host]), forKey: "remoteHosts.v1")
@@ -3456,6 +3558,46 @@ index 361377c9..73489f07 100644
          state.apply(history)
 -        check(state, stale: false, available: true)
 +        check(state, stale: false)
++    }
++
++    @Test @MainActor func historyStatusIncludesEachContributingSource() throws {
++        let suite = "RemoteHistorySources.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let codexID = UUID(), piID = UUID(), duplicateID = UUID()
++        let configured = [codexID, piID, duplicateID].map {
++            RemoteHost(id: $0, label: $0.uuidString, destination: $0.uuidString, enabled: true)
++        }
++        defaults.set(try JSONEncoder().encode(configured), forKey: "remoteHosts.v1")
++        func state(source: String, output: Int, partial: Bool, offline: Bool) throws -> RemoteHostState {
++            var result = RemoteHostState()
++            result.apply(try #require(message(#"{"version":1,"type":"snapshot","machine_id":"same-machine"}"#)))
++            let history = #"{"version":1,"type":"history","partial":\#(partial),"days":[{"day":"2026-01-01","source":"\#(source)","requests":1,"input":0,"cached_input":0,"cache_write_input":0,"output":\#(output),"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null,"unfinalized":0,"agents":1,"models":[],"modes":[],"unpriced":[]}]}"#
++            result.apply(try #require(message(history)))
++            try #require(result.historyUsage != nil)
++            if offline { result.disconnected() }
++            return result
++        }
++        let codex = try state(source: "codex", output: 10, partial: false, offline: false)
++        let pi = try state(source: "pi", output: 20, partial: true, offline: true)
++        let duplicate = try state(source: "codex", output: 30, partial: true, offline: true)
++        let hosts = RemoteHosts(defaults: defaults, states: [codexID: codex, piID: pi, duplicateID: duplicate])
++        let store = HistoryStore()
++        let app = AppModel(settings: AppSettings(defaults: defaults), history: store, remoteHosts: hosts)
++        let view = HistoryViewModel(store: store, l10n: app.l10n, accessibility: app.accessibility,
++                                    cost: app.cost, traffic: app.traffic, model: app)
++        #expect(view.combinedUsage.filter { $0.day == "2026-01-01" }.map(\.totals.output).sorted() == [10, 20])
++        #expect(view.remoteHistoryStale)
++        #expect(view.remoteHistoryPartial)
++        #expect(view.remoteHistoryReceivedAt == [codex.historyReceivedAt, pi.historyReceivedAt].compactMap { $0 }.min())
++
++        let duplicateOnlyHosts = RemoteHosts(defaults: defaults, states: [codexID: codex, piID: codex, duplicateID: duplicate])
++        let duplicateOnlyApp = AppModel(settings: AppSettings(defaults: defaults), history: store, remoteHosts: duplicateOnlyHosts)
++        let duplicateOnlyView = HistoryViewModel(store: store, l10n: duplicateOnlyApp.l10n,
++                                                accessibility: duplicateOnlyApp.accessibility, cost: duplicateOnlyApp.cost,
++                                                traffic: duplicateOnlyApp.traffic, model: duplicateOnlyApp)
++        #expect(!duplicateOnlyView.remoteHistoryStale)
++        #expect(!duplicateOnlyView.remoteHistoryPartial)
      }
  
 -    @Test @MainActor func switchingTargetsKeepsDashboardHistoryAndExportIsolated() async throws {
@@ -3469,11 +3611,12 @@ index 361377c9..73489f07 100644
 -            let history = #"{"version":1,"type":"history","partial":false,"days":[{"day":"\#(today)","source":"codex","requests":1,"input":5,"cached_input":0,"cache_write_input":0,"output":\#(output),"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null,"unfinalized":0,"agents":1,"cost_micro_usd":null,"unpriced_requests":null,"models":[],"modes":[],"unpriced":[]}]}"#
 +        func remote(_ output: Int, machine: String, source: String = "codex") throws -> RemoteHostState {
 +            let snapshot = #"{"version":1,"type":"snapshot","machine_id":"\#(machine)","today_day":"\#(today)","today_output":\#(output),"live_output":null,"live_total":null}"#
-+            let history = #"{"version":1,"type":"history","partial":false,"days":[{"day":"\#(today)","source":"codex","requests":1,"input":5,"cached_input":0,"cache_write_input":0,"output":\#(output),"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null,"unfinalized":0,"agents":1,"cost_micro_usd":null,"unpriced_requests":null,"models":[],"modes":[{"model":"remote-model","kind":"effort","mode":"high","evidence":"recorded","provider":null,"requests":1,"output":\#(output),"measured_output":0,"measured_ms":0}],"unpriced":[{"model":"remote-secret-model","provider":"remote-secret-provider","fast":false,"no_date":false,"count":1}]}]}"#
++            let history = #"{"version":1,"type":"history","partial":false,"days":[{"day":"\#(today)","source":"codex","requests":1,"input":5,"cached_input":0,"cache_write_input":0,"output":\#(output),"reasoning":0,"measured_output":0,"measured_ms":0,"peak":null,"unfinalized":0,"agents":1,"cost_micro_usd":null,"unpriced_requests":null,"models":[{"model":"remote-model","requests":1,"output":\#(output),"measured_output":0,"measured_ms":0,"cost_micro_usd":null,"unpriced_requests":null}],"modes":[{"model":"remote-model","kind":"effort","mode":"high","evidence":"recorded","provider":null,"requests":1,"output":\#(output),"measured_output":0,"measured_ms":0}],"unpriced":[{"model":"remote-secret-model","provider":"remote-secret-provider","fast":false,"no_date":false,"count":1}]}]}"#
              var state = RemoteHostState()
              state.apply(try #require(message(snapshot)))
 -            state.apply(try #require(message(history)))
 +            state.apply(try #require(message(history.replacingOccurrences(of: #""source":"codex""#, with: #""source":"\#(source)""#))))
++            try #require(state.historyUsage != nil)
              return state
          }
 -        let firstID = UUID(), secondID = UUID(), missingID = UUID()
@@ -3561,6 +3704,38 @@ index 361377c9..73489f07 100644
      }
  
      @Test func partialHistoryReplacesCompletenessPerHost() throws {
+@@ -214,15 +362,24 @@ struct RemoteHostsTests {
+     }
+ 
+     @Test func completionsAreMeasuredIsolatedAndBounded() throws {
+-        let measured = try #require(message(#"{"version":1,"type":"completion","source":"pi","output":123,"speed":12.5}"#))
+-        let unknown = try #require(message(#"{"version":1,"type":"completion","source":"pi","output":7,"speed":null}"#))
++        func completion(id: String, output: Int, speed: String) throws -> RemoteMessage {
++            let json = #"{"version":1,"type":"completion","response_id":"\#(id)","source":"pi","output":\#(output),"speed":\#(speed)}"#
++            return try #require(RemoteMessage.decode(Data(json.utf8)))
++        }
+         var first = RemoteHostState(); let second = RemoteHostState()
+-        for _ in 0..<12 { first.apply(measured) }
+-        first.apply(unknown)
++        for id in 0..<12 {
++            first.apply(try completion(id: "\(id)", output: id, speed: "12.5"))
++        }
++        first.apply(try completion(id: "unknown", output: 7, speed: "null"))
++        first.apply(try completion(id: "unknown", output: 7, speed: "null"))
+         #expect(first.completions.count == 10)
+-        #expect(first.completions[0].speed == nil)
+-        #expect(first.completions[1].speed == 12.5)
+-        #expect(first.completions[1].output == 123)
++        let latest = try #require(first.completions.first)
++        #expect(latest.speed == nil)
++        #expect(latest.output == 7)
++        let measured = try #require(first.completions.dropFirst().first)
++        #expect(measured.speed == 12.5)
++        #expect(measured.output == 11)
++        #expect(first.completions.map(\.output) == [7, 11, 10, 9, 8, 7, 6, 5, 4, 3])
+         #expect(second.completions.isEmpty)
+     }
+ 
 diff --git a/macos/Tests/AgentSpeedCoreTests/CombinedLiveHistoryTests.swift b/macos/Tests/AgentSpeedCoreTests/CombinedLiveHistoryTests.swift
 new file mode 100644
 index 00000000..10988470
@@ -3766,6 +3941,3 @@ index 17ab5cb0..803ab6b0 100644
  persists its history cache in `~/.cache/agentspeed-collector/history.sqlite3` on the
  remote host, in an owned mode-0700 directory with a mode-0600 database. A nonblocking exclusive `flock` on `history.lock`
  is held for the collector's lifetime; concurrent collectors and unsafe or unavailable caches fall back to memory.
--- 
-2.41.0
-

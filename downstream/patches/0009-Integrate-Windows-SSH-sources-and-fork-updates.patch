@@ -1,7 +1,7 @@
-From ea8e02b228e6461742aee1730e355f604f010dbf Mon Sep 17 00:00:00 2001
-From: yooztech <service@yooztech.com>
-Date: Thu, 5 Nov 2026 18:43:27 +0800
-Subject: [PATCH 13/14] Integrate Windows SSH sources and fork updates
+From 62d44ae34bed66e7b64b4167f7a932f590656e76 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 6 Nov 2026 13:48:28 +0800
+Subject: [PATCH 09/16] Integrate Windows SSH sources and fork updates
 
 ---
  linux/app/src/network_service.cpp             |  44 ++--
@@ -10,7 +10,10 @@ Subject: [PATCH 13/14] Integrate Windows SSH sources and fork updates
  linux/tests/update_release_test.cpp           |  31 +++
  .../Updates/UpdateConfiguration.swift         |   4 +-
  .../AgentSpeedCore/Updates/Release.swift      |  27 +-
- .../ReleaseFeedTests.swift                    |  40 ++-
+ .../ReleaseFeedTests.swift                    |  46 ++--
+ .../FixtureConfiguration.swift                |   2 +-
+ .../UpdateRelaunchIntegration/Harness.swift   |   2 +-
+ macos/scripts/test-update-relaunch.py         |   9 +-
  spec/UPDATES.md                               |  32 ++-
  windows/src/AgentSpeed.Core/History.cs        |   2 +
  windows/src/AgentSpeed.Core/Models.cs         |  21 +-
@@ -46,10 +49,10 @@ Subject: [PATCH 13/14] Integrate Windows SSH sources and fork updates
  .../ReleaseFeedTests.cs                       |  53 ++--
  .../RemoteHistoryCsvTests.cs                  |  37 +++
  .../RemoteHostSettingsTests.cs                |  42 ++++
- .../UpdatePackageTests.cs                     |  30 +++
- .../UpdateScheduleTests.cs                    |  44 ++--
+ .../UpdatePackageTests.cs                     |  45 +++-
+ .../UpdateScheduleTests.cs                    |  48 ++--
  .../UpdateSourceTests.cs                      |   2 +-
- 45 files changed, 1797 insertions(+), 163 deletions(-)
+ 48 files changed, 1817 insertions(+), 181 deletions(-)
  create mode 100644 linux/app/src/update_release.hpp
  create mode 100644 linux/tests/update_release_test.cpp
  create mode 100644 windows/src/AgentSpeed.Core/RemoteAggregation.cs
@@ -338,7 +341,7 @@ index 35a9cd5c..313b96ed 100644
              guard let url = URL(string: asset.browserDownloadURL), asset.size >= 0 else { return nil }
              return ReleaseAsset(name: asset.name, downloadURL: url, size: asset.size)
 diff --git a/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift b/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift
-index 630fc76e..d7861f55 100644
+index 630fc76e..09f9b5b4 100644
 --- a/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift
 +++ b/macos/Tests/AgentSpeedCoreTests/ReleaseFeedTests.swift
 @@ -8,7 +8,7 @@ struct ReleaseFeedTests {
@@ -438,6 +441,88 @@ index 630fc76e..d7861f55 100644
          #"{"tag_name": 5}"#, #"{"tag_name": null}"#, #"{"name": "v1.0.0"}"#,
          #"{"tag_name": "v1.0.0", "draft": "no"}"#,
          #"{"tag_name": "v1.0.0", "assets": [{"name": "a.zip"}]}"#,
+@@ -183,7 +197,7 @@ struct ReleaseFeedTests {
+ 
+     /// A valid release whose body pads the document to exactly `size` bytes.
+     static func padded(to size: Int) -> Data {
+-        let prefix = #"{"tag_name":"v1.0.0","body":""#
++        let prefix = #"{"tag_name":"v1.0.0-fork.1","body":""#
+         let suffix = #""}"#
+         let filler = String(repeating: "a", count: size - prefix.utf8.count - suffix.utf8.count)
+         return Data((prefix + filler + suffix).utf8)
+@@ -191,9 +205,9 @@ struct ReleaseFeedTests {
+ 
+     @Test func acceptsResponsesUpToTheLimit() throws {
+         let data = Self.padded(to: ReleaseFeed.maxBytes)
+-        #expect(data.count == 2 * 1024 * 1024)
++        #expect(data.count == 20 * 1024 * 1024)
+         let release = try ReleaseFeed.decode(data)
+-        #expect(release.notes.utf8.count == ReleaseFeed.maxBytes - 31)
++        #expect(release.notes.utf8.count == ReleaseFeed.maxBytes - 38)
+     }
+ 
+     @Test func rejectsOversizedResponses() {
+diff --git a/macos/Tests/UpdateRelaunchIntegration/FixtureConfiguration.swift b/macos/Tests/UpdateRelaunchIntegration/FixtureConfiguration.swift
+index 4e679e61..38f347f2 100644
+--- a/macos/Tests/UpdateRelaunchIntegration/FixtureConfiguration.swift
++++ b/macos/Tests/UpdateRelaunchIntegration/FixtureConfiguration.swift
+@@ -19,7 +19,7 @@ struct UpdateConfiguration: Sendable {
+         UpdateConfiguration(
+             feedURL: URL(string: Bundle.main.object(forInfoDictionaryKey: "ASFeedURL") as! String)!,
+             policy: .testing,
+-            currentVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as! String
++            currentVersion: Bundle.main.object(forInfoDictionaryKey: "AgentSpeedVersion") as! String
+         )
+     }
+ }
+diff --git a/macos/Tests/UpdateRelaunchIntegration/Harness.swift b/macos/Tests/UpdateRelaunchIntegration/Harness.swift
+index a67794a8..b0ad510d 100644
+--- a/macos/Tests/UpdateRelaunchIntegration/Harness.swift
++++ b/macos/Tests/UpdateRelaunchIntegration/Harness.swift
+@@ -96,7 +96,7 @@ final class Delegate: NSObject, NSApplicationDelegate {
+         RunLoop.main.add(progress!, forMode: .common)
+         Task { @MainActor in
+             await updates.check(manual: true)
+-            guard updates.availableRelease?.version.description == "1.1.0" else {
++            guard updates.availableRelease?.version.description == "1.1.0-fork.1" else {
+                 self.log.event("no_offer", fields: ["status": String(describing: updates.status)])
+                 Darwin.exit(32)
+             }
+diff --git a/macos/scripts/test-update-relaunch.py b/macos/scripts/test-update-relaunch.py
+index bf4702ac..354a73ce 100644
+--- a/macos/scripts/test-update-relaunch.py
++++ b/macos/scripts/test-update-relaunch.py
+@@ -122,6 +122,7 @@ def run(binary, label, output):
+         shutil.copy2(binary, macos / 'UpdateFinishPipeline')
+         info = {'CFBundleIdentifier': bundle_id, 'CFBundleExecutable': 'UpdateFinishPipeline', 'CFBundlePackageType': 'APPL',
+                 'CFBundleName': 'Agent Speed Update Isolation', 'CFBundleShortVersionString': version, 'CFBundleVersion': version,
++                'AgentSpeedVersion': version + '-fork.1',
+                 'LSUIElement': True, 'ASOutputRoot': str(root), 'ASFeedURL': base + '/feed.json', 'ASDefaultsSuite': suite}
+         (contents / 'Info.plist').write_bytes(plistlib.dumps(info))
+         subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(app)], check=True, capture_output=True)
+@@ -130,7 +131,7 @@ def run(binary, label, output):
+     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+     sums = www / 'SHA256SUMS.txt'
+     sums.write_text(digest + '  AgentSpeed-macOS.zip\n')
+-    feed = {'tag_name': 'v1.1.0', 'name': 'Synthetic update 1.1.0', 'body': 'Isolated update completion test.',
++    feed = {'tag_name': 'v1.1.0-fork.1', 'name': 'Synthetic update 1.1.0', 'body': 'Isolated update completion test.',
+             'draft': False, 'prerelease': False, 'assets': [
+                 {'name': archive.name, 'size': archive.stat().st_size, 'browser_download_url': base + '/' + archive.name},
+                 {'name': sums.name, 'size': sums.stat().st_size, 'browser_download_url': base + '/' + sums.name}]}
+@@ -180,10 +181,10 @@ def run(binary, label, output):
+         assert marker_data['pid'] != proc.pid
+         assert marker_data['version'] == '1.1.0'
+         assert new_exited, ('new fixture process did not exit', root)
+-        assert marker_data['installedBefore'] == '1.1.0'
+-        assert marker_data['previousBefore'] == '1.0.0'
++        assert marker_data['installedBefore'] == '1.1.0-fork.1'
++        assert marker_data['previousBefore'] == '1.0.0-fork.1'
+         assert marker_data['installedAfter'] == marker_data['previousAfter'] == 'nil'
+-        assert marker_data['justUpdatedTo'] == '1.1.0'
++        assert marker_data['justUpdatedTo'] == '1.1.0-fork.1'
+         old_names = [e['event'] for e in old_events]
+         new_names = [e['event'] for e in new_events]
+         assert 'ready_to_relaunch' in old_names and 'leaving_reply' in old_names and 'will_terminate' in old_names
 diff --git a/spec/UPDATES.md b/spec/UPDATES.md
 index 2d95e99d..bb68e71b 100644
 --- a/spec/UPDATES.md
@@ -2924,10 +3009,47 @@ index 00000000..010e28f6
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs
-index 7710ce2d..ad60f201 100644
+index 7710ce2d..480e47c0 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/UpdatePackageTests.cs
-@@ -327,6 +327,36 @@ public class UpdatePackageTests
+@@ -20,7 +20,7 @@ public class UpdatePackageTests
+         Assert.Equal(UpdateFailure.Invalid, exception.Failure);
+     }
+ 
+-    private static ReleaseInfo WithAssets(params ReleaseAsset[] assets) => TestReleases.Release(assets: assets);
++    private static ReleaseInfo WithAssets(params ReleaseAsset[] assets) => TestReleases.Release("v1.2.0-fork.1", assets: assets);
+ 
+     private static PackageEntry Exe(long length = 1000) => new(UpdatePackage.ExecutableName, length);
+ 
+@@ -96,7 +96,7 @@ public class UpdatePackageTests
+     [InlineData(Architecture.Arm64, Arm64)]
+     public void PlanPicksPackageAndChecksums(Architecture architecture, string packageName)
+     {
+-        var release = TestReleases.Release();
++        var release = TestReleases.Release("v1.2.0-fork.1");
+ 
+         var plan = UpdatePackage.Plan(release, architecture, UpdateSource.GitHub);
+ 
+@@ -157,12 +157,13 @@ public class UpdatePackageTests
+     }
+ 
+     [Fact]
+-    public void PlanRejectsDraftsPreReleasesAndUnsupportedArchitectures()
++    public void PlanRejectsDraftsPreReleasesUpstreamAndUnsupportedArchitectures()
+     {
+-        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release(isDraft: true), Architecture.X64, UpdateSource.GitHub));
+-        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release(isPreRelease: true), Architecture.X64, UpdateSource.GitHub));
+-        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release(), Architecture.X86, UpdateSource.GitHub));
+-        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release(), Architecture.Arm, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0-fork.1", isDraft: true), Architecture.X64, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0-fork.1", isPreRelease: true), Architecture.X64, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0"), Architecture.X64, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0-fork.1"), Architecture.X86, UpdateSource.GitHub));
++        AssertInvalid(() => UpdatePackage.Plan(TestReleases.Release("v1.2.0-fork.1"), Architecture.Arm, UpdateSource.GitHub));
+         Assert.Throws<ArgumentNullException>(() => UpdatePackage.Plan(null!, Architecture.X64, UpdateSource.GitHub));
+         Assert.Throws<ArgumentNullException>(() => UpdatePackage.Plan(TestReleases.Release(), Architecture.X64, null!));
+     }
+@@ -327,6 +328,36 @@ public class UpdatePackageTests
          Assert.Throws<ArgumentNullException>(() => UpdatePackage.ValidateEntries(null!));
      }
  
@@ -2965,7 +3087,7 @@ index 7710ce2d..ad60f201 100644
      public void ExtractsOnlyTheExecutable()
      {
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs
-index 24d6fe7a..ed19dc3b 100644
+index 24d6fe7a..7d1c50d2 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/UpdateScheduleTests.cs
 @@ -117,11 +117,11 @@ public class UpdateScheduleTests
@@ -3046,6 +3168,22 @@ index 24d6fe7a..ed19dc3b 100644
  
          Assert.Equal(UpdateOffer.Available, UpdateSchedule.Evaluate(Current, release, skipped, manual: false));
          Assert.False(UpdateSchedule.IsSkipped(release, skipped));
+@@ -191,13 +199,13 @@ public class UpdateScheduleTests
+     [Fact]
+     public void UnparseableStoredTagIsComparedByTagText()
+     {
+-        var release = TestReleases.Release("v1.2.0") with { Tag = "release-2026-10" };
++        var release = TestReleases.Release("v1.2.0-fork.1") with { Tag = "release-2026-10" };
+ 
+         Assert.True(UpdateSchedule.IsSameVersion(release, "release-2026-10"));
+         Assert.True(UpdateSchedule.IsSameVersion(release, " RELEASE-2026-10 "));
+         Assert.False(UpdateSchedule.IsSameVersion(release, "release-2026"));
+         Assert.Equal(UpdateOffer.Skipped, UpdateSchedule.Evaluate(Current, release, "Release-2026-10", manual: false));
+-        Assert.True(UpdateSchedule.IsSameVersion(release, "v1.2.0"));
++        Assert.True(UpdateSchedule.IsSameVersion(release, "v1.2.0-fork.1"));
+     }
+ 
+     [Fact]
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/UpdateSourceTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/UpdateSourceTests.cs
 index b071d18c..ac6dafaa 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/UpdateSourceTests.cs
@@ -3059,6 +3197,3 @@ index b071d18c..ac6dafaa 100644
          Assert.Equal(UpdateSource.GitHubFeedUrl, source.FeedUrl.OriginalString);
          Assert.False(source.IsOverride);
          Assert.True(UpdateSource.IsAllowedGitHubUrl(source.FeedUrl));
--- 
-2.41.0
-

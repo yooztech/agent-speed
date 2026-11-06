@@ -1,7 +1,7 @@
-From 4e86b5b0837d6f4cb8f8ea5a5451b447273b6041 Mon Sep 17 00:00:00 2001
+From f27b01672c9fcecb86fd5c6281f66a6f38bf4874 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 09:15:56 +0800
-Subject: [PATCH] Synchronize HTTP fallback test with accepted delivery
+Subject: [PATCH 14/16] Synchronize HTTP fallback test with accepted delivery
 
 ---
  .../ReportTransportTests.swift                | 56 +++++++++++++++++--

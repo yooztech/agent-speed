@@ -1,7 +1,7 @@
-From fb0debe25f3252e1e7e502c22d6885528202bb72 Mon Sep 17 00:00:00 2001
+From aed3359fd58a4b602e7a6024e2ca7a04ddc1894c Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Thu, 5 Nov 2026 18:34:56 +0800
-Subject: [PATCH] Clear restored traffic ledger before first sample
+Subject: [PATCH 07/16] Clear restored traffic ledger before first sample
 
 ---
  .../Traffic/Engine/TrafficEngine.swift               |  8 ++++++--
@@ -51,6 +51,3 @@ index bad8093c..fa68e156 100644
      @Test func diffReportsMismatches() {
          var out: [String] = []
          TrafficCaseRunner.diff("", want: ["a": 1, "b": [1, 2]] as [String: Any], got: ["a": 2, "b": [1]] as [String: Any], into: &out)
--- 
-2.41.0
-

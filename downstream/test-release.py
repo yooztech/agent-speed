@@ -404,6 +404,116 @@ class ReleaseDriverTests(unittest.TestCase):
                          "v1.2.3-fork.8")
 
 
+class ActionsProgressTests(unittest.TestCase):
+    def run_watch(self, scenario, cli=False):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / '.git').mkdir()
+            (root / '.git/config').write_text('')
+            fake = root / 'gh'
+            fake.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+                import json, os, pathlib, sys
+                path = sys.argv[-1]
+                state = pathlib.Path(os.environ['FAKE_STATE'])
+                n = int(state.read_text()) if state.exists() else 0
+                if '/workflows/' in path:
+                    state.write_text(str(n + 1))
+                    if os.environ['SCENARIO'] == 'api-error':
+                        print('GitHub API unavailable', file=sys.stderr)
+                        sys.exit(7)
+                    if n < 2 or os.environ['SCENARIO'] == 'timeout':
+                        data = {'workflow_runs': []}
+                    else:
+                        status = 'completed' if n >= 5 else 'in_progress'
+                        conclusion = ('failure' if os.environ['SCENARIO'] == 'failure' else 'success') if status == 'completed' else None
+                        data = {'workflow_runs': [{'id': 42, 'head_branch': 'v1.2.3-fork.2', 'head_sha': 'abc', 'status': status, 'conclusion': conclusion, 'html_url': 'https://example.invalid/runs/42'}]}
+                elif '/jobs?' in path:
+                    status = 'completed' if n >= 6 else 'in_progress'
+                    conclusion = ('failure' if os.environ['SCENARIO'] == 'failure' else 'success') if status == 'completed' else None
+                    step = 'Package' if n >= 5 else 'Build'
+                    data = {'jobs': [{'name': 'Linux', 'status': status, 'conclusion': conclusion, 'steps': [{'name': step, 'status': status, 'conclusion': conclusion}]}, {'name': 'Windows', 'status': 'queued', 'conclusion': None, 'steps': []}, {'name': 'macOS', 'status': 'completed', 'conclusion': 'success', 'steps': [{'name': 'Test', 'status': 'completed', 'conclusion': 'success'}]}]}
+                elif '/assets?' in path:
+                    data = [{'name': name, 'state': 'uploaded', 'size': 1} for name in json.loads(os.environ['ASSETS'])]
+                else:
+                    raise AssertionError(path)
+                print(json.dumps(data))
+            '''))
+            fake.chmod(0o755)
+            code = textwrap.dedent('''\
+                import importlib.util, pathlib, subprocess, sys
+                spec = importlib.util.spec_from_file_location('release', sys.argv[1])
+                driver = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(driver)
+                clock = [0]
+                driver.time.monotonic = lambda: clock[0]
+                driver.time.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+                driver.TIMEOUT = 40 if sys.argv[2] == 'timeout' else 100
+                driver.target_release = lambda tag: {'id': 9, 'draft': False, 'prerelease': False}
+                driver.remote_ref = lambda ref: 'abc'
+                try:
+                    if sys.argv[3] == 'cli':
+                        driver.ROOT = pathlib.Path(sys.argv[4])
+                        pushed = [False]
+                        def fake_git(*args):
+                            if args == ('rev-parse', '--git-common-dir'): return '.git'
+                            if args == ('branch', '--show-current'): return driver.BRANCH
+                            if args == ('rev-parse', 'HEAD'): return 'abc'
+                            if args[0] == 'push': pushed[0] = True
+                            return ''
+                        driver.git = fake_git
+                        driver.verify_origin = lambda: None
+                        driver.check_baseline = lambda: '1.2.3'
+                        driver.releases = lambda: [{'tag_name': 'v1.2.3-fork.1', 'draft': False}]
+                        driver.preflight = lambda: None
+                        driver.check_checkout = lambda sha: None
+                        driver.ensure_unpublished = lambda tag: None
+                        driver.remote_ref = lambda ref: 'abc' if ref.startswith('refs/heads/') or pushed[0] else None
+                        sys.argv = ['release.py']
+                        driver.main()
+                    else:
+                        driver.watch('v1.2.3-fork.2', 'abc', set())
+                except (RuntimeError, subprocess.CalledProcessError) as exc:
+                    print('Release failed:', exc, file=sys.stderr)
+                    sys.exit(1)
+            ''')
+            env = dict(os.environ, RELEASE_GH=str(fake), FAKE_STATE=str(root / 'state'),
+                       SCENARIO=scenario, ASSETS=json.dumps(list(driver.assets_expected('1.2.3-fork.2'))))
+            return subprocess.run([sys.executable, '-c', code, str(HERE / 'release.py'), scenario,
+                                   'cli' if cli else 'watch', str(root)],
+                                  cwd=HERE.parent, env=env, capture_output=True, text=True)
+
+    def test_progress_and_success_in_redirected_output(self):
+        result = self.run_watch('success')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for text in ('Waiting for GitHub Actions', '[0s] Waiting', '[10s] Waiting',
+                     'https://example.invalid/runs/42', '[20s] Run 42: in_progress',
+                     'Linux: in_progress; step Build: in_progress', 'step Package: in_progress',
+                     'Windows: queued', 'macOS: completed (success); step Test: completed (success)',
+                     'Run 42: completed (success)', 'Published v1.2.3-fork.2'):
+            self.assertIn(text, result.stdout)
+        self.assertNotIn('\x1b', result.stdout)
+
+    def test_failure_timeout_and_api_error_exit_nonzero(self):
+        for scenario, message in (('failure', 'ended: failure'),
+                                  ('timeout', 'timed out watching'),
+                                  ('api-error', 'GitHub API unavailable')):
+            with self.subTest(scenario=scenario):
+                result = self.run_watch(scenario)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertNotIn('Published ', result.stdout)
+                if scenario == 'failure':
+                    self.assertIn('Linux: completed (failure); step Package: completed (failure)', result.stdout)
+
+    def test_release_entrypoint_reports_progress(self):
+        result = self.run_watch('success', cli=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Waiting for GitHub Actions Release run', result.stdout)
+        self.assertIn('Found Release run 42:', result.stdout)
+        self.assertIn('Linux: in_progress; step Build: in_progress', result.stdout)
+        self.assertIn('Published v1.2.3-fork.2', result.stdout)
+
+
 class PublishWorkflowTests(unittest.TestCase):
     def test_release_lookup_and_publication(self):
         workflow = (HERE.parent / ".github/workflows/release.yml").read_text()

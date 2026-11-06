@@ -1,12 +1,13 @@
-From 91b065e6d64265847d4d668ef72cbcf7975fd8ae Mon Sep 17 00:00:00 2001
-From: yooztech <service@yooztech.com>
-Date: Thu, 5 Nov 2026 18:54:46 +0800
-Subject: [PATCH] Preserve remote source completeness and history integrity
+From 6f1d3eb505a35599913580680bfed3aa529a815e Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 6 Nov 2026 13:49:37 +0800
+Subject: [PATCH 10/16] Preserve remote source completeness and history
+ integrity
 
 ---
  windows/src/AgentSpeed.Core/Models.cs         |  6 +-
  .../src/AgentSpeed.Core/RemoteAggregation.cs  |  3 +-
- windows/src/AgentSpeed.Core/SpeedHub.cs       | 16 ++--
+ windows/src/AgentSpeed.Core/SpeedHub.cs       | 15 ++--
  .../History/DaySummary.cs                     |  2 +-
  .../History/HistoryAggregator.cs              | 15 ++++
  .../History/HistoryCsv.cs                     |  8 +-
@@ -15,10 +16,10 @@ Subject: [PATCH] Preserve remote source completeness and history integrity
  windows/src/AgentSpeed/Dashboard/LiveChart.cs | 70 +++++++++++----
  .../AgentSpeed/History/HistoryViewModel.cs    | 17 ++--
  .../AgentSpeed/Services/RemoteSshWorker.cs    | 86 ++++++++++++-------
- .../RemoteConsumerTests.cs                    | 52 ++++++++++-
+ .../RemoteConsumerTests.cs                    | 64 ++++++++++++--
  .../HistoryCostTests.cs                       | 38 ++++++++
  .../DashboardRemoteCompletenessTests.cs       | 60 +++++++++++++
- 14 files changed, 318 insertions(+), 85 deletions(-)
+ 14 files changed, 324 insertions(+), 90 deletions(-)
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/DashboardRemoteCompletenessTests.cs
 
 diff --git a/windows/src/AgentSpeed.Core/Models.cs b/windows/src/AgentSpeed.Core/Models.cs
@@ -60,7 +61,7 @@ index ffe7a71c..9acd94df 100644
      }
  
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 4f82a1d6..9495d75d 100644
+index 4f82a1d6..9b38488e 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
 @@ -170,7 +170,8 @@ public sealed class SpeedHub
@@ -91,7 +92,7 @@ index 4f82a1d6..9495d75d 100644
          {
              var remoteOutput = Math.Max(0, live.Output - local.Live.Output);
              var remoteTotal = Math.Max(0, live.Total - local.Live.Total);
-@@ -218,15 +219,18 @@ public sealed class SpeedHub
+@@ -218,14 +219,18 @@ public sealed class SpeedHub
              _remoteHistory[second] = new HistoryPoint(DateTimeOffset.FromUnixTimeSeconds(second),
                  new Rate(remoteOutput - estimatedRate.Output, remoteTotal - estimatedRate.Total), estimatedRate);
          }
@@ -106,13 +107,12 @@ index 4f82a1d6..9495d75d 100644
                  history.Add(new HistoryPoint(point.Time,
                      new Rate(point.Measured.Output + remote.Measured.Output, point.Measured.Total + remote.Measured.Total),
                      new Rate(point.Estimated.Output + remote.Estimated.Output, point.Estimated.Total + remote.Estimated.Total)));
--        return local with { Live = live, LiveEstimatedShare = live.Output > 0 ? estimated / live.Output : 0,
 +            else
 +                history.Add(point with { IsAvailable = false });
 +        }
+         return local with { Live = live, LiveEstimatedShare = live.Output > 0 ? estimated / live.Output : 0,
              Today = today, TodayCost = todayCost, Sources = sources, Agents = agents, GeneratingCount = generating, ToolsCount = tools,
              RemoteHosts = statuses, RemoteLiveComplete = complete, RemoteTodayComplete = todayComplete, History = history,
-             State = local.State.Kind == MonitorStateKind.NoSources && sources.Any(s => s.HostId is not null) ? MonitorState.Running : local.State };
 diff --git a/windows/src/AgentSpeed.Presentation/History/DaySummary.cs b/windows/src/AgentSpeed.Presentation/History/DaySummary.cs
 index 1cf90aba..0821b968 100644
 --- a/windows/src/AgentSpeed.Presentation/History/DaySummary.cs
@@ -535,7 +535,7 @@ index 330de59a..35e51a72 100644
      {
          try { if (child is not null && !child.HasExited) child.Kill(entireProcessTree: true); }
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
-index 3225b7fb..ee507564 100644
+index 3225b7fb..1f362af8 100644
 --- a/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteConsumerTests.cs
 @@ -5,7 +5,7 @@ namespace AgentSpeed.Core.Tests;
@@ -547,6 +547,44 @@ index 3225b7fb..ee507564 100644
          """;
  
      private static string History(string timezone, long output) => $$"""
+@@ -31,7 +31,7 @@ public sealed class RemoteConsumerTests
+         var sources = hub.Snapshot.Sources.Where(s => s.HostId.HasValue).ToArray();
+         Assert.Equal(2, sources.Length);
+         Assert.Contains(sources, s => s.HostId == other);
+-        Assert.Single(sources.Where(s => s.HostId == first || s.HostId == duplicate));
++        Assert.Single(sources, s => s.HostId == first || s.HostId == duplicate);
+ 
+         hub.RemoveRemoteHost(other);
+         Assert.Equal(10, hub.Snapshot.Today.Output);
+@@ -48,8 +48,8 @@ public sealed class RemoteConsumerTests
+         hub.UpdateRemoteHost(a, "a", true, json: Snapshot("a", 1).Replace("\"agents\":[]", agents));
+         hub.UpdateRemoteHost(b, "b", true, json: Snapshot("b", 1).Replace("\"agents\":[]", agents));
+ 
+-        var first = Assert.Single(hub.Snapshot.Agents.Where(agent => agent.HostId == a));
+-        var second = Assert.Single(hub.Snapshot.Agents.Where(agent => agent.HostId == b));
++        var first = Assert.Single(hub.Snapshot.Agents, agent => agent.HostId == a);
++        var second = Assert.Single(hub.Snapshot.Agents, agent => agent.HostId == b);
+         Assert.NotEqual(first.Id, second.Id);
+         Assert.NotEqual(first.ParentId, second.ParentId);
+         Assert.Equal(AgentPhase.Generating, first.Phase);
+@@ -61,7 +61,7 @@ public sealed class RemoteConsumerTests
+         var hub = await Task.Run(() => new SpeedHub());
+         var id = Guid.NewGuid();
+         hub.UpdateRemoteHost(id, "host", true, json: Snapshot("machine", 42, "null"));
+-        var unknown = Assert.Single(hub.Snapshot.Sources.Where(s => s.HostId == id));
++        var unknown = Assert.Single(hub.Snapshot.Sources, s => s.HostId == id);
+         Assert.False(unknown.LiveAvailable);
+         Assert.True(unknown.TodayAvailable);
+         Assert.Equal(42, unknown.Today.Output);
+@@ -70,7 +70,7 @@ public sealed class RemoteConsumerTests
+         var status = Assert.Single(hub.Snapshot.RemoteHosts);
+         Assert.False(status.Online);
+         Assert.Equal("offline", status.Error);
+-        var offline = Assert.Single(hub.Snapshot.Sources.Where(s => s.HostId == id));
++        var offline = Assert.Single(hub.Snapshot.Sources, s => s.HostId == id);
+         Assert.False(offline.LiveAvailable);
+         Assert.False(offline.Available);
+         Assert.False(offline.TodayAvailable);
 @@ -102,9 +102,11 @@ public sealed class RemoteConsumerTests
          hub.PublishLive(SpeedSnapshot.Empty with { History = [point] });
  
@@ -561,7 +599,14 @@ index 3225b7fb..ee507564 100644
      }
  
      [Fact]
-@@ -121,6 +123,50 @@ public sealed class RemoteConsumerTests
+@@ -115,12 +117,56 @@ public sealed class RemoteConsumerTests
+         var frame = Snapshot("machine", 42).Replace(
+             DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), "2000-01-01");
+         hub.UpdateRemoteHost(id, "host", true, json: frame);
+-        var source = Assert.Single(hub.Snapshot.Sources.Where(s => s.HostId == id));
++        var source = Assert.Single(hub.Snapshot.Sources, s => s.HostId == id);
+         Assert.False(source.TodayAvailable);
+         Assert.Equal(0, hub.Snapshot.Today.Output);
          Assert.False(hub.Snapshot.RemoteTodayComplete);
      }
  
@@ -727,6 +772,3 @@ index 00000000..c0f2427a
 +        }
 +    }
 +}
--- 
-2.41.0
-

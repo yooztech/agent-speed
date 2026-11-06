@@ -1,7 +1,7 @@
-From b06da725fc53cc1cf3e7d7bddbbc1863f2ecae01 Mon Sep 17 00:00:00 2001
+From b6834cc69afa239523527c2a1045c991e19fbc93 Mon Sep 17 00:00:00 2001
 From: Agent Speed Contributors <contributors@localhost>
 Date: Fri, 6 Nov 2026 11:00:29 +0800
-Subject: [PATCH] Connect remote performance and history metrics
+Subject: [PATCH 15/16] Connect remote performance and history metrics
 
 ---
  README.md                                     |   7 +-
@@ -29,15 +29,13 @@ Subject: [PATCH] Connect remote performance and history metrics
  .../History/Perf/PerfHistoryChart.cs          |   4 +-
  .../History/Perf/PerfHistoryRow.cs            |   5 +-
  .../History/Perf/PerfHistorySection.cs        |  17 ++-
- .../AgentSpeed.Presentation/Perf/PerfCard.cs  |  12 +-
  .../History/HistoryViewModel.Perf.cs          |  18 ++-
  .../History/Perf/PerfHistoryViewModel.cs      |  18 +--
  .../AgentSpeed/History/Perf/PerfRowView.cs    |   6 +-
  .../RemotePerformanceTests.cs                 |  78 +++++++++++
- .../Perf/PerfCardTests.cs                     |   9 ++
  .../Perf/PerfHistoryTests.cs                  |  20 +++
  .../PerfPerformanceSectionTests.cs            |  28 ++++
- 33 files changed, 793 insertions(+), 51 deletions(-)
+ 31 files changed, 773 insertions(+), 50 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/RemotePerformance.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
 
@@ -1236,29 +1234,6 @@ index 975b1d7b..7c0b6734 100644
          }
  
          return new PerfHistorySection(PerfHistoryState.Rows, sorted, chosen, PerfHistoryChart.Of(chosen, days, highlighted, loc), sort);
-diff --git a/windows/src/AgentSpeed.Presentation/Perf/PerfCard.cs b/windows/src/AgentSpeed.Presentation/Perf/PerfCard.cs
-index 2f1f50bc..edd1c7c2 100644
---- a/windows/src/AgentSpeed.Presentation/Perf/PerfCard.cs
-+++ b/windows/src/AgentSpeed.Presentation/Perf/PerfCard.cs
-@@ -123,7 +123,17 @@ public sealed record PerfCard(
-     {
-         ArgumentNullException.ThrowIfNull(subject);
-         ArgumentNullException.ThrowIfNull(loc);
--        var evaluation = subject.Evaluation ?? PerfEvaluation.Empty(subject.Source);
-+        if (subject.Evaluation is null)
-+        {
-+            var unavailable = loc["traffic.unavailable.short"];
-+            var metaUnavailable = MetaLine(subject.Model, loc[DisplayText.SourceKey(subject.Source)], subject.SubAgents, loc);
-+            var factsUnavailable = subject.FactLines?.Where(l => !string.IsNullOrWhiteSpace(l)).ToArray() ?? [];
-+            var signalsUnavailable = SignalLines(subject.Work ?? WorkSignals.None, loc);
-+            return new PerfCard(subject.Source, subject.Project, metaUnavailable, false, loc["perf.provisional"], null, PerfNumber.Dash, null,
-+                PerfNumberTone.None, null, unavailable, string.Empty, [], loc["perf.signals.title"], signalsUnavailable, factsUnavailable,
-+                loc["perf.card.footnote"], HistoryText.JoinParts(new[] { unavailable }.Concat(factsUnavailable), loc));
-+        }
-+        var evaluation = subject.Evaluation;
-         var sourceName = loc[DisplayText.SourceKey(subject.Source)];
-         var meta = MetaLine(evaluation.Model ?? subject.Model, sourceName, subject.SubAgents, loc);
-         var facts = new List<string> { loc.Format("perf.card.sample", evaluation.N) };
 diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
 index aa900294..12622b8b 100644
 --- a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
@@ -1486,26 +1461,6 @@ index 00000000..5bc9d978
 +        Assert.Equal(1100, hub.Snapshot.Agents.Single(a => a.HostId == second).Perf!.Baseline);
 +    }
 +}
-diff --git a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfCardTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfCardTests.cs
-index 5d19ab02..eebadb8b 100644
---- a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfCardTests.cs
-+++ b/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfCardTests.cs
-@@ -11,6 +11,15 @@ public sealed class PerfCardTests
- {
-     private static readonly Localization.Localizer Zh = PerfData.Loc();
- 
-+    [Fact]
-+    public void MissingEvaluationDoesNotInventAnEmptySample()
-+    {
-+        var card = PerfCard.Build(new PerfCardSubject(SourceKind.Pi, "remote", null, null), Zh);
-+        Assert.Equal(PerfNumber.Dash, card.Number);
-+        Assert.Empty(card.Facts);
-+        Assert.Equal(Zh["traffic.unavailable.short"], card.Summary);
-+    }
-+
-     [Fact]
-     public void NovaReadsLikeThePrototype()
-     {
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs
 index 2f33a624..c03ea038 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/Perf/PerfHistoryTests.cs
