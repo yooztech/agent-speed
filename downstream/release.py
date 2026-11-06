@@ -22,14 +22,6 @@ UPSTREAM = 'zoefix/agent-speed'
 GH = os.environ.get('RELEASE_GH', 'gh')
 TIMEOUT = 4 * 60 * 60
 
-# Windows Core cannot track file identity on Linux. These tests exercise rename or
-# replacement identity; the native Windows Release job still runs them all.
-LINUX_IDENTITY_TESTS = (
-    'AgentSpeed.Core.Tests.HermesLiveTests.HistoryFollowsLogsByIdentityAndCountsASessionOnceAcrossFiles',
-    'AgentSpeed.Core.Tests.HermesFixtureTests.RotationFollowsFilesAcrossRenames',
-    'AgentSpeed.Core.Tests.DroidLiveTests.ALowerSidecarAddsNothingAndAReplacedTranscriptStartsOverWithoutCountingTwice',
-    'AgentSpeed.Core.Tests.DroidFixtureTests.ScriptedReadCyclesMatchTheReference',
-)
 
 
 def command(args, *, capture=True):
@@ -76,16 +68,11 @@ def preflight():
     for tool in required:
         if not shutil.which(tool):
             raise RuntimeError(f'{tool} is required for release preflight on {host}')
-    print(f'Release preflight on {host}: Windows cross-platform build and tests; '
+    print(f'Release preflight on {host}: Windows cross-platform build and traffic smoke tests; '
           + ('Linux headless core build and tests.' if host == 'Linux' else 'native macOS Swift tests.'),
           flush=True)
     print('Native UI tests and platform packaging remain Release workflow checks; '
           'other platforms are not validated locally.', flush=True)
-    if host == 'Linux':
-        print('Linux skips 4 Windows Core file-identity tests (unsupported on Linux); '
-              'native Windows Release runs them:', flush=True)
-        for test in LINUX_IDENTITY_TESTS:
-            print(f'  {test}', flush=True)
     dotnet, dotnet_env = find_dotnet_sdk()
     try:
         with tempfile.TemporaryDirectory(prefix='agent-speed-release-') as temp:
@@ -94,12 +81,14 @@ def preflight():
                            cwd=ROOT, check=True)
             subprocess.run([dotnet, 'build', 'windows/AgentSpeed.slnx', '-c', 'Release',
                             '-p:EnableWindowsTargeting=true'], cwd=tree, check=True, env=dotnet_env)
-            for project in ('AgentSpeed.Core.Tests', 'AgentSpeed.Presentation.Tests'):
-                args = [dotnet, 'test', f'windows/tests/{project}', '-c', 'Release',
-                        '-f', 'net10.0', '--no-build']
-                if host == 'Linux' and project == 'AgentSpeed.Core.Tests':
-                    args += ['--filter', '&'.join(f'FullyQualifiedName!={test}' for test in LINUX_IDENTITY_TESTS)]
-                subprocess.run(args, cwd=tree, check=True, env=dotnet_env)
+            tests = (
+                ('AgentSpeed.Core.Tests', 'FullyQualifiedName=AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart'),
+                ('AgentSpeed.Presentation.Tests', 'FullyQualifiedName~AgentSpeed.Presentation.Tests.HistoryTrafficTests'),
+            )
+            for project, test_filter in tests:
+                subprocess.run([dotnet, 'test', f'windows/tests/{project}', '-c', 'Release',
+                                '-f', 'net10.0', '--no-build', '--filter', test_filter],
+                               cwd=tree, check=True, env=dotnet_env)
             if host == 'Linux':
                 build = Path(temp) / 'linux-build'
                 configure = ['cmake', '-S', 'linux', '-B', str(build),

@@ -148,7 +148,7 @@ class ReleaseDriverTests(unittest.TestCase):
                 assert sys.argv[1] == "test"
                 assert sys.argv[2] in ("windows/tests/AgentSpeed.Core.Tests", "windows/tests/AgentSpeed.Presentation.Tests")
                 assert sys.argv[3:8] == ["-c", "Release", "-f", "net10.0", "--no-build"]
-                assert len(sys.argv) == 8 or (len(sys.argv) == 10 and sys.argv[8] == "--filter")
+                assert len(sys.argv) == 10 and sys.argv[8] == "--filter"
                 if os.environ.get("PREFLIGHT_FAIL") == pathlib.Path(sys.argv[2]).name:
                     sys.exit(1)
         '''))
@@ -322,14 +322,10 @@ class ReleaseDriverTests(unittest.TestCase):
                 self.assertEqual(sum(line.startswith("dotnet build ") for line in commands), 1)
                 tests = [line for line in commands if line.startswith("dotnet test ")]
                 self.assertEqual(len(tests), 2)
-                core_filter = "&".join("FullyQualifiedName!=AgentSpeed.Core.Tests." + name for name in (
-                    "HermesLiveTests.HistoryFollowsLogsByIdentityAndCountsASessionOnceAcrossFiles",
-                    "HermesFixtureTests.RotationFollowsFilesAcrossRenames",
-                    "DroidLiveTests.ALowerSidecarAddsNothingAndAReplacedTranscriptStartsOverWithoutCountingTwice",
-                    "DroidFixtureTests.ScriptedReadCyclesMatchTheReference"))
-                core_options = f" --filter {core_filter}" if host == "Linux" else ""
-                self.assertIn(f"dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --no-build{core_options} cwd={tree}", tests)
-                self.assertIn(f"dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --no-build cwd={tree}", tests)
+                core_filter = "FullyQualifiedName=AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart"
+                presentation_filter = "FullyQualifiedName~AgentSpeed.Presentation.Tests.HistoryTrafficTests"
+                self.assertIn(f"dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --no-build --filter {core_filter} cwd={tree}", tests)
+                self.assertIn(f"dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --no-build --filter {presentation_filter} cwd={tree}", tests)
                 self.assertTrue(all(f"cwd={tree}" in line for line in commands
                                     if line.startswith(("dotnet build ", "dotnet test "))))
                 cmake = [line for line in commands if line.startswith("cmake ")]

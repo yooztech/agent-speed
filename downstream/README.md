@@ -94,21 +94,14 @@ against that tree. On Linux and macOS it requires the .NET 10 SDK. It probes
 `DOTNET_ROOT`, then each `dotnet` on `PATH`, then `~/.dotnet/dotnet`, selecting
 the first installation whose `--list-sdks` reports a 10.x SDK. The selected
 installation is used for all .NET build and test subprocesses; the wrapper does
-not install SDKs. It builds `windows/AgentSpeed.slnx` in Release
-with Windows targeting enabled, and runs the Windows Core and Presentation
-tests targeting `net10.0` with `--no-build`. These are cross-platform tests of
-Windows project code, not validation of the native Windows UI.
-
-On Linux, the Windows Core test run excludes four tests that depend on
-`FileIdentity`, which is unsupported on Linux:
-
-- `HermesLiveTests.HistoryFollowsLogsByIdentityAndCountsASessionOnceAcrossFiles`
-- `HermesFixtureTests.RotationFollowsFilesAcrossRenames`
-- `DroidLiveTests.ALowerSidecarAddsNothingAndAReplacedTranscriptStartsOverWithoutCountingTwice`
-- `DroidFixtureTests.ScriptedReadCyclesMatchTheReference`
-
-The macOS preflight does not apply these exclusions; the native Windows
-`Release` job runs all four tests.
+not install SDKs. It builds the complete `windows/AgentSpeed.slnx` in Release
+with Windows targeting enabled, including compilation of all Windows tests.
+It then runs only two cross-platform traffic smoke-test selections targeting
+`net10.0` with `--no-build`: the exact Core test
+`AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart`
+and the Presentation `AgentSpeed.Presentation.Tests.HistoryTrafficTests` class.
+This does not run the full Core or Presentation suites or validate the native
+Windows UI.
 
 The host also determines which native core tests run: Linux requires CMake,
 CTest, a C++ toolchain and the Linux core's build dependencies; it configures
