@@ -5,9 +5,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+
+import release_network
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -32,7 +35,7 @@ def new_directory(value):
     path = Path(value).resolve()
     if path == ROOT or ROOT in path.parents:
         raise ValueError("output must be outside the main workspace")
-    if path.exists():
+    if os.path.lexists(value):
         raise ValueError(f"output already exists: {path}")
     return path
 
@@ -79,7 +82,25 @@ def registry(names, require_commands=True):
 
 def prepare(output, base, names):
     output = new_directory(output)
-    run(["git", "clone", "--no-checkout", CONFIG["upstream_url"], str(output)])
+    def clone():
+        # Reserve the destination atomically; never remove a directory we did not create.
+        output.mkdir()
+        identity = output.stat()
+        try:
+            release_network.run_once(
+                ["git", "clone", "--no-checkout", CONFIG["upstream_url"], str(output)],
+                timeout=300)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            try:
+                current = output.stat()
+            except FileNotFoundError:
+                pass
+            else:
+                if not output.is_symlink() and (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
+                    shutil.rmtree(output)
+            raise
+
+    release_network.retry(clone, label="clone upstream")
     run(["git", "checkout", "--detach", base], cwd=output)
     for name in names:
         run(["git", "-c", "user.name=Downstream Patch Queue", "-c",

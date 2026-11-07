@@ -23,16 +23,20 @@ jobs:
       - name: Verify trusted release tag
         run: |
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-fork\.[0-9]+)?$ ]]
-          git fetch origin refs/heads/downstream/patch-build
+          python3 downstream/release_network.py -- git fetch origin refs/heads/downstream/patch-build
           git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD
       - name: Test collector zip verifier
         run: python3 downstream/test-verify-collector-zip.py
+      - name: Test downstream clone retries
+        run: python3 downstream/test-manage.py
+      - name: Test release publisher retries
+        run: python3 downstream/test-publish-release.py
       - name: Test Windows installer version verifier
         run: python3 downstream/test-release.py WindowsInstallerVersionTests
       - name: Prepare downstream tree
         run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
       - name: Install zstd and brotli
-        run: (command -v zstd && command -v brotli) || (sudo apt-get update && sudo apt-get install -y zstd brotli)
+        run: (command -v zstd && command -v brotli) || (python3 downstream/release_network.py -- sudo apt-get update && python3 downstream/release_network.py -- sudo apt-get install -y zstd brotli)
       - name: Check version and contracts
         working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: |
@@ -60,7 +64,7 @@ jobs:
       - name: Prepare downstream tree
         run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ pkg-config libzstd-dev libbrotli-dev libsqlite3-dev libicu-dev libssl-dev libgtest-dev
+        run: python3 downstream/release_network.py -- sudo apt-get update && python3 downstream/release_network.py -- sudo apt-get install -y cmake g++ pkg-config libzstd-dev libbrotli-dev libsqlite3-dev libicu-dev libssl-dev libgtest-dev
       - name: Build and test Linux
         working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: |
@@ -132,6 +136,10 @@ jobs:
     name: Windows
     needs: [spec, collector]
     runs-on: windows-latest
+    env:
+      NUGET_ENHANCED_MAX_NETWORK_TRY_COUNT: '6'
+      NUGET_ENHANCED_NETWORK_RETRY_DELAY_MILLISECONDS: '1000'
+      NUGET_MAX_RETRY_AFTER_DELAY_SECONDS: '10'
     steps:
       - uses: actions/checkout@v5
       - name: Prepare downstream tree
@@ -150,20 +158,28 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.x
+      - name: Restore Windows test dependencies
+        working-directory: ${{ runner.temp }}/agent-speed-prepared
+        shell: pwsh
+        run: |
+          foreach ($project in @('AgentSpeed.Core.Tests', 'AgentSpeed.Presentation.Tests', 'AgentSpeed.Windows.Tests', 'AgentSpeed.TrafficHelper.Tests')) {
+            python "$env:GITHUB_WORKSPACE/downstream/release_network.py" -- dotnet restore "windows/tests/$project"
+            if ($LASTEXITCODE -ne 0) { throw "Restore failed for $project" }
+          }
       - name: Test core
         working-directory: ${{ runner.temp }}/agent-speed-prepared
-        run: dotnet test windows/tests/AgentSpeed.Core.Tests -c Release
+        run: dotnet test windows/tests/AgentSpeed.Core.Tests -c Release --no-restore
       - name: Test presentation
         working-directory: ${{ runner.temp }}/agent-speed-prepared
-        run: dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -- xUnit.ParallelizeTestCollections=false
+        run: dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release --no-restore -- xUnit.ParallelizeTestCollections=false
       - name: Test Windows consumers
         working-directory: ${{ runner.temp }}/agent-speed-prepared
-        run: dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release
+        run: dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --no-restore
       - name: Test traffic helper
         working-directory: ${{ runner.temp }}/agent-speed-prepared
-        run: dotnet test windows/tests/AgentSpeed.TrafficHelper.Tests -c Release
+        run: dotnet test windows/tests/AgentSpeed.TrafficHelper.Tests -c Release --no-restore
       - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+        run: python downstream/release_network.py -- choco install innosetup --no-progress -y
       - name: Publish
         working-directory: ${{ runner.temp }}/agent-speed-prepared
         shell: pwsh
@@ -268,24 +284,4 @@ jobs:
       - name: Publish release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          verify_tag() {
-            git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
-            test "$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")" = "$GITHUB_SHA"
-          }
-          verify_tag
-          # A successful authenticated listing distinguishes an absent release from API errors.
-          existing="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .draft")"
-          if [ "$existing" = "false" ]; then
-            echo "Release is already published; leaving it unchanged."
-            exit 0
-          elif [ -n "$existing" ] && [ "$existing" != "true" ]; then
-            echo "Unexpected release state: $existing" >&2
-            exit 1
-          fi
-          if [ -z "$existing" ]; then
-            gh release create "$GITHUB_REF_NAME" --draft --title "Agent Speed ${GITHUB_REF_NAME}" --generate-notes --verify-tag
-          fi
-          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
-          verify_tag
-          gh release edit "$GITHUB_REF_NAME" --draft=false --prerelease=false
+        run: python3 downstream/publish-release.py

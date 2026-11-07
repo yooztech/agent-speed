@@ -42,7 +42,7 @@ class FakeAPI:
         self.fail = fail
         self.calls = []
 
-    def __call__(self, path, method="GET"):
+    def __call__(self, path, method="GET", *, deadline=None):
         self.calls.append((method, path))
         if self.fail and self.fail in path:
             raise subprocess.CalledProcessError(1, ["gh", "api", path])
@@ -147,8 +147,11 @@ class ReleaseDriverTests(unittest.TestCase):
                 log.write("dotnet " + " ".join(sys.argv[1:]) + " cwd=" + os.getcwd() + "\\n")
             if sys.argv[1:] == ["--list-sdks"]:
                 print("10.0.100 [/sdk]")
+            elif sys.argv[1] == "restore":
+                assert sys.argv[1:] == ["restore", "windows/AgentSpeed.slnx", "-p:EnableWindowsTargeting=true"]
+                assert os.environ["NUGET_ENHANCED_MAX_NETWORK_TRY_COUNT"] == "6"
             elif sys.argv[1] == "build":
-                assert sys.argv[1:] == ["build", "windows/AgentSpeed.slnx", "-c", "Release", "-p:EnableWindowsTargeting=true"]
+                assert sys.argv[1:] == ["build", "windows/AgentSpeed.slnx", "-c", "Release", "--no-restore", "-p:EnableWindowsTargeting=true"]
                 assert pathlib.Path("windows/AgentSpeed.slnx").is_file()
                 if os.environ.get("PREFLIGHT_FAIL") == "build":
                     sys.exit(1)
@@ -251,6 +254,24 @@ class ReleaseDriverTests(unittest.TestCase):
         self.launch(api)
         self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
         self.assertTrue(any(path.endswith("/git/tags/tag-object") for _, path in api.calls))
+
+    def test_accepted_transient_push_is_not_repeated(self):
+        tag = 'v1.2.3-fork.2'
+        ref = 'refs/tags/' + tag
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        real_git = driver.git
+        pushes = []
+        def ambiguous(*args, **kwargs):
+            if args[0] == 'push' and args[-1] == self.latest + ':' + ref:
+                pushes.append(args)
+                if len(pushes) == 4:
+                    real_git(*args, **kwargs)
+                raise subprocess.CalledProcessError(1, args, stderr='connection reset by peer')
+            return real_git(*args, **kwargs)
+        with patch.object(driver, 'git', side_effect=ambiguous), patch.object(driver.release_network.time, 'sleep'):
+            self.launch(api)
+        self.assertEqual(len(pushes), 4)
+        self.assertEqual(self.remote_sha(tag), self.latest)
 
     def check_tag_push_failure_retry(self, accepted):
         tag = "v1.2.3-fork.2"
@@ -395,14 +416,14 @@ class ReleaseDriverTests(unittest.TestCase):
 
     def test_preflight_finishes_and_cleans_up_before_remote_mutations(self):
         api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()], active=True)
-        def checked_api(path, method="GET"):
+        def checked_api(path, method="GET", *, deadline=None):
             if method != "GET":
                 lines = self.preflight_log.read_text().splitlines()
                 self.assertTrue(any(line.startswith("dotnet build ") for line in lines))
                 tree = Path(next(line[8:] for line in lines if line.startswith("prepare ")))
                 self.assertFalse(tree.exists())
                 self.assertTrue(any("cwd=" + str(tree) in line for line in lines))
-            return api(path, method)
+            return api(path, method, deadline=deadline)
         self.launch(checked_api)
         self.assertTrue(any(method == "POST" for method, _ in api.calls))
         self.assertTrue(any(method == "DELETE" for method, _ in api.calls))
@@ -514,6 +535,7 @@ class ActionsProgressTests(unittest.TestCase):
             fake.chmod(0o755)
             code = textwrap.dedent('''\
                 import importlib.util, pathlib, subprocess, sys
+                sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))
                 spec = importlib.util.spec_from_file_location('release', sys.argv[1])
                 driver = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(driver)
@@ -521,8 +543,8 @@ class ActionsProgressTests(unittest.TestCase):
                 driver.time.monotonic = lambda: clock[0]
                 driver.time.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
                 driver.TIMEOUT = 40 if sys.argv[2] == 'timeout' else 100
-                driver.target_release = lambda tag: {'id': 9, 'draft': False, 'prerelease': False}
-                driver.remote_ref = lambda ref: 'abc'
+                driver.target_release = lambda tag, **kwargs: {'id': 9, 'draft': False, 'prerelease': False}
+                driver.remote_ref = lambda ref, **kwargs: 'abc'
                 try:
                     if sys.argv[3] == 'cli':
                         driver.ROOT = pathlib.Path(sys.argv[4])
@@ -536,17 +558,18 @@ class ActionsProgressTests(unittest.TestCase):
                         driver.git = fake_git
                         driver.verify_origin = lambda: None
                         driver.check_baseline = lambda: '1.2.3'
-                        driver.releases = lambda: [{'tag_name': 'v1.2.3-fork.1', 'draft': False}]
+                        driver.releases = lambda **kwargs: [{'tag_name': 'v1.2.3-fork.1', 'draft': False}]
                         driver.preflight = lambda: None
                         driver.check_checkout = lambda sha: None
-                        driver.ensure_unpublished = lambda tag: None
-                        driver.remote_ref = lambda ref: 'abc' if ref.startswith('refs/heads/') or pushed[0] else None
+                        driver.ensure_unpublished = lambda tag, **kwargs: None
+                        driver.remote_ref = lambda ref, **kwargs: 'abc' if ref.startswith('refs/heads/') or pushed[0] else None
                         sys.argv = ['release.py']
                         driver.main()
                     else:
                         driver.watch('v1.2.3-fork.2', 'abc', set())
                 except (RuntimeError, subprocess.CalledProcessError) as exc:
                     print('Release failed:', exc, file=sys.stderr)
+                    if getattr(exc, 'stderr', None): print(exc.stderr, file=sys.stderr)
                     sys.exit(1)
             ''')
             env = dict(os.environ, RELEASE_GH=str(fake), FAKE_STATE=str(root / 'state'),
@@ -586,54 +609,6 @@ class ActionsProgressTests(unittest.TestCase):
         self.assertIn('Published v1.2.3-fork.2', result.stdout)
 
 
-class PublishWorkflowTests(unittest.TestCase):
-    def test_release_lookup_and_publication(self):
-        workflow = (HERE.parent / ".github/workflows/release.yml").read_text()
-        script = textwrap.dedent(workflow.split("      - name: Publish release assets\n", 1)[1]
-                                 .split("        run: |\n", 1)[1])
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "git").write_text("#!/bin/sh\n[ \"$1\" != rev-parse ] || echo expected-sha\n")
-            (root / "gh").write_text(textwrap.dedent('''\
-                #!/usr/bin/env python3
-                import json, os, sys
-                args = sys.argv[1:]
-                with open(os.environ['CALLS'], 'a') as log:
-                    log.write(json.dumps(args) + '\\n')
-                if args[0] == 'api':
-                    if args != ['api', '--paginate', 'repos/owner/repo/releases?per_page=100',
-                                '--jq', '.[] | select(.tag_name == "v1") | .draft']:
-                        sys.exit(2)
-                    if os.environ['STATE'] == 'error':
-                        sys.exit(1)
-                    # The target occurs on the second page, after an unrelated release.
-                    pages = [[{'tag_name': 'other', 'draft': False}], []]
-                    if os.environ['STATE'] != 'absent':
-                        pages[1].append({'tag_name': 'v1', 'draft': os.environ['STATE'] == 'draft'})
-                    for page in pages:
-                        for release in page:
-                            if release['tag_name'] == 'v1':
-                                print(str(release['draft']).lower())
-                '''))
-            for name in ("git", "gh"):
-                (root / name).chmod(0o755)
-            calls = root / "calls"
-            env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}", CALLS=str(calls),
-                       GITHUB_REPOSITORY="owner/repo", GITHUB_REF_NAME="v1", GITHUB_SHA="expected-sha")
-            for state, expected, success in (
-                ("absent", ["create", "upload", "edit"], True),
-                ("draft", ["upload", "edit"], True),
-                ("published", [], True),
-                ("error", [], False),
-            ):
-                with self.subTest(state=state):
-                    calls.write_text("")
-                    result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script],
-                                            cwd=root, env=dict(env, STATE=state),
-                                            capture_output=True, text=True)
-                    self.assertEqual(result.returncode == 0, success, result.stderr)
-                    invoked = [json.loads(line) for line in calls.read_text().splitlines()]
-                    self.assertEqual([args[1] for args in invoked if args[0] == "release"], expected)
 
 
 class WindowsInstallerVersionTests(unittest.TestCase):
@@ -650,6 +625,55 @@ class WindowsInstallerVersionTests(unittest.TestCase):
         for expected in ("", "v1.6.1-fork.3", "1.6.1-fork.3+abc", "1.6.1-fork.3 "):
             with self.subTest(expected=expected):
                 self.assertFalse(installer_version.matches(expected, expected))
+
+
+class NetworkRetryTests(unittest.TestCase):
+    def test_classification_and_bounded_backoff(self):
+        net = driver.release_network
+        for message in ('connection reset by peer', 'HTTP 429', 'HTTP 503', 'HTTP 403: API rate limit exceeded', 'temporary failure in name resolution'):
+            self.assertTrue(net.is_transient(subprocess.CalledProcessError(1, ['gh'], stderr=message)), message)
+        for message in ('HTTP 401', 'HTTP 403: permission denied', 'HTTP 404', 'validation failed'):
+            self.assertFalse(net.is_transient(subprocess.CalledProcessError(1, ['gh'], stderr=message)), message)
+        calls = []
+        def fail():
+            calls.append(1)
+            raise subprocess.CalledProcessError(1, ['gh'], stderr='HTTP 503')
+        with patch.object(net.time, 'sleep') as sleep:
+            with self.assertRaises(subprocess.CalledProcessError):
+                net.retry(fail, label='test')
+        self.assertEqual(len(calls), 4)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2, 4])
+        with patch.object(net.time, 'monotonic', return_value=10), patch.object(net.time, 'sleep') as sleep:
+            with self.assertRaises(TimeoutError):
+                net.retry(fail, label='test', deadline=11)
+            sleep.assert_not_called()
+
+    def test_resume_is_read_only_and_checks_assets(self):
+        tag, sha = 'v1.2.3-fork.2', 'a' * 40
+        run = {'id': 42, 'event': 'push', 'path': '.github/workflows/release.yml',
+               'repository': {'full_name': driver.REPO}, 'head_branch': tag, 'head_sha': sha,
+               'status': 'completed', 'conclusion': 'success'}
+        calls = []
+        def fake_api(path, method='GET', *, deadline=None):
+            calls.append((method, path))
+            if path.endswith('/actions/runs/42'):
+                return run
+            if '/jobs?' in path:
+                return {'jobs': []}
+            if '/releases?' in path:
+                return [{'id': 7, 'tag_name': tag, 'draft': False, 'prerelease': False}]
+            if '/assets?' in path:
+                return [{'name': name, 'state': 'uploaded', 'size': 1} for name in driver.assets_expected(tag[1:])]
+            raise AssertionError(path)
+        with patch.object(driver, 'api', side_effect=fake_api), patch.object(driver, 'remote_ref', return_value=sha), \
+             patch.object(driver, 'preflight', side_effect=AssertionError('mutation')), \
+             patch.object(driver, 'git', side_effect=AssertionError('checkout access')), \
+             patch.object(sys, 'argv', ['release.py', '--resume', '42']):
+            driver.main()
+        self.assertTrue(calls)
+        self.assertTrue(all(method == 'GET' for method, _ in calls))
+        with self.assertRaises(RuntimeError):
+            driver.validate_run({**run, 'event': 'workflow_dispatch'}, 42)
 
 
 if __name__ == "__main__":

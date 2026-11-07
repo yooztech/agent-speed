@@ -113,6 +113,31 @@ Direct terminal output updates in place; the wrapper pipes through `tee`, so its
 terminal and persistent log instead show only job changes and a roughly one-minute
 heartbeat. The run link is printed once. A dash means timing is not yet available.
 
+Transient network failures in the maintenance-owned GitHub/Git queries, source clone, dependency restore and package
+setup use bounded retries: four attempts with 1, 2 and 4 second backoff. Authentication, validation and conflicting
+remote state fail without blind retries. Polling and retries remain bounded by the overall workflow-watch deadline.
+The local watcher exiting does not cancel an already-started Actions run.
+
+To recover observation of an existing run without rebuilding, cancelling, deleting drafts or changing tags:
+
+```sh
+bash downstream/release.sh --resume RUN_ID
+```
+
+Resume verifies the Release workflow, push event, tag and commit before attaching, then checks the formal published
+release and all expected nonempty assets. It can run from a dirty checkout because it performs no release mutations.
+Use the existing run ID rather than launching a new candidate after a polling connection failure.
+
+Release writes reconcile remote state after an ambiguous response, including on the final attempt: an accepted tag
+push, draft creation, upload or publication is not blindly repeated. Published releases remain untouched. Matching
+uploaded assets are reused; conflicting assets fail instead of being clobbered. Normal unpublished-candidate cleanup
+still follows the safeguards below. Do not manually publish the same tag while release automation is active.
+
+NuGet's own HTTP retry settings also cover implicit restore operations inside the unchanged packaging scripts.
+CMake dependency acquisition retries only configuration, not the subsequent build or tests. Packaging curl downloads,
+checkout, artifact and setup actions additionally have their own request-level retry policies; these do not guarantee
+that every internal request or persistent outage can recover. Exhausted or permanent failures still block release.
+
 The wrapper requires Git, network access, push access to `origin`, and an
 authenticated `gh` session with access to the upstream repository and fork
 releases, drafts, and Actions, including permission to write releases and
@@ -127,8 +152,8 @@ against that tree. On Linux and macOS it requires the .NET 10 SDK. It probes
 `DOTNET_ROOT`, then each `dotnet` on `PATH`, then `~/.dotnet/dotnet`, selecting
 the first installation whose `--list-sdks` reports a 10.x SDK. The selected
 installation is used for all .NET build and test subprocesses; the wrapper does
-not install SDKs. It builds the complete `windows/AgentSpeed.slnx` in Release
-with Windows targeting enabled, including compilation of all Windows tests.
+not install SDKs. It retries dependency restore before building the complete `windows/AgentSpeed.slnx` in Release
+with Windows targeting enabled and `--no-restore`, including compilation of all Windows tests.
 It then runs the exact Core traffic smoke test
 `AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart`
 and the complete `AgentSpeed.Presentation.Tests` suite, both targeting `net10.0`
@@ -167,15 +192,21 @@ automation or administrators, may manually publish the same tag: a concurrent
 publication can race that check. Published releases must never be replaced.
 The wrapper reports success only after publication and all release assets are
 ready. `--plan` performs queries without changing anything.
-After pushing the tag, the wrapper immediately announces that it is looking for
-the Actions run. It prints the run URL once found and reports the run, jobs and
-current or most recently completed steps every 10 seconds, including elapsed time
-when nothing changes. These are ordinary lines suitable for redirected logs;
-GitHub API failures and the existing workflow timeout still terminate with an error.
+After pushing the tag, the wrapper announces that it is looking for the Actions run, then prints its URL once found.
+Redirected output reports job/step changes and a roughly one-minute heartbeat. Transient GitHub API failures retry;
+exhausted failures or the workflow timeout stop local observation with an error. Resume the existing run as described
+above; a local observation failure alone is not evidence that the remote workflow failed.
 
-The focused maintenance checks in `python3 downstream/test-release.py` cover
-the publication workflow's paginated release lookup and its handling of absent,
-draft, published, and failed API responses without contacting GitHub.
+Focused maintenance checks run without publishing to GitHub:
+
+```sh
+python3 downstream/test-release.py
+python3 downstream/test-publish-release.py
+python3 downstream/test-manage.py
+```
+
+They cover release selection and safety, transient query failures, ambiguous write reconciliation, read-only resume,
+published asset immutability, and failed-clone cleanup that preserves pre-existing user directories.
 
 To check a macOS bundle locally against its tested Linux collector, run
 `python3 downstream/verify-collector-zip.py <zip> <collector>` from the

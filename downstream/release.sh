@@ -14,7 +14,8 @@ if (( status == 0 )); then
   status=${statuses[1]}
 fi
 if (( status != 0 )); then
-  printf 'Release failed; log: %s\n' "$log_file" >&2
+  printf 'Release command failed; log: %s\n' "$log_file" >&2
+  printf 'If Actions already started, it may still be running. Resume observation with: bash downstream/release.sh --resume RUN_ID\n' >&2
   if [[ -t 0 && -t 2 ]]; then
     read -r -p 'Press Enter to close this terminal...' _ || true
   fi

@@ -16,6 +16,7 @@ import tempfile
 import time
 import unicodedata
 from urllib.parse import quote
+import release_network
 
 ROOT = Path(__file__).resolve().parent.parent
 BRANCH = 'downstream/patch-build'
@@ -26,13 +27,17 @@ TIMEOUT = 4 * 60 * 60
 
 
 
-def command(args, *, capture=True):
-    return subprocess.run(args, cwd=ROOT, check=True, text=True,
-                          stdout=subprocess.PIPE if capture else None).stdout
+def command(args, *, capture=True, deadline=None):
+    return release_network.run(args, cwd=ROOT, capture=capture, deadline=deadline)
 
 
-def git(*args):
-    return command(['git', *args]).strip()
+def git(*args, deadline=None):
+    if args and args[0] == 'ls-remote':
+        return command(['git', *args], deadline=deadline).strip()
+    if args and args[0] == 'push':
+        return release_network.run_once(['git', *args], cwd=ROOT).strip()
+    return subprocess.run(['git', *args], cwd=ROOT, check=True, text=True,
+                          stdout=subprocess.PIPE).stdout.strip()
 
 
 def find_dotnet_sdk():
@@ -76,13 +81,19 @@ def preflight():
     print('Native UI tests and platform packaging remain Release workflow checks; '
           'other platforms are not validated locally.', flush=True)
     dotnet, dotnet_env = find_dotnet_sdk()
+    dotnet_env.update({'NUGET_ENHANCED_MAX_NETWORK_TRY_COUNT': '6',
+                       'NUGET_ENHANCED_NETWORK_RETRY_DELAY_MILLISECONDS': '1000',
+                       'NUGET_MAX_RETRY_AFTER_DELAY_SECONDS': '10'})
     try:
         with tempfile.TemporaryDirectory(prefix='agent-speed-release-') as temp:
             tree = Path(temp) / 'source'
             subprocess.run([sys.executable, str(ROOT / 'downstream/manage.py'), 'prepare', str(tree)],
                            cwd=ROOT, check=True)
+            release_network.run([dotnet, 'restore', 'windows/AgentSpeed.slnx',
+                                 '-p:EnableWindowsTargeting=true'], cwd=tree,
+                                capture=False, timeout=1800, env=dotnet_env)
             subprocess.run([dotnet, 'build', 'windows/AgentSpeed.slnx', '-c', 'Release',
-                            '-p:EnableWindowsTargeting=true'], cwd=tree, check=True, env=dotnet_env)
+                            '--no-restore', '-p:EnableWindowsTargeting=true'], cwd=tree, check=True, env=dotnet_env)
             subprocess.run([dotnet, 'test', 'windows/tests/AgentSpeed.Core.Tests', '-c', 'Release',
                             '-f', 'net10.0', '--no-build', '--filter',
                             'FullyQualifiedName=AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart'],
@@ -96,7 +107,7 @@ def preflight():
                 googletest = Path('/usr/src/googletest')
                 if (googletest / 'CMakeLists.txt').is_file():
                     configure.append(f'-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST={googletest}')
-                subprocess.run(configure, cwd=tree, check=True)
+                release_network.run(configure, cwd=tree, capture=False, timeout=300)
                 subprocess.run(['cmake', '--build', str(build), '--parallel', '2'], cwd=tree, check=True)
                 subprocess.run(['ctest', '--test-dir', str(build), '--output-on-failure'], cwd=tree, check=True)
             else:
@@ -111,18 +122,19 @@ def check_checkout(commit):
         raise RuntimeError('local branch, HEAD or working tree changed during release')
 
 
-def api(path, method='GET'):
+def api(path, method='GET', *, deadline=None):
     args = [GH, 'api', '--method', method, '-H', 'Accept: application/vnd.github+json', path]
-    output = command(args)
+    output = (command(args, deadline=deadline) if method == 'GET' else
+              release_network.run_once(args, cwd=ROOT, deadline=deadline))
     return json.loads(output) if output and output.strip() else None
 
 
-def pages(path, key=None):
+def pages(path, key=None, *, deadline=None):
     result = []
     page = 1
     while True:
         separator = '&' if '?' in path else '?'
-        value = api(f'{path}{separator}per_page=100&page={page}')
+        value = api(f'{path}{separator}per_page=100&page={page}', deadline=deadline)
         batch = value[key] if key else value
         if not isinstance(batch, list):
             raise RuntimeError(f'invalid API response for {path}')
@@ -132,8 +144,8 @@ def pages(path, key=None):
         page += 1
 
 
-def releases():
-    return pages(f'repos/{REPO}/releases')
+def releases(*, deadline=None):
+    return pages(f'repos/{REPO}/releases', deadline=deadline)
 
 
 def select(rels, version):
@@ -173,47 +185,111 @@ def check_baseline():
               'To upgrade, manually migrate the baseline and patch queue before releasing.', file=sys.stderr)
     return config['upstream_version']
 
-def remote_ref(ref):
-    output = git('ls-remote', '--refs', 'origin', ref)
+def remote_ref(ref, *, deadline=None):
+    output = (git('ls-remote', '--refs', 'origin', ref, deadline=deadline) if deadline is not None
+              else git('ls-remote', '--refs', 'origin', ref))
     rows = [line.split() for line in output.splitlines() if line]
     if len(rows) > 1 or (rows and rows[0][1] != ref):
         raise RuntimeError(f'ambiguous remote ref {ref}')
     return rows[0][0] if rows else None
 
 
-def runs(tag):
-    return pages(f'repos/{REPO}/actions/workflows/release.yml/runs?branch={quote(tag, safe="")}&event=push', 'workflow_runs')
-
+def runs(tag, *, deadline=None):
+    return pages(f'repos/{REPO}/actions/workflows/release.yml/runs?branch={quote(tag, safe="")}&event=push', 'workflow_runs', deadline=deadline)
 
 def cancel_and_wait(tag):
     deadline = time.monotonic() + 600
     while True:
-        active = [r for r in runs(tag) if r['status'] != 'completed' and r['head_branch'] == tag]
+        active = [r for r in runs(tag, deadline=deadline) if r['status'] != 'completed' and r['head_branch'] == tag]
         if not active:
             return
         for run in active:
-            api(f"repos/{REPO}/actions/runs/{run['id']}/cancel", 'POST')
+            attempted = False
+            def cancel():
+                nonlocal attempted
+                if attempted:
+                    ensure_unpublished(tag, deadline=deadline)
+                    current = api(f"repos/{REPO}/actions/runs/{run['id']}", deadline=deadline)
+                    if current['status'] in ('completed', 'cancelled', 'cancelling'):
+                        return
+                attempted = True
+                api(f"repos/{REPO}/actions/runs/{run['id']}/cancel", 'POST', deadline=deadline)
+            try:
+                release_network.retry(cancel, label=f"cancel run {run['id']}", deadline=deadline)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                if not release_network.is_transient(exc):
+                    raise
+                ensure_unpublished(tag, deadline=deadline)
+                current = api(f"repos/{REPO}/actions/runs/{run['id']}", deadline=deadline)
+                if current['status'] not in ('completed', 'cancelled', 'cancelling'):
+                    raise
         for run in active:
             while True:
-                current = api(f"repos/{REPO}/actions/runs/{run['id']}")
+                current = api(f"repos/{REPO}/actions/runs/{run['id']}", deadline=deadline)
                 if current['status'] == 'completed':
                     break
                 if time.monotonic() >= deadline:
                     raise RuntimeError('timed out waiting for old release runs to terminate')
-                time.sleep(5)
+                time.sleep(min(5, max(0, deadline - time.monotonic())))
         if time.monotonic() >= deadline:
             raise RuntimeError('timed out cancelling old release runs')
 
 
-def target_release(tag):
-    found = [r for r in releases() if r['tag_name'] == tag]
+def delete_draft(tag, draft_id, old_tag, version):
+    attempted = False
+    def delete():
+        nonlocal attempted
+        fresh = ensure_unpublished(tag)
+        if fresh is None:
+            if attempted and select(releases(), version) == tag and remote_ref('refs/tags/' + tag) == old_tag:
+                return
+            raise RuntimeError('candidate draft disappeared before deletion')
+        if fresh['id'] != draft_id or select(releases(), version) != tag or remote_ref('refs/tags/' + tag) != old_tag:
+            raise RuntimeError('candidate release or tag changed before draft deletion')
+        attempted = True
+        api(f'repos/{REPO}/releases/{draft_id}', 'DELETE')
+    try:
+        release_network.retry(delete, label=f'delete draft {draft_id}')
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        if not release_network.is_transient(exc):
+            raise
+        if (ensure_unpublished(tag) is not None or select(releases(), version) != tag
+                or remote_ref('refs/tags/' + tag) != old_tag):
+            raise
+
+
+def push_tag(tag, expected, desired, branch_sha):
+    ref = 'refs/tags/' + tag
+    attempted = False
+    def push():
+        nonlocal attempted
+        ensure_unpublished(tag)
+        actual = remote_ref(ref)
+        if attempted and actual == desired and remote_ref('refs/heads/' + BRANCH) == branch_sha:
+            return
+        if actual != expected or remote_ref('refs/heads/' + BRANCH) != branch_sha:
+            raise RuntimeError('branch or candidate tag changed before tag push')
+        attempted = True
+        git('push', f'--force-with-lease={ref}:{expected or ""}', 'origin', f'{desired or ""}:{ref}')
+    try:
+        release_network.retry(push, label=f'push {ref}')
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        if not release_network.is_transient(exc):
+            raise
+        ensure_unpublished(tag)
+        if remote_ref(ref) != desired or remote_ref('refs/heads/' + BRANCH) != branch_sha:
+            raise
+
+
+def target_release(tag, *, deadline=None):
+    found = [r for r in releases(deadline=deadline) if r['tag_name'] == tag]
     if len(found) > 1:
         raise RuntimeError(f'multiple releases for {tag}; refusing to proceed')
     return found[0] if found else None
 
 
-def ensure_unpublished(tag):
-    r = target_release(tag)
+def ensure_unpublished(tag, *, deadline=None):
+    r = target_release(tag, deadline=deadline)
     if r and (not r['draft'] or r.get('published_at')):
         raise RuntimeError(f'{tag} already has a non-draft release; it is immutable')
     return r
@@ -323,36 +399,38 @@ class ProgressDisplay:
         self.previous = {key: signature for key, signature, *_ in rows}
 
 
-def watch(tag, sha, old_ids):
-    started = time.monotonic()
-    deadline = started + TIMEOUT
+def watch(tag, sha, old_ids, *, resume_id=None, deadline=None):
+    deadline = deadline or time.monotonic() + TIMEOUT
     print(f'Waiting for GitHub Actions Release run for {tag}...', flush=True)
-    run_id = None
+    run_id = resume_id
     announced = False
     display = ProgressDisplay()
     while time.monotonic() < deadline:
-        matching = [r for r in runs(tag) if r['id'] not in old_ids and r['head_branch'] == tag and r['head_sha'] == sha]
+        matching = ([api(f'repos/{REPO}/actions/runs/{resume_id}', deadline=deadline)] if resume_id is not None else
+                    [r for r in runs(tag, deadline=deadline) if r['id'] not in old_ids and r['head_branch'] == tag and r['head_sha'] == sha])
         if len(matching) > 1:
             raise RuntimeError('multiple new release runs found; inspect Actions manually')
         if matching:
             run = matching[0]
+            if resume_id is not None:
+                validate_run(run, resume_id, tag, sha)
             if run_id is not None and run_id != run['id']:
                 raise RuntimeError('release run changed while watching')
             run_id = run['id']
             if not announced:
                 print(f"Found Release run {run_id}: {run.get('html_url') or f'https://github.com/{REPO}/actions/runs/{run_id}'}", flush=True)
                 announced = True
-            jobs = pages(f'repos/{REPO}/actions/runs/{run_id}/jobs', 'jobs')
+            jobs = pages(f'repos/{REPO}/actions/runs/{run_id}/jobs', 'jobs', deadline=deadline)
             display.update(jobs)
             if run['status'] == 'completed':
                 if run['conclusion'] != 'success':
                     raise RuntimeError(f"Release run {run_id} ended: {progress_status(run)}")
-                r = target_release(tag)
+                r = target_release(tag, deadline=deadline)
                 if not r or r['draft'] or r['prerelease']:
                     raise RuntimeError('workflow succeeded but no formal published release exists')
-                if remote_ref('refs/tags/' + tag) != sha:
+                if remote_ref('refs/tags/' + tag, deadline=deadline) != sha:
                     raise RuntimeError('published tag no longer matches the release commit')
-                assets = pages(f"repos/{REPO}/releases/{r['id']}/assets")
+                assets = pages(f"repos/{REPO}/releases/{r['id']}/assets", deadline=deadline)
                 names = {a['name'] for a in assets if a.get('state') == 'uploaded' and a.get('size', 0) > 0}
                 missing = assets_expected(tag[1:]) - names
                 if missing:
@@ -361,14 +439,41 @@ def watch(tag, sha, old_ids):
                 return
         else:
             display.update([])
-        time.sleep(10)
+        time.sleep(min(10, max(0, deadline - time.monotonic())))
     raise RuntimeError('timed out watching the Release workflow; inspect Actions before retrying')
+
+
+def validate_run(run, run_id, tag=None, sha=None):
+    actual_tag, actual_sha = run.get('head_branch'), run.get('head_sha')
+    if (run.get('id') != run_id or run.get('event') != 'push'
+            or run.get('path', '').split('@', 1)[0] != '.github/workflows/release.yml'
+            or run.get('repository', {}).get('full_name', '').lower() != REPO.lower()
+            or not isinstance(actual_tag, str)
+            or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+-fork\.[1-9][0-9]*', actual_tag)
+            or not isinstance(actual_sha, str) or not re.fullmatch(r'[0-9a-f]{40}', actual_sha)
+            or (tag is not None and actual_tag != tag) or (sha is not None and actual_sha != sha)):
+        raise RuntimeError('run is not the requested repository Release tag push')
+    return actual_tag, actual_sha
+
+
+def resume(run_id):
+    deadline = time.monotonic() + TIMEOUT
+    run = api(f'repos/{REPO}/actions/runs/{run_id}', deadline=deadline)
+    tag, sha = validate_run(run, run_id)
+    watch(tag, sha, set(), resume_id=run_id, deadline=deadline)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--plan', action='store_true', help='query and print the next candidate without changing anything')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--plan', action='store_true', help='query and print the next candidate without changing anything')
+    mode.add_argument('--resume', type=int, metavar='RUN_ID', help='read-only observation of an existing Release run')
     args = parser.parse_args()
+    if args.resume is not None:
+        if args.resume <= 0:
+            parser.error('RUN_ID must be positive')
+        resume(args.resume)
+        return
     common = Path(git('rev-parse', '--git-common-dir'))
     if not common.is_absolute():
         common = ROOT / common
@@ -406,19 +511,11 @@ def main():
         if remote_ref(branch_ref) != current or remote_ref('refs/tags/' + tag) != old_tag:
             raise RuntimeError('branch or candidate tag changed during planning')
         if draft:
-            fresh = ensure_unpublished(tag)
-            if not fresh or fresh['id'] != draft['id']:
-                raise RuntimeError('candidate draft changed before deletion')
-            if select(releases(), version) != tag or remote_ref('refs/tags/' + tag) != old_tag:
-                raise RuntimeError('candidate release or tag changed before draft deletion')
-            fresh = ensure_unpublished(tag)
-            if not fresh or fresh['id'] != draft['id']:
-                raise RuntimeError('candidate draft changed before deletion')
-            api(f"repos/{REPO}/releases/{draft['id']}", 'DELETE')
+            delete_draft(tag, draft['id'], old_tag, version)
         # Recheck after cancellation and draft deletion, before the destructive tag operation.
         ensure_unpublished(tag)
         if old_tag:
-            git('push', f'--force-with-lease=refs/tags/{tag}:{old_tag}', 'origin', f':refs/tags/{tag}')
+            push_tag(tag, old_tag, None, current)
         if local_tag:
             git('tag', '-d', tag)
         if remote_ref(branch_ref) != current:
@@ -430,12 +527,15 @@ def main():
         check_checkout(current)
         if remote_ref(branch_ref) != current:
             raise RuntimeError('remote branch changed before tagging')
-        git('push', f'--force-with-lease=refs/tags/{tag}:', 'origin', f'{current}:refs/tags/{tag}')
+        push_tag(tag, None, current, current)
         watch(tag, current, old_ids)
 
 if __name__ == '__main__':
     try:
         main()
-    except (RuntimeError, ValueError, KeyError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+    except (RuntimeError, ValueError, KeyError, OSError, subprocess.CalledProcessError,
+            subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
         print(f'release: {exc}', file=sys.stderr)
+        if getattr(exc, 'stderr', None):
+            print(exc.stderr, file=sys.stderr, end='' if exc.stderr.endswith('\n') else '\n')
         sys.exit(1)
