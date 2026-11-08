@@ -40,6 +40,22 @@ class CollectorZipTests(unittest.TestCase):
     def test_valid_collector(self):
         self.check_archive(MEMBER, 0o755, expected_success=True)
 
+    def test_windows_collector_identity_and_duplicates(self):
+        member = 'collectors/linux-x86_64/agent-speed-collector'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = root / 'collector'
+            expected.write_bytes(b'collector')
+            archive = root / 'app.zip'
+            for entries, succeeds in [([b'collector'], True), ([b'other'], False),
+                                     ([], False), ([b'collector', b'collector'], False)]:
+                with zipfile.ZipFile(archive, 'w') as zipped:
+                    for payload in entries:
+                        zipped.writestr(member, payload)
+                result = subprocess.run([sys.executable, str(SCRIPT), '--windows', str(archive), str(expected)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.assertEqual(result.returncode == 0, succeeds, result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

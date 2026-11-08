@@ -1,4 +1,4 @@
-From c452048d94cf3fbf3a98c1a2a9f50b95b2e7b209 Mon Sep 17 00:00:00 2001
+From 47736041cbc6539059020953aae239a11557c6d3 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:28 +0800
 Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
@@ -42,7 +42,7 @@ Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
  .../src/AgentSpeed/History/HistoryWindow.xaml |   4 +
  windows/src/AgentSpeed/Orb/OrbManager.cs      |   4 +-
  .../Services/RemoteConnectionManager.cs       | 231 ++++++++++++++++++
- .../AgentSpeed/Services/RemoteSshWorker.cs    | 203 +++++++++++++++
+ .../AgentSpeed/Services/RemoteSshWorker.cs    | 228 +++++++++++++++++
  .../Settings/Pages/SourcesPage.xaml           |  26 ++
  .../AgentSpeed/Settings/SettingsViewModel.cs  | 157 ++++++++++++
  .../src/AgentSpeed/Updates/ExecutableSwap.cs  |  49 +++-
@@ -56,7 +56,7 @@ Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
  .../UpdatePackageTests.cs                     |  45 +++-
  .../UpdateScheduleTests.cs                    |  48 ++--
  .../UpdateSourceTests.cs                      |   2 +-
- 52 files changed, 2190 insertions(+), 183 deletions(-)
+ 52 files changed, 2215 insertions(+), 183 deletions(-)
  create mode 100644 linux/app/src/update_release.hpp
  create mode 100644 linux/tests/update_release_test.cpp
  create mode 100644 windows/src/AgentSpeed.Core/RemoteAggregation.cs
@@ -2208,11 +2208,12 @@ index 00000000..67b73d1b
 +}
 diff --git a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
 new file mode 100644
-index 00000000..7808904e
+index 00000000..f22b39ae
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,228 @@
 +using System.Diagnostics;
++using System.Security.Cryptography;
 +using System.Text;
 +using System.Text.Json;
 +using AgentSpeed.Presentation.Settings;
@@ -2222,8 +2223,30 @@ index 00000000..7808904e
 +/// <summary>Runs the bundled Linux collector over the user's OpenSSH configuration.</summary>
 +public sealed class RemoteSshWorker
 +{
-+    private const string UploadCommand = "umask 077; mkdir -p ~/.cache/agent-speed && f=~/.cache/agent-speed/collector-$$ && cat > \"$f\" && chmod 700 \"$f\" && mv -f \"$f\" ~/.cache/agent-speed/collector";
-+    private const string CollectorCommand = "exec ~/.cache/agent-speed/collector";
++    private static string UploadCommand(string digest) => $$"""
++        set -eu
++        umask 077
++        [ ! -L "$HOME" ] && [ -d "$HOME" ] && [ -O "$HOME" ] && [ -z "$(find "$HOME" -maxdepth 0 -perm /022 -print)" ] || { echo 'Unsafe home directory' >&2; exit 1; }
++        c="$HOME/.cache"; d="$c/agent-speed"
++        mkdir -p "$c"
++        [ ! -L "$c" ] && [ -d "$c" ] && [ -O "$c" ] && [ -z "$(find "$c" -maxdepth 0 -perm /022 -print)" ] || { echo 'Unsafe cache directory' >&2; exit 1; }
++        mkdir -p "$d"
++        [ ! -L "$d" ] && [ -d "$d" ] && [ -O "$d" ] && [ -z "$(find "$d" -maxdepth 0 -perm /077 -print)" ] || { echo 'Unsafe collector directory' >&2; exit 1; }
++        exec 9<"$d"; flock -x 9
++        f="$d/collector-v2-{{digest}}"
++        t=$(mktemp "$d/.collector-v2.XXXXXXXXXX")
++        trap 'rm -f -- "$t"' EXIT HUP INT TERM
++        cat > "$t"
++        [ "$(sha256sum "$t" | cut -d ' ' -f 1)" = '{{digest}}' ] || { echo 'Collector upload digest mismatch' >&2; exit 1; }
++        chmod 700 "$t"
++        ln "$t" "$f" 2>/dev/null || :
++        rm -f -- "$t"
++        [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ] && [ "$(stat -c '%a:%h' "$f")" = '700:1' ] && [ "$(sha256sum "$f" | cut -d ' ' -f 1)" = '{{digest}}' ] || { echo 'Unsafe or conflicting collector asset' >&2; exit 1; }
++        t=$(mktemp "$d/.collector-v2.XXXXXXXXXX")
++        "$f" --identity > "$t"
++        printf 'shared-collector-v2 {{digest}}\n' | cmp -s - "$t" || { echo 'Collector identity mismatch' >&2; exit 1; }
++        """;
++    private static string CollectorCommand(string digest) => $"exec \"$HOME/.cache/agent-speed/collector-v2-{digest}\"";
 +    private const int MaxLineBytes = 4_194_304;
 +    private readonly string destination;
 +    private readonly object gate = new();
@@ -2323,6 +2346,7 @@ index 00000000..7808904e
 +        {
 +            if (!new RemoteHost(Guid.Empty, "", destination, false).ValidDestination)
 +                throw new IOException("Invalid SSH destination");
++            string digest;
 +            var probe = Launch("uname -m");
 +            try
 +            {
@@ -2333,12 +2357,13 @@ index 00000000..7808904e
 +                var arch = architecture switch { "x86_64" => "x86_64", "aarch64" or "arm64" => "aarch64", _ => throw new IOException("Unsupported remote architecture") };
 +                var path = Path.Combine(AppContext.BaseDirectory, "collectors", "linux-" + arch, "agent-speed-collector");
 +                if (!File.Exists(path)) throw new IOException($"Linux collector for {arch} is missing from this application");
-+                var upload = Launch(UploadCommand);
++                var binary = await File.ReadAllBytesAsync(path).ConfigureAwait(false);
++                digest = Convert.ToHexString(SHA256.HashData(binary)).ToLowerInvariant();
++                var upload = Launch(UploadCommand(digest));
 +                try
 +                {
 +                    var drain = upload.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
-+                    await using (var binary = File.OpenRead(path))
-+                        await binary.CopyToAsync(upload.StandardInput.BaseStream).ConfigureAwait(false);
++                    await upload.StandardInput.BaseStream.WriteAsync(binary).ConfigureAwait(false);
 +                    upload.StandardInput.Close();
 +                    await drain.ConfigureAwait(false);
 +                    await upload.WaitForExitAsync().ConfigureAwait(false);
@@ -2347,7 +2372,7 @@ index 00000000..7808904e
 +                finally { await CleanupAsync(upload).ConfigureAwait(false); }
 +            }
 +            finally { await CleanupAsync(probe).ConfigureAwait(false); }
-+            var collector = Launch(CollectorCommand);
++            var collector = Launch(CollectorCommand(digest));
 +            try
 +            {
 +                lock (gate) { if (!stopped) collectorInput = collector.StandardInput; }

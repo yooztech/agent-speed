@@ -1,4 +1,4 @@
-From aed3359fd58a4b602e7a6024e2ca7a04ddc1894c Mon Sep 17 00:00:00 2001
+From 3c39982dc9625318dd5125e9ff64e827b27de4c7 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Thu, 5 Nov 2026 18:34:56 +0800
 Subject: [PATCH 07/15] Clear restored traffic ledger before first sample

@@ -1,13 +1,15 @@
-From ed8be9afec73a24d87033c7792c090d194140ada Mon Sep 17 00:00:00 2001
+From 39259340c06f57fbd4f116aba2a4a3bc6ac41874 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 15/15] Integrate remote network traffic by host and source
 
 ---
  README.md                                     |   2 +
- linux/collector/main.cpp                      |   6 +-
+ linux/collector/daemon.cpp                    |   2 +-
  linux/collector/protocol.cpp                  |  46 +++++-
  linux/collector/protocol.hpp                  |   3 +-
+ linux/collector/sampling.cpp                  |   2 +-
+ linux/collector/sampling.hpp                  |   1 +
  linux/core/include/agentspeed/monitor.hpp     |   1 +
  .../include/agentspeed/traffic_service.hpp    |   1 +
  linux/core/src/traffic.cpp                    |  11 +-
@@ -45,16 +47,16 @@ Subject: [PATCH 15/15] Integrate remote network traffic by host and source
  .../HistoryTrafficTests.cs                    |  33 ++++
  .../RemoteHistoryCsvTests.cs                  |  37 +++++
  .../TrafficSurfaceTests.cs                    |  54 ++++++
- 41 files changed, 1001 insertions(+), 95 deletions(-)
+ 43 files changed, 1000 insertions(+), 95 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteTraffic.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
  create mode 100644 windows/src/AgentSpeed.Core/RemoteTraffic.cs
 
 diff --git a/README.md b/README.md
-index ebeefbfb..1d424596 100644
+index 0968b8a2..bb06b6af 100644
 --- a/README.md
 +++ b/README.md
-@@ -144,6 +144,8 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
+@@ -153,6 +153,8 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
  Remote sources and agents appear alongside local sources in the native dashboard and history when available. Remote
  data does not include categorized today's token totals, project paths or a continuous live chart; unavailable
  values, including missing price data, remain unknown. Network traffic is reported when the collector can observe it.
@@ -63,38 +65,19 @@ index ebeefbfb..1d424596 100644
  History is aggregated in the viewer's time zone, requested by
  the client from the collector. Partial log reads are marked as potentially incomplete. Supported collectors provide
  remote performance scores and host-specific baselines, plus real daily performance history from analyzed logs. A
-diff --git a/linux/collector/main.cpp b/linux/collector/main.cpp
-index 4048ce12..1245d5a2 100644
---- a/linux/collector/main.cpp
-+++ b/linux/collector/main.cpp
-@@ -161,7 +161,7 @@ int main(int argc, char**) {
-                 }
+diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
+index adab3b4d..d7107cc1 100644
+--- a/linux/collector/daemon.cpp
++++ b/linux/collector/daemon.cpp
+@@ -221,7 +221,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+             sampler.poll(now);
+             for (auto& [fd, c] : clients) if (c.handshaken && !c.dead) {
+                 auto sample = sampler.sample(now, c.view);
+-                enqueue(c, protocol.snapshot(sample.snapshot, c.view.name, c.view.zone), true);
++                enqueue(c, protocol.snapshot(sample.snapshot, c.view.name, c.view.zone, sample.traffic), true);
+                 auto history = sampler.history(c.view);
+                 if (!history.empty() && history != c.lastHistory) { c.lastHistory = history; enqueue(c, std::move(history), false, true); }
              }
-         };
--        emit(protocol.snapshot(monitor->snapshot(now, todayStart(now))));
-+        emit(protocol.snapshot(monitor->snapshot(now, todayStart(now)), std::nullopt, nullptr, monitor->trafficHistory()));
-         std::thread history([&] {
-             try {
-                 const char* home = std::getenv("HOME");
-@@ -238,7 +238,9 @@ int main(int argc, char**) {
-             }
-             const auto start = zone ? todayStart(now, *zone) : todayStart(now);
-             if (monitorGeneration != generation) {
-+                auto trafficHistory = monitor->trafficHistory();
-                 monitor = std::make_unique<agentspeed::Monitor>(config);
-+                monitor->restoreTraffic(trafficHistory);
-                 monitor->start(now, start);
-                 monitorGeneration = generation;
-             } else {
-@@ -248,7 +250,7 @@ int main(int argc, char**) {
-                 std::lock_guard lock(zoneMutex);
-                 monitor->setPerfBaselines(baselines);
-             }
--            emit(protocol.snapshot(monitor->snapshot(now, start), name, zone));
-+            emit(protocol.snapshot(monitor->snapshot(now, start), name, zone, monitor->trafficHistory()));
-             for (const auto& event : monitor->takeCompletions()) emit(collector::Protocol::completion(event));
-         }
-         stopping = true;
 diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
 index 59392499..8b946cce 100644
 --- a/linux/collector/protocol.cpp
@@ -180,6 +163,31 @@ index 9ea0c9d4..14e5ef65 100644
      static std::string history(const std::vector<agentspeed::history::DailyUsage>& days, const agentspeed::history::Report& report,
                                 const std::optional<std::string>& timezone = std::nullopt,
                                 const std::vector<agentspeed::perf::DayRecord>& perfRecords = {});
+diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
+index cb3dabde..8fef2b41 100644
+--- a/linux/collector/sampling.cpp
++++ b/linux/collector/sampling.cpp
+@@ -240,7 +240,7 @@ void Sampler::poll(std::int64_t now) {
+ Sample Sampler::sample(std::int64_t now, const View& view) {
+     impl_->registerView(view);
+     const auto zone = view.name ? view.zone : impl_->localZone();
+-    return {impl_->monitor.snapshot(now, dayStart(now, zone))};
++    return {impl_->monitor.snapshot(now, dayStart(now, zone)), impl_->monitor.trafficHistory()};
+ }
+ 
+ std::string Sampler::history(const View& view) {
+diff --git a/linux/collector/sampling.hpp b/linux/collector/sampling.hpp
+index 375f5f8f..3ab7964b 100644
+--- a/linux/collector/sampling.hpp
++++ b/linux/collector/sampling.hpp
+@@ -18,6 +18,7 @@ struct View {
+ 
+ struct Sample {
+     agentspeed::Snapshot snapshot;
++    std::vector<agentspeed::traffic::HistoryRow> traffic;
+ };
+ 
+ // All public methods are called by the collection thread. History analysis runs in the background.
 diff --git a/linux/core/include/agentspeed/monitor.hpp b/linux/core/include/agentspeed/monitor.hpp
 index 5e791bd8..6c7636c4 100644
 --- a/linux/core/include/agentspeed/monitor.hpp
@@ -346,10 +354,10 @@ index a3ee4ecf..9cc19883 100644
      func setOrbsVisible(_ visible: Bool)
      func resetOrbPosition(_ id: String)
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index 4d69ef88..31588eb8 100644
+index a397855e..e7733308 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-@@ -189,6 +189,7 @@ struct RemoteMessage: Decodable, Sendable {
+@@ -190,6 +190,7 @@ struct RemoteMessage: Decodable, Sendable {
      let todayUnpricedRequests: Int?
      let partialHistory: Bool?
      let sources: [RemoteSource]?
@@ -357,7 +365,7 @@ index 4d69ef88..31588eb8 100644
      let todayRequests: Int?
      let todayAverage: Double?
      let liveOutput: Double?
-@@ -234,9 +235,18 @@ struct RemoteHostState {
+@@ -235,9 +236,18 @@ struct RemoteHostState {
      var completions: [RemoteCompletion] = []
      var error: String?
      var seenCompletionIDs: Set<String> = []
@@ -886,10 +894,10 @@ index 00000000..fdaa60b8
 +    }
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 744c0312..c3b1abce 100644
+index af8abf99..bfeff804 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
-@@ -238,8 +238,8 @@ and outputs, and absolute working paths do not. SSH credentials are not embedded
+@@ -240,8 +240,8 @@ and outputs, and absolute working paths do not. SSH credentials are not embedded
  Protocol v1 may include optional source summaries, agent mode details, today boundaries and cost, and history
  aggregates. Missing live rates, peaks and history costs are unknown (`null`), not zero. Timestamps use Unix
  milliseconds; history days are aggregated in the viewer's time zone requested by the client, and `measured_ms` is a
@@ -900,7 +908,7 @@ index 744c0312..c3b1abce 100644
  After the client requests its time zone, `today_day`, `today_start_ms` and snapshot today totals use that zone;
  `today_day` is in `YYYY-MM-DD` form or null if conversion fails. Untagged or null-zone snapshots retain collector-local
  compatibility behavior. Snapshot and history frames identify their aggregation time zone; history from an older
-@@ -247,6 +247,28 @@ collector without a matching time-zone tag must not be presented as viewer-local
+@@ -249,6 +249,28 @@ collector without a matching time-zone tag must not be presented as viewer-local
  can be measured or live data is incomplete. If global live data is incomplete, each source's live rates and estimated
  share are also null.
  

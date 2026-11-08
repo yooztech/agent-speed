@@ -6,6 +6,10 @@
         "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote -j2 && ctest --test-dir build-remote --output-on-failure"
       },
       {
+        "platform": "linux",
+        "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote --target agentspeed_tests -j2 && build-remote/tests/agentspeed_tests --gtest_filter='DaemonProcessTest.*:CollectorPublisher.*'"
+      },
+      {
         "platform": "macos",
         "run": "cd macos && swift test"
       }
@@ -203,6 +207,10 @@
       {
         "platform": "linux",
         "run": "cmake -S linux -B build-remote && cmake --build build-remote --target agentspeed_tests -j2 && build-remote/tests/agentspeed_tests --gtest_filter='CollectorProtocol.*:CollectorIntegration.*:Engine.TodayMeasuredTotalsUseFinalValidWidenedIntervals'"
+      },
+      {
+        "platform": "linux",
+        "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote --target agentspeed_tests -j2 && build-remote/tests/agentspeed_tests --gtest_filter='SharedHistory.*:CollectorSampler.*'"
       },
       {
         "platform": "macos",

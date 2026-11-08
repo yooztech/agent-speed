@@ -1,4 +1,4 @@
-From 27dd786888cc7da892473816efd75b2b0af00d0b Mon Sep 17 00:00:00 2001
+From b3519d5c3a94e5aa14d1127ff5bb5f8d186b3f62 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:50:08 +0800
 Subject: [PATCH 11/15] Select orb sources independently by host
@@ -292,10 +292,10 @@ index caace5c7..70de1127 100644
          }
      }
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index cd5e8a66..836af188 100644
+index b7e6cd93..a7502800 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-@@ -196,7 +196,7 @@ final class RemoteHosts {
+@@ -197,7 +197,7 @@ final class RemoteHosts {
      @ObservationIgnored private var workers: [UUID: RemoteSSHWorker] = [:]
      @ObservationIgnored private var timezoneObserver: NSObjectProtocol?
      @ObservationIgnored private var reconnects: [UUID: Task<Void, Never>] = [:]
@@ -304,7 +304,7 @@ index cd5e8a66..836af188 100644
      @ObservationIgnored private var emittedCompletions: Set<String> = []
      private static let key = "remoteHosts.v1"
  
-@@ -265,12 +265,7 @@ final class RemoteHosts {
+@@ -266,12 +266,7 @@ final class RemoteHosts {
          guard let worker = workers[host.id], worker.token == event.token else { return }
          switch event.payload {
          case .message(let message):
@@ -318,7 +318,7 @@ index cd5e8a66..836af188 100644
          case .ended(let reason):
              workers.removeValue(forKey: host.id)
              states[host.id, default: RemoteHostState()].disconnected()
-@@ -283,6 +278,16 @@ final class RemoteHosts {
+@@ -284,6 +279,16 @@ final class RemoteHosts {
              }
          }
      }

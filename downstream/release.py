@@ -300,7 +300,9 @@ def assets_expected(version):
             'AgentSpeed-Windows-x64-Setup.exe', 'AgentSpeed-Windows-arm64-Setup.exe',
             'AgentSpeed-Linux-x86_64.AppImage', 'AgentSpeed-Linux-aarch64.AppImage',
             f'agent-speed_{version}_amd64.deb', f'agent-speed_{version}_arm64.deb',
-            'SHA256SUMS-Linux-x86_64.txt', 'SHA256SUMS-Linux-aarch64.txt', 'SHA256SUMS.txt'}
+            'SHA256SUMS-Linux-x86_64.txt', 'SHA256SUMS-Linux-aarch64.txt', 'SHA256SUMS.txt',
+            'agent-speed-collector-linux-x86_64', 'agent-speed-collector-linux-x86_64.sha256',
+            'agent-speed-collector-linux-x86_64.json'}
 
 
 def progress_status(item):

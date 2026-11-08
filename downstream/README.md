@@ -56,6 +56,16 @@ history gaps. Chart estimate indicators mean that the visible range contains
 estimated segments, not necessarily that the current rate is being estimated;
 omp does not provide per-token measurements.
 
+The current queue also contains the same-UID shared collector daemon and
+activity-scoped mobile relay publisher. Native callers use digest-addressed
+collector assets and an exact runtime identity handshake; conflicting running
+versions are rejected without killing other subscribers. The prepared tree's
+`docs/shared-collector.md` defines control v2, lease confirmation and upgrade
+rules. The [implementation handoff](../docs/remote-agent-monitoring-handoff.md#共享-collector-实施记录)
+records the local asset SHA, interface changes and actual isolated SSH/TLS
+verification. Those unpublished local assets and checks are not a Release,
+an upgrade of previously installed clients, or proof of APNs/iPhone delivery.
+
 The existing network traffic views also show supported remote Linux source
 traffic on macOS and Windows. The collector measures the SSH user's non-loopback
 TCP traffic using the existing traffic service; it requires no sudo. Traffic is
@@ -67,6 +77,79 @@ connection healthy. Connection errors include a bounded stderr tail and exit cod
 speed uses measured output and time, with each machine/source counted once; missing categorized totals remain unknown.
 Duplicate connections prefer current online history over stale history. An unavailable traffic sample has an unknown
 rate, distinct from the zero live rate of a disconnected host; last known totals remain visible when available.
+
+### Standalone collector release assets (unreleased)
+
+When formally released, the pipeline is intended to publish
+`agent-speed-collector-linux-x86_64`, the exact Linux x86_64 collector
+embedded in both Windows ZIPs and the macOS ZIP, plus
+`agent-speed-collector-linux-x86_64.sha256` and
+`agent-speed-collector-linux-x86_64.json`. The checksum file is a single
+`sha256sum` line naming the executable. `SHA256SUMS.txt` includes all three
+standalone assets as well as the other release assets, but not itself. The
+publisher checks the standalone checksum and compares it with each desktop ZIP
+before publishing. No separate collector build is performed.
+
+Consumers must resolve the GitHub latest release **once**, retain its immutable
+`tag_name`, and fetch all three exact asset names from that same release/tag;
+never resolve `latest` independently per download. Require a published release,
+all assets, metadata `format_version` 1, the exact resolved `release_tag`,
+`os` `linux`, `architecture` `x86_64`, and the supported protocol version 1.
+Require the single checksum entry to name the exact executable and verify its
+SHA-256 against both that entry and metadata `sha256` before installing or
+executing. Abort on missing, malformed, mismatched or unsupported data: do not
+fall back to older releases, legacy names, other architectures or unverified
+downloads. SHA-256 checks consistency, not authenticity: obtain release data
+over authenticated HTTPS from the intended repository and protect the trust
+channel. Published release assets must not be replaced.
+
+Resolve `https://api.github.com/repos/yooztech/agent-speed/releases/latest`
+once; download from
+`https://github.com/yooztech/agent-speed/releases/download/<tag>/<asset-name>`.
+The checksum format is `<64 lowercase hex characters>  agent-speed-collector-linux-x86_64\n`;
+after checking the exact filename, `sha256sum -c agent-speed-collector-linux-x86_64.sha256`
+verifies the executable in the download directory. Set executable permissions
+when installing the raw attachment; HTTP downloads do not preserve Unix mode.
+
+Metadata records the release tag, maintenance commit (which identifies the
+ordered patch queue), pinned upstream commit, protocol and observed ELF
+interpreter, shared libraries and version requirements from the Ubuntu 22.04
+build. These observations do not guarantee compatibility on another host;
+check the trusted executable with `python3 downstream/check-collector.py PATH`
+on the target. Only Linux x86_64 is packaged; no ARM64 compatibility is implied.
+
+The pending shared collector retains metadata `format_version` 1 and outer
+stdio NDJSON `protocol.version` 1. Its separate `protocol.shared_collector`
+descriptor records `control_version` 2, capabilities `live_activity_v2` and
+`shared_collector_v1`, and the `--identity` contract: the prefix
+`shared-collector-v2`, a space, the executable SHA-256, and a newline. The
+release build opts into identity verification only for its trusted production
+collector; packaging runs the staged executable and rejects a mismatching
+identity or digest. Identity is evidence of the trusted build's declared
+contract, not independent proof of functionality or authenticity. Packaging
+without this explicit opt-in does not claim shared capabilities. Consumers
+requiring shared control must reject missing or mismatched descriptors and must
+not infer compatibility with older clients or binaries. The formal patch queue
+and production build still need verification; no new release is claimed here.
+
+### Shared collector and activity relay (unreleased)
+
+The shared-daemon implementation belongs in the existing ordered application
+feature patches, not in this checkout's unpatched application source or a
+separate integration patch queue. Its protocol, security, lifecycle and build
+contract is `docs/shared-collector.md` in the prepared tree. Local verification
+and asset provenance are recorded in
+[the maintenance handoff](../docs/shared-collector-handoff.md). Mobile changes
+are implemented directly by the mobile project's integration owner; no mobile
+patch artifact is distributed from this repository.
+
+No Cloudflare deployment, Apple signing, APNs delivery, push, tag or release is
+performed by that local implementation. The existing mobile package and its
+legacy collector asset are not automatically migrated. All clients sharing a
+Unix account must adopt the versioned deployment and daemon identity handshake;
+already-shipped same-UID executables cannot be remotely constrained by the new
+daemon. Host logout/cgroup policy must permit detached processes; no root
+service or linger setting is installed.
 
 ### Remote parity corrections (unreleased)
 
@@ -262,14 +345,14 @@ instead of filtering a collection before `Assert.Single`.
 The current registry runs the Linux CMake build and CTest suite, and `swift
 test` on macOS. Linux needs a C++ toolchain, CMake, and the dependencies used
 by the Linux project; if `/usr/src/googletest` is present it is used instead of
-fetching GoogleTest. macOS needs Xcode and Swift. The registry currently has
-no Windows-specific commands; a Windows verification run therefore does not
-establish coverage of the remote-monitoring patch.
+fetching GoogleTest. macOS needs Xcode and Swift. The registry also contains
+Windows Core, Presentation and native-consumer commands; a Linux run does not
+establish native Windows/macOS UI or packaging coverage.
 
 For the headless Linux collector, build on a compatible target Linux host and
 architecture from the prepared tree with `macos/scripts/build-linux-collector.sh`.
 It requires CMake 3.22+, a C++20 compiler, pkg-config, and development libraries
-for zstd, Brotli, SQLite, ICU, and OpenSSL; Qt is not required. The resulting
+for zstd, Brotli, SQLite, ICU, OpenSSL and libcurl (`libcurl4-openssl-dev` on Ubuntu); Qt is not required. The resulting
 binary is dynamically linked and must match the target system's architecture
 and libraries. From the maintenance workspace,
 `python3 downstream/check-collector.py` reports host build prerequisites;

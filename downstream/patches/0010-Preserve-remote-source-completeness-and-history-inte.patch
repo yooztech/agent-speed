@@ -1,4 +1,4 @@
-From b33bb8fb3a859f061cdd0e21e2e33d92f8b9cf46 Mon Sep 17 00:00:00 2001
+From e97bb2159051cc2d24d4b6dbab2456e61ea9aa05 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:49:37 +0800
 Subject: [PATCH 10/15] Preserve remote source completeness and history

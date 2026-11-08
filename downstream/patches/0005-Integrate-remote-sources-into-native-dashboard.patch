@@ -1,4 +1,4 @@
-From 38c472a258e1a001aa534c07a90eb80a0df1b483 Mon Sep 17 00:00:00 2001
+From 1f24a6dafa5754f1a4b8eb162c191ab8f0ba7e3a Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:20 +0800
 Subject: [PATCH 05/15] Integrate remote sources into native dashboard
@@ -12,9 +12,11 @@ Subject: [PATCH 05/15] Integrate remote sources into native dashboard
  linux/core/include/agentspeed/engine.hpp      |   4 +
  .../core/include/agentspeed/monitor_store.hpp |   2 +
  linux/core/include/agentspeed/snapshot.hpp    |   8 +
+ linux/core/include/agentspeed/tz.hpp          |   4 +
  linux/core/src/engine.cpp                     |   3 +
  linux/core/src/history_analyzer.cpp           |   1 +
  linux/core/src/monitor_snapshot.cpp           |   6 +
+ linux/core/src/tz.cpp                         |  29 ++
  linux/tests/collector_integration_test.cpp    |  48 +++
  linux/tests/collector_test.cpp                | 116 +++++++
  linux/tests/engine_fixture_test.cpp           |  22 ++
@@ -22,7 +24,7 @@ Subject: [PATCH 05/15] Integrate remote sources into native dashboard
  macos/Sources/AgentSpeed/App/AppModel.swift   |  41 ++-
  .../AgentSpeed/App/Orbs/OrbRuntime.swift      |  19 +-
  .../AgentSpeed/App/Orbs/OrbsController.swift  |   9 +-
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  60 +++-
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  | 121 +++++++-
  .../AgentSpeed/App/RemoteSnapshot.swift       | 150 ++++++++-
  .../AgentSpeed/Board/Live/BoardRuntime.swift  |  12 +-
  .../Sources/AgentSpeed/Cost/CostDisplay.swift |  10 +
@@ -69,7 +71,7 @@ Subject: [PATCH 05/15] Integrate remote sources into native dashboard
  spec/DESIGN.md                                |  20 +-
  spec/METRICS.md                               |   5 +-
  spec/NETWORK.md                               |  19 +-
- 65 files changed, 1536 insertions(+), 639 deletions(-)
+ 67 files changed, 1623 insertions(+), 646 deletions(-)
  delete mode 100644 macos/Sources/AgentSpeed/Dashboard/RemoteDashboard.swift
  create mode 100644 macos/Sources/AgentSpeedCore/CombinedLiveHistory.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/LiveChartAvailabilityTests.swift
@@ -560,6 +562,21 @@ index 383702a1..4fa70e58 100644
      std::int64_t todayRequests = 0;
      std::optional<double> todayAverage;
      double peakToday = 0;
+diff --git a/linux/core/include/agentspeed/tz.hpp b/linux/core/include/agentspeed/tz.hpp
+index 7ae97c77..375a93f0 100644
+--- a/linux/core/include/agentspeed/tz.hpp
++++ b/linux/core/include/agentspeed/tz.hpp
+@@ -16,6 +16,10 @@ public:
+     // nullptr when the zone cannot be read.
+     static std::shared_ptr<const TimeZone> load(const std::string& id);
+     static std::shared_ptr<const TimeZone> utc();
++    // Stable representation of the parsed transitions and rules, for cache provenance.
++    std::string identity() const;
++    // Restore a timezone from persisted TZif bytes.
++    static std::shared_ptr<const TimeZone> fromData(const std::string& data);
+     // UTC offset in milliseconds at the instant (positive east of Greenwich).
+     std::int64_t offsetMs(std::int64_t unixMs) const;
+ 
 diff --git a/linux/core/src/engine.cpp b/linux/core/src/engine.cpp
 index 118ad88d..87f0a6f1 100644
 --- a/linux/core/src/engine.cpp
@@ -610,6 +627,51 @@ index 9462bbc1..90417d3f 100644
              row.todayRequests = stats.requests;
              row.todayCostMicroUsd = stats.costMicroUsd;
              row.unpricedRequests = stats.unpricedRequests;
+diff --git a/linux/core/src/tz.cpp b/linux/core/src/tz.cpp
+index 7779cf79..fbced75a 100644
+--- a/linux/core/src/tz.cpp
++++ b/linux/core/src/tz.cpp
+@@ -160,11 +160,40 @@ std::shared_ptr<const TimeZone> TimeZone::load(const std::string& id) {
+     std::ifstream in(path, std::ios::binary);
+     if (!in) return nullptr;
+     const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
++    return fromData(data);
++}
++
++std::shared_ptr<const TimeZone> TimeZone::fromData(const std::string& data) {
+     auto zone = std::make_shared<TimeZone>();
+     if (!parse(data, *zone)) return nullptr;
+     return zone;
+ }
+ 
++std::string TimeZone::identity() const {
++    // TZif may describe UTC with redundant transitions or a zero-offset footer.
++    if (std::all_of(offsets_.begin(), offsets_.end(), [](auto offset) { return offset == 0; }) &&
++        (!rule_ || (rule_->stdOffset == 0 && (!rule_->hasDst || rule_->dstOffset == 0)))) return "UTC";
++    std::string result = "tz1;";
++    const auto append = [&](auto value) { result += std::to_string(value); result += ';'; };
++    append(transitions_.size());
++    for (auto value : transitions_) append(value);
++    append(indices_.size());
++    for (auto value : indices_) append(value);
++    append(offsets_.size());
++    for (auto value : offsets_) append(value);
++    append(isDst_.size());
++    for (bool value : isDst_) append(value);
++    append(rule_.has_value());
++    if (rule_) {
++        append(rule_->stdOffset); append(rule_->dstOffset); append(rule_->hasDst);
++        const auto date = [&](const Rule::Date& d) {
++            append(static_cast<int>(d.kind)); append(d.month); append(d.week); append(d.day); append(d.timeSeconds);
++        };
++        date(rule_->start); date(rule_->end);
++    }
++    return result;
++}
++
+ bool TimeZone::parse(const std::string& d, TimeZone& z) {
+     auto header = [&](std::size_t at, std::int64_t counts[6]) {
+         if (d.size() < at + 44 || d.compare(at, 4, "TZif") != 0) return false;
 diff --git a/linux/tests/collector_integration_test.cpp b/linux/tests/collector_integration_test.cpp
 index 9a072c82..6eca14f2 100644
 --- a/linux/tests/collector_integration_test.cpp
@@ -1108,10 +1170,16 @@ index bef80ad6..caace5c7 100644
          loops.forEach { $0.cancel() }
          loops.removeAll()
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index 7a0c5215..cd5e8a66 100644
+index 7a0c5215..b7e6cd93 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-@@ -96,6 +96,9 @@ struct RemoteSource: Decodable, Sendable {
+@@ -1,4 +1,5 @@
+ import Foundation
++import CryptoKit
+ import Observation
+ import AgentSpeedCore
+ 
+@@ -96,6 +97,9 @@ struct RemoteSource: Decodable, Sendable {
      let todayInput: Int
      let todayOutput: Int
      let todayRequests: Int
@@ -1121,7 +1189,7 @@ index 7a0c5215..cd5e8a66 100644
      let todayCostMicroUsd: Int64?
      let unpricedRequests: Int?
  }
-@@ -104,8 +107,12 @@ struct RemoteMessage: Decodable, Sendable {
+@@ -104,8 +108,12 @@ struct RemoteMessage: Decodable, Sendable {
      let version: Int
      let type: String
      let nowMs: Double?
@@ -1134,7 +1202,7 @@ index 7a0c5215..cd5e8a66 100644
      let todayStartMs: Double?
      let todayDay: String?
      let peakToday: Double?
-@@ -122,6 +129,8 @@ struct RemoteMessage: Decodable, Sendable {
+@@ -122,6 +130,8 @@ struct RemoteMessage: Decodable, Sendable {
      let tools: Int?
      let agents: [RemoteAgent]?
      let days: [RemoteDay]?
@@ -1143,7 +1211,7 @@ index 7a0c5215..cd5e8a66 100644
      let partial: Bool?
      let source: String?
      let output: Int?
-@@ -145,6 +154,7 @@ struct RemoteCompletion: Identifiable {
+@@ -145,6 +155,7 @@ struct RemoteCompletion: Identifiable {
  struct RemoteHostState {
      var online = false
      var snapshot: RemoteMessage?
@@ -1151,7 +1219,7 @@ index 7a0c5215..cd5e8a66 100644
      var days: [RemoteDay] = []
      var historyPartial: Bool?
      var historyReceivedAt: Date?
-@@ -152,18 +162,20 @@ struct RemoteHostState {
+@@ -152,18 +163,20 @@ struct RemoteHostState {
      var historyReceivedOnConnection = false
      var completions: [RemoteCompletion] = []
      var error: String?
@@ -1174,7 +1242,7 @@ index 7a0c5215..cd5e8a66 100644
              completions.insert(RemoteCompletion(source: source, output: output, speed: message.speed), at: 0)
              if completions.count > 10 { completions.removeLast() }
          }
-@@ -182,7 +194,10 @@ final class RemoteHosts {
+@@ -182,7 +195,10 @@ final class RemoteHosts {
      private(set) var states: [UUID: RemoteHostState] = [:]
      @ObservationIgnored private let defaults: UserDefaults
      @ObservationIgnored private var workers: [UUID: RemoteSSHWorker] = [:]
@@ -1185,7 +1253,7 @@ index 7a0c5215..cd5e8a66 100644
      private static let key = "remoteHosts.v1"
  
      init(defaults: UserDefaults, states: [UUID: RemoteHostState] = [:]) {
-@@ -191,10 +206,26 @@ final class RemoteHosts {
+@@ -191,10 +207,26 @@ final class RemoteHosts {
          hosts = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([RemoteHost].self, from: $0) } ?? []
      }
  
@@ -1214,7 +1282,7 @@ index 7a0c5215..cd5e8a66 100644
          let destinationChanged = hosts.first(where: { $0.id == host.id }).map { $0.destination != host.destination } ?? false
          if let index = hosts.firstIndex(where: { $0.id == host.id }) { hosts[index] = host }
          else { hosts.append(host) }
-@@ -225,8 +256,8 @@ final class RemoteHosts {
+@@ -225,8 +257,8 @@ final class RemoteHosts {
              Task { @MainActor [weak self] in self?.receive(event, host: host) }
          }
          workers[host.id] = worker
@@ -1224,7 +1292,7 @@ index 7a0c5215..cd5e8a66 100644
          worker.start()
      }
  
-@@ -235,6 +266,11 @@ final class RemoteHosts {
+@@ -235,6 +267,11 @@ final class RemoteHosts {
          switch event.payload {
          case .message(let message):
              states[host.id, default: RemoteHostState()].apply(message)
@@ -1236,15 +1304,58 @@ index 7a0c5215..cd5e8a66 100644
          case .ended(let reason):
              workers.removeValue(forKey: host.id)
              states[host.id, default: RemoteHostState()].disconnected()
-@@ -259,6 +295,7 @@ final class RemoteSSHWorker: @unchecked Sendable {
+@@ -259,6 +296,50 @@ final class RemoteSSHWorker: @unchecked Sendable {
      private let lock = NSLock()
      private var process: Process?
      private var stopped = false
 +    private var collectorInput: FileHandle?
++    private final class Diagnostics: @unchecked Sendable {
++        let group = DispatchGroup()
++        var data = Data()
++        init(_ pipe: Pipe) {
++            group.enter()
++            DispatchQueue.global().async { [self] in
++                data = pipe.fileHandleForReading.readDataToEndOfFile()
++                group.leave()
++            }
++        }
++        func reason(_ prefix: String) -> String {
++            group.wait()
++            let detail = String(decoding: data.suffix(4096), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
++            return detail.isEmpty ? prefix : "\(prefix): \(detail)"
++        }
++    }
++    private var diagnostics: [ObjectIdentifier: Diagnostics] = [:]
++
++    private static func uploadCommand(_ digest: String) -> String {
++        """
++        set -eu
++        umask 077
++        [ ! -L "$HOME" ] && [ -d "$HOME" ] && [ -O "$HOME" ] && [ -z "$(find "$HOME" -maxdepth 0 -perm /022 -print)" ] || { echo 'Unsafe home directory' >&2; exit 1; }
++        c="$HOME/.cache"; d="$c/agent-speed"
++        mkdir -p "$c"
++        [ ! -L "$c" ] && [ -d "$c" ] && [ -O "$c" ] && [ -z "$(find "$c" -maxdepth 0 -perm /022 -print)" ] || { echo 'Unsafe cache directory' >&2; exit 1; }
++        mkdir -p "$d"
++        [ ! -L "$d" ] && [ -d "$d" ] && [ -O "$d" ] && [ -z "$(find "$d" -maxdepth 0 -perm /077 -print)" ] || { echo 'Unsafe collector directory' >&2; exit 1; }
++        exec 9<"$d"; flock -x 9
++        f="$d/collector-v2-\(digest)"
++        t=$(mktemp "$d/.collector-v2.XXXXXXXXXX")
++        trap 'rm -f -- "$t"' EXIT HUP INT TERM
++        cat > "$t"
++        [ "$(sha256sum "$t" | cut -d ' ' -f 1)" = '\(digest)' ] || { echo 'Collector upload digest mismatch' >&2; exit 1; }
++        chmod 700 "$t"
++        ln "$t" "$f" 2>/dev/null || :
++        rm -f -- "$t"
++        [ -f "$f" ] && [ ! -L "$f" ] && [ -O "$f" ] && [ "$(stat -c '%a:%h' "$f")" = '700:1' ] && [ "$(sha256sum "$f" | cut -d ' ' -f 1)" = '\(digest)' ] || { echo 'Unsafe or conflicting collector asset' >&2; exit 1; }
++        t=$(mktemp "$d/.collector-v2.XXXXXXXXXX")
++        "$f" --identity > "$t"
++        printf 'shared-collector-v2 \(digest)\\n' | cmp -s - "$t" || { echo 'Collector identity mismatch' >&2; exit 1; }
++        """
++    }
  
      init(destination: String, callback: @escaping @Sendable (Event) -> Void) {
          self.destination = destination
-@@ -269,6 +306,13 @@ final class RemoteSSHWorker: @unchecked Sendable {
+@@ -269,39 +350,53 @@ final class RemoteSSHWorker: @unchecked Sendable {
          lock.lock(); stopped = true; let running = process; lock.unlock()
          if running?.isRunning == true { running?.terminate() }
      }
@@ -1258,11 +1369,22 @@ index 7a0c5215..cd5e8a66 100644
      static func arguments(destination: String, command: String) -> [String] {
          ["-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", destination, command]
      }
-@@ -284,11 +328,15 @@ final class RemoteSSHWorker: @unchecked Sendable {
+-    private func launch(_ command: String, input: Data? = nil) throws -> (Process, Pipe) {
++    private func launch(_ command: String, input: Data? = nil, interactive: Bool = false) throws -> (Process, Pipe) {
+         let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+         p.arguments = Self.arguments(destination: destination, command: command)
+         let output = Pipe(); p.standardOutput = output
+-        p.standardError = FileHandle.nullDevice
++        let errors = Pipe(); p.standardError = errors
+         let stdin = Pipe(); p.standardInput = stdin
+         lock.lock()
+         if stopped { lock.unlock(); throw CocoaError(.userCancelled) }
+         process = p
          do { try p.run() } catch { lock.unlock(); throw error }
          lock.unlock()
++        diagnostics[ObjectIdentifier(p)] = Diagnostics(errors)
          if let input { try stdin.fileHandleForWriting.write(contentsOf: input); try stdin.fileHandleForWriting.close() }
-+        else if command == "exec ~/.cache/agent-speed/collector" {
++        else if interactive {
 +            lock.lock(); collectorInput = stdin.fileHandleForWriting; lock.unlock()
 +            requestHistoryTimezone()
 +        } else { try stdin.fileHandleForWriting.close() }
@@ -1275,6 +1397,34 @@ index 7a0c5215..cd5e8a66 100644
              if running?.isRunning == true { running?.terminate() }
          }
          do {
+             let (probe, probeOutput) = try launch("uname -m")
+             let archData = probeOutput.fileHandleForReading.readDataToEndOfFile(); probe.waitUntilExit()
+-            guard probe.terminationStatus == 0, let name = String(data: archData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) else { throw Failure("SSH connection failed; check host key and authentication") }
++            guard probe.terminationStatus == 0 else { throw Failure(diagnostics[ObjectIdentifier(probe)]?.reason("SSH connection failed") ?? "SSH connection failed") }
++            guard let name = String(data: archData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) else { throw Failure("Invalid remote architecture response") }
+             let arch: String
+             switch name { case "x86_64": arch = "x86_64"; case "aarch64", "arm64": arch = "aarch64"; default: throw Failure("Unsupported remote architecture") }
+             guard let resource = Bundle.main.resourceURL?.appendingPathComponent("collectors/linux-\(arch)/agent-speed-collector"), let binary = try? Data(contentsOf: resource) else { throw Failure("Linux collector for \(arch) is missing from this application") }
+-            let (upload, uploadOutput) = try launch("umask 077; mkdir -p ~/.cache/agent-speed && f=~/.cache/agent-speed/collector-$$ && cat > \"$f\" && chmod 700 \"$f\" && mv -f \"$f\" ~/.cache/agent-speed/collector", input: binary)
++            let digest = SHA256.hash(data: binary).map { String(format: "%02x", $0) }.joined()
++            let (upload, uploadOutput) = try launch(Self.uploadCommand(digest), input: binary)
+             _ = uploadOutput.fileHandleForReading.readDataToEndOfFile(); upload.waitUntilExit()
+-            guard upload.terminationStatus == 0 else { throw Failure("Collector upload failed") }
+-            let (collector, output) = try launch("exec ~/.cache/agent-speed/collector")
++            guard upload.terminationStatus == 0 else { throw Failure(diagnostics[ObjectIdentifier(upload)]?.reason("Collector upload failed") ?? "Collector upload failed") }
++            let (collector, output) = try launch("exec \"$HOME/.cache/agent-speed/collector-v2-\(digest)\"", interactive: true)
+             var buffer = Data()
+             while true {
+                 let chunk = output.fileHandleForReading.availableData
+@@ -314,7 +409,7 @@ final class RemoteSSHWorker: @unchecked Sendable {
+                 if buffer.count > 4_194_304 { throw Failure("Collector sent an oversized message") }
+             }
+             collector.waitUntilExit()
+-            throw Failure("Disconnected; retrying")
++            throw Failure(diagnostics[ObjectIdentifier(collector)]?.reason("Disconnected; retrying") ?? "Disconnected; retrying")
+         } catch {
+             callback(Event(token: token, payload: .ended((error as? Failure)?.message ?? "SSH connection failed")))
+         }
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 index 08989fad..45e278d0 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift

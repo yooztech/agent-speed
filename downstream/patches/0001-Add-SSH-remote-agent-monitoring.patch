@@ -1,54 +1,94 @@
-From f054ca942c175afc51cfebe59e8de7cc66973f39 Mon Sep 17 00:00:00 2001
+From 5df6f4a227de753ce985f13b1bd50bd3990aab65 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:10 +0800
 Subject: [PATCH 01/15] Add SSH remote agent monitoring
 
 ---
- README.md                                     |  65 ++++-
+ .github/workflows/linux.yml                   |   4 +-
+ README.md                                     |  65 +-
+ docs/shared-collector.md                      |  86 +++
  linux/CMakeLists.txt                          |   1 +
  linux/collector/CMakeLists.txt                |   6 +
- linux/collector/history_cache.cpp             |  77 ++++++
- linux/collector/history_cache.hpp             |  22 ++
- linux/collector/main.cpp                      | 144 +++++++++++
- linux/collector/protocol.cpp                  |  99 +++++++
- linux/collector/protocol.hpp                  |  22 ++
+ linux/collector/daemon.cpp                    | 342 +++++++++
+ linux/collector/daemon.hpp                    |   6 +
+ linux/collector/history_cache.cpp             |  77 ++
+ linux/collector/history_cache.hpp             |  22 +
+ linux/collector/main.cpp                      | 144 ++++
+ linux/collector/protocol.cpp                  |  99 +++
+ linux/collector/protocol.hpp                  |  22 +
+ linux/collector/publisher.cpp                 | 385 ++++++++++
+ linux/collector/publisher.hpp                 |  37 +
+ linux/collector/sampling.cpp                  | 256 +++++++
+ linux/collector/sampling.hpp                  |  41 ++
  linux/core/include/agentspeed/engine.hpp      |   2 +
  linux/core/include/agentspeed/snapshot.hpp    |   2 +
  linux/core/src/engine.cpp                     |  17 +-
  linux/core/src/history_analyzer.cpp           |   2 +-
  linux/core/src/monitor_snapshot.cpp           |   2 +
- linux/core/src/omp_parser.cpp                 |  29 +--
+ linux/core/src/omp_parser.cpp                 |  29 +-
+ linux/docker/Dockerfile                       |   2 +-
  linux/tests/CMakeLists.txt                    |   6 +-
- linux/tests/collector_integration_test.cpp    | 174 +++++++++++++
- linux/tests/collector_test.cpp                | 152 +++++++++++
- linux/tests/engine_fixture_test.cpp           |  27 ++
- linux/tests/history_test.cpp                  |  44 ++++
- linux/tests/parser_fixture_test.cpp           |  49 ++++
+ linux/tests/collector_integration_test.cpp    | 174 +++++
+ linux/tests/collector_test.cpp                | 152 ++++
+ linux/tests/engine_fixture_test.cpp           |  27 +
+ linux/tests/history_test.cpp                  |  44 ++
+ linux/tests/parser_fixture_test.cpp           |  49 ++
+ linux/tests/shared_collector_ssh_smoke.py     | 662 ++++++++++++++++++
  macos/Sources/AgentSpeed/App/AppModel.swift   |   3 +
- .../Sources/AgentSpeed/App/RemoteHosts.swift  | 243 ++++++++++++++++++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  | 243 +++++++
  .../AgentSpeed/Dashboard/DashboardView.swift  |  24 +-
- .../Dashboard/RemoteHostsView.swift           | 131 ++++++++++
+ .../Dashboard/RemoteHostsView.swift           | 131 ++++
  .../SettingsWindow/Panes/SourcesPane.swift    |   1 +
- .../AgentSpeedAppTests/RemoteHostsTests.swift |  92 +++++++
- macos/scripts/build-app.sh                    |  28 ++
- macos/scripts/build-linux-collector.sh        |  39 +++
+ .../AgentSpeedAppTests/RemoteHostsTests.swift |  92 +++
+ macos/scripts/build-app.sh                    |  28 +
+ macos/scripts/build-linux-collector.sh        |  45 ++
  spec/DESIGN.md                                |   7 +
  spec/METRICS.md                               |   9 +
- spec/NETWORK.md                               |  46 +++-
- 31 files changed, 1526 insertions(+), 39 deletions(-)
+ spec/NETWORK.md                               |  46 +-
+ 41 files changed, 3350 insertions(+), 42 deletions(-)
+ create mode 100644 docs/shared-collector.md
  create mode 100644 linux/collector/CMakeLists.txt
+ create mode 100644 linux/collector/daemon.cpp
+ create mode 100644 linux/collector/daemon.hpp
  create mode 100644 linux/collector/history_cache.cpp
  create mode 100644 linux/collector/history_cache.hpp
  create mode 100644 linux/collector/main.cpp
  create mode 100644 linux/collector/protocol.cpp
  create mode 100644 linux/collector/protocol.hpp
+ create mode 100644 linux/collector/publisher.cpp
+ create mode 100644 linux/collector/publisher.hpp
+ create mode 100644 linux/collector/sampling.cpp
+ create mode 100644 linux/collector/sampling.hpp
  create mode 100644 linux/tests/collector_integration_test.cpp
  create mode 100644 linux/tests/collector_test.cpp
+ create mode 100755 linux/tests/shared_collector_ssh_smoke.py
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteHosts.swift
  create mode 100644 macos/Sources/AgentSpeed/Dashboard/RemoteHostsView.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteHostsTests.swift
  create mode 100755 macos/scripts/build-linux-collector.sh
 
+diff --git a/.github/workflows/linux.yml b/.github/workflows/linux.yml
+index c54ce9aa..27c30155 100644
+--- a/.github/workflows/linux.yml
++++ b/.github/workflows/linux.yml
+@@ -28,7 +28,7 @@ jobs:
+         run: |
+           sudo apt-get update
+           sudo apt-get install -y --no-install-recommends g++-12 cmake ninja-build pkg-config \
+-            libzstd-dev libbrotli-dev libsqlite3-dev libssl-dev libpcre2-dev libicu-dev
++            libzstd-dev libbrotli-dev libsqlite3-dev libssl-dev libpcre2-dev libicu-dev libcurl4-openssl-dev
+       - name: Build and test the core
+         env:
+           CXX: g++-12
+@@ -57,7 +57,7 @@ jobs:
+         run: |
+           sudo apt-get update
+           sudo apt-get install -y --no-install-recommends g++-12 cmake ninja-build pkg-config file dpkg-dev \
+-            libzstd-dev libbrotli-dev libsqlite3-dev libssl-dev libpcre2-dev libicu-dev \
++            libzstd-dev libbrotli-dev libsqlite3-dev libssl-dev libpcre2-dev libicu-dev libcurl4-openssl-dev \
+             libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb1-dev libxcb-shape0-dev \
+             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+             libxcb-xinerama0 libxcb-xinput0 libfontconfig1 libdbus-1-3 libfuse2
 diff --git a/README.md b/README.md
 index d2ab76a7..5f30dd9b 100644
 --- a/README.md
@@ -127,6 +167,98 @@ index d2ab76a7..5f30dd9b 100644
  
  Network traffic: Agent Speed counts how many bytes programs send and receive, on this computer only. It never reads content, addresses or destinations; only live reporting (below), if you turn it on, sends your agents' byte counts to the service you chose. On Windows, per-agent traffic needs an optional helper service that runs as the restricted Local Service account and only counts bytes per process; it is installed and removed with one administrator prompt each ([details](spec/WINDOWS-SERVICE.md)).
  
+diff --git a/docs/shared-collector.md b/docs/shared-collector.md
+new file mode 100644
+index 00000000..6592ad3f
+--- /dev/null
++++ b/docs/shared-collector.md
+@@ -0,0 +1,86 @@
++# Shared Linux collector and activity publishing
++
++This feature changes the Linux collector, not ActivityKit authorization. A foreground iPhone must create an existing live activity, obtain an activity-scoped lease from the relay through App Attest, and send that lease over host-key-verified SSH. The collector never receives an Apple provider key, installation management credential, or global password. It does not request notification permission, send alerts, start activities remotely, or keep iOS SSH alive indefinitely.
++
++## Collection and process boundaries
++
++The no-argument executable is a stdin/stdout bridge. A detached daemon owns one live `Monitor` and one incremental historical parser pipeline for the effective Unix UID. The shared history analyzer captures parsed responses, action/performance inputs and source facts once and projects them into requested calendar views without opening or parsing the logs again. Different SSH keys for the same UID are not separate tenants. Different UIDs have separate daemon state.
++
++The runtime directory is the canonical passwd home plus `.agent-speed`, not an SSH-supplied `HOME` or XDG runtime path. Home ownership and writable permissions are checked. The runtime directory must be an owned, nonsymlink directory with mode 0700; `collector.lock` must be an owned, single-link regular file with mode 0600; `collector.sock` must be an owned socket with mode 0600. Both socket peers must have the same effective UID through `SO_PEERCRED`.
++
++A stable `flock` is held for the daemon's entire lifetime. The lock file is never unlinked. Concurrent bridges wait for readiness and perform a private protocol/executable SHA-256 handshake before sending commands. Only the exclusive lifecycle-lock owner may recheck and remove a refused, verified stale endpoint. Connection failures do not authorize removing a socket or killing a process. The daemon uses no TCP listener and does not depend on PID files or PID-based killing.
++
++Each subscription has its own input buffer, named timezone, history generation and bounded nonblocking output. Unsent snapshots may coalesce. History and completion frames do not silently coalesce or disappear: a subscriber exceeding the output bound is disconnected and receives a nonzero interrupted-stream failure. Consumers must treat interruption as an incomplete stream and reconnect. A destructive completion drain occurs once per sampler tick and is fanned out to connected subscribers.
++
++The live monitor retains a rolling 48-hour input window so changing a viewer's day boundary does not rebuild discovery, parsing, performance or traffic state. Calendar totals use each view's day start, including offset transitions. History projections are per view; live performance baselines retain the existing host-local-calendar meaning and do not change with an SSH viewer's timezone. Physical traffic sampling and its baseline remain shared; viewing it does not resample the machine. Unknown rates, partial histories and offline gaps retain the existing v1 semantics.
++
++Any connected subscriber or live/pending authorized lease keeps the daemon active. Closing one bridge's stdin removes only that subscriber. A confirmed lease survives the last SSH exit until expiry, explicit unsubscribe, replacement, terminal relay rejection or bounded invalid-snapshot failure. With no subscribers or leases the daemon exits after 30 seconds. Candidate leases awaiting their first successful publish expire after 75 seconds even when the SSH channel remains open; disconnecting the last waiter cancels an unconfirmed candidate.
++
++Detachment closes inherited SSH descriptors, redirects stdio to `/dev/null`, uses a readiness pipe, and ignores SIGHUP. This is not a guarantee against systemd `KillUserProcesses`, session cgroup destruction, container termination, host shutdown or account policy. Supported background operation requires that policy to allow detached same-user processes to survive the SSH session. No root service or linger setting is installed. A host policy that kills those processes requires operator action outside this feature; re-open SSH and inspect relay freshness rather than reporting continued collection.
++
++## Runtime identity and upgrades
++
++`agent-speed-collector --identity` prints exactly `shared-collector-v2 ` followed by the executable's SHA-256 and a newline. It does not start a daemon. The no-argument bridge compares its digest with the running daemon's digest. A different disk binary fails with a visible version-conflict error; it never kills another subscriber or attaches while pretending new code is running. The operator must close subscribers, revoke/unsubscribe leases, allow the idle exit, then reconnect the chosen version. There is no forced rolling upgrade.
++
++Maintained native deployment computes the bundled bytes' digest, uploads a private temporary file, verifies SHA-256, installs without replacing a conflicting file, and verifies `--identity`. It launches `~/.cache/agent-speed/collector-v2-<sha256>` without arguments. It does not overwrite the legacy `~/.cache/agent-speed/collector` path. Unsupported architecture, missing shared libraries, unsafe permissions and identity conflicts remain errors; there is no old-binary or demonstration-data fallback.
++
++Already shipped legacy applications do not implement this deployment protocol. Software running as the same UID can execute an old collector or replace files it owns; the new daemon cannot impose a security boundary on that UID. All participating Mac, Windows and mobile clients must migrate before using a shared account. Do not mix a legacy collector process with this daemon or claim that a previously installed mobile package has been upgraded. A versioned new asset cannot remotely retrofit those old clients.
++
++## NDJSON control version 2
++
++Data frames remain UTF-8 NDJSON with integer `version: 1`; stdout contains data/control frames, stderr only safe diagnostic categories. No unsolicited capability/control frames are inserted into old streams. The existing `history_timezone` command applies only to the requesting SSH subscription, never to an activity lease.
++
++A `capabilities` request contains `version`, `type`, and `requestId`. Its response echoes the ID and returns:
++
++- `capabilities: ["live_activity_v2", "shared_collector_v1"]` (not `live_activity_v1`);
++- `controlVersion: 2`;
++- `subscribeTimeoutMs: 75000`;
++- `minPublishIntervalMs: 10000`;
++- `relayUrl: "https://agent-speed.yooztech.com"`.
++
++`live_activity_subscribe` retains `requestId`, `relayUrl`, `lease`, `activityId`, `leaseId`, and absolute integer Unix-millisecond `expiresAt`. It requires the following additional fields:
++
++| Field | Meaning |
++| --- | --- |
++| `controlVersion` | Integer 2; clients must negotiate `live_activity_v2`. |
++| `hostId`, `hostName` | Exact strings used by the phone to register the activity with the relay. These are not the collector machine ID or a guessed hostname. |
++| `timezone` | Valid named IANA zone, fixed for this lease. A different activity timezone requires rotation and a new subscription. |
++
++`expiresAt` must be in the future and no more than eight hours away. The bearer is opaque; the collector neither decodes nor extends it. Request and lease identifiers, waiter count, active leases and replay state are bounded.
++
++The response type remains `live_activity_subscribe_ack`. Both positive and negative responses contain integer `version: 1`, `controlVersion: 2`, the exact `requestId`, `activityId`, `leaseId`, `expiresAt`, and Boolean `accepted`. Negative responses additionally contain a safe `error`: `invalid_request`, `conflicting_request`, `busy`, `timeout`, `cancelled`, or `relay_rejected`. A positive response is emitted only after an HTTP 2xx first publish of a fresh real collector sample; parsing a control frame or storing a lease is not confirmation.
++
++The phone must retain a 5-second control-write timeout but wait **90 seconds** for a subscribe response. Capability and unsubscribe requests may keep their shorter wait. A controller timeout, foreground cancellation or stale generation is not proof that the server never received the request: send an unsubscribe for that exact lease and independently revoke the relay activity; persist failed revocation work. Late acknowledgments must not restore display authority. A candidate whose retry deadline cannot fit within 75 seconds fails rather than acknowledging early, bypassing relay limits, or reusing an old sample.
++
++Repeated requests for the same activity/lease and identical binding join the same publisher and first-success outcome, including across SSH reconnects. Request-ID correlation is scoped to the requesting SSH client. Reusing a client's request ID with a changed binding fails. Conflicting host/name/zone/token/expiry under one lease fails. A new lease replaces the old lease for that activity; retired lease IDs are fenced so a delayed retry cannot displace its replacement. In-flight responses are generation-fenced. The relay independently serializes management and publishing; it is the authority over whether old bearer material is valid.
++
++`live_activity_unsubscribe` requires integer `controlVersion: 2`, `requestId`, and `leaseId` in addition to the v1 envelope. `live_activity_unsubscribe_ack` echoes request/lease IDs, `controlVersion: 2`, and `accepted`. Removing an absent lease is idempotent. It removes only that lease, not a newer activity replacement. SSH disconnect does not revoke a confirmed lease.
++
++The only accepted relay URL spellings are the exact HTTPS origin above, optionally with one trailing slash; both map to its fixed `/v1/publish` endpoint. Ports, credentials, case aliases, path/query/fragment additions and other origins are refused. This is not a general-purpose HTTP requester.
++
++## Publishing and failures
++
++Publishing runs on a dedicated worker thread; socket clients and the collection thread do not perform network I/O. There is one latest sample per lease, not a retry backlog. The default interval is at least ten seconds. The body contains only `snapshot` with the Worker-supported minimal fields:
++
++`version`, `hostId`, `hostName`, `sampledAt`, `status`, `speed`, `generating`, `tools`, `todayOutput`, `rxBytesPerSecond`, `txBytesPerSecond`, `title`.
++
++`sampledAt` is the sampled snapshot's real `nowMs`; status is `live`; speed is the complete live-output rate or null; daily output uses the fixed activity timezone; traffic is the physical machine receive/transmit rate or null; title is null. Raw logs, project paths, commands, histories and SSH credentials are not uploaded. A dead or backward-clock sampler cannot be made fresh by changing send time. Samples must be newer than the last attempted sample, at most 30 seconds old and not in the future locally. The relay additionally enforces its own freshness/strict-order checks.
++
++The in-process libcurl transport verifies TLS certificates and hostnames, permits HTTPS only, follows no redirects, ignores proxy and netrc environment configuration, limits connection/DNS to three seconds and the entire request to six seconds, and bounds response bodies to 4096 bytes. Asynchronous DNS support is required. A failed transport produces no raw provider error/body/authorization logging. Bearers are never passed in argv, environment variables or URLs.
++
++Before receiving controls, production bridges disable core dumps and set `PR_SET_DUMPABLE=0`; the daemon inherits those restrictions. Unexpected exceptions produce only a generic safe error. The fixed-loopback TLS smoke build omits only the non-dumpable flag so its disposable processes can be traced; it still disables core dumps and must never receive real credentials or be distributed.
++
++- 400: discard that sample; only a fresh sample may follow. Eight consecutive invalid snapshots retire the authorization rather than sending a known-bad stream forever.
++- 401/403/410, and oversized-body 413: stop and retire the lease. The collector does not obtain replacement authority.
++- 429: honor `Retry-After`, at least ten seconds; `apns_backoff` requires at least sixty seconds. Confirmation and lease expiry still apply.
++- 502/transport failures: bounded exponential backoff, latest fresh sample only. Confirmed authorization remains bounded by expiry and can recover after an outage.
++
++The relay reserves `lastSentAt` and `lastSample` before APNs I/O. Thus even a 502 cannot be retried with the same sample. Rotation preserves the relay's rate window; a newly rotated lease may legitimately wait longer than the old five-second mobile timeout.
++
++## Build and verification surfaces
++
++Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLite, ICU, OpenSSL and libcurl development libraries. On Ubuntu add `libcurl4-openssl-dev`; runtime requires matching libcurl/OpenSSL/ICU and other linked libraries plus CA certificates and timezone data. Qt, sudo and an external curl subprocess are not needed by the collector. Use `macos/scripts/build-linux-collector.sh` for native-architecture-only artifacts and `SHA256SUMS`; do not label x86_64 bytes as ARM64.
++
++CMake's normal test executable uses a separately compiled test-only HOME namespace and one-second idle period so process tests cannot attach to the maintainer's canonical daemon. Neither override exists in the distribution executable. `AGENTSPEED_BUILD_SSH_SMOKE=ON` additionally builds the explicitly non-distributable `agentspeed-collector-ssh-smoke`: it uses the same libcurl path but a compile-time fixed localhost TLS endpoint and test CA, with canonical passwd-home and production 30-second idle behavior. Never package that executable.
++
++`linux/tests/shared_collector_ssh_smoke.py` runs a local sshd, a disposable Unix account and an isolated TLS relay, then cleans them up. It requires local root only for that isolated account/sshd; it never accesses a production host or modifies a system SSH service. Its JSON results identify actual scenarios and limits. It does not prove Cloudflare deployment, APNs acceptance or iPhone delivery. Real signed-iPhone testing, deployed Worker/App Attest configuration, Apple credentials, ARM64 runtime, and native Mac/Windows UI remain separate acceptance prerequisites.
 diff --git a/linux/CMakeLists.txt b/linux/CMakeLists.txt
 index 52ce3422..d2d1feba 100644
 --- a/linux/CMakeLists.txt
@@ -151,6 +283,366 @@ index 00000000..b64cb4d1
 +target_link_libraries(agentspeed_collector_protocol PUBLIC agentspeed_core)
 +add_executable(agentspeed-collector main.cpp)
 +target_link_libraries(agentspeed-collector PRIVATE agentspeed_collector_protocol Threads::Threads)
+diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
+new file mode 100644
+index 00000000..adab3b4d
+--- /dev/null
++++ b/linux/collector/daemon.cpp
+@@ -0,0 +1,342 @@
++#include "daemon.hpp"
++#include "protocol.hpp"
++#include "publisher.hpp"
++#include "sampling.hpp"
++#include "agentspeed/json.hpp"
++
++#include <openssl/evp.h>
++#include <algorithm>
++#include <cerrno>
++#include <cstdlib>
++#include <chrono>
++#include <csignal>
++#include <cstdint>
++#include <cstring>
++#include <deque>
++#include <fcntl.h>
++#include <fstream>
++#include <iostream>
++#include <map>
++#include <optional>
++#include <poll.h>
++#include <pwd.h>
++#include <stdexcept>
++#include <string>
++#include <sys/file.h>
++#include <sys/prctl.h>
++#include <sys/resource.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/un.h>
++#include <sys/wait.h>
++#include <unistd.h>
++#include <vector>
++
++namespace collector {
++namespace {
++constexpr std::size_t kInput = 16384, kOutput = 1024 * 1024, kClients = 64;
++volatile sig_atomic_t stopping = 0;
++void stop(int) { stopping = 1; }
++std::int64_t nowMs() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
++using Clock = std::chrono::steady_clock;
++struct SafeError : std::runtime_error { using std::runtime_error::runtime_error; };
++void fail(const char* category) { throw SafeError(category); }
++void protectCredentials() {
++    const rlimit limit{0, 0};
++    if (setrlimit(RLIMIT_CORE, &limit)) fail("core dump protection");
++#ifndef AGENTSPEED_COLLECTOR_TEST_RELAY
++    if (prctl(PR_SET_DUMPABLE, 0) != 0) fail("process dump protection");
++#endif
++}
++struct Fd {
++    int value = -1;
++    explicit Fd(int fd = -1) : value(fd) {}
++    ~Fd() { if (value >= 0) close(value); }
++    Fd(const Fd&) = delete;
++    Fd& operator=(const Fd&) = delete;
++    Fd(Fd&& other) noexcept : value(other.value) { other.value = -1; }
++    Fd& operator=(Fd&& other) noexcept { if (this != &other) { if (value >= 0) close(value); value = other.value; other.value = -1; } return *this; }
++};
++bool nonblock(int fd) { int flags = fcntl(fd, F_GETFL); return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0; }
++std::string identity() {
++    Fd fd(open("/proc/self/exe", O_RDONLY | O_CLOEXEC));
++    if (fd.value < 0) fail("identity");
++    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
++    if (!ctx) fail("identity");
++    bool ok = EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) == 1;
++    char buf[16384]; ssize_t n;
++    while (ok && (n = read(fd.value, buf, sizeof(buf))) > 0) ok = EVP_DigestUpdate(ctx, buf, static_cast<std::size_t>(n)) == 1;
++    if (ok && n < 0) ok = false;
++    unsigned char digest[EVP_MAX_MD_SIZE]; unsigned int length = 0;
++    if (ok) ok = EVP_DigestFinal_ex(ctx, digest, &length) == 1;
++    EVP_MD_CTX_free(ctx);
++    if (!ok || length != 32) fail("identity");
++    static const char hex[] = "0123456789abcdef";
++    std::string result;
++    for (unsigned int i = 0; i < length; ++i) { result += hex[digest[i] >> 4]; result += hex[digest[i] & 15]; }
++    return result;
++}
++struct Paths { std::string dir, socket; Fd directory; };
++Paths paths() {
++    long size = sysconf(_SC_GETPW_R_SIZE_MAX); if (size < 1024 || size > 1024 * 1024) size = 16384;
++    std::vector<char> buffer(static_cast<std::size_t>(size)); struct passwd pw{}, *result = nullptr;
++    if (getpwuid_r(geteuid(), &pw, buffer.data(), buffer.size(), &result) || !result || !pw.pw_dir || pw.pw_dir[0] != '/') fail("account directory");
++    const char* homePath = pw.pw_dir;
++#ifdef AGENTSPEED_COLLECTOR_TESTING
++    homePath = std::getenv("HOME");
++    if (!homePath || homePath[0] != '/') fail("test account directory");
++#endif
++    Fd home(open(homePath, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
++    struct stat st{};
++    if (home.value < 0 || fstat(home.value, &st) || st.st_uid != geteuid() || (st.st_mode & 0022)) fail("account directory");
++#ifdef AGENTSPEED_COLLECTOR_TESTING
++    if ((st.st_mode & 07777) != 0700) fail("test account directory");
++#endif
++    if (mkdirat(home.value, ".agent-speed", 0700) && errno != EEXIST) fail("runtime directory");
++    Fd dir(openat(home.value, ".agent-speed", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
++    if (dir.value < 0 || fstat(dir.value, &st) || st.st_uid != geteuid() || (st.st_mode & 07777) != 0700) fail("runtime directory");
++    std::string base = std::string(homePath) + "/.agent-speed";
++    std::string socket = base + "/collector.sock";
++    if (socket.size() >= sizeof(sockaddr_un::sun_path)) fail("runtime path");
++    return {base, socket, std::move(dir)};
++}
++Fd lockFile(const Paths& p) {
++    Fd fd(openat(p.directory.value, "collector.lock", O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600));
++    struct stat st{};
++    if (fd.value < 0 || fstat(fd.value, &st) || !S_ISREG(st.st_mode) || st.st_uid != geteuid() || (st.st_mode & 07777) != 0600 || st.st_nlink != 1) fail("runtime lock");
++    return fd;
++}
++bool socketValid(const Paths& p, bool& exists) {
++    struct stat st{};
++    if (fstatat(p.directory.value, "collector.sock", &st, AT_SYMLINK_NOFOLLOW)) { if (errno == ENOENT) { exists = false; return true; } return false; }
++    exists = true;
++    return S_ISSOCK(st.st_mode) && st.st_uid == geteuid() && (st.st_mode & 07777) == 0600;
++}
++bool peer(int fd) { struct ucred cred{}; socklen_t len = sizeof(cred); return getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) == 0 && len == sizeof(cred) && cred.uid == geteuid(); }
++Fd connectSocket(const Paths& p) {
++    bool exists = false; if (!socketValid(p, exists)) fail("runtime socket");
++    if (!exists) return Fd();
++    Fd fd(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)); if (fd.value < 0) fail("socket");
++    sockaddr_un addr{}; addr.sun_family = AF_UNIX; std::memcpy(addr.sun_path, p.socket.c_str(), p.socket.size() + 1);
++    if (connect(fd.value, reinterpret_cast<sockaddr*>(&addr), sizeof(addr))) {
++        int error = errno;
++        if (error == EINPROGRESS) {
++            pollfd event{fd.value, POLLOUT, 0};
++            auto deadline = Clock::now() + std::chrono::seconds(1);
++            int result;
++            do {
++                auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count();
++                if (remaining <= 0) { result = 0; break; }
++                result = poll(&event, 1, static_cast<int>(remaining));
++            } while (result < 0 && errno == EINTR);
++            if (result == 0) error = ETIMEDOUT;
++            else if (result < 0) error = errno;
++            else { socklen_t length = sizeof(error); if (getsockopt(fd.value, SOL_SOCKET, SO_ERROR, &error, &length)) error = errno; }
++        }
++        if (error) { close(fd.value); fd.value = -1; errno = error; return Fd(); }
++    }
++    int flags = fcntl(fd.value, F_GETFL);
++    if (flags < 0 || fcntl(fd.value, F_SETFL, flags & ~O_NONBLOCK) < 0) fail("socket flags");
++    if (!peer(fd.value)) fail("socket peer");
++    return fd;
++}
++bool writeAll(int fd, const std::string& s) {
++    std::size_t pos = 0;
++    while (pos < s.size()) { ssize_t n = write(fd, s.data() + pos, s.size() - pos); if (n > 0) pos += static_cast<std::size_t>(n); else if (n < 0 && errno == EINTR) continue; else return false; }
++    return true;
++}
++std::optional<std::string> readLine(int fd, int timeout) {
++    std::string s; auto deadline = Clock::now() + std::chrono::milliseconds(timeout);
++    while (s.size() < 256) {
++        auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now()).count(); if (left <= 0) return std::nullopt;
++        pollfd p{fd, POLLIN, 0}; int r = poll(&p, 1, static_cast<int>(left)); if (r < 0 && errno == EINTR) continue; if (r <= 0) return std::nullopt;
++        char c; ssize_t n = read(fd, &c, 1); if (n != 1) return std::nullopt; if (c == '\n') return s; s += c;
++    }
++    return std::nullopt;
++}
++std::optional<std::string> machineIdentity() {
++    std::ifstream file("/etc/machine-id"); std::string id;
++    if (!(file >> id)) return std::nullopt;
++    return scopedIdentity(id, static_cast<std::uint64_t>(geteuid()));
++}
++struct Frame { std::string data; std::size_t offset = 0; bool snapshot = false; bool viewFrame = false; std::uint64_t generation = 0; };
++struct Client {
++    Fd fd; std::uint64_t id; std::string input; std::deque<Frame> output; std::size_t bytes = 0;
++    View view; std::string lastHistory; std::uint64_t viewGeneration = 0; bool handshaken = false; bool dead = false; Clock::time_point deadline = Clock::now() + std::chrono::seconds(5);
++};
++void enqueue(Client& c, std::string line, bool snapshot = false, bool viewFrame = false) {
++    if (line.empty() || c.dead) return;
++    if (line.back() != '\n') line += '\n';
++    if (snapshot) {
++        for (auto it = c.output.begin(); it != c.output.end(); ++it) {
++            if (it->snapshot && it->offset == 0) { c.bytes -= it->data.size(); c.output.erase(it); break; }
++        }
++    }
++    if (line.size() > kOutput || c.bytes > kOutput - line.size()) { c.dead = true; return; }
++    c.bytes += line.size(); c.output.push_back({std::move(line), 0, snapshot, snapshot || viewFrame, c.viewGeneration});
++}
++void command(Client& c, const std::string& line, Publisher& publisher, std::int64_t now) {
++    agentspeed::json::Document doc; if (!doc.parse(line)) return;
++    auto root = doc.root(); if (root["version"].raw() != "1") return;
++    auto type = root["type"].string(); if (!type) return;
++    if (*type == "history_timezone") {
++        auto name = root["timezone"].string();
++        if (!name || name->empty() || name->size() > 255 || *name == "localtime") return;
++        auto zone = agentspeed::TimeZone::load(*name); if (!zone) return;
++        ++c.viewGeneration;
++        for (auto it = c.output.begin(); it != c.output.end();) {
++            if (it->viewFrame && it->generation != c.viewGeneration && it->offset == 0) {
++                c.bytes -= it->data.size();
++                it = c.output.erase(it);
++            } else ++it;
++        }
++        c.view = {*name, std::move(zone)};
++        c.lastHistory.clear();
++    } else if (*type == "capabilities" || *type == "live_activity_subscribe" || *type == "live_activity_unsubscribe") {
++        for (auto& response : publisher.control(line, c.id, now)) enqueue(c, std::move(response));
++    }
++}
++void serve(const Paths& p, int lock, int ready, const std::string& hash) {
++    (void)lock;
++    signal(SIGPIPE, SIG_IGN); signal(SIGTERM, stop); signal(SIGINT, stop); signal(SIGHUP, SIG_IGN);
++    bool exists = false; if (!socketValid(p, exists)) fail("runtime socket");
++    if (exists) {
++        Fd check = connectSocket(p); if (check.value >= 0) fail("runtime busy");
++        if (errno != ECONNREFUSED) fail("runtime socket");
++        if (!socketValid(p, exists) || !exists || unlinkat(p.directory.value, "collector.sock", 0)) fail("runtime socket");
++    }
++    Fd listener(socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)); if (listener.value < 0) fail("socket");
++    sockaddr_un addr{}; addr.sun_family = AF_UNIX; std::memcpy(addr.sun_path, p.socket.c_str(), p.socket.size() + 1);
++    mode_t mask = umask(0177); int bound = bind(listener.value, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)); umask(mask);
++    if (bound || listen(listener.value, 64)) fail("socket bind");
++    if (!socketValid(p, exists) || !exists) fail("runtime socket");
++    Sampler sampler; Publisher publisher; Protocol protocol(machineIdentity());
++    if (!writeAll(ready, "R")) fail("readiness");
++    close(ready);
++    std::map<int, Client> clients; std::uint64_t nextId = 1;
++    auto tick = Clock::now(); auto idle = Clock::now();
++    while (!stopping) {
++        auto now = nowMs(); auto steady = Clock::now();
++        if (steady >= tick) {
++            sampler.poll(now);
++            for (auto& [fd, c] : clients) if (c.handshaken && !c.dead) {
++                auto sample = sampler.sample(now, c.view);
++                enqueue(c, protocol.snapshot(sample.snapshot, c.view.name, c.view.zone), true);
++                auto history = sampler.history(c.view);
++                if (!history.empty() && history != c.lastHistory) { c.lastHistory = history; enqueue(c, std::move(history), false, true); }
++            }
++            for (const auto& view : publisher.views()) { auto sample = sampler.sample(now, view); publisher.sample(view, sample); }
++            auto completions = sampler.takeCompletions();
++            for (const auto& completion : completions) {
++                auto line = Protocol::completion(completion);
++                for (auto& [fd, c] : clients) if (c.handshaken) enqueue(c, line);
++            }
++            tick = steady + std::chrono::seconds(1);
++        }
++        for (auto& reply : publisher.replies()) for (auto& [fd, c] : clients) if (c.id == reply.first && c.handshaken) { enqueue(c, std::move(reply.second)); break; }
++        for (auto& [fd, c] : clients) if (!c.handshaken && steady >= c.deadline) c.dead = true;
++        for (auto it = clients.begin(); it != clients.end();) { if (it->second.dead) { publisher.disconnected(it->second.id); it = clients.erase(it); } else ++it; }
++        if (!clients.empty() || publisher.authorized(now)) idle = steady;
++#ifdef AGENTSPEED_COLLECTOR_TESTING
++        else if (steady - idle >= std::chrono::seconds(1)) break;
++#else
++        else if (steady - idle >= std::chrono::seconds(30)) break;
++#endif
++        std::vector<pollfd> fds{{listener.value, POLLIN, 0}};
++        for (auto& [fd, c] : clients) fds.push_back({fd, static_cast<short>(POLLIN | (!c.output.empty() ? POLLOUT : 0)), 0});
++        int r = poll(fds.data(), fds.size(), 100); if (r < 0) { if (errno == EINTR) continue; fail("poll"); }
++        if (fds[0].revents & POLLIN) {
++            for (;;) {
++                int fd = accept4(listener.value, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
++                if (fd < 0) { if (errno == EINTR) continue; break; }
++                if (clients.size() >= kClients || !peer(fd)) { close(fd); continue; }
++                clients.emplace(fd, Client{Fd(fd), nextId++});
++            }
++        }
++        for (std::size_t i = 1; i < fds.size(); ++i) {
++            auto it = clients.find(fds[i].fd); if (it == clients.end()) continue; auto& c = it->second; short events = fds[i].revents;
++            if (events & (POLLERR | POLLNVAL)) c.dead = true;
++            if (events & (POLLIN | POLLHUP)) {
++                char buf[4096]; ssize_t n = read(c.fd.value, buf, sizeof(buf));
++                if (n <= 0) { if (n == 0 || (errno != EAGAIN && errno != EINTR)) c.dead = true; }
++                else {
++                    c.input.append(buf, static_cast<std::size_t>(n));
++                    if (c.input.size() > kInput) c.dead = true;
++                    std::size_t end;
++                    while (!c.dead && (end = c.input.find('\n')) != std::string::npos) {
++                        std::string line = c.input.substr(0, end); c.input.erase(0, end + 1);
++                        if (!c.handshaken) {
++                            if (line != "shared-collector-v2 " + hash) { enqueue(c, "version-conflict"); c.handshaken = true; c.dead = true; break; }
++                            c.handshaken = true; enqueue(c, "shared-collector-v2 " + hash);
++                        } else command(c, line, publisher, now);
++                    }
++                }
++            }
++            if ((events & POLLOUT) && !c.output.empty() && !c.dead) {
++                auto& frame = c.output.front(); ssize_t n = write(c.fd.value, frame.data.data() + frame.offset, frame.data.size() - frame.offset);
++                if (n > 0) { frame.offset += static_cast<std::size_t>(n); c.bytes -= static_cast<std::size_t>(n); if (frame.offset == frame.data.size()) c.output.pop_front(); }
++                else if (n < 0 && errno != EAGAIN && errno != EINTR) c.dead = true;
++            }
++        }
++    }
++    bool valid = false; if (socketValid(p, valid) && valid) unlinkat(p.directory.value, "collector.sock", 0);
++}
++void startDaemon(const Paths& p, Fd& lock, const std::string& hash) {
++    int pipefd[2]; if (pipe2(pipefd, O_CLOEXEC)) fail("readiness"); Fd rd(pipefd[0]), wr(pipefd[1]);
++    pid_t child = fork(); if (child < 0) fail("detach");
++    if (child == 0) {
++        close(rd.value);
++        if (setsid() < 0) _exit(1);
++        pid_t grandchild = fork(); if (grandchild < 0) _exit(1); if (grandchild > 0) _exit(0);
++        int nullfd = open("/dev/null", O_RDWR); if (nullfd < 0) _exit(1);
++        for (int i = 0; i < 3; ++i) if (dup2(nullfd, i) < 0) _exit(1);
++        long maxfd = sysconf(_SC_OPEN_MAX); if (maxfd < 0) maxfd = 65536;
++        for (int fd = 3; fd < maxfd; ++fd) if (fd != wr.value && fd != lock.value && fd != p.directory.value) close(fd);
++        try { serve(p, lock.value, wr.value, hash); } catch (...) { _exit(1); }
++        _exit(0);
++    }
++    close(wr.value); wr.value = -1;
++    int status = 0; while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
++    pollfd f{rd.value, POLLIN, 0}; int r; do { r = poll(&f, 1, 15000); } while (r < 0 && errno == EINTR);
++    char ready = 0; if (r <= 0 || read(rd.value, &ready, 1) != 1 || ready != 'R') fail("daemon readiness");
++}
++int bridge(Fd& socket) {
++    if (!nonblock(STDIN_FILENO) || !nonblock(STDOUT_FILENO) || !nonblock(socket.value)) fail("bridge descriptors");
++    std::string input, output; bool eof = false;
++    while (true) {
++        pollfd fds[3]{{STDIN_FILENO, static_cast<short>(!eof && input.size() < kInput ? POLLIN : 0), 0}, {socket.value, static_cast<short>((output.size() < kOutput ? POLLIN : 0) | (!input.empty() ? POLLOUT : 0)), 0}, {STDOUT_FILENO, static_cast<short>(!output.empty() ? POLLOUT : 0), 0}};
++        int r = poll(fds, 3, -1); if (r < 0) { if (errno == EINTR) continue; fail("bridge poll"); }
++        if (fds[0].revents & (POLLIN | POLLHUP)) { char buf[4096]; ssize_t n = read(0, buf, std::min(sizeof(buf), kInput - input.size())); if (n > 0) input.append(buf, static_cast<std::size_t>(n)); else if (n == 0) eof = true; else if (errno != EINTR && errno != EAGAIN) fail("bridge input"); }
++        if ((fds[1].revents & POLLOUT) && !input.empty()) { ssize_t n = write(socket.value, input.data(), input.size()); if (n > 0) input.erase(0, static_cast<std::size_t>(n)); else if (n < 0 && errno != EINTR && errno != EAGAIN) fail("bridge socket"); }
++        if (eof && input.empty()) return 0;
++        if (fds[1].revents & (POLLIN | POLLHUP)) { char buf[4096]; ssize_t n = read(socket.value, buf, std::min(sizeof(buf), kOutput - output.size())); if (n > 0) output.append(buf, static_cast<std::size_t>(n)); else if (n == 0) { std::cerr << "collector: stream interrupted/incomplete\n"; return 1; } else if (errno != EINTR && errno != EAGAIN) fail("stream interrupted/incomplete"); }
++        if ((fds[2].revents & POLLOUT) && !output.empty()) { ssize_t n = write(1, output.data(), output.size()); if (n > 0) output.erase(0, static_cast<std::size_t>(n)); else if (n < 0 && errno != EINTR && errno != EAGAIN) fail("bridge output"); }
++        if ((fds[0].revents | fds[1].revents | fds[2].revents) & (POLLERR | POLLNVAL)) fail("stream interrupted/incomplete");
++    }
++}
++} // namespace
++int printIdentity() { std::cout << "shared-collector-v2 " << identity() << '\n'; return 0; }
++int runBridge() {
++    signal(SIGPIPE, SIG_IGN);
++    try {
++        protectCredentials();
++        auto hash = identity(); auto p = paths(); Fd lock = lockFile(p); Fd connection;
++        if (flock(lock.value, LOCK_EX | LOCK_NB) == 0) {
++            connection = connectSocket(p);
++            if (connection.value >= 0) fail("runtime busy");
++            startDaemon(p, lock, hash);
++            connection = connectSocket(p);
++        } else if (errno == EWOULDBLOCK) {
++            for (int i = 0; i < 150 && connection.value < 0; ++i) { connection = connectSocket(p); if (connection.value < 0) usleep(100000); }
++        } else fail("runtime lock");
++        if (connection.value < 0) fail("daemon connection");
++        // The daemon inherited the open-file description; release our duplicate without unlocking it.
++        lock = Fd();
++        if (!writeAll(connection.value, "shared-collector-v2 " + hash + "\n")) fail("daemon handshake");
++        auto response = readLine(connection.value, 5000);
++        if (!response || *response != "shared-collector-v2 " + hash) { std::cerr << "collector: version-conflict or daemon handshake failure\n"; return 1; }
++        return bridge(connection);
++    } catch (const SafeError& e) { std::cerr << "collector: " << e.what() << "\n"; return 1; }
++    catch (...) { std::cerr << "collector: runtime failure\n"; return 1; }
++}
++} // namespace collector
+diff --git a/linux/collector/daemon.hpp b/linux/collector/daemon.hpp
+new file mode 100644
+index 00000000..bb06569a
+--- /dev/null
++++ b/linux/collector/daemon.hpp
+@@ -0,0 +1,6 @@
++#pragma once
++
++namespace collector {
++int runBridge();
++int printIdentity();
++}
 diff --git a/linux/collector/history_cache.cpp b/linux/collector/history_cache.cpp
 new file mode 100644
 index 00000000..571e0e2b
@@ -545,6 +1037,749 @@ index 00000000..b01ec5ef
 +    std::map<std::string, std::string> ids_;
 +};
 +}
+diff --git a/linux/collector/publisher.cpp b/linux/collector/publisher.cpp
+new file mode 100644
+index 00000000..a7da4600
+--- /dev/null
++++ b/linux/collector/publisher.cpp
+@@ -0,0 +1,385 @@
++#include "publisher.hpp"
++#include "agentspeed/json.hpp"
++#include "agentspeed/report_json.hpp"
++#include <curl/curl.h>
++#include <algorithm>
++#include <chrono>
++#include <cmath>
++#include <condition_variable>
++#include <cctype>
++#include <limits>
++#include <map>
++#include <mutex>
++#include <thread>
++
++namespace collector {
++namespace {
++using J = agentspeed::report::Json;
++constexpr const char* origin = "https://agent-speed.yooztech.com";
++std::int64_t wall() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
++bool text(const std::string& s, std::size_t max, bool bearer = false) {
++    if (s.empty() || s.size() > max) return false;
++    for (unsigned char c : s) if (c < 0x20 || c == 0x7f || (bearer && std::isspace(c))) return false;
++    return true;
++}
++bool utf8(const std::string& s) {
++    std::size_t chars = 0;
++    for (std::size_t i = 0; i < s.size();) {
++        unsigned char c = s[i++]; unsigned n = 0; unsigned cp = c;
++        if (c < 0x80) {} else if (c >= 0xc2 && c <= 0xdf) { n=1; cp=c&31; } else if (c >= 0xe0 && c <= 0xef) { n=2; cp=c&15; } else if (c >= 0xf0 && c <= 0xf4) { n=3; cp=c&7; } else return false;
++        if (i+n > s.size()) return false;
++        for (unsigned j=0;j<n;++j) { unsigned char b=s[i++]; if ((b&0xc0)!=0x80) return false; cp=(cp<<6)|(b&63); }
++        if ((n==2 && cp<0x800) || (n==3 && cp<0x10000) || cp>0x10ffff || (cp>=0xd800 && cp<=0xdfff)) return false;
++        chars += cp > 0xffff ? 2 : 1;
++    }
++    return chars <= 256;
++}
++bool zoneName(const std::string& z) {
++    if (!text(z,256) || z == "localtime" || z.front() == '/' || z.find("..") != std::string::npos) return false;
++    for (unsigned char c : z) if (!(std::isalnum(c) || c=='/' || c=='_' || c=='-' || c=='+')) return false;
++    return z.find("//")==std::string::npos && z.back()!='/';
++}
++size_t bodyWrite(char* p,size_t a,size_t b,void* opaque) {
++    auto& s=*static_cast<std::string*>(opaque); size_t n=a*b; if (n>4096-s.size()) return 0; s.append(p,n); return n;
++}
++size_t headerWrite(char* p,size_t a,size_t b,void* opaque) {
++    size_t n=a*b; std::string s(p,n); auto& ms=*static_cast<std::int64_t*>(opaque);
++    if (s.size()>12 && std::equal(s.begin(),s.begin()+12,"retry-after:",[](char x,char y){return std::tolower(static_cast<unsigned char>(x))==y;})) {
++        const char* q=s.c_str()+12; while (*q==' ' || *q=='\t') ++q;
++        std::int64_t v=0; bool ok=false; while (*q>='0' && *q<='9') { ok=true; v=std::min<std::int64_t>(28800,v*10+(*q++-'0')); }
++        if (ok && (*q=='\r' || *q=='\n' || *q=='\0' || *q==' ')) ms=v*1000;
++        else { auto date=curl_getdate(q,nullptr); if(date>=0) ms=std::max<std::int64_t>(0,static_cast<std::int64_t>(date)*1000-wall()); }
++    } return n;
++}
++Publisher::Result curlTransport(const std::string& lease,const std::string& body) {
++    Publisher::Result r;
++    static const bool ready=[] { if (curl_global_init(CURL_GLOBAL_DEFAULT)!=CURLE_OK) return false; auto* v=curl_version_info(CURLVERSION_NOW); return v && (v->features&CURL_VERSION_ASYNCHDNS); }();
++    if (!ready) return r;
++    CURL* c=curl_easy_init(); if (!c) return r;
++ #ifdef AGENTSPEED_COLLECTOR_TEST_RELAY
++    curl_easy_setopt(c,CURLOPT_URL,"https://localhost:19443/v1/publish");
++    curl_easy_setopt(c,CURLOPT_CAINFO,"/tmp/agent-speed-shared-ca.pem");
++#else
++    curl_easy_setopt(c,CURLOPT_URL,"https://agent-speed.yooztech.com/v1/publish");
++#endif
++    std::string auth="Authorization: Bearer "+lease;
++    curl_slist* headers=nullptr; headers=curl_slist_append(headers,"Content-Type: application/json"); headers=curl_slist_append(headers,auth.c_str());
++    curl_easy_setopt(c,CURLOPT_HTTPHEADER,headers); curl_easy_setopt(c,CURLOPT_POSTFIELDS,body.data()); curl_easy_setopt(c,CURLOPT_POSTFIELDSIZE,static_cast<long>(body.size()));
++#if LIBCURL_VERSION_NUM >= 0x075500
++    curl_easy_setopt(c, CURLOPT_PROTOCOLS_STR, "https");
++#else
++    curl_easy_setopt(c, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
++#endif
++    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 0L); curl_easy_setopt(c, CURLOPT_PROXY, ""); curl_easy_setopt(c, CURLOPT_NETRC, CURL_NETRC_IGNORED);
++    curl_easy_setopt(c,CURLOPT_SSL_VERIFYPEER,1L); curl_easy_setopt(c,CURLOPT_SSL_VERIFYHOST,2L); curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT_MS,3000L); curl_easy_setopt(c,CURLOPT_TIMEOUT_MS,6000L); curl_easy_setopt(c,CURLOPT_NOSIGNAL,1L);
++    curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,bodyWrite); curl_easy_setopt(c,CURLOPT_WRITEDATA,&r.body); curl_easy_setopt(c,CURLOPT_HEADERFUNCTION,headerWrite); curl_easy_setopt(c,CURLOPT_HEADERDATA,&r.retryAfterMs);
++    if (curl_easy_perform(c)==CURLE_OK) curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&r.status);
++    curl_slist_free_all(headers); curl_easy_cleanup(c); return r;
++}
++std::string ack(const std::string& type,const std::string& request,const std::string& activity,const std::string& lease,std::int64_t expires,bool accepted,const char* error=nullptr) {
++    auto j=J::object({{"version",J::of(1)},{"type",J::of(type)},{"controlVersion",J::of(2)},{"requestId",J::of(request)}});
++    if (type=="live_activity_subscribe_ack") j.add("activityId",J::of(activity));
++    j.add("leaseId",J::of(lease)); if (type=="live_activity_subscribe_ack") j.add("expiresAt",J::of(expires));
++    j.add("accepted",J::of(accepted)); if (error) j.add("error",J::of(error)); return j.compact()+"\n";
++}
++}
++struct Publisher::Impl {
++    struct Waiter { std::uint64_t client; std::string request; };
++    struct Lease {
++        std::string activity, id, token, host, name, zone;
++        std::int64_t expires = 0, deadline = 0, created = 0, last = 0, next = 0;
++        std::uint64_t generation = 0;
++        View view;
++        bool confirmed = false;
++        int failures = 0;
++        int invalidSnapshots = 0;
++        std::vector<Waiter> waiters;
++        std::string payload;
++        std::int64_t sampled = 0;
++    };
++    struct Request { std::string binding; std::string response; };
++    Options options;
++    mutable std::mutex mutex;
++    std::condition_variable cv;
++    bool stop = false;
++    std::thread worker;
++    std::vector<Lease> leases;
++    // Active leases reserve their own fence slot so retirement can never evict a live fence.
++    std::map<std::pair<std::string, std::string>, std::int64_t> retired;
++    std::map<std::pair<std::uint64_t, std::string>, Request> requests;
++    std::vector<std::pair<std::uint64_t, std::string>> pending;
++    std::uint64_t generation = 0;
++
++    explicit Impl(Options o) : options(std::move(o)) {
++        if (!options.clock) options.clock = wall;
++        if (!options.transport) options.transport = curlTransport;
++        options.confirmationMs = std::max<std::int64_t>(1, std::min<std::int64_t>(75000, options.confirmationMs));
++        options.intervalMs = std::max<std::int64_t>(1, options.intervalMs);
++        worker = std::thread([this] { run(); });
++    }
++    ~Impl() {
++        { std::lock_guard<std::mutex> lock(mutex); stop = true; }
++        cv.notify_all();
++        worker.join();
++    }
++    void finish(Lease& lease, bool ok, const char* error) {
++        for (const auto& waiter : lease.waiters) {
++            auto response = ack("live_activity_subscribe_ack", waiter.request, lease.activity, lease.id, lease.expires, ok, error);
++            if (pending.size() < 256) pending.emplace_back(waiter.client, response);
++            auto it = requests.find({waiter.client, waiter.request});
++            if (it != requests.end()) it->second.response = response;
++        }
++        lease.waiters.clear();
++    }
++    void retire(const Lease& lease) {
++        retired[{lease.activity, lease.id}] = lease.expires;
++    }
++    void expire(std::int64_t now) {
++        for (auto it = retired.begin(); it != retired.end();) {
++            if (now >= it->second) it = retired.erase(it);
++            else ++it;
++        }
++        for (auto it = leases.begin(); it != leases.end();) {
++            if (now >= it->expires || (!it->confirmed && now >= it->deadline)) {
++                if (!it->confirmed) finish(*it, false, "timeout");
++                if (now < it->expires) retire(*it);
++                it = leases.erase(it);
++            } else {
++                ++it;
++            }
++        }
++    }
++    void run() {
++        std::unique_lock<std::mutex> lock(mutex);
++        while (!stop) {
++            auto now = options.clock();
++            expire(now);
++            auto it = leases.end();
++            for (auto candidate = leases.begin(); candidate != leases.end(); ++candidate) {
++                if (candidate->sampled <= candidate->last || candidate->sampled < candidate->created ||
++                    candidate->sampled > now || now - candidate->sampled > 30000 ||
++                    now < candidate->next || candidate->payload.empty()) continue;
++                if (it == leases.end() || candidate->next < it->next) it = candidate;
++            }
++            if (it == leases.end()) {
++                cv.wait_for(lock, std::chrono::milliseconds(100));
++                continue;
++            }
++            auto id = it->id;
++            auto gen = it->generation;
++            auto token = it->token;
++            auto body = it->payload;
++            it->last = it->sampled;
++            it->next = now + std::max<std::int64_t>(10000, options.intervalMs);
++            lock.unlock();
++            Result result;
++            try { result = options.transport(token, body); } catch (...) {}
++            lock.lock();
++            now = options.clock();
++            expire(now);
++            it = std::find_if(leases.begin(), leases.end(), [&](const Lease& lease) {
++                return lease.id == id && lease.generation == gen;
++            });
++            if (it == leases.end()) continue;
++            if (result.status >= 200 && result.status < 300) {
++                it->failures = 0;
++                it->invalidSnapshots = 0;
++                if (!it->confirmed) {
++                    it->confirmed = true;
++                    finish(*it, true, nullptr);
++                }
++            } else if (result.status == 401 || result.status == 403 || result.status == 410 || result.status == 413) {
++                if (!it->confirmed) finish(*it, false, "relay_rejected");
++                retire(*it);
++                leases.erase(it);
++            } else {
++                it->failures = std::min(it->failures + 1, 6);
++                it->invalidSnapshots = result.status == 400 ? it->invalidSnapshots + 1 : 0;
++                if (it->invalidSnapshots >= 8) {
++                    if (!it->confirmed) finish(*it, false, "relay_rejected");
++                    retire(*it);
++                    leases.erase(it);
++                    continue;
++                }
++                auto delay = std::min<std::int64_t>(60000, 10000LL << (it->failures - 1));
++                if (result.status == 429) {
++                    delay = std::max(delay, result.retryAfterMs);
++                    if (result.body.find("apns_backoff") != std::string::npos)
++                        delay = std::max<std::int64_t>(60000, delay);
++                    delay = std::min<std::int64_t>(delay, 28800000);
++                }
++                it->next = std::max(it->next, now + delay);
++            }
++        }
++    }
++};
++Publisher::Publisher():Publisher(Options{}) {}
++Publisher::Publisher(Options o):impl_(new Impl(std::move(o))) {}
++Publisher::~Publisher()=default;
++std::vector<std::string> Publisher::control(const std::string& line, std::uint64_t client, std::int64_t now) {
++    if (line.size() > 16384) return {};
++    agentspeed::json::Document doc;
++    if (!doc.parse(line, 32)) return {};
++    auto root = doc.root();
++    if (!root.isObject()) return {};
++    auto type = root["type"].string().value_or("");
++    if (type != "capabilities" && type != "live_activity_subscribe" && type != "live_activity_unsubscribe") return {};
++    auto request = root["requestId"].string().value_or("");
++    auto id = root["leaseId"].string().value_or("");
++    auto activity = root["activityId"].string().value_or("");
++    auto expires = root["expiresAt"].isIntegerLiteral() ? root["expiresAt"].truncated().value_or(0) : 0;
++    if (type == "capabilities") {
++        if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 || !text(request, 128)) return {};
++        return {J::object({{"version", J::of(1)}, {"type", J::of("capabilities")},
++            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("shared_collector_v1")})},
++            {"controlVersion", J::of(2)}, {"subscribeTimeoutMs", J::of(75000)},
++            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)}}).compact() + "\n"};
++    }
++    auto ackType = type + "_ack";
++    auto bad = [&](const char* error) {
++        return std::vector<std::string>{ack(ackType, request, activity, id, expires, false, error)};
++    };
++    if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 ||
++        !root["controlVersion"].isIntegerLiteral() || root["controlVersion"].truncated() != 2 ||
++        !text(request, 128) || !text(id, 256)) return bad("invalid_request");
++    std::lock_guard<std::mutex> lock(impl_->mutex);
++    impl_->expire(now);
++    if (type == "live_activity_unsubscribe") {
++        auto binding = std::string("u:") + id;
++        auto seen = impl_->requests.find({client, request});
++        if (seen != impl_->requests.end()) {
++            if (seen->second.binding != binding) return bad("conflicting_request");
++            return {seen->second.response};
++        }
++        auto it = std::find_if(impl_->leases.begin(), impl_->leases.end(), [&](const Impl::Lease& lease) { return lease.id == id; });
++        if (it != impl_->leases.end()) {
++            if (!it->confirmed) impl_->finish(*it, false, "cancelled");
++            impl_->retire(*it);
++            impl_->leases.erase(it);
++        }
++        auto response = ack(ackType, request, "", id, 0, true);
++        if (impl_->requests.size() >= 256) impl_->requests.erase(impl_->requests.begin());
++        impl_->requests[{client, request}] = {binding, response};
++        return {response};
++    }
++    auto relay = root["relayUrl"].string().value_or("");
++    auto token = root["lease"].string().value_or("");
++    auto host = root["hostId"].string().value_or("");
++    auto name = root["hostName"].string().value_or("");
++    auto zone = root["timezone"].string().value_or("");
++    if ((relay != origin && relay != std::string(origin) + "/") || !text(token, 4096, true) ||
++        !text(activity, 256) || !text(host, 1024) || !utf8(host) || !text(name, 1024) ||
++        !utf8(name) || !zoneName(zone) || expires <= now || expires - now > 28800000) return bad("invalid_request");
++    auto tz = agentspeed::TimeZone::load(zone);
++    if (!tz) return bad("invalid_request");
++    auto binding = std::string("s:") + J::array({J::of(activity), J::of(id), J::of(token), J::of(host), J::of(name), J::of(zone), J::of(expires)}).compact();
++    auto requestIt = impl_->requests.find({client, request});
++    if (requestIt != impl_->requests.end() && requestIt->second.binding != binding) return bad("conflicting_request");
++    std::size_t outstanding = impl_->pending.size();
++    for (const auto& lease : impl_->leases) outstanding += lease.waiters.size();
++    if (outstanding >= 256) return bad("busy");
++    auto it = std::find_if(impl_->leases.begin(), impl_->leases.end(), [&](const Impl::Lease& lease) { return lease.id == id; });
++    if (it != impl_->leases.end()) {
++        if (it->activity != activity || it->token != token || it->host != host || it->name != name ||
++            it->zone != zone || it->expires != expires) return bad("conflicting_request");
++        if (it->confirmed) {
++            auto response = ack(ackType, request, activity, id, expires, true);
++            if (impl_->requests.size() >= 256 && requestIt == impl_->requests.end()) impl_->requests.erase(impl_->requests.begin());
++            impl_->requests[{client, request}] = {binding, response};
++            return {response};
++        }
++        if (it->waiters.size() >= 32) return bad("busy");
++        if (std::none_of(it->waiters.begin(), it->waiters.end(), [&](const Impl::Waiter& waiter) {
++            return waiter.client == client && waiter.request == request;
++        })) it->waiters.push_back({client, request});
++    } else {
++        if (requestIt != impl_->requests.end() && !requestIt->second.response.empty()) {
++            if (requestIt->second.response.find("\"accepted\":false") != std::string::npos) return {requestIt->second.response};
++            return bad("cancelled");
++        }
++        if (impl_->retired.find({activity, id}) != impl_->retired.end()) return bad("cancelled");
++        if (impl_->retired.size() + impl_->leases.size() >= 256) return bad("busy");
++        auto old = std::find_if(impl_->leases.begin(), impl_->leases.end(), [&](const Impl::Lease& lease) { return lease.activity == activity; });
++        if (old != impl_->leases.end()) {
++            if (!old->confirmed) impl_->finish(*old, false, "cancelled");
++            impl_->retire(*old);
++            impl_->leases.erase(old);
++        }
++        if (impl_->leases.size() >= 32) return bad("busy");
++        Impl::Lease lease;
++        lease.activity = activity; lease.id = id; lease.token = token; lease.host = host;
++        lease.name = name; lease.zone = zone; lease.expires = expires; lease.created = now;
++        lease.deadline = now + impl_->options.confirmationMs;
++        lease.generation = ++impl_->generation;
++        lease.view = {zone, tz};
++        lease.waiters.push_back({client, request});
++        impl_->leases.push_back(std::move(lease));
++    }
++    if (impl_->requests.size() >= 256) impl_->requests.erase(impl_->requests.begin());
++    impl_->requests[{client, request}] = {std::move(binding), ""};
++    impl_->cv.notify_one();
++    return {};
++}
++void Publisher::sample(const View& view, const Sample& sample) {
++    std::lock_guard<std::mutex> lock(impl_->mutex);
++    auto now = impl_->options.clock();
++    for (auto& lease : impl_->leases) {
++        if (lease.view.name != view.name || lease.view.zone != view.zone ||
++            sample.snapshot.nowMs < lease.created || sample.snapshot.nowMs <= lease.sampled ||
++            sample.snapshot.nowMs > now || now - sample.snapshot.nowMs > 30000) continue;
++        const auto& snapshot = sample.snapshot;
++        auto number = [](double value) { return std::isfinite(value) ? J::decimal(value, 3) : J::null(); };
++        auto projection = J::object({
++            {"version", J::of(1)}, {"hostId", J::of(lease.host)}, {"hostName", J::of(lease.name)},
++            {"sampledAt", J::of(snapshot.nowMs)}, {"status", J::of("live")},
++            {"speed", snapshot.liveRateComplete ? number(snapshot.liveOutput) : J::null()},
++            {"generating", J::of(snapshot.generating)}, {"tools", J::of(snapshot.tools)},
++            {"todayOutput", J::of(snapshot.todayOutput)},
++            {"rxBytesPerSecond", snapshot.traffic.machine ? number(snapshot.traffic.machine->rx) : J::null()},
++            {"txBytesPerSecond", snapshot.traffic.machine ? number(snapshot.traffic.machine->tx) : J::null()},
++            {"title", J::null()}});
++        auto body = J::object({{"snapshot", std::move(projection)}}).compact();
++        if (body.size() <= 4096) {
++            lease.payload = std::move(body);
++            lease.sampled = snapshot.nowMs;
++        }
++    }
++    impl_->cv.notify_one();
++}
++std::vector<View> Publisher::views() const {
++    std::lock_guard<std::mutex> lock(impl_->mutex);
++    std::vector<View> out;
++    for (const auto& lease : impl_->leases) out.push_back(lease.view);
++    return out;
++}
++std::vector<std::pair<std::uint64_t, std::string>> Publisher::replies() {
++    std::lock_guard<std::mutex> lock(impl_->mutex);
++    std::vector<std::pair<std::uint64_t, std::string>> out;
++    out.swap(impl_->pending);
++    return out;
++}
++void Publisher::disconnected(std::uint64_t client) {
++    std::lock_guard<std::mutex> lock(impl_->mutex);
++    impl_->pending.erase(std::remove_if(impl_->pending.begin(), impl_->pending.end(),
++        [&](const auto& reply) { return reply.first == client; }), impl_->pending.end());
++    auto request = impl_->requests.lower_bound({client, std::string{}});
++    while (request != impl_->requests.end() && request->first.first == client)
++        request = impl_->requests.erase(request);
++    for (auto it = impl_->leases.begin(); it != impl_->leases.end();) {
++        auto& waiters = it->waiters;
++        waiters.erase(std::remove_if(waiters.begin(), waiters.end(),
++            [&](const Impl::Waiter& waiter) { return waiter.client == client; }), waiters.end());
++        if (!it->confirmed && waiters.empty()) {
++            impl_->retire(*it);
++            it = impl_->leases.erase(it);
++        }
++        else ++it;
++    }
++}
++bool Publisher::authorized(std::int64_t now) const {
++    std::lock_guard<std::mutex> lock(impl_->mutex);
++    return std::any_of(impl_->leases.begin(), impl_->leases.end(), [&](const Impl::Lease& lease) {
++        return now < lease.expires && (lease.confirmed || now < lease.deadline);
++    });
++}
++} // namespace collector
+diff --git a/linux/collector/publisher.hpp b/linux/collector/publisher.hpp
+new file mode 100644
+index 00000000..fc53d5f3
+--- /dev/null
++++ b/linux/collector/publisher.hpp
+@@ -0,0 +1,37 @@
++#pragma once
++
++#include "sampling.hpp"
++#include <cstdint>
++#include <functional>
++#include <memory>
++#include <string>
++#include <utility>
++#include <vector>
++
++namespace collector {
++class Publisher {
++public:
++    struct Result { long status = 0; std::string body; std::int64_t retryAfterMs = 0; };
++    using Transport = std::function<Result(const std::string&, const std::string&)>;
++    struct Options {
++        Transport transport;
++        std::function<std::int64_t()> clock;
++        std::int64_t confirmationMs = 75000;
++        std::int64_t intervalMs = 10000;
++    };
++    Publisher();
++    explicit Publisher(Options options);
++    ~Publisher();
++    Publisher(const Publisher&) = delete;
++    Publisher& operator=(const Publisher&) = delete;
++    std::vector<std::string> control(const std::string&, std::uint64_t clientId, std::int64_t now);
++    void sample(const View&, const Sample&);
++    std::vector<View> views() const;
++    std::vector<std::pair<std::uint64_t, std::string>> replies();
++    void disconnected(std::uint64_t clientId);
++    bool authorized(std::int64_t now) const;
++private:
++    struct Impl;
++    std::unique_ptr<Impl> impl_;
++};
++}
+diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
+new file mode 100644
+index 00000000..cb3dabde
+--- /dev/null
++++ b/linux/collector/sampling.cpp
+@@ -0,0 +1,256 @@
++#include "sampling.hpp"
++
++#include "history_cache.hpp"
++#include "protocol.hpp"
++#include "agentspeed/history_analyzer.hpp"
++#include "agentspeed/history_store.hpp"
++#include "agentspeed/price_book.hpp"
++
++#include <chrono>
++#include <condition_variable>
++#include <cstdlib>
++#include <exception>
++#include <ctime>
++#include <fstream>
++#include <iterator>
++#include <map>
++#include <mutex>
++#include <sstream>
++#include <thread>
++
++namespace collector {
++namespace {
++constexpr std::int64_t dayMs = 86'400'000;
++
++std::int64_t dayStart(std::int64_t now, const std::shared_ptr<const agentspeed::TimeZone>& zone) {
++    if (!zone) {
++        const std::time_t seconds = static_cast<std::time_t>(now / 1000);
++        std::tm wall{};
++        localtime_r(&seconds, &wall);
++        wall.tm_hour = wall.tm_min = wall.tm_sec = 0;
++        wall.tm_isdst = -1;
++        return static_cast<std::int64_t>(std::mktime(&wall)) * 1000;
++    }
++    const auto wall = now + zone->offsetMs(now);
++    const auto midnight = (wall >= 0 ? wall / dayMs : (wall - dayMs + 1) / dayMs) * dayMs;
++    auto start = midnight - zone->offsetMs(now);
++    for (int i = 0; i < 3; ++i) start = midnight - zone->offsetMs(start);
++    if (start + zone->offsetMs(start) != midnight) {
++        auto low = now - 2 * dayMs, high = now;
++        while (low + 1 < high) {
++            const auto mid = low + (high - low) / 2;
++            if (mid + zone->offsetMs(mid) < midnight) low = mid; else high = mid;
++        }
++        start = high;
++    }
++    return start;
++}
++
++std::string cacheIdentity(const agentspeed::SourceLocations& locations, const std::set<agentspeed::SourceKind>& enabled) {
++    std::ostringstream out;
++    auto add = [&](const std::string& s) { out << s.size() << ':' << s; };
++    for (const auto source : enabled) out << static_cast<int>(source) << ',';
++    out << ';';
++    for (const auto& [family, path] : locations.fileRoots()) { out << static_cast<int>(family) << ','; add(path); }
++    add(locations.openCodeRoot); add(locations.zcodeRoot); add(locations.hermesRoot);
++    for (const auto& path : locations.openClawRoots) add(path);
++    out << locations.ompAutomatic << locations.piAutomatic << locations.openClawAutomatic
++        << locations.codexAutomatic << locations.hermesChosen;
++    return out.str();
++}
++
++std::string localIdentity() {
++    const char* tz = std::getenv("TZ");
++    std::string id = tz ? tz : "";
++    auto name = id;
++    if (!name.empty() && name.front() == ':') name.erase(0, 1);
++    std::string path = "/etc/localtime";
++    if (!name.empty() && name.front() != '/' && name.find("..") == std::string::npos)
++        path = "/usr/share/zoneinfo/" + name;
++    std::ifstream file(path, std::ios::binary);
++    return id + '\0' + std::string(std::istreambuf_iterator<char>(file), {});
++}
++}
++
++struct Sampler::Impl {
++    struct Cached {
++        View view;
++        std::string history;
++        std::vector<agentspeed::perf::DayRecord> perf;
++    };
++
++    agentspeed::MonitorConfig config = agentspeed::MonitorConfig::fromEnvironment();
++    agentspeed::Monitor monitor{config};
++    std::shared_ptr<const agentspeed::TimeZone> local = agentspeed::localZone(agentspeed::processEnvironment());
++    std::mutex mutex;
++    std::condition_variable changed;
++    std::map<std::optional<std::string>, Cached> views;
++    std::uint64_t baselineGeneration = 0;
++    std::optional<std::uint64_t> appliedBaselineGeneration;
++    std::optional<std::string> baselineDay;
++    bool stopping = false;
++    bool requested = true;
++    bool started = false;
++    std::thread worker;
++
++    Impl() {
++        views.emplace(std::nullopt, Cached{View{std::nullopt, local}, {}, {}});
++        worker = std::thread([this] { historyLoop(); });
++    }
++    ~Impl() {
++        { std::lock_guard lock(mutex); stopping = true; }
++        changed.notify_one();
++        worker.join();
++    }
++
++    void registerView(const View& view) {
++        std::lock_guard lock(mutex);
++        auto [it, inserted] = views.try_emplace(view.name, Cached{View{view.name, view.name ? view.zone : local}, {}, {}});
++        if (inserted) { requested = true; changed.notify_one(); }
++    }
++    std::shared_ptr<const agentspeed::TimeZone> localZone() {
++        std::lock_guard lock(mutex);
++        return local;
++    }
++    void updateBaselines(std::int64_t now) {
++        const auto day = agentspeed::history::DayLabeler(localZone()).label(now);
++        std::vector<agentspeed::perf::DayRecord> records;
++        std::uint64_t generation;
++        {
++            std::lock_guard lock(mutex);
++            generation = baselineGeneration;
++            if (appliedBaselineGeneration == generation && baselineDay == day) return;
++            records = views.at(std::nullopt).perf;
++        }
++        std::map<std::pair<agentspeed::SourceKind, std::string>, double> baselines;
++        if (day) {
++            for (const auto& record : records) {
++                const auto key = std::make_pair(record.source, record.model);
++                if (baselines.count(key)) continue;
++                if (const auto value = agentspeed::perf::baseline(records, record.source, record.model, *day))
++                    baselines.emplace(key, *value);
++            }
++        }
++        monitor.setPerfBaselines(std::move(baselines));
++        appliedBaselineGeneration = generation;
++        baselineDay = day;
++    }
++
++    void historyLoop() {
++        struct Saved {
++            View view;
++            agentspeed::history::Projection projection;
++            agentspeed::history::Report report;
++        };
++        // Kept by this thread so a failed scan can continue serving the last complete
++        // projection, explicitly marked partial, while the analyzer is restarted.
++        std::map<std::optional<std::string>, Saved> saved;
++        std::string scanIdentity;
++        for (;;) {
++            try {
++                const char* home = std::getenv("HOME");
++                HistoryCache cache(home ? home : "");
++                auto store = cache.open(cacheIdentity(config.locations, config.enabled));
++                agentspeed::history::Analyzer analyzer(*store, std::make_shared<agentspeed::pricing::PriceBook>());
++                auto nextScan = std::chrono::steady_clock::time_point::min();
++                agentspeed::history::Report report;
++                for (;;) {
++                    std::map<std::optional<std::string>, View> todo;
++                    {
++                        std::unique_lock lock(mutex);
++                        changed.wait_until(lock, nextScan, [&] { return stopping || requested; });
++                        if (stopping) return;
++                        requested = false;
++                        for (const auto& [key, value] : views) todo.emplace(key, value.view);
++                    }
++                    if (std::chrono::steady_clock::now() >= nextScan) {
++                        auto identity = localIdentity();
++                        if (identity != scanIdentity) {
++                            auto zone = agentspeed::localZone(agentspeed::processEnvironment());
++                            {
++                                std::lock_guard lock(mutex);
++                                local = zone;
++                                auto& value = views.at(std::nullopt);
++                                value.view.zone = zone;
++                                value.history.clear();
++                                value.perf.clear();
++                                ++baselineGeneration;
++                                todo.at(std::nullopt).zone = zone;
++                            }
++                            saved.erase(std::nullopt);
++                            scanIdentity = identity;
++                        }
++                        auto zone = localZone();
++                        analyzer.setHermesZone(zone);
++                        report = analyzer.runShared(config.locations, config.enabled, zone, identity, [this] {
++                            std::lock_guard lock(mutex);
++                            return stopping;
++                        });
++                        nextScan = std::chrono::steady_clock::now() + std::chrono::seconds(60);
++                        if (report.cancelled) continue;
++                    }
++                    for (const auto& [key, view] : todo) {
++                        auto projection = analyzer.project(view.zone, nullptr, nullptr, !view.name);
++                        auto viewReport = report;
++                        if (!projection.complete && !viewReport.filesUnreadable) viewReport.filesUnreadable = 1;
++                        auto line = Protocol::history(projection.days, viewReport, view.name, projection.perfRecords);
++                        auto perf = projection.perfRecords;
++                        saved.insert_or_assign(key, Saved{view, std::move(projection), viewReport});
++                        std::lock_guard lock(mutex);
++                        if (stopping) return;
++                        auto& value = views.at(key);
++                        value.history = std::move(line);
++                        value.perf = std::move(perf);
++                        if (!key) ++baselineGeneration;
++                    }
++                }
++            } catch (const std::exception&) {
++                for (const auto& [key, value] : saved) {
++                    auto report = value.report;
++                    if (!report.filesUnreadable) report.filesUnreadable = 1;
++                    auto line = Protocol::history(value.projection.days, report, value.view.name,
++                                                  value.projection.perfRecords);
++                    std::lock_guard lock(mutex);
++                    if (stopping) return;
++                    views.at(key).history = std::move(line);
++                }
++                std::unique_lock lock(mutex);
++                if (changed.wait_for(lock, std::chrono::seconds(10), [&] { return stopping; })) return;
++                requested = true;
++            }
++        }
++    }
++};
++
++Sampler::Sampler() : impl_(std::make_unique<Impl>()) {}
++Sampler::~Sampler() = default;
++
++void Sampler::poll(std::int64_t now) {
++    // A rolling 48-hour window covers the current civil day in every supported zone,
++    // including long days at offset transitions, without coupling ingest to a viewer.
++    const auto keepFrom = now - 2 * dayMs;
++    if (!impl_->started) {
++        impl_->monitor.start(now, keepFrom);
++        impl_->started = true;
++    }
++    impl_->monitor.poll(now, keepFrom);
++    impl_->updateBaselines(now);
++}
++
++Sample Sampler::sample(std::int64_t now, const View& view) {
++    impl_->registerView(view);
++    const auto zone = view.name ? view.zone : impl_->localZone();
++    return {impl_->monitor.snapshot(now, dayStart(now, zone))};
++}
++
++std::string Sampler::history(const View& view) {
++    impl_->registerView(view);
++    std::lock_guard lock(impl_->mutex);
++    return impl_->views.at(view.name).history;
++}
++
++std::vector<agentspeed::Completion> Sampler::takeCompletions() {
++    return impl_->monitor.takeCompletions();
++}
++
++}  // namespace collector
+diff --git a/linux/collector/sampling.hpp b/linux/collector/sampling.hpp
+new file mode 100644
+index 00000000..375f5f8f
+--- /dev/null
++++ b/linux/collector/sampling.hpp
+@@ -0,0 +1,41 @@
++#pragma once
++
++#include <cstdint>
++#include <memory>
++#include <optional>
++#include <string>
++#include <vector>
++
++#include "agentspeed/monitor.hpp"
++#include "agentspeed/tz.hpp"
++
++namespace collector {
++
++struct View {
++    std::optional<std::string> name;
++    std::shared_ptr<const agentspeed::TimeZone> zone;
++};
++
++struct Sample {
++    agentspeed::Snapshot snapshot;
++};
++
++// All public methods are called by the collection thread. History analysis runs in the background.
++class Sampler {
++public:
++    Sampler();
++    ~Sampler();
++    Sampler(const Sampler&) = delete;
++    Sampler& operator=(const Sampler&) = delete;
++
++    void poll(std::int64_t now);
++    Sample sample(std::int64_t now, const View& view);
++    std::string history(const View& view);
++    std::vector<agentspeed::Completion> takeCompletions();
++
++private:
++    struct Impl;
++    std::unique_ptr<Impl> impl_;
++};
++
++}  // namespace collector
 diff --git a/linux/core/include/agentspeed/engine.hpp b/linux/core/include/agentspeed/engine.hpp
 index 8b1aefd2..6a72fa35 100644
 --- a/linux/core/include/agentspeed/engine.hpp
@@ -717,6 +1952,19 @@ index 18754f06..fa8c289e 100644
  }
  
  void OmpParser::apply(const Line& line, ResponseSink& sink) {
+diff --git a/linux/docker/Dockerfile b/linux/docker/Dockerfile
+index baf4b763..72f6a173 100644
+--- a/linux/docker/Dockerfile
++++ b/linux/docker/Dockerfile
+@@ -3,7 +3,7 @@ FROM ubuntu:22.04
+ ENV DEBIAN_FRONTEND=noninteractive
+ RUN apt-get update && apt-get install -y --no-install-recommends \
+         ca-certificates git python3 pkg-config cmake ninja-build g++-12 gcc-12 \
+-        libzstd-dev libbrotli-dev libsqlite3-dev libssl-dev libpcre2-dev libicu-dev tzdata \
++        libzstd-dev libbrotli-dev libsqlite3-dev libssl-dev libpcre2-dev libicu-dev libcurl4-openssl-dev tzdata \
+     && rm -rf /var/lib/apt/lists/*
+ ENV CC=gcc-12 CXX=g++-12
+ WORKDIR /src
 diff --git a/linux/tests/CMakeLists.txt b/linux/tests/CMakeLists.txt
 index 77dc5081..8048ca80 100644
 --- a/linux/tests/CMakeLists.txt
@@ -1240,6 +2488,674 @@ index 18792ced..8118362f 100644
  // spec/fixtures/parser-expected.json, for the sources ported so far (files in `order`, one shared dedupe set).
  TEST(ParserFixtures, ClaudeAndCodexMatchTheReference) {
      fixtures::JsonFile expected(fixtures::fixtureDir() / "parser-expected.json");
+diff --git a/linux/tests/shared_collector_ssh_smoke.py b/linux/tests/shared_collector_ssh_smoke.py
+new file mode 100755
+index 00000000..64476dba
+--- /dev/null
++++ b/linux/tests/shared_collector_ssh_smoke.py
+@@ -0,0 +1,662 @@
++#!/usr/bin/env python3
++"""Root-only isolated SSH/TLS acceptance. Run after building the test collector.
++
++sudo python3 linux/tests/shared_collector_ssh_smoke.py --collector /absolute/path/build-shared/collector/agentspeed-collector-ssh-smoke
++Requires ssh, sshd, ssh-keygen, openssl, useradd, userdel, chpasswd and /proc.
++The collector must be built with its test relay pointing at https://localhost:19443
++and its CA bundle set to /tmp/agent-speed-shared-ca.pem. That path must not exist.
++No system SSH service or configuration is modified. Output is JSON, without credentials.
++"""
++import argparse
++import datetime
++import hashlib
++import http.server
++import json
++import os
++import math
++import pathlib
++import pwd
++import queue
++import secrets
++import shutil
++import stat
++import signal
++import socket
++import ssl
++import subprocess
++import tempfile
++import threading
++import time
++
++CA = pathlib.Path('/tmp/agent-speed-shared-ca.pem')
++ORIGIN = 'https://agent-speed.yooztech.com'
++HOST_ID, HOST_NAME = 'smoke-host-id', 'Smoke Host'
++FIELDS = {'version', 'hostId', 'hostName', 'sampledAt', 'status', 'speed', 'generating', 'tools', 'todayOutput', 'rxBytesPerSecond', 'txBytesPerSecond', 'title'}
++
++
++def require(condition, message):
++    if not condition:
++        raise AssertionError(message)
++
++
++def command(*args, **kwargs):
++    return subprocess.run(args, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
++
++
++def eventually(fn, timeout, message):
++    end = time.monotonic() + timeout
++    while time.monotonic() < end:
++        value = fn()
++        if value:
++            return value
++        time.sleep(.1)
++    raise AssertionError(message)
++
++
++class Relay(http.server.ThreadingHTTPServer):
++    daemon_threads = True
++    allow_reuse_address = True
++
++    def __init__(self, port):
++        super().__init__(('127.0.0.1', port), Handler)
++        self.lock = threading.Lock()
++        self.tokens = {}
++        self.records = []
++        self.errors = []
++        self.responses = {}
++        self.gates = {}
++        self.retry_after = {}
++        self.activities = {}
++        self.last_success = {}
++        self.last_sample = {}
++ 
++    def register(self, token, label, statuses=(200,), activity=None):
++        with self.lock:
++            activity = activity or label
++            old = self.activities.get(activity)
++            if old is not None:
++                self.tokens.pop(old, None)
++            self.activities[activity] = token
++            self.tokens[token] = (label, activity)
++            self.responses[label] = list(statuses)
++
++
++    def count(self, label):
++        with self.lock:
++            return sum(r['lease'] == label for r in self.records)
++
++    def snapshot(self):
++        with self.lock:
++            return list(self.records), list(self.errors)
++
++
++class Handler(http.server.BaseHTTPRequestHandler):
++    def log_message(self, *args):
++        pass
++
++    def do_POST(self):
++        relay = self.server
++        now = time.time()
++        status = 400
++        gate = None
++        retry_after = 1
++        try:
++            require(self.path == '/v1/publish', 'unexpected relay path')
++            require(self.headers.get_content_type() == 'application/json', 'unexpected content type')
++            length = int(self.headers.get('Content-Length', '0'))
++            require(0 < length <= 4096, 'invalid body length')
++            auth = self.headers.get('Authorization', '')
++            with relay.lock:
++                binding = relay.tokens.get(auth.removeprefix('Bearer ')) if auth.startswith('Bearer ') else None
++            require(binding is not None, 'unexpected or revoked authorization')
++            label, activity = binding
++            body = json.loads(self.rfile.read(length))
++            require(isinstance(body, dict) and set(body) == {'snapshot'}, 'unexpected envelope')
++            snap = body['snapshot']
++            require(isinstance(snap, dict) and set(snap) == FIELDS, 'unexpected snapshot fields')
++            require(snap['version'] == 1 and snap['hostId'] == HOST_ID and snap['hostName'] == HOST_NAME and snap['status'] == 'live', 'wrong snapshot identity')
++            ts = snap['sampledAt']
++            require(type(ts) is int and 0 <= now * 1000 - ts <= 30000, 'stale or future sample')
++            with relay.lock:
++                require(relay.tokens.get(auth.removeprefix('Bearer ')) == binding, 'revoked authorization')
++                prior = [r for r in relay.records if r['lease'] == label]
++                require(not prior or now - prior[-1]['receivedAt'] >= 9.8, 'publisher retried too quickly')
++                require(ts > relay.last_sample.get(activity, 0), 'activity sample timestamp did not increase')
++                relay.last_sample[activity] = ts
++                statuses = relay.responses[label]
++                last = relay.last_success.get(activity)
++                if last is not None and now - last < 10:
++                    status = 429
++                    retry_after = max(1, math.ceil(10 - (now - last)))
++                else:
++                    status = statuses.pop(0) if len(statuses) > 1 else statuses[0]
++                    if 200 <= status < 300:
++                        relay.last_success[activity] = now
++                if status == 429 and activity in relay.retry_after:
++                    retry_after = relay.retry_after[activity]
++                relay.records.append({'lease': label, 'activity': activity, 'sampledAt': ts, 'receivedAt': now, 'status': status, 'retryAfter': retry_after if status == 429 else None})
++                gate = relay.gates.get(label)
++        except Exception as exc:
++            with relay.lock:
++                relay.errors.append(str(exc))
++        if gate:
++            gate.wait(8)
++        if status == -1:
++            self.connection.shutdown(socket.SHUT_RDWR)
++            self.connection.close()
++            return
++        try:
++            self.send_response(status)
++            if status == 429:
++                self.send_header('Retry-After', str(retry_after))
++            self.send_header('Content-Length', '0')
++            self.end_headers()
++        except (BrokenPipeError, ConnectionResetError):
++            pass
++
++
++class Client:
++    def __init__(self, ssh, user, port, key, executable, slow=False):
++        self.messages = queue.Queue(maxsize=4096)
++        self.stderr = bytearray()
++        self.process = subprocess.Popen([ssh, '-F', '/dev/null', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-i', str(key), '-p', str(port), user + '@127.0.0.1', str(executable)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
++        self.threads = [threading.Thread(target=self._errors, daemon=True)]
++        if not slow:
++            self.threads.append(threading.Thread(target=self._read, daemon=True))
++        for thread in self.threads:
++            thread.start()
++
++    def _read(self):
++        for line in self.process.stdout:
++            try:
++                item = json.loads(line)
++                item['_received_mono'] = time.monotonic()
++                try:
++                    self.messages.put_nowait(item)
++                except queue.Full:
++                    self.messages.get_nowait()
++                    self.messages.put_nowait(item)
++            except (ValueError, UnicodeError):
++                self.messages.put_nowait({'_invalid': True})
++
++    def _errors(self):
++        while True:
++            data = os.read(self.process.stderr.fileno(), 4096)
++            if not data:
++                break
++            if len(self.stderr) < 65536:
++                self.stderr.extend(data[:65536-len(self.stderr)])
++
++    def send(self, item):
++        self.process.stdin.write((json.dumps(item, separators=(',', ':')) + '\n').encode())
++        self.process.stdin.flush()
++
++    def get(self, predicate, timeout=20):
++        end = time.monotonic() + timeout
++        while time.monotonic() < end:
++            try:
++                item = self.messages.get(timeout=min(.25, max(.001, end-time.monotonic())))
++                require('_invalid' not in item, 'invalid NDJSON')
++                if predicate(item):
++                    return item
++            except queue.Empty:
++                if self.process.poll() is not None:
++                    self.threads[0].join(timeout=1)
++                    raise AssertionError('SSH client exited unexpectedly (exit code %s)' % self.process.returncode)
++        raise AssertionError('timed out waiting for collector message')
++
++    def close(self):
++        if self.process.stdin and not self.process.stdin.closed:
++            self.process.stdin.close()
++        try:
++            self.process.wait(timeout=5)
++        except subprocess.TimeoutExpired:
++            self.process.terminate()
++            try:
++                self.process.wait(timeout=3)
++            except subprocess.TimeoutExpired:
++                self.process.kill()
++                self.process.wait()
++        for thread in self.threads:
++            thread.join(timeout=2)
++
++
++def processes(uid, executable=None):
++    result = []
++    for p in pathlib.Path('/proc').iterdir():
++        if not p.name.isdigit():
++            continue
++        try:
++            if p.stat().st_uid != uid:
++                continue
++            target = os.readlink(p / 'exe')
++            if executable is None or os.path.realpath(target.removesuffix(' (deleted)')) == os.path.realpath(executable):
++                result.append(int(p.name))
++        except (OSError, ProcessLookupError):
++            pass
++    return result
++
++
++def subscribe(client, request, lease_id, token, activity='activity', expiry=None, zone='UTC'):
++    client.send({'version': 1, 'type': 'live_activity_subscribe', 'controlVersion': 2, 'requestId': request, 'relayUrl': ORIGIN, 'lease': token, 'activityId': activity, 'leaseId': lease_id, 'expiresAt': expiry or int(time.time()*1000)+180000, 'hostId': HOST_ID, 'hostName': HOST_NAME, 'timezone': zone})
++
++
++def ack(client, request, timeout=30):
++    return client.get(lambda m: m.get('requestId') == request and m.get('type', '').endswith('_ack'), timeout)
++
++
++def run(args):
++    require(os.geteuid() == 0, 'must run as root (e.g. sudo)')
++    for name in ('ssh', 'sshd', 'ssh-keygen', 'openssl', 'useradd', 'userdel', 'chpasswd'):
++        require(shutil.which(name), 'missing prerequisite: ' + name)
++    require(pathlib.Path('/proc').is_dir(), '/proc is required')
++    for binary in (args.collector, args.production_collector):
++        if binary:
++            require(os.path.isabs(binary) and os.access(binary, os.X_OK), 'collector must be an executable absolute path')
++    if args.deployment_command_file:
++        require(pathlib.Path(args.deployment_command_file).is_file(), 'deployment command file is missing')
++    require(not CA.exists(), str(CA) + ' already exists; refusing to overwrite')
++    require(args.relay_port == 19443, 'test collector compile seam fixes relay port to 19443')
++    results, clients, secrets_used = {}, [], []
++    user = 'as' + secrets.token_hex(6)
++    relay = None
++    sshd = None
++    uid = None
++    sshd_log = None
++    created_ca = False
++    start = time.monotonic()
++    with tempfile.TemporaryDirectory(prefix='agentspeed-ssh-') as temp:
++        root = pathlib.Path(temp)
++        os.chmod(root, 0o755)
++        home = root / 'home'
++        home.mkdir(mode=0o700)
++        def scenario(name, fn):
++            started = time.monotonic()
++            try:
++                fn()
++            except Exception as exc:
++                results[name] = {'passed': False, 'seconds': round(time.monotonic()-started, 3), 'error': str(exc)}
++                raise
++            results[name] = {'passed': True, 'seconds': round(time.monotonic()-started, 3)}
++        try:
++            command('useradd', '-M', '-d', str(home), '-s', '/bin/sh', user)
++            uid = pwd.getpwnam(user).pw_uid
++            os.chown(home, uid, pwd.getpwnam(user).pw_gid)
++            command('chpasswd', input=(user + ':' + secrets.token_hex(32) + '\n').encode())
++            command('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(root/'client'))
++            command('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(root/'host'))
++            sshdir = home/'.ssh'; sshdir.mkdir(mode=0o700)
++            authorized = sshdir/'authorized_keys'; authorized.write_bytes((root/'client.pub').read_bytes()); authorized.chmod(0o600)
++            for item in (sshdir, authorized): os.chown(item, uid, pwd.getpwnam(user).pw_gid)
++            fd = os.open(CA, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
++            os.close(fd)
++            created_ca = True
++            command('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(root/'ca.key'), '-out', str(CA), '-days', '1', '-subj', '/CN=Agent Speed Smoke CA')
++            command('openssl', 'req', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(root/'server.key'), '-out', str(root/'server.csr'), '-subj', '/CN=localhost')
++            (root/'extensions').write_text('subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\n')
++            command('openssl', 'x509', '-req', '-in', str(root/'server.csr'), '-CA', str(CA), '-CAkey', str(root/'ca.key'), '-CAcreateserial', '-CAserial', str(root/'serial'), '-out', str(root/'server.crt'), '-days', '1', '-extfile', str(root/'extensions'))
++            relay = Relay(args.relay_port)
++            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain(root/'server.crt', root/'server.key')
++            relay.socket = ctx.wrap_socket(relay.socket, server_side=True)
++            threading.Thread(target=relay.serve_forever, daemon=True).start()
++            config = root/'sshd_config'
++            config.write_text(f'Port {args.port}\nListenAddress 127.0.0.1\nHostKey {root}/host\nPidFile {root}/sshd.pid\nAuthorizedKeysFile .ssh/authorized_keys\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nPermitRootLogin no\nAllowUsers {user}\nStrictModes yes\nSubsystem sftp internal-sftp\n')
++            pathlib.Path('/run/sshd').mkdir(mode=0o755, parents=True, exist_ok=True)
++            sshd_log = (root/'sshd.log').open('w+b', buffering=0)
++            sshd = subprocess.Popen([shutil.which('sshd'), '-D', '-e', '-f', str(config)], stdout=subprocess.DEVNULL, stderr=sshd_log)
++            def ready():
++                require(sshd.poll() is None, 'isolated sshd exited')
++                try:
++                    with socket.create_connection(('127.0.0.1', args.port), .2): return True
++                except OSError: return False
++            eventually(ready, 5, 'isolated sshd did not listen')
++            fixture = home/'.omp/agent/sessions/-private-project'; fixture.mkdir(parents=True)
++            for path in [home/'.omp', home/'.omp/agent', home/'.omp/agent/sessions', fixture]: os.chown(path, uid, pwd.getpwnam(user).pw_gid)
++            f = fixture/'2026-10-20T10-48-00-000Z_01a158ec-db00-75e2-83a6-00013c6ef362.jsonl'
++            stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
++            f.write_text(json.dumps({'type':'session','version':3,'id':'01a158ec-db00-75e2-83a6-00013c6ef362','timestamp':stamp,'cwd':'/private-project'})+'\n'); os.chown(f, uid, pwd.getpwnam(user).pw_gid)
++            collector_path = args.collector
++            if args.deployment_command_file:
++                def deployment():
++                    nonlocal collector_path
++                    payload = pathlib.Path(args.collector).read_bytes()
++                    digest = hashlib.sha256(payload).hexdigest()
++                    upload_command = pathlib.Path(args.deployment_command_file).read_text()
++                    require(upload_command.strip() and '\x00' not in upload_command, 'invalid native upload command')
++                    base = [shutil.which('ssh'), '-F', '/dev/null', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-i', str(root/'client'), '-p', str(args.port), user+'@127.0.0.1']
++                    cache = home/'.cache'; cache.mkdir(mode=0o700)
++                    directory = cache/'agent-speed'; directory.mkdir(mode=0o700)
++                    legacy = directory/'collector'; legacy.write_bytes(b'legacy-marker')
++                    gid = pwd.getpwnam(user).pw_gid
++                    for item in (cache, directory, legacy): os.chown(item, uid, gid)
++                    target = directory/('collector-v2-'+digest)
++                    def upload():
++                        return subprocess.Popen(base+[upload_command], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
++                    def complete(proc):
++                        out, err = proc.communicate(input=payload, timeout=60)
++                        return proc.returncode, out, err.decode('utf-8', 'replace')[:8192]
++                    cache.chmod(0o770)
++                    code, _, err = complete(upload())
++                    require(code != 0 and not target.exists() and legacy.read_bytes() == b'legacy-marker', 'group-writable cache accepted: '+err)
++                    cache.chmod(0o700)
++                    other = directory/'hardlink-source'; other.write_bytes(payload); other.chmod(0o700); os.chown(other, uid, gid)
++                    os.link(other, target)
++                    code, _, err = complete(upload())
++                    require(code != 0 and target.stat().st_nlink == 2 and legacy.read_bytes() == b'legacy-marker', 'unsafe hardlink accepted: '+err)
++                    target.unlink(); other.unlink()
++                    first, second = upload(), upload()
++                    outcomes = [None, None]
++                    def finish(index, proc):
++                        outcomes[index] = complete(proc)
++                    threads = [threading.Thread(target=finish, args=(i, proc)) for i, proc in enumerate((first, second))]
++                    for thread in threads: thread.start()
++                    for thread in threads: thread.join()
++                    require(all(item is not None and item[0] == 0 for item in outcomes), 'concurrent native uploads failed: '+str(outcomes))
++                    st = target.lstat()
++                    require(stat.S_ISREG(st.st_mode) and stat.S_IMODE(st.st_mode) == 0o700 and st.st_uid == uid and st.st_nlink == 1 and hashlib.sha256(target.read_bytes()).hexdigest() == digest, 'installed asset metadata or digest incorrect')
++                    require(legacy.read_bytes() == b'legacy-marker', 'legacy asset was replaced')
++                    identity = subprocess.run(base+[str(target)+' --identity'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
++                    require(identity.returncode == 0 and identity.stdout == ('shared-collector-v2 '+digest+'\n').encode(), 'installed collector identity mismatch')
++                    collector_path = str(target)
++                scenario('native_upload_race_and_unsafe_paths', deployment)
++            def connect(exe=None, slow=False):
++                c = Client(shutil.which('ssh'), user, args.port, root/'client', exe or collector_path, slow); clients.append(c); return c
++            a, b, c = connect(), connect(), connect()
++            def capabilities():
++                a.send({'version':1, 'type':'capabilities', 'requestId':'capabilities'})
++                response = a.get(lambda m: m.get('requestId') == 'capabilities', 20)
++                require(response.get('controlVersion') == 2 and {'live_activity_v2', 'shared_collector_v1'} <= set(response.get('capabilities', [])) and 'live_activity_v1' not in response.get('capabilities', []), 'unexpected capabilities')
++            scenario('capabilities_v2', capabilities)
++            def views():
++                for client, zone in zip((a,b,c), ('UTC','America/Los_Angeles','Pacific/Kiritimati')):
++                    client.send({'version':1,'type':'history_timezone','timezone':zone})
++                for client, zone in zip((a,b,c), ('UTC','America/Los_Angeles','Pacific/Kiritimati')):
++                    seen = set()
++                    while seen != {'snapshot', 'history'}:
++                        m = client.get(lambda m, z=zone: m.get('type') in ('snapshot', 'history') and m.get('timezone') == z, 35)
++                        seen.add(m['type'])
++                require(len(processes(uid, collector_path)) >= 1, 'collector process not found')
++            scenario('three_independent_timezone_views', views)
++            def fanout():
++                tracer = None
++                trace_log = None
++                groups = {}
++                trace_prefix = root/'source-trace'
++                if shutil.which('strace'):
++                    pids = processes(uid, collector_path)
++                    require(len(pids) >= 4, 'expected daemon and three live bridges before tracing')
++                    lock_path = str(home/'.agent-speed/collector.lock')
++                    owners = []
++                    for pid in pids:
++                        try:
++                            links = [os.readlink(fd) for fd in pathlib.Path('/proc', str(pid), 'fd').iterdir() if fd.exists()]
++                            if lock_path in links: owners.append(pid)
++                            for tid in pathlib.Path('/proc', str(pid), 'task').iterdir(): groups[int(tid.name)] = pid
++                        except (OSError, ProcessLookupError):
++                            raise AssertionError('collector process vanished before tracing')
++                    require(len(owners) == 1, 'could not uniquely identify daemon lock owner')
++                    daemon = owners[0]
++                    trace_log = (root/'strace.log').open('w+b', buffering=0)
++                    argv = [shutil.which('strace'), '-ff', '-e', 'trace=openat,read,pread64', '-e', 'raw=read,pread64', '-P', str(f), '-o', str(trace_prefix)]
++                    for pid in pids: argv.extend(['-p', str(pid)])
++                    tracer = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=trace_log)
++                try:
++                    if tracer:
++                        time.sleep(1)
++                        require(tracer.poll() is None, 'strace failed to attach; ptrace may be unavailable')
++                        trace_log.seek(0)
++                        attach_log = trace_log.read().decode('utf-8', 'replace')
++                        require(all(('Process '+str(pid)+' attached') in attach_log for pid in pids), 'strace could not attach to every collector process; ptrace may be unavailable')
++                    for client, zone in zip((a,b,c), ('Pacific/Kiritimati','UTC','America/Los_Angeles')):
++                        client.send({'version':1,'type':'history_timezone','timezone':zone})
++                    message = {'type':'message','id':'private-id','parentId':None,'timestamp':stamp,'message':{'role':'assistant','content':[{'type':'text','text':'private-prompt-marker'}],'api':'openai-responses','provider':'openai','model':'gpt-5.5','usage':{'input':300,'output':410,'cacheRead':0,'cacheWrite':0,'totalTokens':710},'stopReason':'stop','timestamp':int(time.time()*1000)}}
++                    with f.open('a') as out: out.write(json.dumps(message)+'\n')
++                    for client in (a,b,c): client.get(lambda m: m.get('type') == 'completion' and m.get('output') == 410, 35)
++                    if tracer:
++                        for pid in pids:
++                            try:
++                                for tid in pathlib.Path('/proc', str(pid), 'task').iterdir(): groups[int(tid.name)] = pid
++                            except OSError: pass
++                finally:
++                    if tracer:
++                        if tracer.poll() is None: tracer.send_signal(signal.SIGINT)
++                        try: tracer.wait(timeout=5)
++                        except subprocess.TimeoutExpired: tracer.kill(); tracer.wait()
++                        trace_log.close()
++                if tracer:
++                    counts = {}
++                    for path in root.glob('source-trace.*'):
++                        try: tid = int(path.name.rsplit('.', 1)[1])
++                        except ValueError: continue
++                        owner = groups.get(tid)
++                        for line in path.read_text(errors='replace').splitlines():
++                            operation = line.split('(', 1)[0].strip()
++                            if operation in ('openat', 'read', 'pread64'):
++                                require(owner is not None, 'traced source syscall from unknown thread')
++                                per_pid = counts.setdefault(owner, {'openat':0, 'read':0, 'pread64':0})
++                                per_pid[operation] += 1
++                    require(set(counts) == {daemon}, 'source syscalls were not confined to the single daemon')
++                    results['source_syscall_trace'] = {'passed':True, 'sourceReadingProcesses':len(counts), 'daemon':counts[daemon], 'bridges':[counts.get(pid, {'openat':0, 'read':0, 'pread64':0}) for pid in pids if pid != daemon], 'note':'Syscalls do not prove parser invocation count.'}
++                else:
++                    results['source_syscall_trace'] = {'passed':None, 'reason':'strace not installed; source-reader ownership not observed'}
++            scenario('completion_fanout', fanout)
++            scenario('disconnect_other_continues', lambda: (b.close(), a.get(lambda m: m.get('type') == 'snapshot', 15)))
++            slow = connect(slow=True)
++            scenario('slow_reader_other_continues', lambda: a.get(lambda m: m.get('type') == 'snapshot', 15))
++            slow.close()
++            def token(label, statuses=(200,), activity=None):
++                value = secrets.token_urlsafe(32); secrets_used.append(value); relay.register(value, label, statuses, activity); return value
++            t1 = token('first', (429,200), 'activity'); gate = threading.Event(); relay.gates['first'] = gate
++            def first_ack():
++                subscribe(a, 'first-request', 'first-lease', t1)
++                eventually(lambda: relay.count('first') >= 1, 20, 'first publish missing')
++                try:
++                    ack(a, 'first-request', 1)
++                    raise AssertionError('ack arrived before HTTP success')
++                except AssertionError as e:
++                    if str(e) != 'timed out waiting for collector message': raise
++                gate.set()
++                response = ack(a, 'first-request', 30)
++                require(response.get('accepted') is True and relay.count('first') >= 2, '429 retry did not lead to success')
++            scenario('first_success_ack_after_429', first_ack)
++            timeout_client = connect()
++            timeout_token = token('deadline', (429,))
++            relay.retry_after['deadline'] = 120
++            timeout_started = time.monotonic()
++            subscribe(timeout_client, 'deadline-request', 'deadline-lease', timeout_token, activity='deadline', expiry=int(time.time()*1000)+180000)
++            t2 = token('replacement', activity='activity')
++            def replacement():
++                old = relay.count('first')
++                subscribe(a, 'replace-request', 'second-lease', t2)
++                eventually(lambda: relay.count('replacement') >= 1, 20, 'replacement publish missing')
++                records, _ = relay.snapshot()
++                first_replacement = next(r for r in records if r['lease'] == 'replacement')
++                require(first_replacement['status'] == 429 and first_replacement['retryAfter'] > 0, 'rotation did not retain worker rate limit')
++                require(ack(a, 'replace-request', 30).get('accepted') is True, 'replacement failed')
++                records, _ = relay.snapshot()
++                replacements = [r for r in records if r['lease'] == 'replacement']
++                require(len(replacements) >= 2 and replacements[-1]['status'] == 200 and replacements[-1]['receivedAt'] - first_replacement['receivedAt'] >= first_replacement['retryAfter'] - .2, 'replacement ignored retry-after')
++                time.sleep(11)
++                require(relay.count('first') == old, 'old lease published after replacement')
++            scenario('replacement_fences_old_lease', replacement)
++            def held_success():
++                t = token('held-success')
++                release = threading.Event()
++                relay.gates['held-success'] = release
++                subscribe(a, 'held-request', 'held-lease', t, activity='held-success')
++                eventually(lambda: relay.count('held-success') == 1, 20, 'held HTTP request missing')
++                try:
++                    ack(a, 'held-request', 1)
++                    raise AssertionError('acknowledgment preceded HTTP success response')
++                except AssertionError as exc:
++                    if str(exc) != 'timed out waiting for collector message': raise
++                release.set()
++                require(ack(a, 'held-request', 20).get('accepted') is True, 'held success was not acknowledged')
++                a.send({'version':1,'type':'live_activity_unsubscribe','controlVersion':2,'requestId':'held-unsub','leaseId':'held-lease'})
++                require(ack(a, 'held-unsub').get('accepted') is True, 'held lease unsubscribe failed')
++            scenario('ack_waits_for_http_success_response', held_success)
++            def recovery(label, statuses, hold=False):
++                t = token(label, statuses)
++                release = threading.Event()
++                if hold:
++                    relay.gates[label] = release
++                subscribe(a, label+'-request', label+'-lease', t, activity=label)
++                eventually(lambda: relay.count(label) >= 1, 20, label+' first attempt missing')
++                if hold:
++                    time.sleep(7)
++                    release.set()
++                response = ack(a, label+'-request', 35)
++                require(response.get('accepted') is True and relay.count(label) >= 2, label+' did not recover')
++                a.send({'version':1,'type':'live_activity_unsubscribe','controlVersion':2,'requestId':label+'-unsub','leaseId':label+'-lease'})
++                require(ack(a, label+'-unsub').get('accepted') is True, label+' unsubscribe failed')
++            scenario('relay_502_fresh_recovery', lambda: recovery('bad-gateway', (502,200)))
++            scenario('relay_400_fresh_recovery', lambda: recovery('bad-request', (400,200)))
++            scenario('relay_connection_loss_recovery', lambda: recovery('offline', (-1,200)))
++            scenario('curl_timeout_fresh_recovery', lambda: recovery('curl-timeout', (502,200), True))
++            def expired():
++                subscribe(a, 'expired-request', 'expired-lease', token('expired'), activity='expired', expiry=int(time.time()*1000)-1000)
++                require(ack(a, 'expired-request').get('accepted') is False, 'expired lease accepted')
++            scenario('expired_lease_rejected', expired)
++            def live_expiry():
++                t = token('short-lived')
++                subscribe(a, 'short-request', 'short-lease', t, activity='short', expiry=int(time.time()*1000)+6000)
++                require(ack(a, 'short-request', 20).get('accepted') is True, 'short lease not confirmed')
++                before = relay.count('short-lived')
++                time.sleep(12)
++                require(relay.count('short-lived') == before, 'expired lease continued publishing')
++            scenario('active_lease_expiry', live_expiry)
++            for code in (401,403,410):
++                def rejected(code=code):
++                    label = 'reject'+str(code); t = token(label, (code,))
++                    subscribe(a, label, label, t, activity=label)
++                    require(ack(a, label, 30).get('accepted') is False, 'terminal relay error accepted')
++                    time.sleep(11)
++                    require(relay.count(label) == 1, 'terminal relay error retried')
++                scenario('relay_'+str(code)+'_stops', rejected)
++            def digest():
++                other = root/'different-collector'; shutil.copyfile(args.collector, other); other.chmod(0o755)
++                with other.open('ab') as out: out.write(b'\nsmoke-digest-change\n')
++                d = connect(other)
++                eventually(lambda: d.process.poll() is not None, 15, 'digest mismatch did not terminate')
++                require(d.process.returncode != 0, 'digest mismatch succeeded')
++                a.get(lambda m: m.get('type') == 'snapshot', 15)
++            scenario('digest_conflict_preserves_clients', digest)
++            def confirmation_deadline():
++                response = ack(timeout_client, 'deadline-request', 90)
++                require(response.get('accepted') is False and response.get('error') == 'timeout', 'confirmation deadline did not reject')
++                require(response['_received_mono'] - timeout_started >= 73, 'confirmation rejected before deadline')
++                require(relay.count('deadline') == 1, 'deadline retry ignored Retry-After')
++                timeout_client.close()
++            scenario('confirmation_deadline_negative_ack', confirmation_deadline)
++            def persistence():
++                before = relay.count('replacement')
++                for client in (a,c): client.close()
++                eventually(lambda: relay.count('replacement') > before, 25, 'lease did not publish after SSH exit')
++            scenario('lease_survives_all_ssh_exits', persistence)
++            d = connect()
++            def unsubscribe():
++                d.send({'version':1,'type':'live_activity_unsubscribe','controlVersion':2,'requestId':'unsub','leaseId':'second-lease'})
++                require(ack(d, 'unsub').get('accepted') is True, 'unsubscribe failed')
++                before = relay.count('replacement'); time.sleep(11)
++                require(relay.count('replacement') == before, 'unsubscribed lease published')
++                d.close()
++                eventually(lambda: not processes(uid, collector_path), 40, 'daemon did not idle exit')
++            scenario('unsubscribe_and_idle_exit', unsubscribe)
++            def socket_safety():
++                runtime = home/'.agent-speed'
++                sock = runtime/'collector.sock'
++                lock = runtime/'collector.lock'
++                sock.symlink_to(home/'sentinel')
++                bad = connect()
++                eventually(lambda: bad.process.poll() is not None, 15, 'symlink socket was not rejected')
++                require(bad.process.returncode != 0 and sock.is_symlink(), 'malicious socket accepted or modified')
++                sock.unlink()
++                lock.unlink(missing_ok=True)
++                lock.symlink_to(home/'sentinel')
++                bad = connect()
++                eventually(lambda: bad.process.poll() is not None, 15, 'symlink lock was not rejected')
++                require(bad.process.returncode != 0 and lock.is_symlink(), 'malicious lock accepted or modified')
++                lock.unlink()
++                stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++                stale.bind(str(sock)); stale.close()
++                os.chown(sock, uid, pwd.getpwnam(user).pw_gid); sock.chmod(0o600)
++                restarted = connect()
++                restarted.get(lambda m: m.get('type') == 'snapshot', 25)
++                end = time.monotonic() + 4
++                while time.monotonic() < end:
++                    try:
++                        item = restarted.messages.get(timeout=.2)
++                        require(item.get('type') != 'completion', 'historical completion replayed on restart')
++                    except queue.Empty:
++                        pass
++                restarted.close()
++                eventually(lambda: not processes(uid, collector_path), 40, 'restarted daemon did not idle exit')
++            scenario('malicious_paths_and_stale_socket_restart', socket_safety)
++            if args.production_collector:
++                def production():
++                    client = connect(args.production_collector)
++                    client.get(lambda m: m.get('type') == 'snapshot', 25)
++                    client.close()
++                    eventually(lambda: not processes(uid, args.production_collector), 40, 'production daemon did not idle exit')
++                scenario('production_binary_canonical_runtime', production)
++            records, errors = relay.snapshot(); require(not errors, 'relay validation failures: ' + '; '.join(errors))
++            for client in clients:
++                for secret in secrets_used: require(secret.encode() not in client.stderr, 'bearer appeared in SSH stderr')
++            return {'passed':True, 'scenarios':results, 'relay':{'requests':records, 'validationErrors':errors}, 'notes':['Shared scan/parse count is not externally observable; deterministic counter acceptance belongs to C++ tests.', 'APNs backoff of at least 60 seconds is left to deterministic C++ tests.', 'Connection-loss recovery closes an established local TLS connection; it does not disable the network interface.', 'No Apple delivery is exercised.'], 'seconds':round(time.monotonic()-start,3)}
++        except Exception as exc:
++            for client in clients:
++                try: client.close()
++                except (OSError, ValueError): pass
++            if sshd is not None and sshd.poll() is None:
++                sshd.terminate()
++                try: sshd.wait(timeout=5)
++                except subprocess.TimeoutExpired: sshd.kill(); sshd.wait()
++            records, errors = relay.snapshot() if relay is not None else ([], [])
++            diagnostics = {'clients': [{'index': i, 'exitCode': client.process.returncode, 'stderr': bytes(client.stderr).decode('utf-8', 'replace')} for i, client in enumerate(clients)]}
++            if sshd_log is not None:
++                size = sshd_log.seek(0, os.SEEK_END)
++                sshd_log.seek(max(0, size - 65536))
++                diagnostics['sshdStderr'] = sshd_log.read().decode('utf-8', 'replace')
++            result = {'passed': False, 'error': str(exc), 'exception': type(exc).__name__, 'scenarios': results, 'relay': {'requests': records, 'validationErrors': errors}, 'diagnostics': diagnostics, 'seconds': round(time.monotonic()-start, 3)}
++            encoded = json.dumps(result)
++            for secret in secrets_used:
++                encoded = encoded.replace(secret, '[REDACTED]')
++            return json.loads(encoded)
++        finally:
++            for client in clients:
++                try: client.close()
++                except (OSError, ValueError): pass
++            if uid is not None:
++                for pid in processes(uid):
++                    try: os.kill(pid, signal.SIGTERM)
++                    except ProcessLookupError: pass
++                end = time.monotonic()+5
++                while processes(uid) and time.monotonic() < end: time.sleep(.1)
++            if sshd is not None:
++                sshd.terminate()
++                try: sshd.wait(timeout=5)
++                except subprocess.TimeoutExpired: sshd.kill(); sshd.wait()
++            if sshd_log is not None: sshd_log.close()
++            if relay is not None: relay.shutdown(); relay.server_close()
++            if uid is not None: subprocess.run(['userdel', user], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
++            if created_ca: CA.unlink(missing_ok=True)
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
++    parser.add_argument('--collector', required=True, help='absolute path to test-relay collector')
++    parser.add_argument('--production-collector', help='optional absolute production collector path')
++    parser.add_argument('--deployment-command-file', help='file containing the native client upload shell command for this exact collector digest')
++    parser.add_argument('--port', type=int, default=22387, help='isolated sshd port (default: 22387)')
++    parser.add_argument('--relay-port', type=int, default=19443, help='test relay port (must match compile seam)')
++    args = parser.parse_args()
++    try:
++        result = run(args)
++    except Exception as exc:
++        result = {'passed':False, 'error':str(exc), 'exception':type(exc).__name__}
++    print(json.dumps(result, sort_keys=True))
++    return 0 if result['passed'] else 1
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
 index d60943bb..90c5f171 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
@@ -1876,10 +3792,10 @@ index a9312a05..955a476f 100755
  step "Signing (ad hoc)"
 diff --git a/macos/scripts/build-linux-collector.sh b/macos/scripts/build-linux-collector.sh
 new file mode 100755
-index 00000000..63f7ec2b
+index 00000000..ca890c89
 --- /dev/null
 +++ b/macos/scripts/build-linux-collector.sh
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,45 @@
 +#!/usr/bin/env bash
 +# Build on a compatible target Ubuntu system, not on the Mac packaging host.
 +set -euo pipefail
@@ -1895,11 +3811,12 @@ index 00000000..63f7ec2b
 +under OUTPUT_DIR/linux-<architecture>/agent-speed-collector. OUTPUT_DIR defaults
 +to <repo>/dist/collectors. Copy the architecture directory to the Mac before
 +running build-app.sh; use --collectors there if not using its default location.
++Only the native architecture is built; no ARM artifact is generated on x86_64.
 +
 +Install build dependencies: cmake, g++, pkg-config, libzstd-dev, libbrotli-dev,
-+libsqlite3-dev, libicu-dev and libssl-dev. The collector uses system shared
-+libraries: build against a compatible target Ubuntu release and ensure the target
-+has the corresponding runtime libraries installed.
++libsqlite3-dev, libicu-dev, libssl-dev and libcurl4-openssl-dev. The collector
++uses system shared libraries, including libcurl with AsynchDNS; build against a
++compatible target Ubuntu release and install the corresponding runtime libraries.
 +EOF
 +    exit 0
 +fi
@@ -1910,6 +3827,7 @@ index 00000000..63f7ec2b
 +    aarch64|arm64) arch=aarch64 ;;
 +    *) echo "Unsupported Linux architecture: $(uname -m)" >&2; exit 1 ;;
 +esac
++command -v curl-config >/dev/null && curl-config --features | grep -qx AsynchDNS || { echo "libcurl with AsynchDNS is required." >&2; exit 1; }
 +
 +output_dir="${1:-$REPO_ROOT/dist/collectors}"
 +build_dir="$REPO_ROOT/linux/build/collector-$arch"
@@ -1918,6 +3836,10 @@ index 00000000..63f7ec2b
 +cmake --build "$build_dir" --config Release --target agentspeed-collector --parallel
 +mkdir -p "$output_dir/linux-$arch"
 +install -m 755 "$build_dir/collector/agentspeed-collector" "$output_dir/linux-$arch/agent-speed-collector"
++artifact="$output_dir/linux-$arch/agent-speed-collector"
++digest="$(sha256sum "$artifact" | cut -d ' ' -f 1)"
++[[ "$("$artifact" --identity)" == "shared-collector-v2 $digest" ]] || { echo "Collector identity mismatch" >&2; exit 1; }
++(cd "$output_dir/linux-$arch" && sha256sum agent-speed-collector > SHA256SUMS)
 +printf 'Collector artifact: %s\n' "$output_dir/linux-$arch/agent-speed-collector"
 diff --git a/spec/DESIGN.md b/spec/DESIGN.md
 index 5bb26510..016d0632 100644

@@ -1,25 +1,38 @@
-From 409ce0bb611dfbc36529e79fc6453dd23a352f39 Mon Sep 17 00:00:00 2001
+From 447aea4b0decb84dea3b7b574b4eefdb49ab169f Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 14/15] Connect remote performance and history metrics
 
 ---
- README.md                                     |  17 ++-
- linux/collector/main.cpp                      |  32 ++++-
- linux/collector/protocol.cpp                  |  66 ++++++++-
+ README.md                                     |  40 +-
+ linux/collector/CMakeLists.txt                |  30 +-
+ linux/collector/main.cpp                      | 234 +---------
+ linux/collector/protocol.cpp                  |  66 ++-
  linux/collector/protocol.hpp                  |   4 +-
+ linux/core/CMakeLists.txt                     |   1 +
  linux/core/include/agentspeed/engine.hpp      |   5 +
+ .../include/agentspeed/history_analyzer.hpp   |  23 +
+ .../include/agentspeed/history_canonical.hpp  |  33 ++
+ .../core/include/agentspeed/history_store.hpp |   2 +
  linux/core/include/agentspeed/snapshot.hpp    |   3 +
  linux/core/src/engine.cpp                     |   7 +-
- linux/core/src/monitor_snapshot.cpp           |   9 ++
- linux/tests/collector_integration_test.cpp    | 123 +++++++++++++++++
- linux/tests/collector_test.cpp                |  60 ++++++++
- linux/tests/engine_fixture_test.cpp           |  21 +++
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 ++++++++++
- .../AgentSpeed/App/RemoteSnapshot.swift       |  77 ++++++++++-
- .../AgentSpeed/History/HistoryViewModel.swift |  20 ++-
+ linux/core/src/history_analyzer.cpp           | 201 ++++++++-
+ linux/core/src/history_canonical.cpp          | 172 ++++++++
+ linux/core/src/history_store.cpp              |  18 +-
+ linux/core/src/monitor_snapshot.cpp           |   9 +
+ linux/tests/CMakeLists.txt                    |  10 +-
+ linux/tests/collector_daemon_test.cpp         | 227 ++++++++++
+ linux/tests/collector_integration_test.cpp    | 123 ++++++
+ linux/tests/collector_publisher_test.cpp      | 282 ++++++++++++
+ linux/tests/collector_test.cpp                |  60 +++
+ linux/tests/engine_fixture_test.cpp           |  21 +
+ linux/tests/sampling_test.cpp                 | 117 +++++
+ linux/tests/shared_history_test.cpp           | 406 ++++++++++++++++++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 ++++
+ .../AgentSpeed/App/RemoteSnapshot.swift       |  77 +++-
+ .../AgentSpeed/History/HistoryViewModel.swift |  20 +-
  .../AgentSpeed/Localization/StringTable.swift |   1 +
- .../Perf/History/PerfHistoryContent.swift     |  37 ++++-
+ .../Perf/History/PerfHistoryContent.swift     |  37 +-
  .../Perf/History/PerfHistorySection.swift     |   8 +-
  .../Perf/History/PerfHistoryTable.swift       |   6 +-
  .../Perf/History/PerfHistoryText.swift        |   3 +-
@@ -30,45 +43,82 @@ Subject: [PATCH 14/15] Connect remote performance and history metrics
  .../AgentSpeedCore/Engine/SpeedEngine.swift   |   1 +
  macos/Sources/AgentSpeedCore/Models.swift     |   3 +
  .../Monitor/SnapshotBuilder.swift             |   5 +-
- .../AgentSpeedAppTests/PerfHistoryTests.swift |  23 ++++
- .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 ++++++++++++++++++
+ .../AgentSpeedAppTests/PerfHistoryTests.swift |  23 +
+ .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 ++++++
  .../EngineBehaviorTests.swift                 |   4 +
- spec/METRICS.md                               |  23 +++-
- spec/NETWORK.md                               |  17 +++
+ spec/METRICS.md                               |  23 +-
+ spec/NETWORK.md                               |  57 ++-
  spec/strings.json                             |   6 +
  .../src/AgentSpeed.Core/Engine/EngineFrame.cs |   1 +
  .../src/AgentSpeed.Core/Engine/SpeedEngine.cs |   3 +
  .../src/AgentSpeed.Core/Engine/TodayLedger.cs |   7 +
  windows/src/AgentSpeed.Core/Models.cs         |   2 +
  .../AgentSpeed.Core/Monitoring/MonitorCore.cs |   1 +
- windows/src/AgentSpeed.Core/OrbSubset.cs      |  19 ++-
- .../src/AgentSpeed.Core/Perf/PerfHistory.cs   |  19 ++-
+ windows/src/AgentSpeed.Core/OrbSubset.cs      |  19 +-
+ .../src/AgentSpeed.Core/Perf/PerfHistory.cs   |  19 +-
  .../src/AgentSpeed.Core/Perf/PerfRecord.cs    |   2 +
  .../src/AgentSpeed.Core/RemoteAggregation.cs  |  13 +-
- .../src/AgentSpeed.Core/RemotePerformance.cs  |  63 +++++++++
- windows/src/AgentSpeed.Core/SpeedHub.cs       |  35 ++++-
+ .../src/AgentSpeed.Core/RemotePerformance.cs  |  63 +++
+ windows/src/AgentSpeed.Core/SpeedHub.cs       |  35 +-
  .../History/Perf/PerfHistoryChart.cs          |   4 +-
  .../History/Perf/PerfHistoryRow.cs            |   5 +-
- .../History/Perf/PerfHistorySection.cs        |  41 ++++--
+ .../History/Perf/PerfHistorySection.cs        |  41 +-
  .../Dashboard/DashboardViewModel.cs           |   2 +-
  .../History/HistoryViewModel.Perf.cs          |   6 +-
- .../History/Perf/PerfHistoryViewModel.cs      |  24 ++--
+ .../History/Perf/PerfHistoryViewModel.cs      |  24 +-
  .../History/Perf/PerfPerformanceSection.xaml  |   4 +
  .../AgentSpeed/History/Perf/PerfRowView.cs    |   6 +-
- .../RemoteConsumerTests.cs                    |  79 ++++++++++-
- .../RemotePerformanceTests.cs                 |  78 +++++++++++
+ .../RemoteConsumerTests.cs                    |  79 +++-
+ .../RemotePerformanceTests.cs                 |  78 ++++
  .../RemoteProtocolLifecycleTests.cs           |   2 +-
- .../Perf/PerfHistoryTests.cs                  |  55 ++++++++
- .../PerfPerformanceSectionTests.cs            |  28 ++++
- 56 files changed, 1231 insertions(+), 63 deletions(-)
+ .../Perf/PerfHistoryTests.cs                  |  55 +++
+ .../PerfPerformanceSectionTests.cs            |  28 ++
+ 69 files changed, 2774 insertions(+), 307 deletions(-)
+ create mode 100644 linux/core/include/agentspeed/history_canonical.hpp
+ create mode 100644 linux/core/src/history_canonical.cpp
+ create mode 100644 linux/tests/collector_daemon_test.cpp
+ create mode 100644 linux/tests/collector_publisher_test.cpp
+ create mode 100644 linux/tests/sampling_test.cpp
+ create mode 100644 linux/tests/shared_history_test.cpp
  create mode 100644 windows/src/AgentSpeed.Core/RemotePerformance.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
 
 diff --git a/README.md b/README.md
-index 87352402..ebeefbfb 100644
+index 87352402..0968b8a2 100644
 --- a/README.md
 +++ b/README.md
-@@ -132,6 +132,9 @@ On macOS and Windows, cached history remains stale after reconnecting until a ne
+@@ -61,7 +61,7 @@ Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uni
+ - **Cost** — what your agents' work would cost at each model's API list prices: live money per second next to tok/s, today's cost in the dashboard and each day's cost in the history. US dollars by default, or any of 38 currencies with daily exchange rates; sources on a flat-rate subscription can be left out. The price table updates daily from this repository.
+ - **Network traffic** — upload and download speed per agent or for the whole computer, as two small lines on the orbs, in the menu bar / taskbar and in the dashboard, with each day's traffic in the history. On Windows, per-agent traffic needs a small optional helper service, installed once with administrator approval.
+ - **Title themes** — nine ladders of speed titles: *Vehicles*, *Animals*, *Beaufort Scale*, *Cosmos*, *Cultivation*, *Martial Arts*, *Arcane Ranks*, *Game Ranks* and *Engineer Career* — or up to eight sets of your own. Outside *Vehicles*, the dashboard orb shows a glowing title badge.
+-- **Usage history** — every day since your oldest log: output and input tokens, requests, average speed and peak, cost and network traffic, charted by source over today, yesterday or any date range, with per-model speed and CSV export. Only daily totals are kept, so your history survives even after your tools delete old logs.
++- **Usage history** — every day since your oldest log: output and input tokens, requests, average speed and peak, cost and network traffic, charted by source over today, yesterday or any date range, with per-model speed and CSV export. Desktop history retains daily aggregates; the shared collector additionally keeps private timestamped metric inputs to support independent timezone views without rescanning.
+ - **Live reporting (opt-in)** — off by default; if you like, share your live numbers with an API you pick, such as the [Codex Radar](https://codexradar.com/) speed ladder, under a username you choose. Never conversation content, files or project names — see [Privacy](#privacy).
+ - **Execution modes** — show confirmed Standard / Fast / Ultrafast modes and native accelerator, model-variant or routing choices across supported agents, with defaults and unknown values kept distinct. History has a separate mode CSV; measurement formulas stay the same.
+ - **Profile and devices (optional API extension)** — preview, change or remove an avatar, and link devices through an approved one-time code. Your receiver must support the [new API schema](spec/report-schema.json); each device keeps its own key and unlinking preserves accounted history.
+@@ -121,9 +121,18 @@ Settings → Sources shows each host's online, offline or disabled status and it
+ snapshot arrives.
+ Duplicate SSH destinations are rejected when saving; an existing host can keep its own destination while editing.
+ Remote effort and speed retain their configured or selected status when provided by the collector.
+-Local diagnostic reports and live reporting contain local data only, not remote data. Remote SSH is independent of the
+-network switch: disable the host to stop it. The app selects its bundled collector for the host architecture, uploads
+-it over SSH and runs it over SSH standard streams. There is no HTTP service, listening port, Python runtime or sudo.
++Local diagnostic reports and desktop live reporting contain local data only, not remote data. Remote SSH is independent
++of the desktop network switch: disable the host to close that subscription. The app verifies a digest-addressed bundled
++collector and runs its no-argument stdio bridge. Same-UID connections share one collector daemon through a private Unix
++socket, with independent timezone views. No HTTP server, TCP listener, Python runtime or sudo is required.
++
++Optional mobile live-activity authorization is separate: after the user creates an activity in the foreground, an
++activity-scoped lease can authorize the daemon to send only minimal current metrics over verified HTTPS to
++`https://agent-speed.yooztech.com`. Confirmed authorization can survive the last SSH exit, subject to host logout policy,
++and ends at lease expiry, replacement or revocation. Closing SSH alone does not revoke it. This sends no raw logs,
++commands, conversation content or SSH credentials; the target host receives no Apple provider key. It updates existing
++activities only and does not request alerts or promise ten-second iOS rendering. See the complete
++[shared collector/control-v2 contract](docs/shared-collector.md) and [network specification](spec/NETWORK.md#8-activity-scoped-mobile-relay).
+ 
+ The Linux collector reuses the native measurement core, including omp parsing and parent/child deduplication. The
+ remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
+@@ -132,6 +141,9 @@ On macOS and Windows, cached history remains stale after reconnecting until a ne
  Disabling a host stops its connection and excludes it from displayed totals while retaining its in-memory history.
  Re-enabling can show that retained history as stale until refreshed; deleting the host or changing its destination clears it.
  When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
@@ -78,7 +128,7 @@ index 87352402..ebeefbfb 100644
  Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
  response rates use the logged duration. On macOS and Windows, the chart's “Estimating” legend remains visible
  whenever the selected range includes a dashed estimated segment, even after that response has completed. In particular omp commonly writes a response when it completes, so remote
-@@ -139,10 +142,16 @@ monitoring cannot measure per-token streaming speed or infer an unrecorded time
+@@ -139,10 +151,16 @@ monitoring cannot measure per-token streaming speed or infer an unrecorded time
  the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
  
  Remote sources and agents appear alongside local sources in the native dashboard and history when available. Remote
@@ -99,70 +149,305 @@ index 87352402..ebeefbfb 100644
  After the client requests its time zone, snapshot today totals also use that zone. Untagged or null-zone snapshots
  retain collector-local compatibility behavior. History from older collectors without a matching time-zone tag is
  unavailable rather than being mislabeled as viewer-local.
+@@ -156,6 +174,12 @@ The flag covers known discovered-file and database errors: inaccessible director
+ skipped during discovery, and unchanged cached files are not reopened. Thus `partial: false` does not guarantee
+ exhaustive discovery or filesystem readability.
+ 
++The shared daemon also persists canonical response metrics, execution-mode facts and action/completion timing and
++deduplication identifiers in this private cache so multiple timezone views can be rebuilt after logs disappear. It
++does not cache prompts or transcript content. Source-timezone provenance is stored with each affected record; missing
++or incompatible inputs remain visibly partial rather than being presented as a complete view. This remote metric
++cache is separate from mobile storage and is never included in a relay publish.
++
+ In one read-only measurement on a local home directory with 7,233 omp JSONL files, the first snapshot arrived after
+ 8.546 seconds, but no history frame arrived within 90 seconds. During a subsequent 10-second sample, the collector used
+ 12.63 seconds of CPU time and about 106,988 KiB RSS. The history scan was still running, so these figures describe an ongoing
+diff --git a/linux/collector/CMakeLists.txt b/linux/collector/CMakeLists.txt
+index b64cb4d1..1eb5023e 100644
+--- a/linux/collector/CMakeLists.txt
++++ b/linux/collector/CMakeLists.txt
+@@ -1,6 +1,34 @@
+ find_package(Threads REQUIRED)
++find_package(PkgConfig REQUIRED)
++pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
+ add_library(agentspeed_collector_protocol STATIC protocol.cpp history_cache.cpp)
+ target_include_directories(agentspeed_collector_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+ target_link_libraries(agentspeed_collector_protocol PUBLIC agentspeed_core)
++
++add_library(agentspeed_collector_sampling STATIC sampling.cpp)
++target_link_libraries(agentspeed_collector_sampling PUBLIC agentspeed_collector_protocol Threads::Threads)
++
++function(collector_runtime name)
++    add_library(${name} STATIC daemon.cpp publisher.cpp)
++    target_link_libraries(${name} PUBLIC agentspeed_collector_sampling PkgConfig::CURL Threads::Threads)
++endfunction()
++
++collector_runtime(agentspeed_collector_runtime)
+ add_executable(agentspeed-collector main.cpp)
+-target_link_libraries(agentspeed-collector PRIVATE agentspeed_collector_protocol Threads::Threads)
++target_link_libraries(agentspeed-collector PRIVATE agentspeed_collector_runtime)
++
++if(AGENTSPEED_BUILD_TESTS)
++    # Isolated HOME is a test-only runtime namespace, never a production override.
++    collector_runtime(agentspeed_collector_test_runtime)
++    target_compile_definitions(agentspeed_collector_test_runtime PRIVATE AGENTSPEED_COLLECTOR_TESTING)
++    add_executable(agentspeed-collector-test main.cpp)
++    target_link_libraries(agentspeed-collector-test PRIVATE agentspeed_collector_test_runtime)
++endif()
++
++option(AGENTSPEED_BUILD_SSH_SMOKE "Build non-distributable fixed-loopback TLS smoke collector" OFF)
++if(AGENTSPEED_BUILD_SSH_SMOKE)
++    collector_runtime(agentspeed_collector_smoke_runtime)
++    target_compile_definitions(agentspeed_collector_smoke_runtime PRIVATE AGENTSPEED_COLLECTOR_TEST_RELAY)
++    add_executable(agentspeed-collector-ssh-smoke main.cpp)
++    target_link_libraries(agentspeed-collector-ssh-smoke PRIVATE agentspeed_collector_smoke_runtime)
++endif()
 diff --git a/linux/collector/main.cpp b/linux/collector/main.cpp
-index 8f7364f0..4048ce12 100644
+index 8f7364f0..5b84ec85 100644
 --- a/linux/collector/main.cpp
 +++ b/linux/collector/main.cpp
-@@ -105,6 +105,7 @@ int main(int argc, char**) {
-         std::atomic<std::uint64_t> zoneGeneration{0};
-         std::optional<std::string> requestedZone;
-         std::shared_ptr<const agentspeed::TimeZone> requestedZoneValue;
-+        std::map<std::pair<agentspeed::SourceKind, std::string>, double> baselines;
-         std::string inputBuffer;
-         auto checkInput = [&](short events) {
-             std::lock_guard inputLock(inputMutex);
-@@ -167,6 +168,8 @@ int main(int argc, char**) {
-                 collector::HistoryCache cache(home ? home : "");
-                 auto store = cache.open(cacheIdentity(config.locations, config.enabled));
-                 agentspeed::history::Analyzer analyzer(*store, std::make_shared<agentspeed::pricing::PriceBook>());
-+                auto localStore = agentspeed::history::Store::open(":memory:");
-+                agentspeed::history::Analyzer localAnalyzer(*localStore, std::make_shared<agentspeed::pricing::PriceBook>());
-                 auto local = agentspeed::localZone(agentspeed::processEnvironment());
-                 const auto localId = zoneIdentity();
-                 while (!stopping) {
-@@ -183,7 +186,30 @@ int main(int argc, char**) {
-                     auto report = analyzer.run(config.locations, config.enabled, zone, id,
-                         [&] { return stopping.load(); });
-                     if (!stopping && !report.cancelled && zoneGeneration.load() == generation)
+@@ -1,232 +1,16 @@
+-#include "protocol.hpp"
+-#include "history_cache.hpp"
++#include "daemon.hpp"
+ 
+-#include "agentspeed/history_analyzer.hpp"
+-#include "agentspeed/json.hpp"
+-#include "agentspeed/history_store.hpp"
+-#include "agentspeed/monitor.hpp"
+-#include "agentspeed/price_book.hpp"
+-#include "agentspeed/tz.hpp"
+-
+-#include <atomic>
+-#include <cerrno>
+-#include <chrono>
+-#include <condition_variable>
+-#include <ctime>
+-#include <cstdlib>
+-#include <fstream>
+-#include <iterator>
+-#include <sstream>
+-#include <exception>
+-#include <fcntl.h>
++#include <cstring>
+ #include <iostream>
+-#include <mutex>
+-#include <poll.h>
+-#include <signal.h>
+-#include <thread>
+-#include <unistd.h>
+-std::optional<std::string> machineIdentity() {
+-    std::ifstream file("/etc/machine-id");
+-    std::string id;
+-    if (!(file >> id)) return std::nullopt;
+-    return collector::scopedIdentity(id, static_cast<std::uint64_t>(geteuid()));
+-}
+ 
+-namespace {
+-std::int64_t nowMs() {
+-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+-}
+-std::int64_t todayStart(std::int64_t now) {
+-    const std::time_t seconds = static_cast<std::time_t>(now / 1000);
+-    std::tm local{};
+-    localtime_r(&seconds, &local);
+-    local.tm_hour = local.tm_min = local.tm_sec = 0;
+-    local.tm_isdst = -1;
+-    return static_cast<std::int64_t>(std::mktime(&local)) * 1000;
+-}
+-std::int64_t todayStart(std::int64_t now, const agentspeed::TimeZone& zone) {
+-    constexpr std::int64_t day = 86400000;
+-    const auto wall = now + zone.offsetMs(now);
+-    const auto midnight = (wall >= 0 ? wall / day : (wall - day + 1) / day) * day;
+-    auto start = midnight - zone.offsetMs(now);
+-    for (int i = 0; i < 3; ++i) start = midnight - zone.offsetMs(start);
+-    if (start + zone.offsetMs(start) != midnight) {
+-        // A timezone transition can skip midnight; find the first instant on this local day.
+-        auto low = now - 2 * day, high = now;
+-        while (low + 1 < high) {
+-            const auto mid = low + (high - low) / 2;
+-            if (mid + zone.offsetMs(mid) < midnight) low = mid; else high = mid;
+-        }
+-        start = high;
+-    }
+-    return start;
+-}
+-std::string cacheIdentity(const agentspeed::SourceLocations& locations, const std::set<agentspeed::SourceKind>& enabled) {
+-    std::ostringstream out;
+-    auto add = [&](const std::string& s) { out << s.size() << ':' << s; };
+-    for (const auto source : enabled) out << static_cast<int>(source) << ',';
+-    out << ';';
+-    for (const auto& [family, path] : locations.fileRoots()) { out << static_cast<int>(family) << ','; add(path); }
+-    add(locations.openCodeRoot); add(locations.zcodeRoot); add(locations.hermesRoot);
+-    for (const auto& path : locations.openClawRoots) add(path);
+-    out << locations.ompAutomatic << locations.piAutomatic << locations.openClawAutomatic
+-        << locations.codexAutomatic << locations.hermesChosen;
+-    return out.str();
+-}
+-std::string zoneIdentity(const std::optional<std::string>& requested = std::nullopt) {
+-    const char* tz = std::getenv("TZ");
+-    std::string id = requested ? *requested : (tz ? tz : "");
+-    auto name = id;
+-    if (!name.empty() && name.front() == ':') name.erase(0, 1);
+-    std::string path = "/etc/localtime";
+-    if (!name.empty() && name.front() != '/' && name.find("..") == std::string::npos)
+-        path = "/usr/share/zoneinfo/" + name;
+-    std::ifstream file(path, std::ios::binary);
+-    return id + '\0' + std::string(std::istreambuf_iterator<char>(file), {});
+-}
+-}
+-int main(int argc, char**) {
+-    if (argc != 1) {
+-        std::cerr << "usage: agentspeed-collector\n";
+-        return 2;
+-    }
+-    signal(SIGPIPE, SIG_IGN);
+-    if (fcntl(STDIN_FILENO, F_SETFL, fcntl(STDIN_FILENO, F_GETFL) | O_NONBLOCK) < 0 ||
+-        fcntl(STDOUT_FILENO, F_SETFL, fcntl(STDOUT_FILENO, F_GETFL) | O_NONBLOCK) < 0) return 1;
++int main(int argc, char** argv) {
+     try {
+-        auto config = agentspeed::MonitorConfig::fromEnvironment();
+-        auto monitor = std::make_unique<agentspeed::Monitor>(config);
+-        collector::Protocol protocol(machineIdentity());
+-        auto now = nowMs();
+-        monitor->start(now, todayStart(now));
+-        std::mutex outputMutex, inputMutex, zoneMutex;
+-        std::condition_variable zoneChanged;
+-        std::atomic<bool> stopping{false};
+-        std::atomic<std::uint64_t> zoneGeneration{0};
+-        std::optional<std::string> requestedZone;
+-        std::shared_ptr<const agentspeed::TimeZone> requestedZoneValue;
+-        std::string inputBuffer;
+-        auto checkInput = [&](short events) {
+-            std::lock_guard inputLock(inputMutex);
+-            if (events & (POLLERR | POLLNVAL)) { stopping = true; zoneChanged.notify_all(); return; }
+-            if (events & (POLLIN | POLLHUP)) {
+-                char buf[4096];
+-                const auto n = read(STDIN_FILENO, buf, sizeof(buf));
+-                if (n == 0 || (n < 0 && errno != EAGAIN && errno != EINTR)) {
+-                    stopping = true; zoneChanged.notify_all(); return;
+-                }
+-                if (n <= 0) return;
+-                inputBuffer.append(buf, static_cast<std::size_t>(n));
+-                std::size_t end;
+-                while ((end = inputBuffer.find('\n')) != std::string::npos) {
+-                    auto line = inputBuffer.substr(0, end);
+-                    inputBuffer.erase(0, end + 1);
+-                    agentspeed::json::Document doc;
+-                    if (!doc.parse(line)) continue;
+-                    const auto root = doc.root();
+-                    if (root["version"].raw() != "1" || root["type"].string() != "history_timezone") continue;
+-                    auto name = root["timezone"].string();
+-                    if (!name || name->empty() || name->size() > 255 || *name == "localtime") continue;
+-                    auto zone = agentspeed::TimeZone::load(*name);
+-                    if (!zone) continue;
+-                    {
+-                        std::lock_guard zoneLock(zoneMutex);
+-                        if (requestedZone == name) continue;
+-                        requestedZone = std::move(name);
+-                        requestedZoneValue = std::move(zone);
+-                        ++zoneGeneration;
+-                    }
+-                    zoneChanged.notify_all();
+-                }
+-                if (inputBuffer.size() > 16384) inputBuffer.clear();
+-            }
+-        };
+-        auto emit = [&](const std::string& line) {
+-            std::lock_guard lock(outputMutex);
+-            const std::string_view parts[] = {line, "\n"};
+-            for (auto part : parts) {
+-                while (!part.empty() && !stopping) {
+-                    pollfd fds[] = {{STDIN_FILENO, POLLIN, 0}, {STDOUT_FILENO, POLLOUT, 0}};
+-                    const int ready = poll(fds, 2, 1000);
+-                    if (ready < 0) { if (errno != EINTR) stopping = true; continue; }
+-                    checkInput(fds[0].revents);
+-                    if (stopping) break;
+-                    if (fds[1].revents & (POLLERR | POLLHUP | POLLNVAL)) { stopping = true; break; }
+-                    if (fds[1].revents & POLLOUT) {
+-                        const auto n = write(STDOUT_FILENO, part.data(), part.size());
+-                        if (n > 0) part.remove_prefix(static_cast<std::size_t>(n));
+-                        else if (n < 0 && errno != EAGAIN && errno != EINTR) stopping = true;
+-                    }
+-                }
+-            }
+-        };
+-        emit(protocol.snapshot(monitor->snapshot(now, todayStart(now))));
+-        std::thread history([&] {
+-            try {
+-                const char* home = std::getenv("HOME");
+-                collector::HistoryCache cache(home ? home : "");
+-                auto store = cache.open(cacheIdentity(config.locations, config.enabled));
+-                agentspeed::history::Analyzer analyzer(*store, std::make_shared<agentspeed::pricing::PriceBook>());
+-                auto local = agentspeed::localZone(agentspeed::processEnvironment());
+-                const auto localId = zoneIdentity();
+-                while (!stopping) {
+-                    std::optional<std::string> name;
+-                    std::shared_ptr<const agentspeed::TimeZone> zone;
+-                    std::uint64_t generation;
+-                    {
+-                        std::lock_guard lock(zoneMutex);
+-                        name = requestedZone;
+-                        zone = name ? requestedZoneValue : local;
+-                        generation = zoneGeneration.load();
+-                    }
+-                    const auto id = name ? zoneIdentity(name) : localId;
+-                    auto report = analyzer.run(config.locations, config.enabled, zone, id,
+-                        [&] { return stopping.load(); });
+-                    if (!stopping && !report.cancelled && zoneGeneration.load() == generation)
 -                        emit(collector::Protocol::history(analyzer.days(), report, name));
-+                        emit(collector::Protocol::history(analyzer.days(), report, name, analyzer.perfRecords()));
-+                    const auto localReport = localAnalyzer.run(config.locations, config.enabled, local, localId,
-+                        [&] { return stopping.load(); });
-+                    if (!stopping && !localReport.cancelled) {
-+                        const auto records = localAnalyzer.perfRecords();
-+                        const auto current = nowMs();
-+                        const std::time_t seconds = static_cast<std::time_t>((current + (local ? local->offsetMs(current) : 0)) / 1000);
-+                        std::tm wall{};
-+                        char day[11];
-+                        std::map<std::pair<agentspeed::SourceKind, std::string>, double> next;
-+                        if ((local ? gmtime_r(&seconds, &wall) : localtime_r(&seconds, &wall)) &&
-+                            std::strftime(day, sizeof(day), "%Y-%m-%d", &wall) == 10) {
-+                            for (const auto& record : records) {
-+                                const auto key = std::make_pair(record.source, record.model);
-+                                if (next.count(key)) continue;
-+                                if (const auto value = agentspeed::perf::baseline(records, record.source, record.model, day))
-+                                    next.emplace(key, *value);
-+                            }
-+                        }
-+                        {
-+                            std::lock_guard lock(zoneMutex);
-+                            baselines = std::move(next);
-+                        }
-+                    }
-                     std::unique_lock lock(zoneMutex);
-                     zoneChanged.wait_for(lock, std::chrono::seconds(60), [&] {
-                         return stopping.load() || zoneGeneration.load() != generation;
-@@ -218,6 +244,10 @@ int main(int argc, char**) {
-             } else {
-                 monitor->poll(now, start);
-             }
-+            {
-+                std::lock_guard lock(zoneMutex);
-+                monitor->setPerfBaselines(baselines);
-+            }
-             emit(protocol.snapshot(monitor->snapshot(now, start), name, zone));
-             for (const auto& event : monitor->takeCompletions()) emit(collector::Protocol::completion(event));
-         }
+-                    std::unique_lock lock(zoneMutex);
+-                    zoneChanged.wait_for(lock, std::chrono::seconds(60), [&] {
+-                        return stopping.load() || zoneGeneration.load() != generation;
+-                    });
+-                }
+-            } catch (const std::exception&) {
+-                std::cerr << "history unavailable\n";
+-            }
+-        });
+-        std::uint64_t monitorGeneration = 0;
+-        while (!stopping) {
+-            pollfd input{STDIN_FILENO, POLLIN, 0};
+-            int result = poll(&input, 1, 1000);
+-            if (result < 0) break;
+-            if (result > 0) checkInput(input.revents);
+-            if (stopping) break;
+-            now = nowMs();
+-            std::optional<std::string> name;
+-            std::shared_ptr<const agentspeed::TimeZone> zone;
+-            std::uint64_t generation;
+-            {
+-                std::lock_guard lock(zoneMutex);
+-                name = requestedZone;
+-                zone = requestedZoneValue;
+-                generation = zoneGeneration.load();
+-            }
+-            const auto start = zone ? todayStart(now, *zone) : todayStart(now);
+-            if (monitorGeneration != generation) {
+-                monitor = std::make_unique<agentspeed::Monitor>(config);
+-                monitor->start(now, start);
+-                monitorGeneration = generation;
+-            } else {
+-                monitor->poll(now, start);
+-            }
+-            emit(protocol.snapshot(monitor->snapshot(now, start), name, zone));
+-            for (const auto& event : monitor->takeCompletions()) emit(collector::Protocol::completion(event));
+-        }
+-        stopping = true;
+-        zoneChanged.notify_all();
+-        history.join();
+-        return 0;
+-    } catch (const std::exception&) {
+-        std::cerr << "collector unavailable\n";
++        if (argc == 1) return collector::runBridge();
++        if (argc == 2 && std::strcmp(argv[1], "--identity") == 0) return collector::printIdentity();
++        std::cerr << "usage: agentspeed-collector [--identity]\n";
++        return 2;
++    } catch (...) {
++        std::cerr << "collector: runtime failure\n";
+         return 1;
+     }
+ }
 diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
 index 7889436b..59392499 100644
 --- a/linux/collector/protocol.cpp
@@ -295,6 +580,18 @@ index 23e6006e..9ea0c9d4 100644
      static std::string completion(const agentspeed::Completion& value);
  private:
      std::string id(const std::string& raw);
+diff --git a/linux/core/CMakeLists.txt b/linux/core/CMakeLists.txt
+index 82bdfda5..123bc1bd 100644
+--- a/linux/core/CMakeLists.txt
++++ b/linux/core/CMakeLists.txt
+@@ -46,6 +46,7 @@ add_library(agentspeed_core STATIC
+     src/hermes.cpp
+     src/history.cpp
+     src/history_analyzer.cpp
++    src/history_canonical.cpp
+     src/history_store.cpp
+     src/json.cpp
+     src/kimi_parser.cpp
 diff --git a/linux/core/include/agentspeed/engine.hpp b/linux/core/include/agentspeed/engine.hpp
 index c57c1d38..dd7d5c2f 100644
 --- a/linux/core/include/agentspeed/engine.hpp
@@ -323,6 +620,126 @@ index c57c1d38..dd7d5c2f 100644
      std::map<std::string, ThinkingWindow> perModel;
  };
  Thinking thinking(const std::vector<Response>& responses, const std::vector<Agent>& agents, std::int64_t now);
+diff --git a/linux/core/include/agentspeed/history_analyzer.hpp b/linux/core/include/agentspeed/history_analyzer.hpp
+index b99438c9..d3a1d7dc 100644
+--- a/linux/core/include/agentspeed/history_analyzer.hpp
++++ b/linux/core/include/agentspeed/history_analyzer.hpp
+@@ -8,6 +8,7 @@
+ #include <vector>
+ 
+ #include "agentspeed/droid.hpp"
++#include "agentspeed/history_canonical.hpp"
+ #include "agentspeed/history.hpp"
+ #include "agentspeed/history_store.hpp"
+ #include "agentspeed/locations.hpp"
+@@ -29,6 +30,13 @@ struct Report {
+     bool cancelled = false;
+ };
+ 
++struct Projection {
++    std::vector<DailyUsage> days;
++    std::vector<perf::DayRecord> perfRecords;
++    std::vector<unpriced::Part> unpricedParts;
++    bool complete = true;
++};
++
+ // METRICS 8: analyses every discovered file of every enabled source with the parsers of section 4 over whole files,
+ // in startup order, and keeps per-file contributions; unchanged files are skipped.
+ class Analyzer {
+@@ -39,12 +47,20 @@ public:
+     static constexpr int kVersion = 5;
+ 
+     Analyzer(Store& store, std::shared_ptr<pricing::PriceBook> prices, std::shared_ptr<const TimeZone> hermesZone = nullptr);
++    void setHermesZone(std::shared_ptr<const TimeZone> zone) { hermesZone_ = std::move(zone); }
+ 
+     // `zoneId` names the zone the days are labelled in; a change re-analyses everything. `progress` hears the files
+     // analysed so far and the files planned.
+     Report run(const SourceLocations& locations, const std::set<SourceKind>& enabled, std::shared_ptr<const TimeZone> zone,
+                const std::string& zoneId, const std::function<bool()>& cancelled = {},
+                const std::function<void(int, int)>& progress = {});
++    // Populate and incrementally refresh the in-memory, timezone-independent parsed history.
++    Report runShared(const SourceLocations& locations, const std::set<SourceKind>& enabled, std::shared_ptr<const TimeZone> zone,
++                     const std::string& zoneId, const std::function<bool()>& cancelled = {},
++                     const std::function<void(int, int)>& progress = {});
++    // Project the most recent shared scan without reading or parsing source files.
++    Projection project(std::shared_ptr<const TimeZone> zone, const std::set<SourceKind>* sources = nullptr,
++                       const std::map<std::string, double>* livePeaks = nullptr, bool includeStoredPeaks = false);
+     // Day rows, by day then source id; live peaks raise the stored ones.
+     std::vector<DailyUsage> days(const std::set<SourceKind>* sources = nullptr, const std::map<std::string, double>* livePeaks = nullptr) const;
+     bool recordPeaks(const std::map<std::string, double>& peaks);
+@@ -80,6 +96,7 @@ private:
+     void advance(Report& report);
+     bool unchanged(const StoredFile* previous, const std::string& family, std::int64_t size, std::int64_t modified, bool force) const;
+     const StoredFile* previousOf(const std::string& path) const;
++    void setCanonical(StoredFile& entry, canonical::File data);
+     StoredFile& keep(StoredFile file, std::vector<std::uint64_t> owned);
+     std::map<std::string, droid::SidecarSignature> droidUnreadableParents_;
+ 
+@@ -90,6 +107,12 @@ private:
+     std::map<std::string, double> peaks_;
+     std::vector<std::pair<StoredFile*, std::vector<std::uint64_t>>> pending_;
+     bool repricing_ = false;
++    using ProjectFile = std::function<void(StoredFile&, const DayLabeler&)>;
++    std::map<std::string, ProjectFile> canonical_;
++    bool sharedMode_ = false;
++    std::shared_ptr<const TimeZone> sharedZone_;
++    std::string sharedZoneId_;
++    std::shared_ptr<const TimeZone> legacyZone_;
+     std::function<void(int, int)> progress_;
+ };
+ 
+diff --git a/linux/core/include/agentspeed/history_canonical.hpp b/linux/core/include/agentspeed/history_canonical.hpp
+new file mode 100644
+index 00000000..f759ca7a
+--- /dev/null
++++ b/linux/core/include/agentspeed/history_canonical.hpp
+@@ -0,0 +1,33 @@
++#pragma once
++
++#include <optional>
++#include <string>
++#include <string_view>
++#include <vector>
++
++#include "agentspeed/actions.hpp"
++#include "agentspeed/model.hpp"
++
++namespace agentspeed::history::canonical {
++
++// Completion events reference a response key; action events carry an action.
++struct Event {
++    std::string key;
++    std::optional<work::Action> action;
++};
++
++struct File {
++    std::vector<ParsedResponse> items, perfItems;
++    std::vector<Event> events;
++    SourceKind source = SourceKind::Codex;
++    std::string agent;
++    std::optional<std::string> onlyAgent;
++    std::optional<std::string> hermesSourceZone;
++    bool emitted = false;
++};
++
++// Versioned binary encoding. Invalid, truncated, or unsupported input returns nullopt.
++std::string serialize(const File& file);
++std::optional<File> deserialize(std::string_view bytes);
++
++}  // namespace agentspeed::history::canonical
+diff --git a/linux/core/include/agentspeed/history_store.hpp b/linux/core/include/agentspeed/history_store.hpp
+index c67262c7..99b5afac 100644
+--- a/linux/core/include/agentspeed/history_store.hpp
++++ b/linux/core/include/agentspeed/history_store.hpp
+@@ -25,6 +25,8 @@ struct StoredFile {
+     Contributions days;
+     // METRICS 6.11: the performance records of the file's agents per day, source and raw model, current version only.
+     std::vector<perf::DayRecord> perf;
++    // Versioned shared-history inputs, stored atomically with this file's contributions.
++    std::optional<std::string> canonical;
+     bool hasUnpriced() const;
+ };
+ 
 diff --git a/linux/core/include/agentspeed/snapshot.hpp b/linux/core/include/agentspeed/snapshot.hpp
 index 4fa70e58..1227b36c 100644
 --- a/linux/core/include/agentspeed/snapshot.hpp
@@ -369,6 +786,563 @@ index 87f0a6f1..f02c25fa 100644
          out.perModel[model.value_or("")].add(source, weight, reasoning);
      };
      const std::int64_t w0 = now - kWindowMs;
+diff --git a/linux/core/src/history_analyzer.cpp b/linux/core/src/history_analyzer.cpp
+index ddbb9b5a..213f0846 100644
+--- a/linux/core/src/history_analyzer.cpp
++++ b/linux/core/src/history_analyzer.cpp
+@@ -136,6 +136,14 @@ public:
+         for (const auto& key : order_) out.push_back(byKey_.at(key));
+         return out;
+     }
++    canonical::File capture(SourceKind source, const std::string& agent) const {
++        canonical::File file;
++        file.items = items();
++        file.source = source;
++        file.agent = agent;
++        for (const auto& event : done_) file.events.push_back({event.key, event.action});
++        return file;
++    }
+ 
+ private:
+     struct Done {
+@@ -214,10 +222,34 @@ const StoredFile* Analyzer::previousOf(const std::string& path) const {
+     const auto it = entries_.find(path);
+     return it == entries_.end() ? nullptr : &it->second;
+ }
++void Analyzer::setCanonical(StoredFile& entry, canonical::File data) {
++    entry.canonical = canonical::serialize(data);
++    canonical_[entry.path] = [this, data = std::move(data)](StoredFile& projected, const DayLabeler& day) {
++        projected.days = contributionsOf(data.items, data.source, day, *prices_);
++        if (data.emitted) {
++            projected.perf = emittedRecords(data.items, data.source, day);
++            return;
++        }
++        std::map<std::string, const ParsedResponse*> byKey;
++        for (const auto& response : data.perfItems.empty() ? data.items : data.perfItems) byKey[response.key] = &response;
++        perf::Recorder recorder([&](std::int64_t ms) { return day.label(ms); });
++        for (const auto& event : data.events) {
++            if (event.action) {
++                recorder.action(data.agent, data.source, *event.action);
++            } else if (const auto it = byKey.find(event.key); it != byKey.end()) {
++                const auto& response = *it->second;
++                if (!data.onlyAgent || response.agentId == *data.onlyAgent)
++                    recorder.response(response.agentId, data.source, engineOf(response));
++            }
++        }
++        projected.perf = recorder.rows();
++    };
++}
++
+ 
+ bool Analyzer::unchanged(const StoredFile* previous, const std::string& family, std::int64_t size, std::int64_t modified, bool force) const {
+-    return previous && !force && previous->version == kVersion && previous->family == family && previous->size == size &&
+-           previous->modified == modified && !(repricing_ && previous->hasUnpriced());
++    return previous && !force && (!sharedMode_ || canonical_.contains(previous->path)) && previous->version == kVersion &&
++           previous->family == family && previous->size == size && previous->modified == modified && !(repricing_ && previous->hasUnpriced());
+ }
+ 
+ std::vector<perf::DayRecord> Analyzer::perfRecords(const std::set<SourceKind>* sources) const {
+@@ -252,6 +284,96 @@ std::vector<unpriced::Part> Analyzer::unpricedParts(const std::set<SourceKind>*
+     return unpriced::mergeParts(parts);
+ }
+ 
++Report Analyzer::runShared(const SourceLocations& locations, const std::set<SourceKind>& enabled, std::shared_ptr<const TimeZone> zone,
++                           const std::string& zoneId, const std::function<bool()>& cancelled, const std::function<void(int, int)>& progress) {
++    if (!sharedMode_) {
++        sharedZone_ = std::move(zone);
++        sharedZoneId_ = zoneId;
++        if (const auto stored = store_.meta("timeZone")) {
++            const auto separator = stored->find('\0');
++            if (separator == std::string::npos) legacyZone_ = TimeZone::load(*stored);
++            else legacyZone_ = TimeZone::fromData(stored->substr(separator + 1));
++        }
++        sharedMode_ = true;
++    }
++    const auto sourceZone = hermesZone_ ? hermesZone_ : TimeZone::load("localtime");
++    const auto sourceIdentity = (sourceZone ? sourceZone : TimeZone::utc())->identity();
++    for (auto& [path, entry] : entries_) {
++        const bool hermes = entry.family == kHermesFamily || entry.family == kHermesLogFamily;
++        if (hermes) canonical_.erase(path);
++        if (entry.version != kVersion || !entry.canonical || (!hermes && canonical_.contains(path))) continue;
++        if (auto data = canonical::deserialize(*entry.canonical)) {
++            if (!hermes || data->hermesSourceZone == sourceIdentity) setCanonical(entry, std::move(*data));
++        }
++    }
++    auto report = run(locations, enabled, sharedZone_, sharedZoneId_, cancelled, progress);
++    // Missing previously indexed files retain their cached data, but make the scan partial.
++    for (const auto& [path, entry] : entries_) {
++        bool ordinary = false;
++        for (const auto& [family, root] : locations.fileRoots()) {
++            if (!root.empty() && familyEnabled(family, enabled) && entry.family == familyName(family)) {
++                ordinary = true;
++                break;
++            }
++        }
++        if (ordinary && !fsx::statOf(path, true)) ++report.filesUnreadable;
++        if (entry.family == kOpenClawDatabaseFamily && enabled.contains(SourceKind::OpenClaw) && !fsx::statOf(path, true))
++            ++report.filesUnreadable;
++    }
++    if (enabled.contains(SourceKind::OpenCode) && !locations.openCodeRoot.empty()) {
++        const auto path = opencode::Database::databasePath(locations.openCodeRoot);
++        if (!fsx::statOf(path, true) && std::any_of(entries_.begin(), entries_.end(), [](const auto& item) {
++                return item.second.family == kOpenCodeFamily;
++            })) ++report.filesUnreadable;
++    }
++    if (enabled.contains(SourceKind::ZCode) && !locations.zcodeRoot.empty()) {
++        const auto path = harness::zcodeDatabase(locations.zcodeRoot);
++        if (!fsx::statOf(path, true) && std::any_of(entries_.begin(), entries_.end(), [](const auto& item) {
++                return item.second.family == kZCodeFamily;
++            })) ++report.filesUnreadable;
++    }
++    return report;
++}
++
++Projection Analyzer::project(std::shared_ptr<const TimeZone> zone, const std::set<SourceKind>* sources,
++                             const std::map<std::string, double>* livePeaks, bool includeStoredPeaks) {
++    const bool baselineZone = zone && legacyZone_ && zone->identity() == legacyZone_->identity();
++    std::map<std::string, StoredFile> projected;
++    bool complete = true;
++    const DayLabeler labeler(std::move(zone));
++    for (const auto& [path, entry] : entries_) {
++        const auto it = canonical_.find(path);
++        if (it == canonical_.end()) {
++            complete = false;
++            if (baselineZone) projected.emplace(path, entry);
++            continue;
++        }
++        StoredFile copy;
++        copy.id = entry.id;
++        copy.path = entry.path;
++        copy.family = entry.family;
++        copy.size = entry.size;
++        copy.modified = entry.modified;
++        copy.version = entry.version;
++        it->second(copy, labeler);
++        projected.emplace(path, std::move(copy));
++    }
++    std::map<std::string, double> savedPeaks;
++    if (!includeStoredPeaks) peaks_.swap(savedPeaks);
++    entries_.swap(projected);
++    struct Restore {
++        std::map<std::string, StoredFile>& entries;
++        std::map<std::string, StoredFile>& original;
++        std::map<std::string, double>& peaks;
++        std::map<std::string, double>& savedPeaks;
++        bool restorePeaks;
++        ~Restore() {
++            entries.swap(original);
++            if (restorePeaks) peaks.swap(savedPeaks);
++        }
++    } restore{entries_, projected, peaks_, savedPeaks, !includeStoredPeaks};
++    return {days(sources, livePeaks), perfRecords(sources), unpricedParts(sources), complete};
++}
+ void Analyzer::advance(Report& report) {
+     ++report.filesAnalyzed;
+     if (progress_) progress_(report.filesAnalyzed, report.filesPlanned);
+@@ -259,6 +381,14 @@ void Analyzer::advance(Report& report) {
+ 
+ StoredFile& Analyzer::keep(StoredFile file, std::vector<std::uint64_t> owned) {
+     if (const auto* previous = previousOf(file.path)) file.id = previous->id;
++    if (sharedMode_ && !file.canonical) {
++        canonical::File data;
++        if (file.family == kHermesFamily || file.family == kHermesLogFamily) {
++            const auto zone = hermesZone_ ? hermesZone_ : TimeZone::load("localtime");
++            data.hermesSourceZone = (zone ? zone : TimeZone::utc())->identity();
++        }
++        setCanonical(file, std::move(data));
++    }
+     auto& stored = entries_[file.path] = std::move(file);
+     pending_.emplace_back(&stored, std::move(owned));
+     return stored;
+@@ -274,9 +404,9 @@ void Analyzer::flush(std::vector<std::pair<StoredFile*, std::vector<std::uint64_
+ Report Analyzer::run(const SourceLocations& locations, const std::set<SourceKind>& enabled, std::shared_ptr<const TimeZone> zone,
+                      const std::string& zoneId, const std::function<bool()>& cancelled, const std::function<void(int, int)>& progress) {
+     Report report;
+-    const bool zoneChanged = !entries_.empty() && store_.meta("timeZone") != zoneId;
++    const bool zoneChanged = !sharedMode_ && !entries_.empty() && store_.meta("timeZone") != zoneId;
+     const auto priceVersion = std::to_string(prices_->currentVersion());
+-    repricing_ = !entries_.empty() && store_.meta("priceTableVersion") != priceVersion;
++    repricing_ = !sharedMode_ && !entries_.empty() && store_.meta("priceTableVersion") != priceVersion;
+     Work work;
+     planFiles(locations, enabled, zoneChanged, work, report);
+     planOpenClaw(locations, enabled, zoneChanged, work, report);
+@@ -308,8 +438,15 @@ Report Analyzer::run(const SourceLocations& locations, const std::set<SourceKind
+     flush(pending_);
+     saveBindings();
+     if (!report.cancelled && report.filesUnreadable == 0) {
+-        store_.setMeta("timeZone", zoneId);
+-        store_.setMeta("priceTableVersion", priceVersion);
++        if (!sharedMode_ || std::all_of(entries_.begin(), entries_.end(), [&](const auto& item) {
++                return canonical_.contains(item.first);
++            })) {
++            store_.setMeta("timeZone", zoneId);
++            if (sharedMode_) legacyZone_ = sharedZone_;
++        }
++        // Shared projections reprice from parsed responses; leave the persisted version unchanged so a later
++        // conventional analyzer can refresh any previously stored unpriced contributions.
++        if (!sharedMode_) store_.setMeta("priceTableVersion", priceVersion);
+         if (work.openCode) store_.setMeta("opencode", work.openCode->identity);
+     }
+     return report;
+@@ -391,6 +528,7 @@ void Analyzer::analyzeFiles(Work& work, KeyLedger& ledger, const DayLabeler& lab
+         entry.modified = file.family == RootFamily::Droid ? file.identity : result.writeNs;
+         entry.version = kVersion;
+         entry.days = contributionsOf(sink.items(), parser->source(), labeler, *prices_);
++        if (sharedMode_) setCanonical(entry, sink.capture(parser->source(), parser->agentId()));
+         entry.perf = sink.perfRecords(parser->agentId(), parser->source(), labeler);
+         keep(std::move(entry), ledger.finish(parser->agentId()));
+         advance(report);
+@@ -412,7 +550,12 @@ void Analyzer::planOpenCode(const SourceLocations& locations, const std::set<Sou
+                           std::to_string(kVersion) + "|" + zoneId;
+     bool reprices = false;
+     for (const auto& [p, e] : entries_) reprices |= repricing_ && e.family == kOpenCodeFamily && e.hasUnpriced();
+-    if (!force && !reprices && store_.meta("opencode") == identity) return;
++    bool cached = true;
++    if (sharedMode_) {
++        for (const auto& [p, e] : entries_)
++            if (e.family == kOpenCodeFamily && !canonical_.contains(p)) cached = false;
++    }
++    if (!force && !reprices && cached && store_.meta("opencode") == identity) return;
+     for (const auto& [p, e] : entries_) {
+         if (e.family == kOpenCodeFamily) work.replaced.insert(e.id);
+     }
+@@ -455,6 +598,13 @@ void Analyzer::analyzeOpenCode(Work& work, KeyLedger& ledger, const DayLabeler&
+             entry.family = kOpenCodeFamily;
+             entry.size = rows;
+             entry.modified = std::max(info.updatedMs, lastUpdated);
++            if (sharedMode_) {
++                canonical::File data;
++                data.items = responses;
++                data.source = SourceKind::OpenCode;
++                data.emitted = true;
++                setCanonical(entry, std::move(data));
++            }
+             entry.version = kVersion;
+             entry.days = contributionsOf(responses, SourceKind::OpenCode, labeler, *prices_);
+             entry.perf = emittedRecords(responses, SourceKind::OpenCode, labeler);
+@@ -529,6 +679,13 @@ void Analyzer::analyzeZCode(Work& work, KeyLedger& ledger, const DayLabeler& lab
+         entry.version = kVersion;
+         entry.days = contributionsOf(responses, SourceKind::ZCode, labeler, *prices_);
+         entry.perf = emittedRecords(responses, SourceKind::ZCode, labeler);
++        if (sharedMode_) {
++            canonical::File data;
++            data.items = responses;
++            data.source = SourceKind::ZCode;
++            data.emitted = true;
++            setCanonical(entry, std::move(data));
++        }
+         keep(std::move(entry), ledger.finish(id));
+         advance(report);
+     }
+@@ -591,6 +748,8 @@ void Analyzer::analyzeOpenClaw(Work& work, KeyLedger& ledger, const DayLabeler&
+                 entry.days = contributionsOf(sink == sinks.end() ? std::vector<ParsedResponse>{} : sink->second->items(), SourceKind::OpenClaw,
+                                              labeler, *prices_);
+                 if (sink != sinks.end()) entry.perf = sink->second->perfRecords(parser->agentId(), SourceKind::OpenClaw, labeler);
++                if (sharedMode_ && sink != sinks.end())
++                    setCanonical(entry, sink->second->capture(SourceKind::OpenClaw, parser->agentId()));
+                 keep(std::move(entry), owned[parser->agentId()]);
+             }
+             advance(report);
+@@ -608,6 +767,7 @@ void Analyzer::analyzeOpenClaw(Work& work, KeyLedger& ledger, const DayLabeler&
+ 
+ void Analyzer::planHermes(const SourceLocations& locations, const std::set<SourceKind>& enabled, bool force, Work& work, Report& report) {
+     if (!enabled.contains(SourceKind::Hermes) || locations.hermesRoot.empty()) return;
++    std::set<std::string> found;
+     for (const auto& folder : locations.hermesFolders()) {
+         std::vector<Work::HermesWork> files;
+         for (const auto& path : hermes::logFiles(folder)) {
+@@ -615,10 +775,17 @@ void Analyzer::planHermes(const SourceLocations& locations, const std::set<Sourc
+             if (!s || !s->regular) continue;
+             ++report.filesDiscovered;
+             const auto marker = std::to_string(s->device) + ":" + std::to_string(s->inode) + "|" + folder;
++            if (sharedMode_) found.insert(marker);
+             const auto* previous = previousOf(marker);
+             bool sessionsUnpriced = false;
+-            for (const auto& [p, e] : entries_) sessionsUnpriced |= e.family == kHermesFamily && p.rfind(marker + "#", 0) == 0 && e.hasUnpriced();
+-            if (unchanged(previous, kHermesLogFamily, s->length, s->writeNs, force) && !(repricing_ && sessionsUnpriced)) continue;
++            bool sessionsInvalid = false;
++            for (const auto& [p, e] : entries_) {
++                if (e.family != kHermesFamily || p.rfind(marker + "#", 0) != 0) continue;
++                sessionsUnpriced |= e.hasUnpriced();
++                sessionsInvalid |= sharedMode_ && (!canonical_.contains(p) || e.version != kVersion);
++            }
++            if (unchanged(previous, kHermesLogFamily, s->length, s->writeNs, force) &&
++                !sessionsInvalid && !(repricing_ && sessionsUnpriced)) continue;
+             if (previous) work.replaced.insert(previous->id);
+             for (const auto& [p, e] : entries_) {
+                 if (e.family == kHermesFamily && p.rfind(marker + "#", 0) == 0) work.replaced.insert(e.id);
+@@ -630,6 +797,10 @@ void Analyzer::planHermes(const SourceLocations& locations, const std::set<Sourc
+         });
+         work.hermes.insert(work.hermes.end(), files.begin(), files.end());
+     }
++    if (sharedMode_) {
++        for (const auto& [path, entry] : entries_)
++            if (entry.family == kHermesLogFamily && !found.contains(path)) ++report.filesUnreadable;
++    }
+ }
+ 
+ void Analyzer::analyzeHermes(Work& work, KeyLedger& ledger, const DayLabeler& labeler, Report& report) {
+@@ -678,6 +849,14 @@ void Analyzer::analyzeHermes(Work& work, KeyLedger& ledger, const DayLabeler& la
+             entry.modified = log.writeNs;
+             entry.version = kVersion;
+             entry.days = contributionsOf(responses, SourceKind::Hermes, labeler, *prices_);
++            if (sharedMode_) {
++                auto data = sink.capture(SourceKind::Hermes, agent);
++                if (data.items.size() != responses.size()) data.perfItems = std::move(data.items);
++                data.hermesSourceZone = (zone ? zone : TimeZone::utc())->identity();
++                data.items = responses;
++                data.onlyAgent = agent;
++                setCanonical(entry, std::move(data));
++            }
+             entry.perf = sink.perfRecords(agent, SourceKind::Hermes, labeler, &agent);
+             keep(std::move(entry), {});
+         }
+@@ -753,6 +932,10 @@ bool Analyzer::recordPeaks(const std::map<std::string, double>& peaks) {
+ void Analyzer::clear() {
+     store_.clear();
+     entries_.clear();
++    canonical_.clear();
++    sharedMode_ = false;
++    sharedZone_.reset();
++    sharedZoneId_.clear();
+     peaks_.clear();
+     prices_->clearBindings();
+ }
+diff --git a/linux/core/src/history_canonical.cpp b/linux/core/src/history_canonical.cpp
+new file mode 100644
+index 00000000..baa4acdb
+--- /dev/null
++++ b/linux/core/src/history_canonical.cpp
+@@ -0,0 +1,172 @@
++#include "agentspeed/history_canonical.hpp"
++
++#include <bit>
++#include <cstdint>
++#include <utility>
++
++namespace agentspeed::history::canonical {
++namespace {
++
++constexpr std::string_view kHeader = "ASHC\x02";
++constexpr std::string_view kLegacyHeader = "ASHC\x01";
++
++class Writer {
++public:
++    std::string bytes = std::string(kHeader);
++
++    void byte(std::uint8_t value) { bytes.push_back(static_cast<char>(value)); }
++    void number(std::uint64_t value) {
++        for (int i = 0; i < 8; ++i) byte(static_cast<std::uint8_t>(value >> (i * 8)));
++    }
++    void integer(std::int64_t value) { number(std::bit_cast<std::uint64_t>(value)); }
++    void text(const std::string& value) { number(value.size()); bytes.append(value); }
++    void boolean(bool value) { byte(value ? 1 : 0); }
++    template <typename T, typename F> void optional(const std::optional<T>& value, F put) {
++        boolean(value.has_value());
++        if (value) put(*value);
++    }
++    void optText(const std::optional<std::string>& value) { optional(value, [this](const auto& v) { text(v); }); }
++    void optInteger(const std::optional<std::int64_t>& value) { optional(value, [this](auto v) { integer(v); }); }
++
++    void response(const ParsedResponse& r) {
++        text(r.key); byte(static_cast<std::uint8_t>(r.source)); text(r.agentId); optText(r.model);
++        optInteger(r.startMs); integer(r.endMs); optInteger(r.firstMs);
++        integer(r.tokens.input); integer(r.tokens.cachedInput); integer(r.tokens.cacheWriteInput);
++        integer(r.tokens.output); integer(r.tokens.reasoning); integer(r.tokens.cacheWrite1hInput);
++        boolean(r.final); optText(r.provider); boolean(r.fast); integer(r.requestCount);
++        number(r.modes.facts().size());
++        for (const auto& f : r.modes.facts()) {
++            byte(static_cast<std::uint8_t>(f.kind)); text(f.value); text(f.raw);
++            byte(static_cast<std::uint8_t>(f.evidence)); optText(f.provider); byte(static_cast<std::uint8_t>(f.scope));
++        }
++    }
++    void action(const work::Action& a) {
++        integer(a.callMs); optInteger(a.resultMs); text(a.tool); text(a.digest);
++        optional(a.failed, [this](bool v) { boolean(v); }); optText(a.model);
++        boolean(a.seeded); number(a.serial);
++    }
++};
++
++class Reader {
++public:
++    explicit Reader(std::string_view data) : data_(data) {}
++    bool done() const { return ok_ && data_.empty(); }
++    bool ok() const { return ok_; }
++    std::uint8_t byte() {
++        if (data_.empty()) { ok_ = false; return 0; }
++        const auto result = static_cast<std::uint8_t>(data_.front());
++        data_.remove_prefix(1);
++        return result;
++    }
++    std::uint64_t number() {
++        std::uint64_t value = 0;
++        for (int i = 0; i < 8; ++i) value |= std::uint64_t{byte()} << (i * 8);
++        return value;
++    }
++    std::int64_t integer() { return std::bit_cast<std::int64_t>(number()); }
++    bool boolean() {
++        auto value = byte();
++        if (value > 1) ok_ = false;
++        return value == 1;
++    }
++    std::string text() {
++        const auto size = number();
++        if (!ok_ || size > data_.size()) { ok_ = false; return {}; }
++        std::string result(data_.substr(0, static_cast<std::size_t>(size)));
++        data_.remove_prefix(static_cast<std::size_t>(size));
++        return result;
++    }
++    template <typename T, typename F> std::optional<T> optional(F get) {
++        if (!boolean()) return std::nullopt;
++        return get();
++    }
++    std::optional<std::string> optText() { return optional<std::string>([this] { return text(); }); }
++    std::optional<std::int64_t> optInteger() { return optional<std::int64_t>([this] { return integer(); }); }
++    template <typename E> E enumeration(std::uint8_t maximum) {
++        auto value = byte();
++        if (value > maximum) ok_ = false;
++        return static_cast<E>(value);
++    }
++    std::uint64_t count() {
++        auto n = number();
++        // Every encoded element occupies at least one byte.
++        if (!ok_ || n > data_.size()) { ok_ = false; return 0; }
++        return n;
++    }
++    ParsedResponse response() {
++        ParsedResponse r;
++        r.key = text(); r.source = enumeration<SourceKind>(static_cast<std::uint8_t>(SourceKind::Droid));
++        r.agentId = text(); r.model = optText(); r.startMs = optInteger(); r.endMs = integer(); r.firstMs = optInteger();
++        r.tokens.input = integer(); r.tokens.cachedInput = integer(); r.tokens.cacheWriteInput = integer();
++        r.tokens.output = integer(); r.tokens.reasoning = integer(); r.tokens.cacheWrite1hInput = integer();
++        r.final = boolean(); r.provider = optText(); r.fast = boolean(); r.requestCount = integer();
++        auto n = count();
++        if (n > ExecutionModes::kMaxFacts) { ok_ = false; return r; }
++        std::vector<ModeFact> facts;
++        facts.reserve(static_cast<std::size_t>(n));
++        for (std::uint64_t i = 0; i < n && ok_; ++i) {
++            ModeFact f;
++            f.kind = enumeration<ModeKind>(static_cast<std::uint8_t>(ModeKind::Effort));
++            f.value = text(); f.raw = text();
++            f.evidence = enumeration<ModeEvidence>(static_cast<std::uint8_t>(ModeEvidence::Served));
++            f.provider = optText(); f.scope = enumeration<ModeScope>(static_cast<std::uint8_t>(ModeScope::Response));
++            facts.push_back(std::move(f));
++        }
++        r.modes = ExecutionModes(facts);
++        if (r.modes.facts() != facts) ok_ = false;
++        return r;
++    }
++    work::Action action() {
++        work::Action a;
++        a.callMs = integer(); a.resultMs = optInteger(); a.tool = text(); a.digest = text();
++        a.failed = optional<bool>([this] { return boolean(); }); a.model = optText();
++        a.seeded = boolean(); a.serial = number();
++        return a;
++    }
++private:
++    std::string_view data_;
++    bool ok_ = true;
++};
++
++}  // namespace
++
++std::string serialize(const File& file) {
++    Writer w;
++    w.byte(static_cast<std::uint8_t>(file.source)); w.text(file.agent); w.optText(file.onlyAgent); w.boolean(file.emitted);
++    w.optText(file.hermesSourceZone);
++    w.number(file.items.size());
++    for (const auto& item : file.items) w.response(item);
++    w.number(file.perfItems.size());
++    for (const auto& item : file.perfItems) w.response(item);
++    w.number(file.events.size());
++    for (const auto& event : file.events) {
++        w.text(event.key);
++        w.optional(event.action, [&w](const auto& action) { w.action(action); });
++    }
++    return std::move(w.bytes);
++}
++
++std::optional<File> deserialize(std::string_view bytes) {
++    const bool legacy = bytes.starts_with(kLegacyHeader);
++    if (!legacy && !bytes.starts_with(kHeader)) return std::nullopt;
++    Reader r(bytes.substr(kHeader.size()));
++    File file;
++    file.source = r.enumeration<SourceKind>(static_cast<std::uint8_t>(SourceKind::Droid));
++    file.agent = r.text(); file.onlyAgent = r.optText(); file.emitted = r.boolean();
++    if (!legacy) file.hermesSourceZone = r.optText();
++    auto n = r.count();
++    for (std::uint64_t i = 0; i < n && r.ok(); ++i) file.items.push_back(r.response());
++    n = r.count();
++    for (std::uint64_t i = 0; i < n && r.ok(); ++i) file.perfItems.push_back(r.response());
++    n = r.count();
++    for (std::uint64_t i = 0; i < n && r.ok(); ++i) {
++        Event event;
++        event.key = r.text();
++        event.action = r.optional<work::Action>([&r] { return r.action(); });
++        file.events.push_back(std::move(event));
++    }
++    if (!r.done()) return std::nullopt;
++    return file;
++}
++
++}  // namespace agentspeed::history::canonical
+diff --git a/linux/core/src/history_store.cpp b/linux/core/src/history_store.cpp
+index 711678e8..faec15a8 100644
+--- a/linux/core/src/history_store.cpp
++++ b/linux/core/src/history_store.cpp
+@@ -227,7 +227,7 @@ std::unique_ptr<Store> Store::open(const std::string& path) {
+     store->db_.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)");
+     const auto schema = store->meta("schema");
+     if (schema && *schema != std::to_string(kSchema)) {
+-        for (const char* table : {"files", "contributions", "peaks", "bindings", "price_tables"}) {
++        for (const char* table : {"files", "contributions", "peaks", "bindings", "price_tables", "canonical_history"}) {
+             store->db_.execute(std::string("DROP TABLE IF EXISTS ") + table);
+         }
+         store->db_.execute("DELETE FROM meta");
+@@ -241,6 +241,7 @@ void Store::createSchema() {
+     db_.execute(
+         "CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, family TEXT NOT NULL, size INTEGER NOT NULL,"
+         " modified INTEGER NOT NULL, version INTEGER NOT NULL, keys BLOB)");
++    db_.execute("CREATE TABLE IF NOT EXISTS canonical_history(file_id INTEGER PRIMARY KEY, data BLOB NOT NULL)");
+     db_.execute(
+         "CREATE TABLE IF NOT EXISTS contributions(file_id INTEGER NOT NULL, day TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL,"
+         " PRIMARY KEY(file_id, day, source))");
+@@ -312,6 +313,11 @@ std::map<std::string, StoredFile> Store::loadFiles() const {
+         byId[f.id] = f.path;
+         files[f.path] = std::move(f);
+     }
++    auto canonical = db_.prepare("SELECT file_id, data FROM canonical_history");
++    while (canonical.step()) {
++        const auto it = byId.find(canonical.getInt64(0));
++        if (it != byId.end()) files[it->second].canonical = std::string(canonical.getBlob(1));
++    }
+     auto days = db_.prepare("SELECT file_id, day, source, data FROM contributions");
+     while (days.step()) {
+         const auto it = byId.find(days.getInt64(0));
+@@ -362,6 +368,8 @@ void Store::save(std::vector<std::pair<StoredFile*, std::vector<std::uint64_t>>>
+             " version=excluded.version, keys=excluded.keys RETURNING id");
+         auto clear = db_.prepare("DELETE FROM contributions WHERE file_id=?1");
+         auto insert = db_.prepare("INSERT INTO contributions(file_id, day, source, data) VALUES(?1, ?2, ?3, ?4)");
++        auto clearCanonical = db_.prepare("DELETE FROM canonical_history WHERE file_id=?1");
++        auto insertCanonical = db_.prepare("INSERT INTO canonical_history(file_id, data) VALUES(?1, ?2)");
+         auto clearRecords = db_.prepare("DELETE FROM perf_records WHERE file_id=?1");
+         auto insertRecord = db_.prepare(
+             "INSERT INTO perf_records(file_id, day, source, model, n, output_sum, duration_ms_sum, latency_bins, reason_n, reason_output,"
+@@ -375,6 +383,14 @@ void Store::save(std::vector<std::pair<StoredFile*, std::vector<std::uint64_t>>>
+             if (upsert.step()) file->id = upsert.getInt64(0);
+             while (upsert.step()) {
+             }
++            clearCanonical.reset();
++            clearCanonical.bind(1, file->id);
++            clearCanonical.step();
++            if (file->canonical) {
++                insertCanonical.reset();
++                insertCanonical.bind(1, file->id).bindBlob(2, *file->canonical);
++                insertCanonical.step();
++            }
+             clear.reset();
+             clear.bind(1, file->id);
+             clear.step();
 diff --git a/linux/core/src/monitor_snapshot.cpp b/linux/core/src/monitor_snapshot.cpp
 index 90417d3f..a35c9c74 100644
 --- a/linux/core/src/monitor_snapshot.cpp
@@ -403,6 +1377,267 @@ index 90417d3f..a35c9c74 100644
              row.todayCostMicroUsd = stats.costMicroUsd;
              row.unpricedRequests = stats.unpricedRequests;
              std::vector<engine::Agent> ownAgents;
+diff --git a/linux/tests/CMakeLists.txt b/linux/tests/CMakeLists.txt
+index 735e3a74..c65c934e 100644
+--- a/linux/tests/CMakeLists.txt
++++ b/linux/tests/CMakeLists.txt
+@@ -8,6 +8,10 @@ add_executable(agentspeed_tests
+     board_test.cpp
+     collector_test.cpp
+     collector_integration_test.cpp
++    collector_daemon_test.cpp
++    collector_publisher_test.cpp
++    sampling_test.cpp
++    shared_history_test.cpp
+     current_values_test.cpp
+     discovery_test.cpp
+     droid_test.cpp
+@@ -36,9 +40,9 @@ add_executable(agentspeed_tests
+     update_release_test.cpp
+     work_signals_test.cpp
+ )
+-target_link_libraries(agentspeed_tests PRIVATE agentspeed_core agentspeed_collector_protocol GTest::gtest_main)
+-add_dependencies(agentspeed_tests agentspeed-collector)
+-target_compile_definitions(agentspeed_tests PRIVATE AGENTSPEED_COLLECTOR_PATH="$<TARGET_FILE:agentspeed-collector>")
++target_link_libraries(agentspeed_tests PRIVATE agentspeed_core agentspeed_collector_runtime GTest::gtest_main)
++add_dependencies(agentspeed_tests agentspeed-collector-test)
++target_compile_definitions(agentspeed_tests PRIVATE AGENTSPEED_COLLECTOR_PATH="$<TARGET_FILE:agentspeed-collector-test>")
+ target_compile_definitions(agentspeed_tests PRIVATE
+     AGENTSPEED_SPEC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../spec")
+ 
+diff --git a/linux/tests/collector_daemon_test.cpp b/linux/tests/collector_daemon_test.cpp
+new file mode 100644
+index 00000000..50fc6c20
+--- /dev/null
++++ b/linux/tests/collector_daemon_test.cpp
+@@ -0,0 +1,227 @@
++#include <gtest/gtest.h>
++
++#include "agentspeed/json.hpp"
++
++#include <chrono>
++#include <cerrno>
++#include <csignal>
++#include <cstdlib>
++#include <cstring>
++#include <fcntl.h>
++#include <filesystem>
++#include <fstream>
++#include <poll.h>
++#include <string>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/un.h>
++#include <sys/wait.h>
++#include <thread>
++#include <unistd.h>
++
++namespace {
++namespace fs = std::filesystem;
++using Clock = std::chrono::steady_clock;
++
++class Home {
++public:
++    Home() {
++        char name[] = "/tmp/as-daemon-XXXXXX";
++        if (char* p = mkdtemp(name)) path = p;
++    }
++    ~Home() {
++        // The test daemon has a one-second idle timeout; do not remove its lock
++        // while it still owns it, even when an assertion terminates a test early.
++        const auto socket = path / ".agent-speed/collector.sock";
++        auto end = Clock::now() + std::chrono::seconds(8);
++        while (!path.empty() && fs::is_socket(socket) && Clock::now() < end)
++            std::this_thread::sleep_for(std::chrono::milliseconds(50));
++        if (!path.empty()) { std::error_code ec; fs::remove_all(path, ec); }
++    }
++    fs::path runtime() const { return path / ".agent-speed"; }
++    fs::path path;
++};
++
++class Bridge {
++public:
++    Bridge(const fs::path& home, const fs::path& executable = AGENTSPEED_COLLECTOR_PATH) {
++        int in[2], out[2];
++        if (pipe2(in, O_CLOEXEC)) return;
++        if (pipe2(out, O_CLOEXEC)) { close(in[0]); close(in[1]); return; }
++        pid = fork();
++        if (pid == 0) {
++            dup2(in[0], STDIN_FILENO); dup2(out[1], STDOUT_FILENO);
++            close(in[0]); close(in[1]); close(out[0]); close(out[1]);
++            setenv("HOME", home.c_str(), 1);
++            unsetenv("PI_CODING_AGENT_DIR"); unsetenv("PI_CONFIG_DIR");
++            execl(executable.c_str(), executable.c_str(), static_cast<char*>(nullptr));
++            _exit(127);
++        }
++        close(in[0]); close(out[1]);
++        if (pid < 0) { close(in[1]); close(out[0]); return; }
++        input = in[1]; output = out[0];
++    }
++    ~Bridge() {
++        closeInput();
++        if (output >= 0) close(output);
++        if (pid > 0 && !wait(3000)) {
++            kill(pid, SIGKILL);
++            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
++        }
++    }
++    void closeInput() { if (input >= 0) { close(input); input = -1; } }
++    bool send(const std::string& message) {
++        std::size_t offset = 0;
++        while (offset < message.size()) {
++            ssize_t n = write(input, message.data() + offset, message.size() - offset);
++            if (n > 0) offset += static_cast<std::size_t>(n);
++            else if (n < 0 && errno == EINTR) continue;
++            else return false;
++        }
++        return true;
++    }
++    bool wait(int ms) {
++        if (pid <= 0) return true;
++        auto end = Clock::now() + std::chrono::milliseconds(ms);
++        do {
++            pid_t r = waitpid(pid, &status, WNOHANG);
++            if (r == pid) { pid = -1; return true; }
++            if (r < 0 && errno != EINTR) { pid = -1; return true; }
++            std::this_thread::sleep_for(std::chrono::milliseconds(10));
++        } while (Clock::now() < end);
++        return false;
++    }
++    bool failed(int ms = 5000) { return wait(ms) && WIFEXITED(status) && WEXITSTATUS(status) != 0; }
++    bool lineType(const std::string& type, int timeout = 12000) {
++        auto end = Clock::now() + std::chrono::milliseconds(timeout);
++        while (Clock::now() < end) {
++            auto newline = buffer.find('\n');
++            if (newline != std::string::npos) {
++                std::string line = buffer.substr(0, newline); buffer.erase(0, newline + 1);
++                agentspeed::json::Document doc;
++                if (doc.parse(line) && doc.root()["type"].string() == type &&
++                    (timezone.empty() || doc.root()["timezone"].string() == timezone)) return true;
++                continue;
++            }
++            auto left = std::chrono::duration_cast<std::chrono::milliseconds>(end - Clock::now()).count();
++            pollfd fd{output, POLLIN, 0};
++            int r = poll(&fd, 1, static_cast<int>(left));
++            if (r < 0 && errno == EINTR) continue;
++            if (r <= 0) return false;
++            char data[8192]; ssize_t n = read(output, data, sizeof(data));
++            if (n <= 0) return false;
++            buffer.append(data, static_cast<std::size_t>(n));
++        }
++        return false;
++    }
++    bool capabilities(const std::string& request) {
++        return send("{\"version\":1,\"type\":\"capabilities\",\"requestId\":\"" + request + "\"}\n") && lineType("capabilities");
++    }
++    pid_t pid = -1;
++    int input = -1, output = -1, status = 0;
++    std::string timezone;
++    std::string buffer;
++};
++
++class DaemonProcessTest : public ::testing::Test {
++protected:
++    void SetUp() override { oldPipe = std::signal(SIGPIPE, SIG_IGN); ASSERT_FALSE(home.path.empty()); }
++    void TearDown() override { std::signal(SIGPIPE, oldPipe); }
++    Home home;
++    using Handler = void (*)(int);
++    Handler oldPipe = SIG_DFL;
++};
++
++TEST_F(DaemonProcessTest, ConcurrentColdBridgesAndIndependentEof) {
++    Bridge first(home.path), second(home.path);
++    ASSERT_GT(first.pid, 0); ASSERT_GT(second.pid, 0);
++    ASSERT_TRUE(first.capabilities("first"));
++    ASSERT_TRUE(second.capabilities("second"));
++    ASSERT_TRUE(first.lineType("snapshot"));
++    ASSERT_TRUE(second.lineType("snapshot"));
++    first.closeInput();
++    ASSERT_TRUE(first.wait(5000));
++    EXPECT_TRUE(WIFEXITED(first.status)); EXPECT_EQ(WEXITSTATUS(first.status), 0);
++    EXPECT_TRUE(second.capabilities("after-eof"));
++    EXPECT_TRUE(second.lineType("snapshot"));
++}
++
++TEST_F(DaemonProcessTest, TimezoneChangesStayLocalToSubscriber) {
++    Bridge changing(home.path), stable(home.path);
++    ASSERT_TRUE(changing.capabilities("changing"));
++    ASSERT_TRUE(stable.capabilities("stable"));
++    ASSERT_TRUE(changing.send("{\"version\":1,\"type\":\"history_timezone\",\"timezone\":\"UTC\"}\n"));
++    ASSERT_TRUE(stable.send("{\"version\":1,\"type\":\"history_timezone\",\"timezone\":\"America/New_York\"}\n"));
++    changing.timezone = "UTC";
++    stable.timezone = "America/New_York";
++    ASSERT_TRUE(changing.lineType("history", 15000));
++    ASSERT_TRUE(stable.lineType("history", 15000));
++    ASSERT_TRUE(changing.lineType("snapshot", 5000));
++    ASSERT_TRUE(stable.lineType("snapshot", 5000));
++    ASSERT_TRUE(changing.send("{\"version\":1,\"type\":\"history_timezone\",\"timezone\":\"Asia/Tokyo\"}\n"));
++    changing.timezone = "Asia/Tokyo";
++    EXPECT_TRUE(changing.lineType("history", 15000));
++    EXPECT_TRUE(changing.lineType("snapshot", 5000));
++    EXPECT_TRUE(stable.lineType("snapshot", 5000));
++}
++
++TEST_F(DaemonProcessTest, RejectsSymlinkLockAndSocketWithoutTouchingTargets) {
++    fs::create_directory(home.runtime());
++    ASSERT_EQ(chmod(home.runtime().c_str(), 0700), 0);
++    const auto target = home.path / "target";
++    { std::ofstream file(target); file << "preserve"; }
++    const auto lock = home.runtime() / "collector.lock";
++    ASSERT_EQ(symlink(target.c_str(), lock.c_str()), 0);
++    { Bridge bridge(home.path); ASSERT_TRUE(bridge.failed()); }
++    ASSERT_TRUE(fs::is_symlink(lock));
++    fs::remove(lock);
++    const auto socket = home.runtime() / "collector.sock";
++    ASSERT_EQ(symlink(target.c_str(), socket.c_str()), 0);
++    { Bridge bridge(home.path); ASSERT_TRUE(bridge.failed()); }
++    EXPECT_TRUE(fs::is_symlink(socket));
++    std::ifstream file(target); std::string content; file >> content;
++    EXPECT_EQ(content, "preserve");
++}
++
++TEST_F(DaemonProcessTest, RecoversStaleOwnedSocket) {
++    fs::create_directory(home.runtime());
++    ASSERT_EQ(chmod(home.runtime().c_str(), 0700), 0);
++    auto path = home.runtime() / "collector.sock";
++    ASSERT_LT(path.string().size(), sizeof(sockaddr_un::sun_path));
++    int fd = socket(AF_UNIX, SOCK_STREAM, 0); ASSERT_GE(fd, 0);
++    sockaddr_un address{}; address.sun_family = AF_UNIX;
++    std::strcpy(address.sun_path, path.c_str());
++    mode_t mask = umask(0177);
++    int result = bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address));
++    umask(mask); close(fd);
++    ASSERT_EQ(result, 0);
++    Bridge bridge(home.path);
++    ASSERT_TRUE(bridge.capabilities("restart"));
++    EXPECT_TRUE(bridge.lineType("snapshot"));
++}
++
++TEST_F(DaemonProcessTest, DifferentExecutableDigestDoesNotInterruptExistingBridge) {
++    Bridge original(home.path);
++    ASSERT_TRUE(original.capabilities("original"));
++    auto alternate = home.path / "alternate-collector";
++    ASSERT_TRUE(fs::copy_file(AGENTSPEED_COLLECTOR_PATH, alternate));
++    { std::ofstream file(alternate, std::ios::binary | std::ios::app); ASSERT_TRUE(file.good()); file << "digest-change"; }
++    ASSERT_EQ(chmod(alternate.c_str(), 0700), 0);
++    { Bridge changed(home.path, alternate); EXPECT_TRUE(changed.failed()); }
++    EXPECT_TRUE(original.capabilities("still-running"));
++    EXPECT_TRUE(original.lineType("snapshot"));
++}
++
++TEST_F(DaemonProcessTest, SlowReaderDoesNotPreventHealthyClientProgress) {
++    Bridge slow(home.path), healthy(home.path);
++    ASSERT_GT(slow.pid, 0); ASSERT_TRUE(healthy.capabilities("healthy"));
++    // Never read the slow bridge's output while the healthy bridge continues
++    // receiving ticks and control replies.
++    for (int i = 0; i < 80; ++i)
++        ASSERT_TRUE(slow.send("{\"version\":1,\"type\":\"capabilities\",\"requestId\":\"slow-" + std::to_string(i) + "\"}\n"));
++    for (int i = 0; i < 4; ++i) {
++        EXPECT_TRUE(healthy.lineType("snapshot", 5000));
++        EXPECT_TRUE(healthy.capabilities("healthy-" + std::to_string(i)));
++    }
++}
++} // namespace
 diff --git a/linux/tests/collector_integration_test.cpp b/linux/tests/collector_integration_test.cpp
 index 6eca14f2..f70a18a2 100644
 --- a/linux/tests/collector_integration_test.cpp
@@ -534,6 +1769,294 @@ index 6eca14f2..f70a18a2 100644
 +    EXPECT_TRUE(history); EXPECT_TRUE(baseline);
 +    std::filesystem::remove_all(home);
 +}
+diff --git a/linux/tests/collector_publisher_test.cpp b/linux/tests/collector_publisher_test.cpp
+new file mode 100644
+index 00000000..dc0189f4
+--- /dev/null
++++ b/linux/tests/collector_publisher_test.cpp
+@@ -0,0 +1,282 @@
++#include <gtest/gtest.h>
++#include "publisher.hpp"
++#include "agentspeed/json.hpp"
++#include <atomic>
++#include <chrono>
++#include <mutex>
++#include <thread>
++
++namespace {
++std::string subscribe(const std::string& request="r", const std::string& lease="l", const std::string& relay="https://agent-speed.yooztech.com") {
++    return "{\"version\":1,\"type\":\"live_activity_subscribe\",\"controlVersion\":2,\"requestId\":\""+request+"\",\"relayUrl\":\""+relay+"\",\"lease\":\"bearer\",\"activityId\":\"a\",\"leaseId\":\""+lease+"\",\"expiresAt\":2000000,\"hostId\":\"host\",\"hostName\":\"machine\",\"timezone\":\"UTC\"}";
++}
++bool accepted(const std::string& line) { agentspeed::json::Document d; return d.parse(line) && d.root()["accepted"].isTrue(); }
++template<class F> bool eventually(F f) { for(int i=0;i<100;++i) {if(f()) return true; std::this_thread::sleep_for(std::chrono::milliseconds(5));} return false; }
++}
++TEST(CollectorPublisher, RejectsUntrustedOriginAndControlVersion) {
++    collector::Publisher::Options o; o.clock=[] {return 1000000;}; o.transport=[](const auto&,const auto&){return collector::Publisher::Result{200};}; collector::Publisher p(o);
++    auto response=p.control(subscribe("r","l","https://agent-speed.yooztech.com.evil"),1,1000000); ASSERT_EQ(response.size(),1u); EXPECT_FALSE(accepted(response[0])); EXPECT_FALSE(p.authorized(1000000));
++    response=p.control("{\"version\":1,\"type\":\"live_activity_unsubscribe\",\"controlVersion\":1,\"requestId\":\"r\",\"leaseId\":\"l\"}",1,1000000); ASSERT_EQ(response.size(),1u); EXPECT_FALSE(accepted(response[0]));
++}
++TEST(CollectorPublisher, ConfirmsOnlyRealSampleAndProjectsAllowedFields) {
++    std::atomic<std::int64_t> now{1000000}; std::mutex m; std::string captured; std::atomic<int> calls{0}; collector::Publisher::Options o; o.clock=[&]{return now.load();}; o.transport=[&](const auto& token,const auto& body){EXPECT_EQ(token,"bearer"); {std::lock_guard<std::mutex> lock(m); captured=body;} ++calls; return collector::Publisher::Result{200};}; collector::Publisher p(o);
++    EXPECT_TRUE(p.control(subscribe(),1,now).empty()); EXPECT_TRUE(p.replies().empty()); auto views=p.views(); ASSERT_EQ(views.size(),1u); collector::Sample s; s.snapshot.nowMs=now; s.snapshot.liveRateComplete=false; s.snapshot.todayOutput=42; s.snapshot.traffic.machine=agentspeed::traffic::Rate{12,34}; p.sample(views[0],s);
++    ASSERT_TRUE(eventually([&]{return calls.load()==1;})); std::vector<std::pair<std::uint64_t,std::string>> replies; ASSERT_TRUE(eventually([&]{replies=p.replies(); return !replies.empty();})); EXPECT_TRUE(accepted(replies[0].second));
++    std::lock_guard<std::mutex> lock(m); agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(captured)); auto snap=doc.root()["snapshot"]; EXPECT_EQ(snap["hostId"].string().value_or(""),"host"); EXPECT_TRUE(snap["speed"].isNull()); EXPECT_EQ(snap["rxBytesPerSecond"].truncated().value_or(-1),12); EXPECT_TRUE(snap["title"].isNull()); EXPECT_EQ(snap.size(),12u);
++}
++TEST(CollectorPublisher, ReplacementFencesInflightAndUnsubscribeIsScoped) {
++    std::atomic<std::int64_t> now{1000000}; std::atomic<bool> entered{false}, release{false}; collector::Publisher::Options o; o.clock=[&]{return now.load();}; o.transport=[&](const auto&,const auto&){entered=true; while(!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1)); return collector::Publisher::Result{200};}; collector::Publisher p(o);
++    ASSERT_TRUE(p.control(subscribe(),1,now).empty()); auto v=p.views(); collector::Sample s; s.snapshot.nowMs=now; p.sample(v[0],s); ASSERT_TRUE(eventually([&]{return entered.load();})); EXPECT_TRUE(p.control(subscribe("r2","l2"),1,now).empty()); auto u=p.control("{\"version\":1,\"type\":\"live_activity_unsubscribe\",\"controlVersion\":2,\"requestId\":\"u\",\"leaseId\":\"l\"}",1,now); ASSERT_EQ(u.size(),1u); EXPECT_TRUE(accepted(u[0])); release=true; EXPECT_TRUE(p.authorized(now)); auto replies=p.replies(); for(const auto& r:replies) EXPECT_FALSE(accepted(r.second));
++}
++TEST(CollectorPublisher, DisconnectionCancelsUnconfirmedLease) {
++    collector::Publisher::Options o; o.clock=[] {return 1000000;}; o.transport=[](const auto&,const auto&){return collector::Publisher::Result{200};}; collector::Publisher p(o); EXPECT_TRUE(p.control(subscribe(),4,1000000).empty()); EXPECT_TRUE(p.authorized(1000000)); p.disconnected(4); EXPECT_FALSE(p.authorized(1000000));
++}
++
++TEST(CollectorPublisher, FailedAttemptNeverReplaysSample) {
++    std::atomic<std::int64_t> now{1000000}; std::atomic<int> calls{0}; collector::Publisher::Options o;
++    o.clock=[&]{return now.load();}; o.transport=[&](const auto&,const auto&){++calls; return collector::Publisher::Result{502};}; collector::Publisher p(o);
++    ASSERT_TRUE(p.control(subscribe(),1,now).empty()); auto views=p.views(); ASSERT_EQ(views.size(),1u);
++    collector::Sample s; s.snapshot.nowMs=now; p.sample(views[0],s); ASSERT_TRUE(eventually([&]{return calls.load()==1;}));
++    now+=11000; p.sample(views[0],s); std::this_thread::sleep_for(std::chrono::milliseconds(150)); EXPECT_EQ(calls.load(),1);
++    s.snapshot.nowMs=now; p.sample(views[0],s); EXPECT_TRUE(eventually([&]{return calls.load()==2;})); EXPECT_TRUE(p.replies().empty());
++}
++TEST(CollectorPublisher, PendingDeadlineExpiresWithoutSuccess) {
++    std::atomic<std::int64_t> now{1000000}; collector::Publisher::Options o; o.clock=[&]{return now.load();}; o.confirmationMs=100;
++    o.transport=[](const auto&,const auto&){return collector::Publisher::Result{502};}; collector::Publisher p(o);
++    ASSERT_TRUE(p.control(subscribe(),1,now).empty()); now+=101; std::vector<std::pair<std::uint64_t,std::string>> replies;
++    ASSERT_TRUE(eventually([&]{replies=p.replies(); return !replies.empty();})); EXPECT_FALSE(accepted(replies[0].second)); EXPECT_FALSE(p.authorized(now));
++}
++
++TEST(CollectorPublisher, ViewsUseTimezoneRatherThanHostName) {
++    collector::Publisher::Options o;
++    o.clock = [] { return 1000000; };
++    o.transport = [](const auto&, const auto&) { return collector::Publisher::Result{200}; };
++    collector::Publisher p(o);
++    auto second = subscribe("r2", "l2");
++    second.replace(second.find("\"activityId\":\"a\""), 16, "\"activityId\":\"b\"");
++    second.replace(second.find("\"hostName\":\"machine\""), 20, "\"hostName\":\"other\"");
++    auto third = subscribe("r3", "l3");
++    third.replace(third.find("\"activityId\":\"a\""), 16, "\"activityId\":\"c\"");
++    third.replace(third.find("\"timezone\":\"UTC\""), 16, "\"timezone\":\"Etc/UTC\"");
++    ASSERT_TRUE(p.control(subscribe(), 1, 1000000).empty());
++    ASSERT_TRUE(p.control(second, 2, 1000000).empty());
++    ASSERT_TRUE(p.control(third, 3, 1000000).empty());
++    auto views = p.views();
++    ASSERT_EQ(views.size(), 3u);
++    EXPECT_EQ(views[0].name, "UTC");
++    EXPECT_EQ(views[1].name, "UTC");
++    EXPECT_EQ(views[2].name, "Etc/UTC");
++}
++
++TEST(CollectorPublisher, DisconnectKeepsOtherPendingWaiter) {
++    collector::Publisher::Options o;
++    o.clock = [] { return 1000000; };
++    o.transport = [](const auto&, const auto&) { return collector::Publisher::Result{200}; };
++    collector::Publisher p(o);
++    ASSERT_TRUE(p.control(subscribe("r1"), 1, 1000000).empty());
++    ASSERT_TRUE(p.control(subscribe("r2"), 2, 1000000).empty());
++    p.disconnected(1);
++    EXPECT_TRUE(p.authorized(1000000));
++    auto views = p.views();
++    ASSERT_EQ(views.size(), 1u);
++    collector::Sample sample;
++    sample.snapshot.nowMs = 1000000;
++    p.sample(views[0], sample);
++    std::vector<std::pair<std::uint64_t, std::string>> replies;
++    ASSERT_TRUE(eventually([&] { replies = p.replies(); return !replies.empty(); }));
++    ASSERT_EQ(replies.size(), 1u);
++    EXPECT_EQ(replies[0].first, 2u);
++    EXPECT_TRUE(accepted(replies[0].second));
++}
++
++TEST(CollectorPublisher, OversizedRelayResponseTerminatesLease) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto&) {
++        ++calls;
++        return collector::Publisher::Result{413};
++    };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto views = publisher.views();
++    ASSERT_EQ(views.size(), 1u);
++    collector::Sample sample;
++    sample.snapshot.nowMs = now;
++    publisher.sample(views[0], sample);
++    std::vector<std::pair<std::uint64_t, std::string>> replies;
++    ASSERT_TRUE(eventually([&] { replies = publisher.replies(); return !replies.empty(); }));
++    ASSERT_EQ(replies.size(), 1u);
++    EXPECT_FALSE(accepted(replies[0].second));
++    EXPECT_FALSE(publisher.authorized(now));
++    now += 11000;
++    sample.snapshot.nowMs = now;
++    publisher.sample(views[0], sample);
++    EXPECT_EQ(calls.load(), 1);
++}
++
++TEST(CollectorPublisher, RequestIdsAreScopedToClient) {
++    collector::Publisher::Options options;
++    options.clock = [] { return 1000000; };
++    options.transport = [](const auto&, const auto&) { return collector::Publisher::Result{200}; };
++    collector::Publisher publisher(options);
++    auto first = subscribe("activity-1", "lease1");
++    auto second = subscribe("activity-1", "lease2");
++    const std::string oldActivity = "\"activityId\":\"a\"";
++    second.replace(second.find(oldActivity), oldActivity.size(), "\"activityId\":\"b\"");
++    ASSERT_TRUE(publisher.control(first, 1, 1000000).empty());
++    auto conflict = publisher.control(second, 1, 1000000);
++    ASSERT_EQ(conflict.size(), 1u);
++    EXPECT_FALSE(accepted(conflict[0]));
++    ASSERT_TRUE(publisher.control(second, 2, 1000000).empty());
++    auto views = publisher.views();
++    ASSERT_EQ(views.size(), 2u);
++    collector::Sample sample;
++    sample.snapshot.nowMs = 1000000;
++    for (const auto& view : views) publisher.sample(view, sample);
++    std::vector<std::pair<std::uint64_t, std::string>> replies;
++    ASSERT_TRUE(eventually([&] {
++        auto next = publisher.replies();
++        replies.insert(replies.end(), next.begin(), next.end());
++        return replies.size() == 2;
++    }));
++    EXPECT_NE(replies[0].first, replies[1].first);
++    EXPECT_TRUE(accepted(replies[0].second));
++    EXPECT_TRUE(accepted(replies[1].second));
++}
++
++TEST(CollectorPublisher, RetiredLeaseCannotReplaceNewGeneration) {
++    std::atomic<int> calls{0};
++    collector::Publisher::Options options;
++    options.clock = [] { return 1000000; };
++    options.transport = [&](const auto&, const auto&) { ++calls; return collector::Publisher::Result{200}; };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe("first", "old"), 1, 1000000).empty());
++    ASSERT_TRUE(publisher.control(subscribe("second", "new"), 1, 1000000).empty());
++    auto retry = publisher.control(subscribe("late", "old"), 2, 1000000);
++    ASSERT_EQ(retry.size(), 1u);
++    EXPECT_FALSE(accepted(retry[0]));
++    auto views = publisher.views();
++    ASSERT_EQ(views.size(), 1u);
++    EXPECT_TRUE(publisher.authorized(1000000));
++    EXPECT_EQ(calls.load(), 0);
++    collector::Sample sample;
++    sample.snapshot.nowMs = 1000000;
++    publisher.sample(views[0], sample);
++    std::vector<std::pair<std::uint64_t, std::string>> replies;
++    ASSERT_TRUE(eventually([&] {
++        auto next = publisher.replies();
++        replies.insert(replies.end(), next.begin(), next.end());
++        return replies.size() >= 2;
++    }));
++    EXPECT_FALSE(accepted(replies[0].second));
++    EXPECT_TRUE(accepted(replies[1].second));
++    EXPECT_EQ(calls.load(), 1);
++}
++
++TEST(CollectorPublisher, ConfirmedLeaseSurvivesTransientFailuresAndRecovers) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    std::mutex mutex;
++    std::vector<std::int64_t> timestamps;
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto& body) {
++        agentspeed::json::Document doc;
++        if (doc.parse(body)) {
++            std::lock_guard<std::mutex> lock(mutex);
++            timestamps.push_back(doc.root()["snapshot"]["sampledAt"].truncated().value_or(0));
++        }
++        int call = ++calls;
++        return collector::Publisher::Result{call == 1 || call == 11 ? 200L : 502L};
++    };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto views = publisher.views();
++    ASSERT_EQ(views.size(), 1u);
++    collector::Sample sample;
++    for (int i = 0; i < 11; ++i) {
++        if (i) now += 61000;
++        sample.snapshot.nowMs = now;
++        publisher.sample(views[0], sample);
++        ASSERT_TRUE(eventually([&] { return calls.load() == i + 1; }));
++        std::this_thread::sleep_for(std::chrono::milliseconds(20));
++        EXPECT_TRUE(publisher.authorized(now));
++    }
++    std::lock_guard<std::mutex> lock(mutex);
++    ASSERT_EQ(timestamps.size(), 11u);
++    for (std::size_t i = 1; i < timestamps.size(); ++i) EXPECT_GT(timestamps[i], timestamps[i - 1]);
++}
++
++TEST(CollectorPublisher, IdentityLimitMatchesWorkerUtf16Length) {
++    collector::Publisher::Options options;
++    options.clock = [] { return 1000000; };
++    options.transport = [](const auto&, const auto&) { return collector::Publisher::Result{200}; };
++    collector::Publisher publisher(options);
++    const std::string field = "\"hostName\":\"machine\"";
++    const std::string emoji = "\xf0\x9f\x98\x80";
++    std::string name;
++    for (int i = 0; i < 128; ++i) name += emoji;
++    auto valid = subscribe("valid", "one");
++    valid.replace(valid.find(field), field.size(), "\"hostName\":\"" + name + "\"");
++    EXPECT_TRUE(publisher.control(valid, 1, 1000000).empty());
++    name += emoji;
++    auto invalid = subscribe("invalid", "two");
++    invalid.replace(invalid.find(field), field.size(), "\"hostName\":\"" + name + "\"");
++    auto response = publisher.control(invalid, 2, 1000000);
++    ASSERT_EQ(response.size(), 1u);
++    EXPECT_FALSE(accepted(response[0]));
++}
++
++TEST(CollectorPublisher, EarliestDueLeasePreventsStarvation) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<bool> ready{false};
++    std::atomic<int> calls{0};
++    std::mutex mutex;
++    std::vector<std::string> hosts;
++    collector::Publisher* publisherPtr = nullptr;
++    std::vector<collector::View> views;
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto& body) {
++        while (!ready.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
++        agentspeed::json::Document doc;
++        if (doc.parse(body)) {
++            std::lock_guard<std::mutex> lock(mutex);
++            hosts.push_back(doc.root()["snapshot"]["hostId"].string().value_or(""));
++        }
++        auto call = ++calls;
++        now += 6000;
++        if (call < 4) {
++            collector::Sample newer;
++            newer.snapshot.nowMs = now;
++            for (const auto& view : views) publisherPtr->sample(view, newer);
++        }
++        return collector::Publisher::Result{200};
++    };
++    collector::Publisher publisher(options);
++    publisherPtr = &publisher;
++    const std::string oldActivity = "\"activityId\":\"a\"";
++    const std::string oldHost = "\"hostId\":\"host\"";
++    for (int i = 0; i < 4; ++i) {
++        auto suffix = std::to_string(i);
++        auto request = subscribe("r" + suffix, "l" + suffix);
++        request.replace(request.find(oldActivity), oldActivity.size(), "\"activityId\":\"a" + suffix + "\"");
++        request.replace(request.find(oldHost), oldHost.size(), "\"hostId\":\"host" + suffix + "\"");
++        EXPECT_TRUE(publisher.control(request, i + 1, now).empty());
++    }
++    views = publisher.views();
++    EXPECT_EQ(views.size(), 4u);
++    collector::Sample first;
++    first.snapshot.nowMs = now;
++    for (const auto& view : views) publisher.sample(view, first);
++    ready = true;
++    ASSERT_TRUE(eventually([&] { return calls.load() >= 4; }));
++    std::lock_guard<std::mutex> lock(mutex);
++    ASSERT_GE(hosts.size(), 4u);
++    EXPECT_EQ(hosts[0], "host0");
++    EXPECT_EQ(hosts[1], "host1");
++    EXPECT_EQ(hosts[2], "host2");
++    EXPECT_EQ(hosts[3], "host3");
++}
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
 index d826d8c5..3feaf96e 100644
 --- a/linux/tests/collector_test.cpp
@@ -655,11 +2178,546 @@ index 8121f0bb..9421b2e5 100644
  namespace {
  
  constexpr double kTolerance = 1e-6;
+diff --git a/linux/tests/sampling_test.cpp b/linux/tests/sampling_test.cpp
+new file mode 100644
+index 00000000..8196a9fa
+--- /dev/null
++++ b/linux/tests/sampling_test.cpp
+@@ -0,0 +1,117 @@
++#include <gtest/gtest.h>
++
++#include "sampling.hpp"
++#include "agentspeed/tz.hpp"
++#include <cstdlib>
++#include <ctime>
++#include <filesystem>
++#include <fstream>
++
++namespace {
++class ScopedEnv {
++public:
++    ScopedEnv(const char* name, const char* value) : name_(name) {
++        if (const char* old = std::getenv(name)) old_ = old;
++        if (value) setenv(name, value, 1); else unsetenv(name);
++    }
++    ~ScopedEnv() { if (old_) setenv(name_, old_->c_str(), 1); else unsetenv(name_); }
++private:
++    const char* name_;
++    std::optional<std::string> old_;
++};
++}
++
++TEST(CollectorSampler, ViewsHaveIndependentCalendarDaysAndRealTimestamp) {
++    char home[] = "/tmp/agentspeed-sampler-views-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    struct TempHome {
++        const char* path;
++        ~TempHome() { std::filesystem::remove_all(path); }
++    } tempHome{home};
++    ScopedEnv homeEnv("HOME", home);
++    ScopedEnv agentEnv("PI_CODING_AGENT_DIR", nullptr);
++    ScopedEnv sessionEnv("PI_CODING_AGENT_SESSION_DIR", nullptr);
++    ScopedEnv configEnv("PI_CONFIG_DIR", ".omp");
++    ScopedEnv codexEnv("CODEX_HOME", nullptr);
++    ScopedEnv claudeEnv("CLAUDE_CONFIG_DIR", nullptr);
++    ScopedEnv deepseekEnv("DSH_HOME", nullptr);
++    ScopedEnv xdgEnv("XDG_DATA_HOME", nullptr);
++    ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
++
++    const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-project";
++    std::filesystem::create_directories(dir);
++    const auto file = dir / "2026-10-19T23-30-00-000Z_01a158ec-db00-75e2-83a6-00013c6ef362.jsonl";
++    std::ofstream(file)
++        << R"({"type":"session","version":3,"id":"session-id","timestamp":"2026-10-19T23:30:00.000Z","cwd":"/project"})" << '\n'
++        << R"({"type":"message","id":"response-id","parentId":null,"timestamp":"2026-10-19T23:30:00.000Z","message":{"role":"assistant","content":[],"api":"openai-responses","provider":"openai","model":"gpt-5.5","usage":{"input":300,"output":410,"cacheRead":40,"cacheWrite":20,"reasoningTokens":70,"totalTokens":770},"stopReason":"stop","timestamp":1792452600000,"duration":3000}})" << '\n';
++
++    collector::Sampler sampler;
++    const auto losAngeles = agentspeed::TimeZone::load("America/Los_Angeles");
++    const auto kiritimati = agentspeed::TimeZone::load("Pacific/Kiritimati");
++    ASSERT_TRUE(losAngeles);
++    ASSERT_TRUE(kiritimati);
++    const collector::View utc{std::string("UTC"), agentspeed::TimeZone::utc()};
++    const collector::View west{std::string("America/Los_Angeles"), losAngeles};
++    const collector::View east{std::string("Pacific/Kiritimati"), kiritimati};
++    constexpr std::int64_t now = 1792476000000LL; // 2026-10-20 06:00 UTC
++    sampler.poll(now);
++    const auto utcSample = sampler.sample(now, utc);
++    const auto westBefore = sampler.sample(now, west);
++    const auto eastSample = sampler.sample(now, east);
++    const auto westAfter = sampler.sample(now, west);
++    EXPECT_EQ(utcSample.snapshot.nowMs, now);
++    EXPECT_EQ(westBefore.snapshot.nowMs, now);
++    EXPECT_NE(utcSample.snapshot.todayStartMs, westBefore.snapshot.todayStartMs);
++    EXPECT_EQ(utcSample.snapshot.todayOutput, 0);
++    EXPECT_EQ(westBefore.snapshot.todayOutput, 410);
++    EXPECT_EQ(eastSample.snapshot.todayOutput, 410);
++    EXPECT_EQ(westBefore.snapshot.todayStartMs, westAfter.snapshot.todayStartMs);
++    EXPECT_EQ(westBefore.snapshot.todayOutput, westAfter.snapshot.todayOutput);
++    EXPECT_EQ(westBefore.snapshot.todayRequests, westAfter.snapshot.todayRequests);
++    EXPECT_EQ(westBefore.snapshot.traffic.machineToday.rx, westAfter.snapshot.traffic.machineToday.rx);
++    EXPECT_EQ(westBefore.snapshot.traffic.machineToday.tx, westAfter.snapshot.traffic.machineToday.tx);
++
++    // Advance the sample clock past Los Angeles midnight without another poll.
++    constexpr std::int64_t afterMidnight = 1792479660000LL; // 2026-10-20 07:01 UTC
++    const auto nextDay = sampler.sample(afterMidnight, west);
++    EXPECT_EQ(nextDay.snapshot.nowMs, afterMidnight);
++    EXPECT_NE(nextDay.snapshot.todayStartMs, westBefore.snapshot.todayStartMs);
++    EXPECT_EQ(nextDay.snapshot.todayOutput, 0);
++    EXPECT_EQ(nextDay.snapshot.todayRequests, 0);
++}
++
++TEST(CollectorSampler, SamplingNeverDrainsCompletions) {
++    char home[] = "/tmp/agentspeed-sampler-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    const auto agentDir = std::filesystem::path(home) / ".omp" / "agent";
++    const auto dir = agentDir / "sessions" / "-project";
++    std::filesystem::create_directories(dir);
++    const auto file = dir / "2026-10-20T10-48-00-000Z_01a158ec-db00-75e2-83a6-00013c6ef362.jsonl";
++    const auto seconds = std::time(nullptr);
++    std::tm utc{};
++    gmtime_r(&seconds, &utc);
++    char stamp[32];
++    std::strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
++    std::ofstream(file) << "{\"type\":\"session\",\"version\":3,\"id\":\"session-id\",\"timestamp\":\"" << stamp
++                        << "\",\"cwd\":\"/project\"}\n";
++    ScopedEnv homeEnv("HOME", home);
++    ScopedEnv agentEnv("PI_CODING_AGENT_DIR", nullptr);
++    ScopedEnv configEnv("PI_CONFIG_DIR", ".omp");
++    {
++        collector::Sampler sampler;
++        const auto now = static_cast<std::int64_t>(seconds) * 1000;
++        sampler.poll(now);
++        std::ofstream(file, std::ios::app)
++            << "{\"type\":\"message\",\"id\":\"response-id\",\"parentId\":null,\"timestamp\":\"" << stamp
++            << "\",\"message\":{\"role\":\"assistant\",\"content\":[],\"api\":\"openai-responses\",\"provider\":\"openai\",\"model\":\"gpt-5.5\",\"usage\":{\"input\":300,\"output\":410,\"cacheRead\":40,\"cacheWrite\":20,\"reasoningTokens\":70,\"totalTokens\":770},\"stopReason\":\"stop\",\"timestamp\":"
++            << now << ",\"duration\":3000}}\n";
++        sampler.poll(now + 1000);
++        const collector::View view{std::string("UTC"), agentspeed::TimeZone::utc()};
++        const auto first = sampler.sample(now + 1000, view);
++        const auto second = sampler.sample(now + 1000, view);
++        EXPECT_EQ(first.snapshot.todayOutput, second.snapshot.todayOutput);
++        EXPECT_EQ(sampler.takeCompletions().size(), 1u);
++        EXPECT_TRUE(sampler.takeCompletions().empty());
++    }
++    std::filesystem::remove_all(home);
++}
+diff --git a/linux/tests/shared_history_test.cpp b/linux/tests/shared_history_test.cpp
+new file mode 100644
+index 00000000..44ec3b05
+--- /dev/null
++++ b/linux/tests/shared_history_test.cpp
+@@ -0,0 +1,406 @@
++#include <gtest/gtest.h>
++#include <unistd.h>
++
++#include <filesystem>
++#include <fstream>
++#include <memory>
++#include <set>
++#include <string>
++
++#include "agentspeed/history_analyzer.hpp"
++#include "agentspeed/price_book.hpp"
++#include "agentspeed/tz.hpp"
++#include "fixture_support.hpp"
++
++using namespace agentspeed;
++using namespace agentspeed::history;
++namespace fs = std::filesystem;
++
++namespace {
++
++void replaceAll(std::string& text, const std::string& from, const std::string& to) {
++    for (std::size_t pos = 0; (pos = text.find(from, pos)) != std::string::npos; pos += to.size()) text.replace(pos, from.size(), to);
++}
++
++void writeFile(const fs::path& path, const std::string& text) {
++    std::ofstream out(path, std::ios::trunc);
++    out << text;
++}
++
++struct TempDirectory {
++    fs::path path;
++    TempDirectory() {
++        char pattern[] = "/tmp/agentspeed-shared-history-XXXXXX";
++        if (const auto* result = mkdtemp(pattern)) path = result;
++    }
++    ~TempDirectory() { if (!path.empty()) fs::remove_all(path); }
++};
++
++TEST(SharedHistory, ProjectsCachedResponsesAndRefreshesChangedFile) {
++    TempDirectory temp;
++    ASSERT_FALSE(temp.path.empty());
++    const auto root = temp.path / "sessions";
++    fs::create_directories(root);
++    const auto file = root / "rollout-test.jsonl";
++    auto data = fixtures::readText(fixtures::fixtureDir() /
++        "codex/sessions/2026/10/20/rollout-2026-10-20T10-00-00-modern.jsonl");
++    ASSERT_FALSE(data.empty());
++    replaceAll(data, "2026-10-20T10:", "2026-10-20T00:");
++    writeFile(file, data);
++
++    SourceLocations locations;
++    locations.codexRoot = root.string();
++    const std::set<SourceKind> enabled{SourceKind::Codex};
++    const auto utc = TimeZone::utc();
++    const auto losAngeles = TimeZone::load("America/Los_Angeles");
++    ASSERT_TRUE(losAngeles);
++    auto store = Store::open((temp.path / "shared.sqlite").string());
++    ASSERT_TRUE(store);
++    Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>());
++
++    const auto first = analyzer.runShared(locations, enabled, utc, "UTC");
++    ASSERT_EQ(first.filesUnreadable, 0);
++    ASSERT_EQ(first.filesAnalyzed, 1);
++    const auto moved = temp.path / "temporarily-unavailable.jsonl";
++    fs::rename(file, moved);
++    const auto utcView = analyzer.project(utc);
++    const auto localView = analyzer.project(losAngeles);
++    const auto utcAgain = analyzer.project(utc);
++    ASSERT_EQ(utcView.days.size(), 1u);
++    ASSERT_EQ(localView.days.size(), 1u);
++    ASSERT_EQ(utcAgain.days.size(), 1u);
++    EXPECT_EQ(utcView.days[0].key.day, "2026-10-20");
++    EXPECT_EQ(localView.days[0].key.day, "2026-10-19");
++    EXPECT_EQ(utcView.days[0].totals.input, localView.days[0].totals.input);
++    EXPECT_EQ(utcView.days[0].totals.input, utcAgain.days[0].totals.input);
++    EXPECT_GT(utcView.days[0].totals.input, 0);
++    fs::rename(moved, file);
++
++    const auto unchanged = analyzer.runShared(locations, enabled, utc, "UTC");
++    EXPECT_EQ(unchanged.filesAnalyzed, 0);
++    replaceAll(data, "10400", "114000");
++    writeFile(file, data);
++    const auto refreshed = analyzer.runShared(locations, enabled, utc, "UTC");
++    ASSERT_EQ(refreshed.filesUnreadable, 0);
++    ASSERT_EQ(refreshed.filesAnalyzed, 1);
++    const auto updated = analyzer.project(utc);
++    ASSERT_EQ(updated.days.size(), 1u);
++    EXPECT_GT(updated.days[0].totals.input, utcView.days[0].totals.input);
++
++    auto conventionalStore = Store::open((temp.path / "conventional.sqlite").string());
++    ASSERT_TRUE(conventionalStore);
++    Analyzer conventional(*conventionalStore, std::make_shared<pricing::PriceBook>());
++    const auto normal = conventional.run(locations, enabled, utc, "UTC");
++    ASSERT_EQ(normal.filesUnreadable, 0);
++    ASSERT_EQ(normal.filesAnalyzed, 1);
++    const auto normalDays = conventional.days();
++    ASSERT_EQ(normalDays.size(), updated.days.size());
++    EXPECT_EQ(normalDays[0].key.day, updated.days[0].key.day);
++    EXPECT_EQ(normalDays[0].totals.input, updated.days[0].totals.input);
++    EXPECT_EQ(normalDays[0].totals.output, updated.days[0].totals.output);
++    EXPECT_EQ(normalDays[0].totals.requests, updated.days[0].totals.requests);
++    EXPECT_EQ(conventional.run(locations, enabled, utc, "UTC").filesAnalyzed, 0);
++}
++
++TEST(SharedHistory, RestartProjectsMissingSourceFromDurableCanonicalHistory) {
++    TempDirectory temp;
++    ASSERT_FALSE(temp.path.empty());
++    const auto root = temp.path / "sessions";
++    fs::create_directories(root);
++    const auto file = root / "rollout-test.jsonl";
++    auto data = fixtures::readText(fixtures::fixtureDir() /
++        "codex/sessions/2026/10/20/rollout-2026-10-20T10-00-00-modern.jsonl");
++    ASSERT_FALSE(data.empty());
++    replaceAll(data, "2026-10-20T10:", "2026-10-20T00:");
++    writeFile(file, data);
++
++    SourceLocations locations;
++    locations.codexRoot = root.string();
++    const std::set<SourceKind> enabled{SourceKind::Codex};
++    const auto utc = TimeZone::utc();
++    const auto losAngeles = TimeZone::load("America/Los_Angeles");
++    ASSERT_TRUE(losAngeles);
++    const auto database = (temp.path / "shared.sqlite").string();
++    Projection beforeUtc, beforeLocal;
++    {
++        auto store = Store::open(database);
++        ASSERT_TRUE(store);
++        Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>());
++        const auto report = analyzer.runShared(locations, enabled, utc, "UTC");
++        ASSERT_EQ(report.filesAnalyzed, 1);
++        ASSERT_EQ(report.filesUnreadable, 0);
++        beforeUtc = analyzer.project(utc);
++        beforeLocal = analyzer.project(losAngeles);
++    }
++    ASSERT_EQ(beforeUtc.days.size(), 1u);
++    ASSERT_EQ(beforeLocal.days.size(), 1u);
++    ASSERT_EQ(beforeUtc.days[0].key.day, "2026-10-20");
++    ASSERT_EQ(beforeLocal.days[0].key.day, "2026-10-19");
++    ASSERT_GT(beforeUtc.days[0].totals.input, 0);
++    fs::remove(file);
++
++    auto store = Store::open(database);
++    ASSERT_TRUE(store);
++    Analyzer restarted(*store, std::make_shared<pricing::PriceBook>());
++    const auto report = restarted.runShared(locations, enabled, utc, "UTC");
++    EXPECT_EQ(report.filesAnalyzed, 0);
++    EXPECT_GT(report.filesUnreadable, 0);
++    const auto check = [](const Projection& expected, const Projection& actual) {
++        EXPECT_TRUE(actual.complete);
++        ASSERT_EQ(actual.days.size(), expected.days.size());
++        for (std::size_t i = 0; i < expected.days.size(); ++i) {
++            EXPECT_EQ(actual.days[i].key.day, expected.days[i].key.day);
++            EXPECT_EQ(actual.days[i].key.source, expected.days[i].key.source);
++            const auto& a = actual.days[i].totals;
++            const auto& e = expected.days[i].totals;
++            EXPECT_EQ(a.requests, e.requests);
++            EXPECT_EQ(a.input, e.input);
++            EXPECT_EQ(a.cachedInput, e.cachedInput);
++            EXPECT_EQ(a.output, e.output);
++            EXPECT_EQ(a.reasoning, e.reasoning);
++            EXPECT_EQ(a.costMicroUsd, e.costMicroUsd);
++            EXPECT_EQ(a.unpricedRequests, e.unpricedRequests);
++        }
++        ASSERT_EQ(actual.perfRecords.size(), expected.perfRecords.size());
++        for (std::size_t i = 0; i < expected.perfRecords.size(); ++i) {
++            EXPECT_EQ(actual.perfRecords[i].day, expected.perfRecords[i].day);
++            EXPECT_EQ(actual.perfRecords[i].source, expected.perfRecords[i].source);
++            EXPECT_EQ(actual.perfRecords[i].model, expected.perfRecords[i].model);
++            EXPECT_EQ(actual.perfRecords[i].record, expected.perfRecords[i].record);
++        }
++        ASSERT_EQ(actual.unpricedParts.size(), expected.unpricedParts.size());
++        for (std::size_t i = 0; i < expected.unpricedParts.size(); ++i) {
++            EXPECT_EQ(actual.unpricedParts[i].day, expected.unpricedParts[i].day);
++            EXPECT_EQ(actual.unpricedParts[i].source, expected.unpricedParts[i].source);
++            EXPECT_EQ(actual.unpricedParts[i].requests, expected.unpricedParts[i].requests);
++            EXPECT_EQ(actual.unpricedParts[i].noCostData, expected.unpricedParts[i].noCostData);
++            EXPECT_EQ(actual.unpricedParts[i].derived, expected.unpricedParts[i].derived);
++            EXPECT_EQ(actual.unpricedParts[i].facts, expected.unpricedParts[i].facts);
++        }
++    };
++    check(beforeUtc, restarted.project(utc));
++    check(beforeLocal, restarted.project(losAngeles));
++}
++
++TEST(SharedHistory, LegacyCacheWithoutCanonicalIsRetainedAndIncomplete) {
++    TempDirectory temp;
++    ASSERT_FALSE(temp.path.empty());
++    const auto root = temp.path / "sessions";
++    fs::create_directories(root);
++    const auto file = root / "rollout-test.jsonl";
++    const auto data = fixtures::readText(fixtures::fixtureDir() /
++        "codex/sessions/2026/10/20/rollout-2026-10-20T10-00-00-modern.jsonl");
++    ASSERT_FALSE(data.empty());
++    writeFile(file, data);
++    SourceLocations locations;
++    locations.codexRoot = root.string();
++    const std::set<SourceKind> enabled{SourceKind::Codex};
++    const auto utc = TimeZone::utc();
++    const auto database = (temp.path / "legacy.sqlite").string();
++    std::vector<DailyUsage> original;
++    {
++        auto store = Store::open(database);
++        ASSERT_TRUE(store);
++        Analyzer conventional(*store, std::make_shared<pricing::PriceBook>());
++        ASSERT_EQ(conventional.run(locations, enabled, utc, "UTC").filesAnalyzed, 1);
++        original = conventional.days();
++    }
++    ASSERT_EQ(original.size(), 1u);
++    ASSERT_GT(original[0].totals.input, 0);
++    fs::remove(file);
++    auto store = Store::open(database);
++    ASSERT_TRUE(store);
++    Analyzer restarted(*store, std::make_shared<pricing::PriceBook>());
++    const auto report = restarted.runShared(locations, enabled, utc, "UTC");
++    EXPECT_EQ(report.filesAnalyzed, 0);
++    EXPECT_GT(report.filesUnreadable, 0);
++    const auto view = restarted.project(utc);
++    EXPECT_FALSE(view.complete);
++    ASSERT_EQ(view.days.size(), original.size());
++    EXPECT_EQ(view.days[0].key.day, original[0].key.day);
++    EXPECT_EQ(view.days[0].totals.input, original[0].totals.input);
++    EXPECT_EQ(view.days[0].totals.unpricedRequests, original[0].totals.unpricedRequests);
++}
++
++TEST(SharedHistory, SemanticNamedFallbackUsesPersistedZone) {
++    TempDirectory temp;
++    const auto root = temp.path / "sessions";
++    fs::create_directories(root);
++    const auto file = root / "rollout-test.jsonl";
++    const auto data = fixtures::readText(fixtures::fixtureDir() /
++        "codex/sessions/2026/10/20/rollout-2026-10-20T10-00-00-modern.jsonl");
++    ASSERT_FALSE(data.empty());
++    writeFile(file, data);
++    SourceLocations locations;
++    locations.codexRoot = root.string();
++    const std::set<SourceKind> enabled{SourceKind::Codex};
++    const auto la = TimeZone::load("America/Los_Angeles");
++    ASSERT_TRUE(la);
++    const auto database = (temp.path / "legacy-named.sqlite").string();
++    {
++        auto store = Store::open(database);
++        ASSERT_TRUE(store);
++        Analyzer conventional(*store, std::make_shared<pricing::PriceBook>());
++        ASSERT_EQ(conventional.run(locations, enabled, la, "America/Los_Angeles").filesAnalyzed, 1);
++    }
++    fs::remove(file);
++    auto store = Store::open(database);
++    ASSERT_TRUE(store);
++    Analyzer restarted(*store, std::make_shared<pricing::PriceBook>());
++    restarted.runShared(locations, enabled, TimeZone::utc(), "UTC");
++    const auto other = restarted.project(TimeZone::utc());
++    EXPECT_FALSE(other.complete);
++    EXPECT_TRUE(other.days.empty());
++    const auto named = restarted.project(TimeZone::load("America/Los_Angeles"));
++    EXPECT_FALSE(named.complete);
++    EXPECT_FALSE(named.days.empty());
++}
++
++TEST(SharedHistory, ParserStaleCanonicalMissingSourceIsIncomplete) {
++    TempDirectory temp;
++    const auto root = temp.path / "sessions";
++    fs::create_directories(root);
++    const auto file = root / "rollout-test.jsonl";
++    const auto data = fixtures::readText(fixtures::fixtureDir() /
++        "codex/sessions/2026/10/20/rollout-2026-10-20T10-00-00-modern.jsonl");
++    ASSERT_FALSE(data.empty());
++    writeFile(file, data);
++    SourceLocations locations;
++    locations.codexRoot = root.string();
++    const std::set<SourceKind> enabled{SourceKind::Codex};
++    const auto database = (temp.path / "stale.sqlite").string();
++    {
++        auto store = Store::open(database);
++        ASSERT_TRUE(store);
++        Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>());
++        ASSERT_EQ(analyzer.runShared(locations, enabled, TimeZone::utc(), "UTC").filesAnalyzed, 1);
++    }
++    {
++        auto store = Store::open(database);
++        auto files = store->loadFiles();
++        ASSERT_EQ(files.size(), 1u);
++        auto& entry = files.begin()->second;
++        ASSERT_TRUE(entry.canonical);
++        entry.version = Analyzer::kVersion - 1;
++        std::vector<std::pair<StoredFile*, std::vector<std::uint64_t>>> updates{{&entry, {}}};
++        store->save(updates);
++    }
++    fs::remove(file);
++    auto store = Store::open(database);
++    Analyzer restarted(*store, std::make_shared<pricing::PriceBook>());
++    restarted.runShared(locations, enabled, TimeZone::utc(), "UTC");
++    EXPECT_FALSE(restarted.project(TimeZone::utc()).complete);
++}
++
++TEST(SharedHistory, CanonicalCodecPreservesProvenanceAndRejectsInvalidData) {
++    canonical::File file;
++    file.source = SourceKind::Hermes;
++    file.hermesSourceZone = "source-zone";
++    const auto bytes = canonical::serialize(file);
++    const auto decoded = canonical::deserialize(bytes);
++    ASSERT_TRUE(decoded);
++    EXPECT_EQ(decoded->hermesSourceZone, file.hermesSourceZone);
++    EXPECT_FALSE(canonical::deserialize(bytes.substr(0, bytes.size() - 1)));
++    auto unsupported = bytes;
++    unsupported[4] = '\x7f';
++    EXPECT_FALSE(canonical::deserialize(unsupported));
++}
++
++TEST(SharedHistory, HermesPartialZoneMigrationSurvivesRestartPerRecord) {
++    TempDirectory temp;
++    const auto root = temp.path / "hermes";
++    fs::create_directories(root / "logs");
++    const auto first = root / "logs" / "agent.log";
++    const auto second = root / "logs" / "agent.log.1";
++    const std::string log =
++        "2026-10-20 23:03:00,000 INFO [20261020_045958_a1b2c3] agent.turn_context: conversation turn: session=20261020_045958_a1b2c3 model=anthropic/claude-opus-5-5 provider=openrouter platform=cli history=10 msg='hello'\n"
++        "2026-10-20 23:03:05,500 INFO [20261020_045958_a1b2c3] agent.conversation_loop: API call #1: model=anthropic/claude-opus-5-5 provider=openrouter in=2000 out=150 total=2150 latency=5.5s\n"
++        "2026-10-20 23:03:05,600 INFO [20261020_045958_a1b2c3] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=anthropic/claude-opus-5-5 api_calls=1/90 budget=1/90 tool_turns=0 last_msg_role=assistant response_len=42 session=20261020_045958_a1b2c3\n";
++    auto other = log;
++    replaceAll(other, "20261020_045958_a1b2c3", "20261020_045959_d4e5f6");
++    writeFile(first, log);
++    writeFile(second, other);
++    SourceLocations locations;
++    locations.hermesRoot = root.string();
++    const std::set<SourceKind> enabled{SourceKind::Hermes};
++    const auto utc = TimeZone::utc();
++    const auto la = TimeZone::load("America/Los_Angeles");
++    ASSERT_TRUE(la);
++    const auto database = (temp.path / "history.sqlite").string();
++    {
++        auto store = Store::open(database);
++        Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>(), utc);
++        ASSERT_EQ(analyzer.runShared(locations, enabled, la, "America/Los_Angeles").filesAnalyzed, 2);
++        ASSERT_TRUE(analyzer.project(utc).complete);
++    }
++    fs::remove(second);
++    {
++        auto store = Store::open(database);
++        Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>(), la);
++        EXPECT_EQ(analyzer.runShared(locations, enabled, la, "America/Los_Angeles").filesAnalyzed, 1);
++        EXPECT_FALSE(analyzer.project(utc).complete);
++    }
++    fs::remove(first);
++    for (const auto& [zone, expectedDay] : {std::pair{utc, "2026-10-20"}, std::pair{la, "2026-10-21"}}) {
++        auto store = Store::open(database);
++        Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>(), zone);
++        analyzer.runShared(locations, enabled, la, "America/Los_Angeles");
++        const auto view = analyzer.project(utc);
++        EXPECT_FALSE(view.complete);
++        ASSERT_EQ(view.days.size(), 1u);
++        EXPECT_EQ(view.days[0].key.day, expectedDay);
++    }
++}
++
++TEST(SharedHistory, SourceZoneChangeReparsesHermesAndMissingIsIncomplete) {
++    TempDirectory temp;
++    const auto root = temp.path / "hermes";
++    fs::create_directories(root / "logs");
++    const auto file = root / "logs" / "agent.log";
++    writeFile(file,
++        "2026-10-20 23:03:00,000 INFO [20261020_045958_a1b2c3] agent.turn_context: conversation turn: session=20261020_045958_a1b2c3 model=anthropic/claude-opus-5-5 provider=openrouter platform=cli history=10 msg='hello'\n"
++        "2026-10-20 23:03:05,500 INFO [20261020_045958_a1b2c3] agent.conversation_loop: API call #1: model=anthropic/claude-opus-5-5 provider=openrouter in=2000 out=150 total=2150 latency=5.5s\n"
++        "2026-10-20 23:03:05,600 INFO [20261020_045958_a1b2c3] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=anthropic/claude-opus-5-5 api_calls=1/90 budget=1/90 tool_turns=0 last_msg_role=assistant response_len=42 session=20261020_045958_a1b2c3\n");
++    SourceLocations locations;
++    locations.hermesRoot = root.string();
++    const std::set<SourceKind> enabled{SourceKind::Hermes};
++    const auto utc = TimeZone::utc();
++    const auto la = TimeZone::load("America/Los_Angeles");
++    ASSERT_TRUE(la);
++    const auto database = (temp.path / "hermes.sqlite").string();
++    {
++        auto store = Store::open(database);
++        Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>(), utc);
++        ASSERT_GT(analyzer.runShared(locations, enabled, utc, "UTC").filesAnalyzed, 0);
++        const auto view = analyzer.project(utc);
++        ASSERT_TRUE(view.complete);
++        ASSERT_EQ(view.days.size(), 1u);
++        EXPECT_EQ(view.days[0].key.day, "2026-10-20");
++    }
++    {
++        auto store = Store::open(database);
++        Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>(), la);
++        EXPECT_GT(analyzer.runShared(locations, enabled, utc, "UTC").filesAnalyzed, 0);
++        const auto view = analyzer.project(utc);
++        ASSERT_TRUE(view.complete);
++        ASSERT_EQ(view.days.size(), 1u);
++        EXPECT_EQ(view.days[0].key.day, "2026-10-21");
++        analyzer.setHermesZone(utc);
++        EXPECT_GT(analyzer.runShared(locations, enabled, utc, "UTC").filesAnalyzed, 0);
++        const auto changed = analyzer.project(utc);
++        ASSERT_TRUE(changed.complete);
++        ASSERT_EQ(changed.days.size(), 1u);
++        EXPECT_EQ(changed.days[0].key.day, "2026-10-20");
++        analyzer.setHermesZone(la);
++        EXPECT_GT(analyzer.runShared(locations, enabled, utc, "UTC").filesAnalyzed, 0);
++    }
++    fs::remove(file);
++    auto store = Store::open(database);
++    Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>(), utc);
++    EXPECT_GT(analyzer.runShared(locations, enabled, utc, "UTC").filesUnreadable, 0);
++    const auto missing = analyzer.project(utc);
++    EXPECT_FALSE(missing.complete);
++    EXPECT_FALSE(missing.days.empty());
++}
++
++}  // namespace
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index 836af188..4d69ef88 100644
+index a7502800..a397855e 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-@@ -15,6 +15,20 @@ struct RemoteHost: Codable, Identifiable, Equatable {
+@@ -16,6 +16,20 @@ struct RemoteHost: Codable, Identifiable, Equatable {
      }
  }
  
@@ -680,7 +2738,7 @@ index 836af188..4d69ef88 100644
  struct RemoteAgent: Decodable, Identifiable, Sendable {
      let id: String
      let source: String
-@@ -30,6 +44,58 @@ struct RemoteAgent: Decodable, Identifiable, Sendable {
+@@ -31,6 +45,58 @@ struct RemoteAgent: Decodable, Identifiable, Sendable {
      let speed: String?
      let effortConfigured: Bool?
      let speedConfigured: Bool?
@@ -739,7 +2797,7 @@ index 836af188..4d69ef88 100644
  }
  
  struct RemoteDay: Decodable, Identifiable, Sendable {
-@@ -96,6 +162,9 @@ struct RemoteSource: Decodable, Sendable {
+@@ -97,6 +163,9 @@ struct RemoteSource: Decodable, Sendable {
      let todayInput: Int
      let todayOutput: Int
      let todayRequests: Int
@@ -749,7 +2807,7 @@ index 836af188..4d69ef88 100644
      let todayCachedInput: Int?
      let todayCacheWriteInput: Int?
      let todayReasoning: Int?
-@@ -129,6 +198,7 @@ struct RemoteMessage: Decodable, Sendable {
+@@ -130,6 +199,7 @@ struct RemoteMessage: Decodable, Sendable {
      let tools: Int?
      let agents: [RemoteAgent]?
      let days: [RemoteDay]?
@@ -757,7 +2815,7 @@ index 836af188..4d69ef88 100644
      let timezone: String?
      let responseId: String?
      let partial: Bool?
-@@ -156,6 +226,7 @@ struct RemoteHostState {
+@@ -157,6 +227,7 @@ struct RemoteHostState {
      var snapshot: RemoteMessage?
      var connectionID = UUID()
      var days: [RemoteDay] = []
@@ -765,7 +2823,7 @@ index 836af188..4d69ef88 100644
      var historyPartial: Bool?
      var historyReceivedAt: Date?
      /// True only after this connection has supplied a history frame.
-@@ -171,6 +242,7 @@ struct RemoteHostState {
+@@ -172,6 +243,7 @@ struct RemoteHostState {
              error = nil
          } else if message.type == "history", message.timezone == TimeZone.current.identifier, let replacement = message.days {
              days = replacement
@@ -1469,10 +3527,24 @@ index a87c8283..00b00cd5 100644
  
  性能表現 (DESIGN 12) over the window's range [`first`, `last`] — of every source, or only of the one source chosen in
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 803ab6b0..744c0312 100644
+index 803ab6b0..af8abf99 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
-@@ -247,6 +247,23 @@ collector without a matching time-zone tag must not be presented as viewer-local
+@@ -2,9 +2,11 @@
+ 
+ Agent Speed reads local logs and works offline. Its three optional automatic HTTPS GET requests are the update check
+ (`spec/UPDATES.md`), daily price-table sync (section 3) and daily exchange rates (section 4); none carries activity
+-data. Opt-in live reporting (section 6) sends activity data to a user-chosen receiver. On macOS, explicitly enabled
++data. Opt-in live reporting (section 6) sends activity data to a user-chosen receiver. On macOS and Windows, enabled
+ remote monitoring additionally uses SSH to a user-configured Linux host (section 7). It is separate from reporting.
+-Without remote monitoring enabled, monitoring does not open an SSH connection.
++Without remote monitoring enabled, monitoring does not open an SSH connection. Separately consented mobile
++live-activity leases can authorize the remote collector's limited HTTPS publishing described in section 8; they are
++not desktop reporting or controlled by a disconnected desktop's network switch.
+ 
+ ## 1. Common rules
+ 
+@@ -247,6 +249,23 @@ collector without a matching time-zone tag must not be presented as viewer-local
  can be measured or live data is incomplete. If global live data is incomplete, each source's live rates and estimated
  share are also null.
  
@@ -1496,6 +3568,44 @@ index 803ab6b0..744c0312 100644
  Each configured host has a stable identity; remote sources are identified by host and source kind. Local sources and
  all enabled remote sources appear together in the native macOS dashboard. Local diagnostic reports and live reporting
  contain local data only. Snapshots and history replace the previous host state rather than accumulating on reconnect. The collector
+@@ -261,3 +280,37 @@ metadata checks may be skipped during discovery, and unchanged cached files are
+ If the flag is absent, completeness is unknown, including when history is empty. On disconnect, last data is
+ stale/offline, not evidence of an idle agent or zero usage. Unavailable measurements remain unknown and in-progress
+ rates derived from prior completions are estimates; see `spec/METRICS.md`.
++
++The shared daemon additionally persists timestamped canonical response metrics, execution-mode facts and ordered
++action/completion timing and deduplication identifiers, allowing independent timezone projections without reparsing
++each view. No prompt, transcript or command content is persisted in those canonical records. Each Hermes record
++includes its source-timezone provenance, atomically stored with its aggregate. Missing source files, unsupported
++parser/codec versions or incompatible timezone provenance keep affected views partial; stored day labels are not
++relabelled as a different timezone. These private cache records are never uploaded to the activity relay.
++
++## 8. Activity-scoped mobile relay
++
++This opt-in authorization is distinct from desktop reporting and SSH subscriptions. A mobile app must create a real
++ActivityKit activity in the foreground, obtain an expiring activity lease through App Attest, and deliver it over
++host-key-verified SSH. Only requested control-v2 frames negotiate this behavior; old clients receive no unsolicited
++control frames. The exact schema, acknowledgment and timeout rules are in `docs/shared-collector.md`.
++
++The single effective-UID daemon may POST only to `https://agent-speed.yooztech.com/v1/publish`, using the opaque bearer
++lease. The body contains one minimal `snapshot`: registered host identity, actual sample time, live speed/counts,
++activity-timezone daily output and machine receive/transmit rates; unknown metrics remain null and title is null.
++No raw logs, history, transcript, project path, command, SSH credential or provider secret is uploaded. The host never
++receives an Apple private key, provider JWT, installation management credential or global relay password.
++
++TLS verifies the certificate and hostname. Redirects, proxy-environment forwarding and netrc credentials are disabled;
++URL aliases, arbitrary origins, query strings and alternate paths are rejected. DNS/connect is bounded to three
++seconds, the whole request to six seconds, and responses to 4096 bytes. Publishing is off the collector/SSH loop and
++keeps only the latest real sample, at least ten seconds apart; it does not replay a backlog or rewrite timestamps.
++
++A positive subscription acknowledgment requires the first successful fresh-sample publish. A confirmed lease may
++outlive every SSH subscription but cannot exceed its authorized expiry (at most eight hours); the daemon cannot
++renew it. Explicit lease unsubscribe, replacement and terminal relay rejection stop that publisher. The mobile app
++separately revokes relay authorization; activity-level DELETE operations must not race a newer lease. With no clients
++or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup policy may kill it earlier; no system
++service or linger policy is installed. Only existing activities are updated: no alert, sound, banner, ordinary
++completion notification or push-to-start is sent. Local relay verification does not prove Cloudflare/APNs/iPhone delivery.
++
 diff --git a/spec/strings.json b/spec/strings.json
 index f3b0992c..771f6c56 100644
 --- a/spec/strings.json

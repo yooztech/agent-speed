@@ -67,7 +67,7 @@ def main():
         else:
             print(result.stdout.splitlines()[0])
     if shutil.which('pkg-config'):
-        for package in ('libzstd', 'libbrotlidec', 'sqlite3', 'icu-uc', 'openssl'):
+        for package in ('libzstd', 'libbrotlidec', 'sqlite3', 'icu-uc', 'openssl', 'libcurl'):
             result = command(['pkg-config', '--modversion', package])
             if result is None or result.returncode:
                 print(f'{package}: missing development package', file=sys.stderr)

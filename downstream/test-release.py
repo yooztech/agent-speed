@@ -29,6 +29,13 @@ def git(cwd, *args):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.strip()
 
 
+class CollectorAssetContractTests(unittest.TestCase):
+    def test_standalone_assets_are_required(self):
+        assets = driver.assets_expected('1.2.3-fork.1')
+        name = 'agent-speed-collector-linux-x86_64'
+        self.assertTrue({name, name + '.sha256', name + '.json'} <= assets)
+
+
 class FakeAPI:
     def __init__(self, baseline, releases, active=False, publish_on_cancel=False,
                  publish_on_delete=False, fail=None, latest_tag="v1.2.3", annotated=False):
@@ -540,8 +547,10 @@ class ActionsProgressTests(unittest.TestCase):
                 driver = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(driver)
                 clock = [0]
-                driver.time.monotonic = lambda: clock[0]
-                driver.time.sleep = lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+                from types import SimpleNamespace
+                driver.time = SimpleNamespace(monotonic=lambda: clock[0],
+                    sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+                driver.release_network.time = driver.time
                 driver.TIMEOUT = 40 if sys.argv[2] == 'timeout' else 100
                 driver.target_release = lambda tag, **kwargs: {'id': 9, 'draft': False, 'prerelease': False}
                 driver.remote_ref = lambda ref, **kwargs: 'abc'
