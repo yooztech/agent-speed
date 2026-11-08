@@ -215,6 +215,10 @@ Release writes reconcile remote state after an ambiguous response, including on 
 push, draft creation, upload or publication is not blindly repeated. Published releases remain untouched. Matching
 uploaded assets are reused; conflicting assets fail instead of being clobbered. Normal unpublished-candidate cleanup
 still follows the safeguards below. Do not manually publish the same tag while release automation is active.
+After successful draft creation, an absent release-list result is checked up to four times, with 1, 2 and 4 seconds
+between checks. These bounds cover visibility checks and backoff in addition to existing network timeouts, not a strict
+seven-second total. If the draft remains invisible, publication stops; a draft may still exist for a safe later retry.
+This visibility retry does not change reconciliation of an ambiguously failed create request.
 
 NuGet's own HTTP retry settings also cover implicit restore operations inside the unchanged packaging scripts.
 CMake dependency acquisition retries only configuration, not the subsequent build or tests. Packaging curl downloads,

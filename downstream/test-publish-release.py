@@ -25,6 +25,9 @@ class FakeGitHub:
         self.query_failure = None
         self.fail_before = {}
         self.upload_conflict = False
+        self.hidden_created_release_reads = 0
+        self.created_release_reads_before_upload = 0
+        self.created = False
 
     def read(self, args, **kwargs):
         def query():
@@ -37,7 +40,13 @@ class FakeGitHub:
             elif '/assets?' in endpoint:
                 result = [list(self.assets.values())]
             elif '/releases?' in endpoint:
-                result = [[self.release] if self.release else []]
+                if self.created and 'upload' not in self.writes:
+                    self.created_release_reads_before_upload += 1
+                if self.created and self.hidden_created_release_reads:
+                    self.hidden_created_release_reads -= 1
+                    result = [[]]
+                else:
+                    result = [[self.release] if self.release else []]
             else:
                 raise AssertionError(endpoint)
             return json.dumps(result)
@@ -53,6 +62,7 @@ class FakeGitHub:
             raise AssertionError('Release assets must never be clobbered')
         if action == 'create':
             self.release = {'id': 1, 'tag_name': 'v1.2.3-fork.1', 'draft': True, 'prerelease': False}
+            self.created = True
         elif action == 'upload':
             path = Path(args[4])
             data = path.read_bytes()
@@ -90,6 +100,29 @@ class PublicationTests(unittest.TestCase):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def test_created_draft_eventually_visible(self):
+        self.github.hidden_created_release_reads = 2
+        with patch.object(publish.time, 'sleep') as sleep:
+            publish.main()
+        # Three visibility observations plus the upload's fresh-state check.
+        self.assertEqual(self.github.created_release_reads_before_upload, 4)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(1,), (2,)])
+        self.assertEqual(self.github.writes, ['create', 'upload', 'edit'])
+        self.assertFalse(self.github.release['draft'])
+        self.assertEqual(set(self.github.assets), {'asset'})
+        self.assertEqual(self.github.assets['asset']['digest'], 'sha256:' + hashlib.sha256(b'contents').hexdigest())
+
+    def test_created_draft_visibility_exhausted(self):
+        self.github.hidden_created_release_reads = 4
+        with patch.object(publish.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'may have been created.*not visible after bounded checks'):
+                publish.main()
+        self.assertEqual(self.github.created_release_reads_before_upload, 4)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(1,), (2,), (4,)])
+        self.assertEqual(self.github.writes, ['create'])
+        self.assertTrue(self.github.release['draft'])
+        self.assertEqual(self.github.assets, {})
 
     def test_lost_create_upload_and_publication_responses(self):
         self.github.lost = {'create', 'upload', 'edit'}

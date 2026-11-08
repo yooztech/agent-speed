@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 import release
 import release_network as network
@@ -151,9 +152,16 @@ def main():
 
     if not current:
         retry_write(create, created, 'create draft release')
-    current = get_release()
-    if not current:
-        raise RuntimeError('Draft release was not created')
+        for delay in (0, 1, 2, 4):
+            if delay:
+                print(f'Draft not yet visible in release list; checking again in {delay}s.', file=sys.stderr)
+                time.sleep(delay)
+            verify_tag()
+            current = get_release()
+            if current:
+                break
+        if not current:
+            raise RuntimeError('Draft may have been created but was not visible after bounded checks')
     if not is_draft(current):
         verify_published(current)
         return
