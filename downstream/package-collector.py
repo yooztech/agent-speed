@@ -79,7 +79,7 @@ def main():
     if shared_identity is not None:
         metadata['protocol']['shared_collector'] = {
             'control_version': 2,
-            'capabilities': ['live_activity_v2', 'shared_collector_v1'],
+            'capabilities': ['live_activity_v2', 'shared_collector_v1', 'widget_statistics_v1'],
             'identity': shared_identity,
         }
     (args.output / (NAME + '.json')).write_text(json.dumps(metadata, indent=2, sort_keys=True) + '\n')

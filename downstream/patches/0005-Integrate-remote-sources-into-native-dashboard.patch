@@ -1,7 +1,7 @@
-From 1f24a6dafa5754f1a4b8eb162c191ab8f0ba7e3a Mon Sep 17 00:00:00 2001
+From e8f6ce4e3a4ac007463e621c814331034136f12b Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:20 +0800
-Subject: [PATCH 05/15] Integrate remote sources into native dashboard
+Subject: [PATCH 05/16] Integrate remote sources into native dashboard
 
 ---
  .github/release-notes.md                      |   2 +-
@@ -90,7 +90,7 @@ index f5f98d67..d0cc9f1b 100644
 -Agent Speed {{VERSION}} reads local logs from 13 supported agent sources. Conversation content is never uploaded. Live reporting and profile sharing are optional; Settings → About → Network Access controls all network features.
 +Agent Speed {{VERSION}} reads local logs from supported agent sources. Conversation content is never uploaded. Live reporting and profile sharing are optional; Settings → About → Network Access controls HTTP network features. On macOS, opt-in remote Linux sources use SSH independently of that switch and appear alongside local sources in the native dashboard. History is aggregated in the viewer's time zone; local diagnostic reports and live reporting exclude remote data.
 diff --git a/README.md b/README.md
-index d1186168..021305e2 100644
+index 749c8550..80542350 100644
 --- a/README.md
 +++ b/README.md
 @@ -107,31 +107,34 @@ Ordinary Claude Desktop chat conversations are not stored on your computer, so t
@@ -140,8 +140,8 @@ index d1186168..021305e2 100644
 +retain collector-local compatibility behavior. History from older collectors without a matching time-zone tag is
 +unavailable rather than being mislabeled as viewer-local.
  
- The collector keeps a private history cache on the Linux host at `~/.cache/agentspeed-collector/history.sqlite3`.
- An exclusive lock allows one collector to use it; concurrent collectors or an unsafe or unavailable cache use memory
+ The collector keeps a private history cache at the Linux account's canonical home under
+ `~/.cache/agentspeed-collector/<collector-sha256>/history.sqlite3`. Each digest has its own exclusive cache lock;
 diff --git a/linux/collector/main.cpp b/linux/collector/main.cpp
 index f9759531..8f7364f0 100644
 --- a/linux/collector/main.cpp
@@ -732,7 +732,7 @@ index 9a072c82..6eca14f2 100644
      char home[] = "/tmp/agentspeed-collector-full-XXXXXX";
      ASSERT_NE(mkdtemp(home), nullptr);
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
-index 22848da4..d826d8c5 100644
+index 3cf370d9..b8f1673d 100644
 --- a/linux/tests/collector_test.cpp
 +++ b/linux/tests/collector_test.cpp
 @@ -11,16 +11,34 @@
@@ -4060,7 +4060,7 @@ index c4395a4a..a87c8283 100644
  ## 1. Vocabulary
  
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 17ab5cb0..803ab6b0 100644
+index b73a559c..c49834db 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -237,16 +237,19 @@ and outputs, and absolute working paths do not. SSH credentials are not embedded
@@ -4088,6 +4088,6 @@ index 17ab5cb0..803ab6b0 100644
 +Each configured host has a stable identity; remote sources are identified by host and source kind. Local sources and
 +all enabled remote sources appear together in the native macOS dashboard. Local diagnostic reports and live reporting
 +contain local data only. Snapshots and history replace the previous host state rather than accumulating on reconnect. The collector
- persists its history cache in `~/.cache/agentspeed-collector/history.sqlite3` on the
- remote host, in an owned mode-0700 directory with a mode-0600 database. A nonblocking exclusive `flock` on `history.lock`
- is held for the collector's lifetime; concurrent collectors and unsafe or unavailable caches fall back to memory.
+ persists its history cache in the canonical account home's `~/.cache/agentspeed-collector/<collector-sha256>/history.sqlite3`,
+ in owned mode-0700 directories with a mode-0600 database. A nonblocking exclusive `flock` on that digest's `history.lock`
+ is held for the collector's lifetime; unsafe or unavailable optional caches fall back to memory. Different executable

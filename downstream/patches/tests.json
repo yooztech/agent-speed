@@ -262,5 +262,20 @@
     ],
     "related": [],
     "reason": ""
+  },
+  "0016-Add-independent-widget-statistics-feed.patch": {
+    "regression": [
+      {
+        "platform": "linux",
+        "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-widget -DCMAKE_BUILD_TYPE=Release -DAGENTSPEED_BUILD_APP=OFF -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-widget -DCMAKE_BUILD_TYPE=Release -DAGENTSPEED_BUILD_APP=OFF; fi && cmake --build build-widget --target agentspeed_tests agentspeed-collector -j2 && build-widget/tests/agentspeed_tests --gtest_filter='WidgetStatistics.*:WidgetPublisher.*'"
+      }
+    ],
+    "related": [
+      {
+        "platform": "linux",
+        "run": "cmake --build build-widget --target agentspeed_tests -j2 && build-widget/tests/agentspeed_tests --gtest_filter='CollectorSampler.*:SharedHistory.*:CollectorPublisher.*:DaemonProcessTest.*'"
+      }
+    ],
+    "reason": ""
   }
 }

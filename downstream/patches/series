@@ -13,3 +13,4 @@
 0013-Synchronize-HTTP-fallback-test-with-accepted-deliver.patch
 0014-Connect-remote-performance-and-history-metrics.patch
 0015-Integrate-remote-network-traffic-by-host-and-source.patch
+0016-Add-independent-widget-statistics-feed.patch

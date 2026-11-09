@@ -56,15 +56,35 @@ history gaps. Chart estimate indicators mean that the visible range contains
 estimated segments, not necessarily that the current rate is being estimated;
 omp does not provide per-token measurements.
 
-The current queue also contains the same-UID shared collector daemon and
-activity-scoped mobile relay publisher. Native callers use digest-addressed
-collector assets and an exact runtime identity handshake; conflicting running
-versions are rejected without killing other subscribers. The prepared tree's
-`docs/shared-collector.md` defines control v2, lease confirmation and upgrade
-rules. The [implementation handoff](../docs/remote-agent-monitoring-handoff.md#共享-collector-实施记录)
-records the local asset SHA, interface changes and actual isolated SSH/TLS
-verification. Those unpublished local assets and checks are not a Release,
-an upgrade of previously installed clients, or proof of APNs/iPhone delivery.
+The current queue contains collector daemons shared by the same Unix UID and
+full executable SHA-256, plus the activity-scoped mobile relay publisher.
+Byte-identical collector assets share one daemon even at different paths;
+different digests run independently without stopping older clients. Native
+deployment and the exact runtime identity handshake are unchanged. Runtime
+endpoints are private to `~/.agent-speed/daemons/<sha256>/`; persistent collector
+history is private to `~/.cache/agentspeed-collector/<sha256>/`. Old global
+endpoints, locks and caches are not migrated or removed. Each digest pays its
+own scanning and memory cost. Lease IDs and relay authorization are not
+digest-namespaced; their owners must revoke or unsubscribe the originating
+authorization rather than assume another daemon can cancel it.
+The prepared tree's `docs/shared-collector.md` defines control v2, lease
+confirmation and coexistence rules. The [implementation handoff](../docs/remote-agent-monitoring-handoff.md#共享-collector-实施记录)
+retains earlier local asset provenance and isolated SSH/TLS observations.
+Unpublished local assets and checks are not a Release, an upgrade of previously
+installed clients, or proof of APNs/iPhone delivery.
+
+The independent, unreleased Widget statistics feed is carried by feature patch
+`0016-Add-independent-widget-statistics-feed.patch`; it does not change the
+previous fifteen patches or ActivityKit's ten-second cadence. It adds negotiated
+`widget_statistics_v1` controls, a separately revocable authorization of at most
+30 days, and a fixed statistics-only relay path with 30-minute routine attempts.
+It reuses the single collector ingestion and per-timezone history projections;
+missing dates/counts remain unknown. A positive subscription ACK confirms a
+genuine HTTP 200 storage response, not WidgetKit/APNs delivery. New local
+development assets must retain pin, full ordered queue hashes, source commit/tree,
+build commands/toolchain and actual ELF SHA/identity provenance. Never distribute
+the compile-time loopback test-transport executable or call an unpublished
+development artifact a GitHub release.
 
 The existing network traffic views also show supported remote Linux source
 traffic on macOS and Windows. The collector measures the SSH user's non-loopback
@@ -120,17 +140,19 @@ on the target. Only Linux x86_64 is packaged; no ARM64 compatibility is implied.
 
 The pending shared collector retains metadata `format_version` 1 and outer
 stdio NDJSON `protocol.version` 1. Its separate `protocol.shared_collector`
-descriptor records `control_version` 2, capabilities `live_activity_v2` and
-`shared_collector_v1`, and the `--identity` contract: the prefix
-`shared-collector-v2`, a space, the executable SHA-256, and a newline. The
+descriptor records `control_version` 2, capabilities `live_activity_v2`,
+`shared_collector_v1` and `widget_statistics_v1`, and the `--identity` contract:
+the prefix `shared-collector-v2`, a space, the executable SHA-256, and a newline. The
 release build opts into identity verification only for its trusted production
 collector; packaging runs the staged executable and rejects a mismatching
 identity or digest. Identity is evidence of the trusted build's declared
 contract, not independent proof of functionality or authenticity. Packaging
 without this explicit opt-in does not claim shared capabilities. Consumers
 requiring shared control must reject missing or mismatched descriptors and must
-not infer compatibility with older clients or binaries. The formal patch queue
-and production build still need verification; no new release is claimed here.
+not infer compatibility with older clients or binaries. The Widget declaration
+applies to future builds of the full queue containing feature patch 0016, not
+to immutable previously published fork.8 metadata. Runtime capability negotiation
+is still required; no new release is claimed here.
 
 ### Shared collector and activity relay (unreleased)
 

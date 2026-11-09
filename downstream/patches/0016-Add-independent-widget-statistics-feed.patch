@@ -1,0 +1,1494 @@
+From 4adfdc22705674e2735e24492ec5fa7d7adf5185 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Mon, 9 Nov 2026 09:50:00 +0800
+Subject: [PATCH 16/16] Add independent widget statistics feed
+
+---
+ README.md                              |  14 +-
+ docs/shared-collector.md               |  64 ++++++
+ linux/collector/CMakeLists.txt         |   4 +-
+ linux/collector/daemon.cpp             |  18 +-
+ linux/collector/publisher.cpp          |   9 +-
+ linux/collector/relay_http.hpp         |  16 ++
+ linux/collector/sampling.cpp           |  21 ++
+ linux/collector/sampling.hpp           |   9 +
+ linux/collector/widget_publisher.cpp   | 230 +++++++++++++++++++
+ linux/collector/widget_publisher.hpp   |  32 +++
+ linux/collector/widget_statistics.cpp  | 161 +++++++++++++
+ linux/collector/widget_statistics.hpp  |   9 +
+ linux/tests/CMakeLists.txt             |   2 +
+ linux/tests/widget_publisher_test.cpp  | 136 +++++++++++
+ linux/tests/widget_statistics_smoke.py | 298 +++++++++++++++++++++++++
+ linux/tests/widget_statistics_test.cpp | 154 +++++++++++++
+ spec/NETWORK.md                        |  29 +++
+ 17 files changed, 1193 insertions(+), 13 deletions(-)
+ create mode 100644 linux/collector/relay_http.hpp
+ create mode 100644 linux/collector/widget_publisher.cpp
+ create mode 100644 linux/collector/widget_publisher.hpp
+ create mode 100644 linux/collector/widget_statistics.cpp
+ create mode 100644 linux/collector/widget_statistics.hpp
+ create mode 100644 linux/tests/widget_publisher_test.cpp
+ create mode 100755 linux/tests/widget_statistics_smoke.py
+ create mode 100644 linux/tests/widget_statistics_test.cpp
+
+diff --git a/README.md b/README.md
+index 51ccd86c..13700853 100644
+--- a/README.md
++++ b/README.md
+@@ -123,8 +123,10 @@ Duplicate SSH destinations are rejected when saving; an existing host can keep i
+ Remote effort and speed retain their configured or selected status when provided by the collector.
+ Local diagnostic reports and desktop live reporting contain local data only, not remote data. Remote SSH is independent
+ of the desktop network switch: disable the host to close that subscription. The app verifies a digest-addressed bundled
+-collector and runs its no-argument stdio bridge. Same-UID connections share one collector daemon through a private Unix
+-socket, with independent timezone views. No HTTP server, TCP listener, Python runtime or sudo is required.
++collector and runs its no-argument stdio bridge. Connections with the same Unix UID and identical collector SHA-256
++share one daemon through a private Unix socket, with independent timezone views. Different digests run in parallel
++without replacing or stopping older daemons; each build has its own scanning and memory cost.
++No HTTP server, TCP listener, Python runtime or sudo is required.
+ 
+ Optional mobile live-activity authorization is separate: after the user creates an activity in the foreground, an
+ activity-scoped lease can authorize the daemon to send only minimal current metrics over verified HTTPS to
+@@ -134,6 +136,14 @@ commands, conversation content or SSH credentials; the target host receives no A
+ activities only and does not request alerts or promise ten-second iOS rendering. See the complete
+ [shared collector/control-v2 contract](docs/shared-collector.md) and [network specification](spec/NETWORK.md#8-activity-scoped-mobile-relay).
+ 
++An independently consented mobile Widget statistics feed can additionally forward only today's
++input/output, seven calendar days of count aggregates and today's source aggregates, with explicit
++unknown/partial coverage. It uses a separate revocable publisher authorization of at most 30 days and
++at most one routine publish attempt per 30 minutes after initial storage; it neither extends the
++ActivityKit lease nor uploads raw history/logs. The daemon cannot renew this authorization. Widget
++push invalidates timelines rather than sending ordinary alerts. This queue feature is unpublished;
++see the [separate Widget network boundary](spec/NETWORK.md#9-independent-opt-in-widget-statistics-relay-unreleased).
++
+ The Linux collector reuses the native measurement core, including omp parsing and parent/child deduplication. The
+ remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
+ stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
+diff --git a/docs/shared-collector.md b/docs/shared-collector.md
+index 479bd336..c60741f3 100644
+--- a/docs/shared-collector.md
++++ b/docs/shared-collector.md
+@@ -84,3 +84,67 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
+ CMake's normal test executable uses a separately compiled test-only HOME namespace and one-second idle period so process tests cannot attach to the maintainer's canonical daemon. Neither override exists in the distribution executable. `AGENTSPEED_BUILD_SSH_SMOKE=ON` additionally builds the explicitly non-distributable `agentspeed-collector-ssh-smoke`: it uses the same libcurl path but a compile-time fixed localhost TLS endpoint and test CA, with canonical passwd-home and production 30-second idle behavior. Never package that executable.
+ 
+ `linux/tests/shared_collector_ssh_smoke.py` runs a local sshd, a disposable Unix account and an isolated TLS relay, then cleans them up. It requires local root only for that isolated account/sshd; it never accesses a production host or modifies a system SSH service. Its JSON results identify actual scenarios and limits. It does not prove Cloudflare deployment, APNs acceptance or iPhone delivery. Real signed-iPhone testing, deployed Worker/App Attest configuration, Apple credentials, ARM64 runtime, and native Mac/Windows UI remain separate acceptance prerequisites.
++
++## Independent Widget statistics feed (unreleased)
++
++Widget statistics are a separate opt-in authorization, not an extension of ActivityKit's eight-hour lease.
++The same effective-UID/executable-digest daemon and existing scan/parser pipeline supply timestamped input/output counts;
++there is no extra Monitor, per-widget scanner, ordinary notification, or indefinite mobile SSH session.
++Negotiation requires outer `version: 1`, `controlVersion: 2`, capability `widget_statistics_v1`,
++`widgetMinPublishIntervalMs: 1800000`, and `widgetMaxLeaseSeconds: 2592000` alongside existing capabilities.
++Unresponsive or incomplete capabilities do not permit a legacy collector fallback.
++
++`widget_subscribe` requires `requestId`, `subscriptionId` (the registered widget ID), opaque publisher
++`lease`, absolute Unix-millisecond `expiresAt`, registered `hostId`/`hostName`, IANA `timezone`, and
++`intervalMs: 1800000`. The expiry must be in the future and at most 30 days away. No relay URL is accepted
++from the command. The only destination is `https://agent-speed.yooztech.com/v1/widget-publish` with
++`Authorization: Bearer <lease>` and body `{ "snapshot": <statistics> }`.
++
++The statistics object has version 1, registered host identity, genuine snapshot `sampledAt`, fixed
++`timezone`, its calendar `usageDate`, `today: {input, output, complete}`, exactly seven ascending `days`
++ending today with `{date, input, output, complete}`, canonical `sources` with
++`{source, input, output, complete}`, and `historyComplete`. Total means input plus output only when both
++are known; cached input and reasoning are already included and must not be added again. Missing counts
++and missing historical dates are null, not zero. Current-day fields come from the actual timezone-view
++snapshot, including the final day row; absent history leaves the previous six dates unknown. Typed
++history must match the view's timezone and calendar date. Calendar stepping respects DST, not fixed
++24-hour subtraction. Partial known counts remain visibly incomplete. Known unavailable sources remain
++explicit null/incomplete rows, not fabricated zeros. Unsafe integers, unrepresentable coverage, more than
++32 unique sources or a body larger than 64 KiB fail rather than being silently truncated.
++The final day row's counts and `complete` exactly equal `today`; `historyComplete` is true only when
++all seven final day rows are complete. It cannot be copied from today's flag or from an older cached
++history report. Historical participation requires actual source rows or current usage evidence;
++undetected never-used harnesses are not fabricated as zero contributors. Missing coverage of a
++participating source makes the daily aggregate unknown. This does not prove undiscovered usage absent.
++
++`widget_subscribe_ack` echoes `version`, `controlVersion`, `requestId`, `subscriptionId`, `hostId`,
++`hostName`, `timezone`, `expiresAt` and Boolean `accepted`, plus a safe `error` on failure. A positive ACK
++requires a genuine valid first statistics POST returning HTTP **200**, within the bounded 75-second
++confirmation window. This confirms Worker storage, not APNs/device delivery. A failed confirmation must
++not leave the mobile app displaying enabled authority; it independently revokes Worker registration and
++sends a best-effort collector unsubscribe. Same-lease retries preserve the publisher and its attempt
++window; a new authorization replaces it with generation fencing and may publish its initial sample
++immediately. The Worker separately enforces its installation-wide push budget across replacements.
++
++`widget_unsubscribe` requires `version: 1`, `controlVersion: 2`, `requestId`, `subscriptionId`, and the
++matching publisher `lease`. Its ACK echoes the request/subscription IDs and `accepted`. An old credential
++cannot revoke a replacement. Confirmed Widget authorization survives ordinary SSH close until explicit
++unsubscribe, replacement or expiry, independently of ActivityKit ending. Only authenticated foreground
++registration can renew it; the daemon and widget fetch cannot. No widget read credential, registration
++credential, App Attest key or Apple provider secret is sent to the collector. Host logout/cgroup policy
++can still kill the daemon; no linger policy or root service is installed.
++
++After the initial attempt, publish attempts are at least 30 minutes apart. Latest real source/history
++changes coalesce; unchanged counts still receive a genuine fresh observation/date at the next slot.
++Publishing uses a separate bounded single-flight HTTPS worker, verifies certificates and hostname,
++disables redirects/environment proxies/netrc, limits connection/DNS to three seconds and total request
++time to 15 seconds, and bounds response bytes. No credential appears in argv, environment, URL or logs.
++401/403/410 and other permanent 4xx stop only the matching authorization; 429 observes a later
++Retry-After; transport/5xx retain confirmed authorization until expiry and use the next normal slot,
++not a retry storm. Stale responses cannot resurrect or retire a replacement. Worker storage and
++WidgetKit `widgets` push remain separate: HTTP 200 must preserve newly stored data even when APNs fails.
++
++This is an unpublished source/queue feature. Production ELF and fixed-loopback TLS test ELF are separate;
++only the former may be delivered as a collector asset. Local process/TLS checks do not validate App Attest,
++WidgetKit entitlement/signing, APNs acceptance or actual iPhone timeline delivery.
++
+diff --git a/linux/collector/CMakeLists.txt b/linux/collector/CMakeLists.txt
+index 1eb5023e..12d6cb04 100644
+--- a/linux/collector/CMakeLists.txt
++++ b/linux/collector/CMakeLists.txt
+@@ -5,11 +5,11 @@ add_library(agentspeed_collector_protocol STATIC protocol.cpp history_cache.cpp)
+ target_include_directories(agentspeed_collector_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+ target_link_libraries(agentspeed_collector_protocol PUBLIC agentspeed_core)
+ 
+-add_library(agentspeed_collector_sampling STATIC sampling.cpp)
++add_library(agentspeed_collector_sampling STATIC sampling.cpp widget_statistics.cpp)
+ target_link_libraries(agentspeed_collector_sampling PUBLIC agentspeed_collector_protocol Threads::Threads)
+ 
+ function(collector_runtime name)
+-    add_library(${name} STATIC daemon.cpp publisher.cpp)
++    add_library(${name} STATIC daemon.cpp publisher.cpp widget_publisher.cpp)
+     target_link_libraries(${name} PUBLIC agentspeed_collector_sampling PkgConfig::CURL Threads::Threads)
+ endfunction()
+ 
+diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
+index ed4e98b1..e72ec39b 100644
+--- a/linux/collector/daemon.cpp
++++ b/linux/collector/daemon.cpp
+@@ -2,6 +2,7 @@
+ #include "protocol.hpp"
+ #include "publisher.hpp"
+ #include "sampling.hpp"
++#include "widget_publisher.hpp"
+ #include "agentspeed/json.hpp"
+ 
+ #include <openssl/evp.h>
+@@ -180,7 +181,7 @@ void enqueue(Client& c, std::string line, bool snapshot = false, bool viewFrame
+     if (line.size() > kOutput || c.bytes > kOutput - line.size()) { c.dead = true; return; }
+     c.bytes += line.size(); c.output.push_back({std::move(line), 0, snapshot, snapshot || viewFrame, c.viewGeneration});
+ }
+-void command(Client& c, const std::string& line, Publisher& publisher, std::int64_t now) {
++void command(Client& c, const std::string& line, Publisher& publisher, WidgetPublisher& widgets, std::int64_t now) {
+     agentspeed::json::Document doc; if (!doc.parse(line)) return;
+     auto root = doc.root(); if (root["version"].raw() != "1") return;
+     auto type = root["type"].string(); if (!type) return;
+@@ -199,6 +200,8 @@ void command(Client& c, const std::string& line, Publisher& publisher, std::int6
+         c.lastHistory.clear();
+     } else if (*type == "capabilities" || *type == "live_activity_subscribe" || *type == "live_activity_unsubscribe") {
+         for (auto& response : publisher.control(line, c.id, now)) enqueue(c, std::move(response));
++    } else if (*type == "widget_subscribe" || *type == "widget_unsubscribe") {
++        for (auto& response : widgets.control(line, c.id, now)) enqueue(c, std::move(response));
+     }
+ }
+ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -215,7 +218,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+     mode_t mask = umask(0177); int bound = bind(listener.value, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)); umask(mask);
+     if (bound || listen(listener.value, 64)) fail("socket bind");
+     if (!socketValid(p, exists) || !exists) fail("runtime socket");
+-    Sampler sampler(p.home, hash); Publisher publisher; Protocol protocol(machineIdentity());
++    Sampler sampler(p.home, hash); Publisher publisher; WidgetPublisher widgets; Protocol protocol(machineIdentity());
+     if (!writeAll(ready, "R")) fail("readiness");
+     close(ready);
+     std::map<int, Client> clients; std::uint64_t nextId = 1;
+@@ -231,6 +234,10 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+                 if (!history.empty() && history != c.lastHistory) { c.lastHistory = history; enqueue(c, std::move(history), false, true); }
+             }
+             for (const auto& view : publisher.views()) { auto sample = sampler.sample(now, view); publisher.sample(view, sample); }
++            for (const auto& view : widgets.views()) {
++                auto sample = sampler.sample(now, view);
++                widgets.sample(view, sample, sampler.statisticsHistory(view));
++            }
+             auto completions = sampler.takeCompletions();
+             for (const auto& completion : completions) {
+                 auto line = Protocol::completion(completion);
+@@ -239,9 +246,10 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+             tick = steady + std::chrono::seconds(1);
+         }
+         for (auto& reply : publisher.replies()) for (auto& [fd, c] : clients) if (c.id == reply.first && c.handshaken) { enqueue(c, std::move(reply.second)); break; }
++        for (auto& reply : widgets.replies()) for (auto& [fd, c] : clients) if (c.id == reply.first && c.handshaken) { enqueue(c, std::move(reply.second)); break; }
+         for (auto& [fd, c] : clients) if (!c.handshaken && steady >= c.deadline) c.dead = true;
+-        for (auto it = clients.begin(); it != clients.end();) { if (it->second.dead) { publisher.disconnected(it->second.id); it = clients.erase(it); } else ++it; }
+-        if (!clients.empty() || publisher.authorized(now)) idle = steady;
++        for (auto it = clients.begin(); it != clients.end();) { if (it->second.dead) { publisher.disconnected(it->second.id); widgets.disconnected(it->second.id); it = clients.erase(it); } else ++it; }
++        if (!clients.empty() || publisher.authorized(now) || widgets.authorized(now)) idle = steady;
+ #ifdef AGENTSPEED_COLLECTOR_TESTING
+         else if (steady - idle >= std::chrono::seconds(1)) break;
+ #else
+@@ -273,7 +281,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+                         if (!c.handshaken) {
+                             if (line != "shared-collector-v2 " + hash) { enqueue(c, "version-conflict"); c.handshaken = true; c.dead = true; break; }
+                             c.handshaken = true; enqueue(c, "shared-collector-v2 " + hash);
+-                        } else command(c, line, publisher, now);
++                        } else command(c, line, publisher, widgets, now);
+                     }
+                 }
+             }
+diff --git a/linux/collector/publisher.cpp b/linux/collector/publisher.cpp
+index a7da4600..88468b4a 100644
+--- a/linux/collector/publisher.cpp
++++ b/linux/collector/publisher.cpp
+@@ -1,3 +1,4 @@
++#include "relay_http.hpp"
+ #include "publisher.hpp"
+ #include "agentspeed/json.hpp"
+ #include "agentspeed/report_json.hpp"
+@@ -53,8 +54,7 @@ size_t headerWrite(char* p,size_t a,size_t b,void* opaque) {
+ }
+ Publisher::Result curlTransport(const std::string& lease,const std::string& body) {
+     Publisher::Result r;
+-    static const bool ready=[] { if (curl_global_init(CURL_GLOBAL_DEFAULT)!=CURLE_OK) return false; auto* v=curl_version_info(CURLVERSION_NOW); return v && (v->features&CURL_VERSION_ASYNCHDNS); }();
+-    if (!ready) return r;
++    if (!initializeRelayHttp()) return r;
+     CURL* c=curl_easy_init(); if (!c) return r;
+  #ifdef AGENTSPEED_COLLECTOR_TEST_RELAY
+     curl_easy_setopt(c,CURLOPT_URL,"https://localhost:19443/v1/publish");
+@@ -231,9 +231,10 @@ std::vector<std::string> Publisher::control(const std::string& line, std::uint64
+     if (type == "capabilities") {
+         if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 || !text(request, 128)) return {};
+         return {J::object({{"version", J::of(1)}, {"type", J::of("capabilities")},
+-            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("shared_collector_v1")})},
++            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("shared_collector_v1"), J::of("widget_statistics_v1")})},
+             {"controlVersion", J::of(2)}, {"subscribeTimeoutMs", J::of(75000)},
+-            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)}}).compact() + "\n"};
++            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)},
++            {"widgetMinPublishIntervalMs", J::of(1800000)}, {"widgetMaxLeaseSeconds", J::of(2592000)}}).compact() + "\n"};
+     }
+     auto ackType = type + "_ack";
+     auto bad = [&](const char* error) {
+diff --git a/linux/collector/relay_http.hpp b/linux/collector/relay_http.hpp
+new file mode 100644
+index 00000000..16d21855
+--- /dev/null
++++ b/linux/collector/relay_http.hpp
+@@ -0,0 +1,16 @@
++#pragma once
++
++#include <curl/curl.h>
++
++namespace collector {
++// Both publishing workers share one initialization, including on libcurl builds
++// where curl_global_init itself is not safe to call concurrently.
++inline bool initializeRelayHttp() {
++    static const bool ready = [] {
++        if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) return false;
++        const auto* version = curl_version_info(CURLVERSION_NOW);
++        return version && (version->features & CURL_VERSION_ASYNCHDNS);
++    }();
++    return ready;
++}
++}
+diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
+index bd17339e..adcb07f9 100644
+--- a/linux/collector/sampling.cpp
++++ b/linux/collector/sampling.cpp
+@@ -77,6 +77,7 @@ struct Sampler::Impl {
+         View view;
+         std::string history;
+         std::vector<agentspeed::perf::DayRecord> perf;
++        std::shared_ptr<const StatisticsHistory> statistics;
+     };
+ 
+     std::string home, digest;
+@@ -174,6 +175,7 @@ struct Sampler::Impl {
+                                 value.view.zone = zone;
+                                 value.history.clear();
+                                 value.perf.clear();
++                                value.statistics.reset();
+                                 ++baselineGeneration;
+                                 todo.at(std::nullopt).zone = zone;
+                             }
+@@ -195,6 +197,13 @@ struct Sampler::Impl {
+                         if (!projection.complete && !viewReport.filesUnreadable) viewReport.filesUnreadable = 1;
+                         auto line = Protocol::history(projection.days, viewReport, view.name, projection.perfRecords);
+                         auto perf = projection.perfRecords;
++                        auto statistics = std::make_shared<StatisticsHistory>();
++                        statistics->timezone = view.name.value_or("");
++                        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
++                            std::chrono::system_clock::now().time_since_epoch()).count();
++                        statistics->usageDate = agentspeed::history::DayLabeler(view.zone).label(now).value_or("");
++                        statistics->days = projection.days;
++                        statistics->complete = projection.complete && !viewReport.filesUnreadable && !viewReport.cancelled;
+                         saved.insert_or_assign(key, Saved{view, std::move(projection), viewReport});
+                         std::lock_guard lock(mutex);
+                         if (stopping) return;
+@@ -202,6 +211,7 @@ struct Sampler::Impl {
+                         value.history = std::move(line);
+                         value.perf = std::move(perf);
+                         if (!key) ++baselineGeneration;
++                        value.statistics = std::move(statistics);
+                     }
+                 }
+             } catch (const std::exception&) {
+@@ -212,6 +222,11 @@ struct Sampler::Impl {
+                                                   value.projection.perfRecords);
+                     std::lock_guard lock(mutex);
+                     if (stopping) return;
++                    if (auto current = views.at(key).statistics) {
++                        auto partial = std::make_shared<StatisticsHistory>(*current);
++                        partial->complete = false;
++                        views.at(key).statistics = std::move(partial);
++                    }
+                     views.at(key).history = std::move(line);
+                 }
+                 std::unique_lock lock(mutex);
+@@ -249,6 +264,12 @@ std::string Sampler::history(const View& view) {
+     return impl_->views.at(view.name).history;
+ }
+ 
++std::shared_ptr<const StatisticsHistory> Sampler::statisticsHistory(const View& view) {
++    impl_->registerView(view);
++    std::lock_guard lock(impl_->mutex);
++    return impl_->views.at(view.name).statistics;
++}
++
+ std::vector<agentspeed::Completion> Sampler::takeCompletions() {
+     return impl_->monitor.takeCompletions();
+ }
+diff --git a/linux/collector/sampling.hpp b/linux/collector/sampling.hpp
+index 738c9b4c..9b1b5ba6 100644
+--- a/linux/collector/sampling.hpp
++++ b/linux/collector/sampling.hpp
+@@ -6,6 +6,7 @@
+ #include <string>
+ #include <vector>
+ 
++#include "agentspeed/history.hpp"
+ #include "agentspeed/monitor.hpp"
+ #include "agentspeed/tz.hpp"
+ 
+@@ -21,6 +22,13 @@ struct Sample {
+     std::vector<agentspeed::traffic::HistoryRow> traffic;
+ };
+ 
++struct StatisticsHistory {
++    std::string timezone;
++    std::string usageDate;
++    std::vector<agentspeed::history::DailyUsage> days;
++    bool complete = false;
++};
++
+ // All public methods are called by the collection thread. History analysis runs in the background.
+ class Sampler {
+ public:
+@@ -32,6 +40,7 @@ public:
+     void poll(std::int64_t now);
+     Sample sample(std::int64_t now, const View& view);
+     std::string history(const View& view);
++    std::shared_ptr<const StatisticsHistory> statisticsHistory(const View& view);
+     std::vector<agentspeed::Completion> takeCompletions();
+ 
+ private:
+diff --git a/linux/collector/widget_publisher.cpp b/linux/collector/widget_publisher.cpp
+new file mode 100644
+index 00000000..a1791f39
+--- /dev/null
++++ b/linux/collector/widget_publisher.cpp
+@@ -0,0 +1,230 @@
++#include "widget_publisher.hpp"
++#include "widget_statistics.hpp"
++#include "relay_http.hpp"
++#include "agentspeed/json.hpp"
++#include "agentspeed/report_json.hpp"
++#include <curl/curl.h>
++#include <algorithm>
++#include <chrono>
++#include <cctype>
++#include <condition_variable>
++#include <map>
++#include <mutex>
++#include <set>
++#include <thread>
++
++namespace collector {
++namespace {
++using J = agentspeed::report::Json;
++std::int64_t wall() { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
++bool text(const std::string& s, std::size_t max, bool bearer = false) {
++    if (s.empty() || s.size() > max) return false;
++    for (unsigned char c : s) if (c < 32 || c == 127 || (bearer && (c >= 127 || std::isspace(c)))) return false;
++    return true;
++}
++bool utf8(const std::string& s) {
++    for (std::size_t i = 0; i < s.size();) {
++        unsigned char c = s[i++]; unsigned n = 0, cp = c;
++        if (c < 128) {} else if (c >= 0xc2 && c <= 0xdf) { n=1; cp=c&31; } else if (c >= 0xe0 && c <= 0xef) { n=2; cp=c&15; } else if (c >= 0xf0 && c <= 0xf4) { n=3; cp=c&7; } else return false;
++        if (i+n > s.size()) return false;
++        for (unsigned j=0; j<n; ++j) { unsigned char b=s[i++]; if ((b&0xc0)!=0x80) return false; cp=(cp<<6)|(b&63); }
++        if ((n==2 && cp<0x800) || (n==3 && cp<0x10000) || cp>0x10ffff || (cp>=0xd800 && cp<=0xdfff)) return false;
++    }
++    return true;
++}
++bool zoneName(const std::string& z) {
++    if (!text(z,128) || z == "localtime" || z.front() == '/' || z.find("..") != std::string::npos || z.find("//") != std::string::npos || z.back() == '/') return false;
++    for (unsigned char c : z) if (!(std::isalnum(c) || c=='/' || c=='_' || c=='-' || c=='+')) return false;
++    return true;
++}
++size_t bodyWrite(char* p, size_t a, size_t b, void* data) {
++    auto& body=*static_cast<std::string*>(data); size_t n=a*b; if (n>4096-body.size()) return 0; body.append(p,n); return n;
++}
++size_t headerWrite(char* p, size_t a, size_t b, void* data) {
++    size_t n=a*b; std::string s(p,n); auto& ms=*static_cast<std::int64_t*>(data);
++    if (s.size()>12 && std::equal(s.begin(),s.begin()+12,"retry-after:",[](char x,char y){return std::tolower(static_cast<unsigned char>(x))==y;})) {
++        const char* q=s.c_str()+12; while (*q==' ' || *q=='\t') ++q;
++        std::int64_t v=0; bool ok=false; while (*q>='0' && *q<='9') { ok=true; v=std::min<std::int64_t>(2592000,v*10+(*q++-'0')); }
++        if (ok && (*q=='\r' || *q=='\n' || *q=='\0' || *q==' ')) ms=v*1000;
++        else { auto date=curl_getdate(q,nullptr); if (date>=0) ms=std::max<std::int64_t>(0,static_cast<std::int64_t>(date)*1000-wall()); }
++    } return n;
++}
++WidgetPublisher::Result transport(const std::string& lease, const std::string& body) {
++    WidgetPublisher::Result r;
++    if (!initializeRelayHttp()) return r;
++    CURL* c=curl_easy_init(); if (!c) return r;
++#ifdef AGENTSPEED_COLLECTOR_TEST_RELAY
++    curl_easy_setopt(c,CURLOPT_URL,"https://localhost:19443/v1/widget-publish");
++    curl_easy_setopt(c,CURLOPT_CAINFO,"/tmp/agent-speed-shared-ca.pem");
++#else
++    curl_easy_setopt(c,CURLOPT_URL,"https://agent-speed.yooztech.com/v1/widget-publish");
++#endif
++    std::string auth="Authorization: Bearer "+lease;
++    curl_slist* headers=nullptr; headers=curl_slist_append(headers,"Content-Type: application/json"); headers=curl_slist_append(headers,auth.c_str());
++    curl_easy_setopt(c,CURLOPT_HTTPHEADER,headers); curl_easy_setopt(c,CURLOPT_POSTFIELDS,body.data()); curl_easy_setopt(c,CURLOPT_POSTFIELDSIZE,static_cast<long>(body.size()));
++#if LIBCURL_VERSION_NUM >= 0x075500
++    curl_easy_setopt(c,CURLOPT_PROTOCOLS_STR,"https");
++#else
++    curl_easy_setopt(c,CURLOPT_PROTOCOLS,CURLPROTO_HTTPS);
++#endif
++    curl_easy_setopt(c,CURLOPT_FOLLOWLOCATION,0L); curl_easy_setopt(c,CURLOPT_PROXY,""); curl_easy_setopt(c,CURLOPT_NETRC,CURL_NETRC_IGNORED);
++    curl_easy_setopt(c,CURLOPT_SSL_VERIFYPEER,1L); curl_easy_setopt(c,CURLOPT_SSL_VERIFYHOST,2L); curl_easy_setopt(c,CURLOPT_CONNECTTIMEOUT_MS,3000L); curl_easy_setopt(c,CURLOPT_TIMEOUT_MS,15000L); curl_easy_setopt(c,CURLOPT_NOSIGNAL,1L);
++    curl_easy_setopt(c,CURLOPT_WRITEFUNCTION,bodyWrite); curl_easy_setopt(c,CURLOPT_WRITEDATA,&r.body); curl_easy_setopt(c,CURLOPT_HEADERFUNCTION,headerWrite); curl_easy_setopt(c,CURLOPT_HEADERDATA,&r.retryAfterMs);
++    if (curl_easy_perform(c)==CURLE_OK) curl_easy_getinfo(c,CURLINFO_RESPONSE_CODE,&r.status);
++    curl_slist_free_all(headers); curl_easy_cleanup(c); return r;
++}
++std::string ack(const std::string& type, const std::string& request, const std::string& id, const std::string& host, const std::string& name, const std::string& zone, std::int64_t expiry, bool accepted, const char* error=nullptr) {
++    auto j=J::object({{"version",J::of(1)},{"type",J::of(type+"_ack")},{"controlVersion",J::of(2)},{"requestId",J::of(request)},{"subscriptionId",J::of(id)}});
++    if (type=="widget_subscribe") { j.add("hostId",J::of(host)); j.add("hostName",J::of(name)); j.add("timezone",J::of(zone)); j.add("expiresAt",J::of(expiry)); }
++    j.add("accepted",J::of(accepted)); if (error) j.add("error",J::of(error)); return j.compact()+"\n";
++}
++}
++struct WidgetPublisher::Impl {
++    struct Waiter { std::uint64_t client; std::string request; };
++    struct Lease {
++        std::string id, token, host, name, zone, payload;
++        std::int64_t expiry=0, created=0, deadline=0, next=0;
++        std::int64_t payloadSampledAt=0, lastAttemptSample=-1;
++        std::uint64_t generation=0;
++        View view; bool confirmed=false, inFlight=false;
++        std::vector<Waiter> waiters;
++    };
++    struct Request { std::string binding, response; std::int64_t expiry; };
++    Options options; mutable std::mutex mutex; std::condition_variable cv; bool stop=false;
++    std::thread worker; std::vector<Lease> leases;
++    std::map<std::pair<std::uint64_t,std::string>,Request> requests;
++    std::map<std::pair<std::string,std::string>,std::int64_t> retired;
++    std::vector<std::pair<std::uint64_t,std::string>> pending;
++    std::uint64_t generation=0;
++    explicit Impl(Options o):options(std::move(o)) {
++        if (!options.clock) options.clock=wall;
++        if (!options.transport) options.transport=transport;
++        options.confirmationMs=std::max<std::int64_t>(1,std::min<std::int64_t>(75000,options.confirmationMs));
++        options.intervalMs=std::max<std::int64_t>(1,options.intervalMs);
++        worker=std::thread([this]{ run(); });
++    }
++    ~Impl() { { std::lock_guard<std::mutex> lock(mutex); stop=true; leases.clear(); } cv.notify_all(); worker.join(); }
++    void finish(Lease& l, bool success, const char* error=nullptr) {
++        for (const auto& w:l.waiters) {
++            auto response=ack("widget_subscribe",w.request,l.id,l.host,l.name,l.zone,l.expiry,success,error);
++            auto r=requests.find({w.client,w.request}); if (r!=requests.end()) r->second.response=response;
++            pending.emplace_back(w.client,std::move(response));
++        }
++        l.waiters.clear();
++    }
++    void retire(const Lease& l) { retired[{l.id,l.token}]=l.expiry; }
++    void prune(std::int64_t now) {
++        for (auto i=leases.begin(); i!=leases.end();) {
++            if (i->expiry<=now || (!i->confirmed && i->deadline<=now)) {
++                if (!i->confirmed) finish(*i,false,i->expiry<=now?"expired":"stats_unavailable");
++                retire(*i); i=leases.erase(i);
++            } else ++i;
++        }
++        for (auto i=retired.begin();i!=retired.end();) if (i->second<=now) i=retired.erase(i); else ++i;
++        for (auto i=requests.begin();i!=requests.end();) if (i->second.expiry<=now) i=requests.erase(i); else ++i;
++    }
++    void run() {
++        std::unique_lock<std::mutex> lock(mutex);
++        while (!stop) {
++            auto now=options.clock(); prune(now);
++            auto it=std::find_if(leases.begin(),leases.end(),[&](const Lease& l){ return !l.inFlight && !l.payload.empty() && l.next<=now; });
++            if (it==leases.end()) { cv.wait_for(lock,std::chrono::milliseconds(100)); continue; }
++            if (it->payloadSampledAt>now || now-it->payloadSampledAt>300000 || it->payloadSampledAt<=it->lastAttemptSample) {
++                it->payload.clear();
++                continue;
++            }
++            auto id=it->id, token=it->token, payload=std::move(it->payload); auto gen=it->generation;
++            it->inFlight=true; it->next=now+options.intervalMs; it->lastAttemptSample=it->payloadSampledAt;
++            lock.unlock(); auto result=options.transport(token,payload); lock.lock();
++            if (stop) break;
++            now=options.clock(); prune(now);
++            it=std::find_if(leases.begin(),leases.end(),[&](const Lease& l){return l.id==id && l.generation==gen;});
++            if (it==leases.end()) continue;
++            it->inFlight=false;
++            if (result.status==200) { if (!it->confirmed) { it->confirmed=true; finish(*it,true); } }
++            else if (!it->confirmed) { finish(*it,false,"publish_failed"); retire(*it); leases.erase(it); }
++            else if (result.status>=400 && result.status<500 && result.status!=429) { retire(*it); leases.erase(it); }
++            else if (result.status==429 && result.retryAfterMs>0) it->next=std::max(it->next,now+std::min<std::int64_t>(result.retryAfterMs,2592000000LL));
++        }
++    }
++};
++WidgetPublisher::WidgetPublisher():WidgetPublisher(Options{}) {}
++WidgetPublisher::WidgetPublisher(Options o):impl_(new Impl(std::move(o))) {}
++WidgetPublisher::~WidgetPublisher()=default;
++std::vector<std::string> WidgetPublisher::control(const std::string& line,std::uint64_t client,std::int64_t now) {
++    if (line.size()>16384) return {};
++    agentspeed::json::Document doc; if (!doc.parse(line,32) || !doc.root().isObject()) return {};
++    auto root=doc.root(); auto type=root["type"].string().value_or("");
++    if (type!="widget_subscribe" && type!="widget_unsubscribe") return {};
++    auto req=root["requestId"].string().value_or(""), id=root["subscriptionId"].string().value_or(""), token=root["lease"].string().value_or("");
++    auto host=root["hostId"].string().value_or(""), name=root["hostName"].string().value_or(""), zone=root["timezone"].string().value_or("");
++    auto expiry=root["expiresAt"].isIntegerLiteral()?root["expiresAt"].truncated().value_or(0):0;
++    auto bad=[&](const char* e){return std::vector<std::string>{ack(type,req,id,host,name,zone,expiry,false,e)};};
++    std::set<std::string> keys={"version","type","controlVersion","requestId","subscriptionId","lease"};
++    if (type=="widget_subscribe") keys.insert({"expiresAt","hostId","hostName","timezone","intervalMs"});
++    std::set<std::string> seen;
++    for (const auto& member:root.members()) if (!keys.count(member.first) || !seen.insert(member.first).second) return bad("invalid_request");
++    if (seen!=keys || !root["version"].isIntegerLiteral() || root["version"].truncated()!=1 || !root["controlVersion"].isIntegerLiteral() || root["controlVersion"].truncated()!=2 || !text(req,128) || !utf8(req) || !text(id,128) || !utf8(id) || !text(token,4096,true)) return bad("invalid_request");
++    std::shared_ptr<const agentspeed::TimeZone> tz;
++    if (type=="widget_subscribe") {
++        if (!text(host,128) || !utf8(host) || !text(name,128) || !utf8(name) || !zoneName(zone) || !root["intervalMs"].isIntegerLiteral() || root["intervalMs"].truncated()!=1800000 || expiry<=now || expiry-now>2592000000LL || !(tz=agentspeed::TimeZone::load(zone))) return bad("invalid_request");
++    }
++    auto binding=J::array({J::of(type),J::of(id),J::of(token),J::of(host),J::of(name),J::of(zone),J::of(expiry)}).compact();
++    std::lock_guard<std::mutex> lock(impl_->mutex); impl_->prune(now);
++    auto prior=impl_->requests.find({client,req});
++    if (prior!=impl_->requests.end()) {
++        if (prior->second.binding!=binding) return bad("conflicting_request");
++        if (type=="widget_subscribe" && prior->second.response.find("\"accepted\":true")!=std::string::npos && impl_->retired.count({id,token})) return bad("cancelled");
++        if (!prior->second.response.empty()) return {prior->second.response};
++        return {};
++    }
++    if (impl_->requests.size()>=256 || impl_->pending.size()>=256) return bad("busy");
++    auto it=std::find_if(impl_->leases.begin(),impl_->leases.end(),[&](const Impl::Lease& l){return l.id==id;});
++    if (type=="widget_unsubscribe") {
++        if (it!=impl_->leases.end() && it->token!=token) return bad("lease_mismatch");
++        if (it!=impl_->leases.end()) { if (!it->confirmed) impl_->finish(*it,false,"cancelled"); impl_->retire(*it); impl_->leases.erase(it); }
++        else if (!impl_->retired.count({id,token})) {
++            if (impl_->retired.size()+impl_->leases.size()>=256) return bad("busy");
++            impl_->retired[{id,token}]=now+2592000000LL;
++        }
++        else impl_->retired[{id,token}]=now+2592000000LL;
++        auto response=ack(type,req,id,"","","",0,true); impl_->requests[{client,req}]={binding,response,now+75000}; return {response};
++    }
++    if (it!=impl_->leases.end() && it->token==token) {
++        if (it->host!=host || it->name!=name || it->zone!=zone || it->expiry!=expiry) return bad("conflicting_request");
++        if (it->confirmed) { auto response=ack(type,req,id,host,name,zone,expiry,true); impl_->requests[{client,req}]={binding,response,expiry}; return {response}; }
++        if (it->waiters.size()>=32) return bad("busy");
++        it->waiters.push_back({client,req}); impl_->requests[{client,req}]={binding,"",expiry}; return {};
++    }
++    if (impl_->retired.count({id,token})) return bad("cancelled");
++    if (impl_->retired.size()+impl_->leases.size()>=256 || (it==impl_->leases.end() && impl_->leases.size()>=32)) return bad("busy");
++    if (it!=impl_->leases.end()) { if (!it->confirmed) impl_->finish(*it,false,"cancelled"); impl_->retire(*it); impl_->leases.erase(it); }
++    Impl::Lease l; l.id=id; l.token=token; l.host=host; l.name=name; l.zone=zone; l.expiry=expiry; l.created=now; l.deadline=now+impl_->options.confirmationMs; l.next=now; l.generation=++impl_->generation; l.view={zone,tz}; l.waiters.push_back({client,req});
++    impl_->leases.push_back(std::move(l)); impl_->requests[{client,req}]={binding,"",expiry}; impl_->cv.notify_one(); return {};
++}
++void WidgetPublisher::sample(const View& view,const Sample& sample,const std::shared_ptr<const StatisticsHistory>& history) {
++    std::lock_guard<std::mutex> lock(impl_->mutex); auto now=impl_->options.clock(); impl_->prune(now);
++    for (auto& l:impl_->leases) {
++        if (l.view.name!=view.name || l.view.zone!=view.zone || l.inFlight || l.next>now || sample.snapshot.nowMs<l.created || sample.snapshot.nowMs>now || now-sample.snapshot.nowMs>30000 || sample.snapshot.nowMs<=l.lastAttemptSample) continue;
++        auto stats=widgetStatistics(sample,view,history,l.host,l.name);
++        if (stats && stats->size()<=65536-sizeof("{\"snapshot\":}")+1) { l.payload="{\"snapshot\":"+*stats+"}"; l.payloadSampledAt=sample.snapshot.nowMs; }
++    }
++    impl_->cv.notify_one();
++}
++std::vector<View> WidgetPublisher::views() const {
++    std::lock_guard<std::mutex> lock(impl_->mutex); auto now=impl_->options.clock(); std::vector<View> out;
++    for (const auto& l:impl_->leases) if (l.expiry>now && (l.confirmed || l.deadline>now) && !l.inFlight && l.payload.empty() && l.next<=now && std::none_of(out.begin(),out.end(),[&](const View& v){return v.name==l.view.name && v.zone==l.view.zone;})) out.push_back(l.view);
++    return out;
++}
++std::vector<std::pair<std::uint64_t,std::string>> WidgetPublisher::replies() { std::lock_guard<std::mutex> lock(impl_->mutex); impl_->prune(impl_->options.clock()); auto out=std::move(impl_->pending); impl_->pending.clear(); return out; }
++void WidgetPublisher::disconnected(std::uint64_t client) {
++    std::lock_guard<std::mutex> lock(impl_->mutex);
++    for (auto it=impl_->leases.begin();it!=impl_->leases.end();) {
++        auto& w=it->waiters; w.erase(std::remove_if(w.begin(),w.end(),[&](const Impl::Waiter& x){return x.client==client;}),w.end());
++        if (!it->confirmed && w.empty()) { impl_->retire(*it); it=impl_->leases.erase(it); } else ++it;
++    }
++    for (auto it=impl_->requests.begin();it!=impl_->requests.end();) if (it->first.first==client) it=impl_->requests.erase(it); else ++it;
++    impl_->pending.erase(std::remove_if(impl_->pending.begin(),impl_->pending.end(),[&](const auto& p){return p.first==client;}),impl_->pending.end());
++}
++bool WidgetPublisher::authorized(std::int64_t now) const { std::lock_guard<std::mutex> lock(impl_->mutex); return std::any_of(impl_->leases.begin(),impl_->leases.end(),[&](const Impl::Lease& l){return l.confirmed && l.expiry>now;}); }
++}
+diff --git a/linux/collector/widget_publisher.hpp b/linux/collector/widget_publisher.hpp
+new file mode 100644
+index 00000000..3a37e0ed
+--- /dev/null
++++ b/linux/collector/widget_publisher.hpp
+@@ -0,0 +1,32 @@
++#pragma once
++
++#include "publisher.hpp"
++
++namespace collector {
++struct StatisticsHistory;
++class WidgetPublisher {
++public:
++    using Result = Publisher::Result;
++    using Transport = Publisher::Transport;
++    struct Options {
++        Transport transport;
++        std::function<std::int64_t()> clock;
++        std::int64_t confirmationMs = 75000;
++        std::int64_t intervalMs = 1800000;
++    };
++    WidgetPublisher();
++    explicit WidgetPublisher(Options);
++    ~WidgetPublisher();
++    WidgetPublisher(const WidgetPublisher&) = delete;
++    WidgetPublisher& operator=(const WidgetPublisher&) = delete;
++    std::vector<std::string> control(const std::string&, std::uint64_t, std::int64_t);
++    void sample(const View&, const Sample&, const std::shared_ptr<const StatisticsHistory>&);
++    std::vector<View> views() const;
++    std::vector<std::pair<std::uint64_t, std::string>> replies();
++    void disconnected(std::uint64_t);
++    bool authorized(std::int64_t) const;
++private:
++    struct Impl;
++    std::unique_ptr<Impl> impl_;
++};
++}
+diff --git a/linux/collector/widget_statistics.cpp b/linux/collector/widget_statistics.cpp
+new file mode 100644
+index 00000000..0f22b22f
+--- /dev/null
++++ b/linux/collector/widget_statistics.cpp
+@@ -0,0 +1,161 @@
++#include "widget_statistics.hpp"
++
++#include <array>
++#include <chrono>
++#include <cstdio>
++#include <map>
++#include <set>
++#include <sstream>
++#include <string_view>
++
++namespace collector {
++namespace {
++constexpr std::int64_t maxInteger = 9007199254740991LL;
++
++bool validText(std::string_view s, std::size_t limit) {
++    if (s.empty() || s.size() > limit) return false;
++    for (std::size_t i = 0; i < s.size();) {
++        unsigned char c = s[i++];
++        if (c < 0x80) continue;
++        unsigned length = c >= 0xc2 && c <= 0xdf ? 2 : c >= 0xe0 && c <= 0xef ? 3 : c >= 0xf0 && c <= 0xf4 ? 4 : 0;
++        if (!length || i + length - 1 > s.size()) return false;
++        unsigned char first = static_cast<unsigned char>(s[i]);
++        if ((c == 0xe0 && first < 0xa0) || (c == 0xed && first >= 0xa0) ||
++            (c == 0xf0 && first < 0x90) || (c == 0xf4 && first >= 0x90)) return false;
++        for (unsigned j = 1; j < length; ++j)
++            if ((static_cast<unsigned char>(s[i++]) & 0xc0) != 0x80) return false;
++    }
++    return true;
++}
++void text(std::ostream& out, std::string_view value) {
++    static constexpr char hex[] = "0123456789abcdef";
++    out << '"';
++    for (unsigned char c : value) {
++        if (c == '"' || c == '\\') out << '\\' << static_cast<char>(c);
++        else if (c < 0x20) out << "\\u00" << hex[c >> 4] << hex[c & 15];
++        else out << static_cast<char>(c);
++    }
++    out << '"';
++}
++bool safe(std::int64_t value) { return value >= 0 && value <= maxInteger; }
++struct Counts {
++    std::optional<std::int64_t> input, output;
++    bool complete = false;
++};
++void counts(std::ostream& out, const Counts& c) {
++    out << "\"input\":";
++    if (c.input) out << *c.input; else out << "null";
++    out << ",\"output\":";
++    if (c.output) out << *c.output; else out << "null";
++    out << ",\"complete\":" << (c.complete ? "true" : "false");
++}
++std::optional<std::array<std::string, 7>> dates(const std::string& date) {
++    if (date.size() != 10 || date[4] != '-' || date[7] != '-') return std::nullopt;
++    for (std::size_t i : {0, 1, 2, 3, 5, 6, 8, 9}) if (date[i] < '0' || date[i] > '9') return std::nullopt;
++    const int y = std::stoi(date.substr(0, 4));
++    const unsigned m = std::stoi(date.substr(5, 2)), d = std::stoi(date.substr(8, 2));
++    const std::chrono::year_month_day ymd{std::chrono::year{y}, std::chrono::month{m}, std::chrono::day{d}};
++    if (!ymd.ok()) return std::nullopt;
++    std::array<std::string, 7> result;
++    for (int i = 0; i < 7; ++i) {
++        auto day = std::chrono::year_month_day{std::chrono::sys_days{ymd} - std::chrono::days{6 - i}};
++        int year = int(day.year());
++        if (year < 1 || year > 9999) return std::nullopt;
++        char buf[11];
++        std::snprintf(buf, sizeof(buf), "%04d-%02u-%02u", year, unsigned(day.month()), unsigned(day.day()));
++        result[i] = buf;
++    }
++    return result;
++}
++}
++
++std::optional<std::string> widgetStatistics(const Sample& sample, const View& view,
++    const std::shared_ptr<const StatisticsHistory>& history, const std::string& hostId, const std::string& hostName) {
++    if (!view.name || !view.zone || !validText(*view.name, 128) || !validText(hostId, 128) || !validText(hostName, 128) ||
++        sample.snapshot.nowMs < -maxInteger || sample.snapshot.nowMs > maxInteger) return std::nullopt;
++    const auto namedZone = agentspeed::TimeZone::load(*view.name);
++    if (!namedZone || namedZone->identity() != view.zone->identity()) return std::nullopt;
++    const auto date = agentspeed::history::DayLabeler(view.zone).label(sample.snapshot.nowMs);
++    if (!date) return std::nullopt;
++    const auto calendar = dates(*date);
++    if (!calendar) return std::nullopt;
++    const auto& snapshot = sample.snapshot;
++    std::map<agentspeed::SourceKind, const agentspeed::SourceRow*> sources;
++    std::set<std::string_view> identifiers;
++    bool anyAvailable = false;
++    std::set<agentspeed::SourceKind> participating;
++    for (const auto& row : snapshot.sources) {
++        if (static_cast<unsigned>(row.source) > static_cast<unsigned>(agentspeed::SourceKind::Droid)) return std::nullopt;
++        auto id = agentspeed::sourceId(row.source);
++        if (!validText(id, 64) || !identifiers.insert(id).second || !sources.emplace(row.source, &row).second) return std::nullopt;
++        if (row.available && (!safe(row.todayInput) || !safe(row.todayOutput))) return std::nullopt;
++        if (row.enabled && row.available) {
++            anyAvailable = true;
++            if (row.todayInput != 0 || row.todayOutput != 0) participating.insert(row.source);
++        }
++    }
++    if (sources.size() > 32) return std::nullopt;
++    if (!safe(snapshot.todayInput) || !safe(snapshot.todayOutput)) return std::nullopt;
++    Counts today;
++    if (anyAvailable) { today.input = snapshot.todayInput; today.output = snapshot.todayOutput; }
++    today.complete = anyAvailable && !snapshot.warnings.partialHistory;
++
++    const bool matching = history && history->timezone == *view.name && history->usageDate == *date;
++    std::array<Counts, 7> days;
++    if (matching) {
++        std::map<std::pair<std::string, agentspeed::SourceKind>, const agentspeed::history::DailyUsage*> rows;
++        for (const auto& row : history->days) {
++            if (row.key.day < calendar->front() || row.key.day > calendar->back()) continue;
++            if (!safe(row.totals.input) || !safe(row.totals.output) ||
++                !rows.emplace(std::make_pair(row.key.day, row.key.source), &row).second) return std::nullopt;
++            participating.insert(row.key.source);
++        }
++        for (std::size_t i = 0; i < days.size(); ++i) {
++            std::int64_t input = 0, output = 0;
++            bool covered = true, found = false;
++            for (const auto kind : participating) {
++                auto sourceIt = sources.find(kind);
++                if (sourceIt == sources.end() || !sourceIt->second->enabled) { covered = false; continue; }
++                const auto* source = sourceIt->second;
++                auto it = rows.find({(*calendar)[i], kind});
++                if (!source->available || it == rows.end()) { covered = false; continue; }
++                found = true;
++                const auto& totals = it->second->totals;
++                if (input > maxInteger - totals.input || output > maxInteger - totals.output) return std::nullopt;
++                input += totals.input; output += totals.output;
++            }
++            // Unknown coverage cannot be represented as a complete sum, even if other rows exist.
++            if (covered && found) { days[i].input = input; days[i].output = output; }
++            days[i].complete = covered && found && history->complete;
++        }
++    }
++    days.back() = today;
++    bool historyComplete = true;
++    for (const auto& day : days) historyComplete &= day.complete;
++    std::ostringstream out;
++    out << "{\"version\":1,\"hostId\":"; text(out, hostId);
++    out << ",\"hostName\":"; text(out, hostName);
++    out << ",\"sampledAt\":" << snapshot.nowMs << ",\"timezone\":"; text(out, *view.name);
++    out << ",\"usageDate\":"; text(out, *date);
++    out << ",\"today\":{"; counts(out, today); out << "},\"days\":[";
++    for (std::size_t i = 0; i < days.size(); ++i) {
++        if (i) out << ',';
++        out << "{\"date\":"; text(out, (*calendar)[i]); out << ','; counts(out, days[i]); out << '}';
++    }
++    out << "],\"sources\":[";
++    bool first = true;
++    for (const auto& [kind, source] : sources) {
++        if (!first) out << ',';
++        first = false;
++        out << "{\"source\":"; text(out, agentspeed::sourceId(kind)); out << ',';
++        Counts value;
++        if (source->available && source->enabled) { value.input = source->todayInput; value.output = source->todayOutput; }
++        value.complete = source->available && source->enabled && !snapshot.warnings.partialHistory;
++        counts(out, value); out << '}';
++    }
++    out << "],\"historyComplete\":" << (historyComplete ? "true" : "false") << '}';
++    auto result = out.str();
++    if (result.size() > 65536) return std::nullopt;
++    return result;
++}
++}
+diff --git a/linux/collector/widget_statistics.hpp b/linux/collector/widget_statistics.hpp
+new file mode 100644
+index 00000000..71def423
+--- /dev/null
++++ b/linux/collector/widget_statistics.hpp
+@@ -0,0 +1,9 @@
++#pragma once
++
++#include "sampling.hpp"
++
++namespace collector {
++std::optional<std::string> widgetStatistics(const Sample& sample, const View& view,
++    const std::shared_ptr<const StatisticsHistory>& history, const std::string& hostId,
++    const std::string& hostName);
++}
+diff --git a/linux/tests/CMakeLists.txt b/linux/tests/CMakeLists.txt
+index c65c934e..5e18f84d 100644
+--- a/linux/tests/CMakeLists.txt
++++ b/linux/tests/CMakeLists.txt
+@@ -10,6 +10,8 @@ add_executable(agentspeed_tests
+     collector_integration_test.cpp
+     collector_daemon_test.cpp
+     collector_publisher_test.cpp
++    widget_publisher_test.cpp
++    widget_statistics_test.cpp
+     sampling_test.cpp
+     shared_history_test.cpp
+     current_values_test.cpp
+diff --git a/linux/tests/widget_publisher_test.cpp b/linux/tests/widget_publisher_test.cpp
+new file mode 100644
+index 00000000..8074f45c
+--- /dev/null
++++ b/linux/tests/widget_publisher_test.cpp
+@@ -0,0 +1,136 @@
++#include <gtest/gtest.h>
++#include "widget_publisher.hpp"
++#include "agentspeed/json.hpp"
++#include <algorithm>
++#include <atomic>
++#include <chrono>
++#include <condition_variable>
++#include <mutex>
++#include <thread>
++
++namespace {
++std::string subscribe(std::string request="r", std::string id="widget", std::string lease="lease", std::int64_t expiry=1710098200000LL, std::string host="host") {
++    return "{\"version\":1,\"type\":\"widget_subscribe\",\"controlVersion\":2,\"requestId\":\""+request+"\",\"subscriptionId\":\""+id+"\",\"lease\":\""+lease+"\",\"expiresAt\":"+std::to_string(expiry)+",\"hostId\":\""+host+"\",\"hostName\":\"name\",\"timezone\":\"UTC\",\"intervalMs\":1800000}";
++}
++std::string unsubscribe(std::string request, std::string id, std::string lease) {
++    return "{\"version\":1,\"type\":\"widget_unsubscribe\",\"controlVersion\":2,\"requestId\":\""+request+"\",\"subscriptionId\":\""+id+"\",\"lease\":\""+lease+"\"}";
++}
++bool accepted(const std::string& s) { agentspeed::json::Document d; return d.parse(s) && d.root()["accepted"].isTrue(); }
++template<class F> bool eventually(F f) { for(int i=0;i<200;++i) { if(f()) return true; std::this_thread::sleep_for(std::chrono::milliseconds(5)); } return false; }
++void sample(collector::WidgetPublisher& p, std::int64_t now) {
++    collector::Sample s; s.snapshot.nowMs=now; s.snapshot.todayInput=3; s.snapshot.todayOutput=4;
++    for (const auto& v:p.views()) p.sample(v,s,nullptr);
++}
++constexpr std::int64_t start=1710088200000LL;
++}
++TEST(WidgetPublisher, ConfirmsOnlyAfter200AndRejectsUnexpectedFields) {
++    std::atomic<std::int64_t> now{start}; std::atomic<int> calls{0}; std::string body; std::mutex mutex;
++    collector::WidgetPublisher::Options o; o.clock=[&]{return now.load();}; o.transport=[&](const auto&,const auto& b) { std::lock_guard<std::mutex> lock(mutex); body=b; ++calls; return collector::WidgetPublisher::Result{200}; };
++    collector::WidgetPublisher p(o);
++    auto invalid=subscribe(); invalid.insert(invalid.size()-1,",\"readToken\":\"secret\""); ASSERT_EQ(p.control(invalid,1,now).size(),1u);
++    EXPECT_TRUE(p.control(subscribe(),1,now).empty()); EXPECT_FALSE(p.authorized(now)); sample(p,now);
++    std::vector<std::pair<std::uint64_t,std::string>> replies; ASSERT_TRUE(eventually([&]{replies=p.replies(); return !replies.empty();}));
++    ASSERT_EQ(replies.size(),1u); EXPECT_TRUE(accepted(replies[0].second)); EXPECT_TRUE(p.authorized(now)); EXPECT_EQ(calls,1);
++    agentspeed::json::Document doc; { std::lock_guard<std::mutex> lock(mutex); ASSERT_TRUE(doc.parse(body)); }
++    EXPECT_EQ(doc.root()["snapshot"]["hostId"].string().value_or(""),"host"); EXPECT_EQ(doc.root()["snapshot"]["days"].size(),7u);
++}
++TEST(WidgetPublisher, Non200DoesNotAuthorizeAndDisconnectCancelsPending) {
++    std::atomic<std::int64_t> now{start}; collector::WidgetPublisher::Options o; o.clock=[&]{return now.load();}; o.transport=[](const auto&,const auto&){return collector::WidgetPublisher::Result{202};};
++    collector::WidgetPublisher p(o); EXPECT_TRUE(p.control(subscribe(),1,now).empty()); sample(p,now);
++    std::vector<std::pair<std::uint64_t,std::string>> replies; ASSERT_TRUE(eventually([&]{replies=p.replies(); return !replies.empty();})); EXPECT_FALSE(accepted(replies[0].second)); EXPECT_FALSE(p.authorized(now));
++    EXPECT_TRUE(p.control(subscribe("r2","other","otherlease"),2,now).empty()); p.disconnected(2); EXPECT_TRUE(p.views().empty()); EXPECT_FALSE(p.authorized(now));
++}
++TEST(WidgetPublisher, ReplacementFencesInflightAndWrongLeaseCannotRemoveIt) {
++    std::atomic<std::int64_t> now{start}; std::mutex m; std::condition_variable cv; bool entered=false, release=false;
++    collector::WidgetPublisher::Options o; o.clock=[&]{return now.load();}; o.transport=[&](const auto& token,const auto&) { if(token=="old") { std::unique_lock<std::mutex> lock(m); entered=true; cv.notify_all(); cv.wait(lock,[&]{return release;}); return collector::WidgetPublisher::Result{403}; } return collector::WidgetPublisher::Result{200}; };
++    collector::WidgetPublisher p(o); EXPECT_TRUE(p.control(subscribe("a","widget","old"),1,now).empty()); sample(p,now);
++    { std::unique_lock<std::mutex> lock(m); ASSERT_TRUE(cv.wait_for(lock,std::chrono::seconds(1),[&]{return entered;})); }
++    EXPECT_TRUE(p.control(subscribe("b","widget","new"),2,now).empty()); auto wrong=p.control(unsubscribe("u","widget","old"),1,now); ASSERT_EQ(wrong.size(),1u); EXPECT_FALSE(accepted(wrong[0])); sample(p,now);
++    { std::lock_guard<std::mutex> lock(m); release=true; } cv.notify_all();
++    ASSERT_TRUE(eventually([&]{return p.authorized(now);})); p.disconnected(2); EXPECT_TRUE(p.authorized(now));
++    auto right=p.control(unsubscribe("u2","widget","new"),2,now); ASSERT_EQ(right.size(),1u); EXPECT_TRUE(accepted(right[0])); EXPECT_FALSE(p.authorized(now));
++}
++TEST(WidgetPublisher, CadenceFailuresAndIndependentExpiry) {
++    std::atomic<std::int64_t> now{start}; std::atomic<int> calls{0}; collector::WidgetPublisher::Options o; o.clock=[&]{return now.load();};
++    o.transport=[&](const auto&,const auto&){ int n=++calls; return collector::WidgetPublisher::Result{n<=2?200L:500L}; };
++    collector::WidgetPublisher p(o); EXPECT_TRUE(p.control(subscribe("a","one","l1",start+7200000),1,now).empty()); EXPECT_TRUE(p.control(subscribe("b","two","l2",start+3600000),2,now).empty()); sample(p,now);
++    ASSERT_TRUE(eventually([&]{return calls==2;})); ASSERT_TRUE(eventually([&]{return p.authorized(now);}));
++    EXPECT_TRUE(p.control(subscribe("c","one","l1",start+7200000),1,now).size()==1); EXPECT_TRUE(p.views().empty());
++    now+=1800000; sample(p,now); ASSERT_TRUE(eventually([&]{return calls==4;})); EXPECT_TRUE(p.authorized(now)); EXPECT_TRUE(p.views().empty());
++    now=start+3600001; EXPECT_TRUE(p.authorized(now)); now=start+7200001; EXPECT_FALSE(p.authorized(now));
++}
++
++TEST(WidgetPublisher, RateLimitDelaysNextAttemptAndPendingExpires) {
++    std::atomic<std::int64_t> now{start}; std::atomic<int> calls{0};
++    collector::WidgetPublisher::Options o; o.clock=[&]{return now.load();};
++    o.transport=[&](const auto&,const auto&) { int n=++calls; return n==2 ? collector::WidgetPublisher::Result{429,"",3600000} : collector::WidgetPublisher::Result{200}; };
++    collector::WidgetPublisher p(o); EXPECT_TRUE(p.control(subscribe("a","one","l1",start+9000000),1,now).empty()); sample(p,now);
++    ASSERT_TRUE(eventually([&]{return p.authorized(now);})); now+=1800000; sample(p,now); ASSERT_TRUE(eventually([&]{return calls==2;}));
++    now+=1800000; EXPECT_TRUE(p.views().empty()); now+=1800001; EXPECT_FALSE(p.views().empty());
++    EXPECT_TRUE(p.control(subscribe("b","two","l2",start+9000000),2,now).empty()); now+=75001;
++    std::vector<std::pair<std::uint64_t,std::string>> replies;
++    ASSERT_TRUE(eventually([&]{auto batch=p.replies(); for (auto& r:batch) replies.push_back(std::move(r)); return std::any_of(replies.begin(),replies.end(),[](const auto& r){return r.first==2;});}));
++    for (const auto& r:replies) if (r.first==2) EXPECT_FALSE(accepted(r.second));
++}
++
++TEST(WidgetPublisher, DropsStaleQueuedSampleWithoutSpendingAttempt) {
++    std::atomic<std::int64_t> now{start}; std::atomic<int> calls{0};
++    std::mutex m; std::condition_variable cv; bool entered=false, release=false;
++    std::vector<std::pair<std::string,std::int64_t>> sent;
++    collector::WidgetPublisher::Options o; o.clock=[&]{return now.load();}; o.intervalMs=1;
++    o.transport=[&](const auto& token,const auto& body) {
++        agentspeed::json::Document doc; EXPECT_TRUE(doc.parse(body));
++        auto sampled=doc.root()["snapshot"]["sampledAt"].truncated().value_or(-1);
++        std::unique_lock<std::mutex> lock(m); sent.emplace_back(token,sampled); int n=++calls;
++        if (n==3) { entered=true; cv.notify_all(); cv.wait(lock,[&]{return release;}); }
++        return collector::WidgetPublisher::Result{200};
++    };
++    collector::WidgetPublisher p(o);
++    struct ReleaseGate { std::mutex& m; std::condition_variable& cv; bool& release; ~ReleaseGate() { { std::lock_guard<std::mutex> lock(m); release=true; } cv.notify_all(); } } gate{m,cv,release};
++    EXPECT_TRUE(p.control(subscribe("a","one","l1",start+9000000),1,now).empty());
++    auto second=subscribe("b","two","l2",start+9000000);
++    second.replace(second.find("\"UTC\""),5,"\"America/New_York\"");
++    EXPECT_TRUE(p.control(second,2,now).empty()); sample(p,now);
++    int confirmed=0; ASSERT_TRUE(eventually([&]{for (auto& r:p.replies()) { EXPECT_TRUE(accepted(r.second)); ++confirmed; } return confirmed==2;}));
++    now+=1; sample(p,now);
++    { std::unique_lock<std::mutex> lock(m); ASSERT_TRUE(cv.wait_for(lock,std::chrono::seconds(1),[&]{return entered;})); }
++    now+=300001;
++    { std::lock_guard<std::mutex> lock(m); release=true; } cv.notify_all();
++    auto due=[&](const char* zone) { auto views=p.views(); return std::any_of(views.begin(),views.end(),[&](const auto& v){return v.name && *v.name==zone;}); };
++    ASSERT_TRUE(eventually([&]{return due("UTC") && due("America/New_York");})); EXPECT_EQ(calls,3);
++    const auto fresh=now.load(); sample(p,fresh); ASSERT_TRUE(eventually([&]{return calls==5;}));
++    now+=1; ASSERT_TRUE(eventually([&]{return due("UTC") && due("America/New_York");}));
++    sample(p,fresh); EXPECT_EQ(calls,5);
++    sample(p,now); ASSERT_TRUE(eventually([&]{return calls==7;}));
++    { std::lock_guard<std::mutex> lock(m);
++      ASSERT_EQ(sent.size(),7u);
++      for (const auto& token : {std::string("l1"),std::string("l2")}) {
++          std::int64_t previous=-1; int count=0;
++          for (const auto& item:sent) if (item.first==token) { EXPECT_GT(item.second,previous); previous=item.second; ++count; }
++          EXPECT_GE(count,3);
++      }
++    }
++}
++
++TEST(WidgetPublisher, AbsentUnsubscribeFencesDelayedSubscribeAcrossClients) {
++    std::atomic<std::int64_t> now{start}; std::atomic<int> calls{0};
++    collector::WidgetPublisher::Options o; o.clock=[&]{return now.load();};
++    o.transport=[&](const auto&,const auto&){++calls; return collector::WidgetPublisher::Result{200};};
++    collector::WidgetPublisher p(o);
++    auto revoked=p.control(unsubscribe("u","widget","lease"),1,now); ASSERT_EQ(revoked.size(),1u); EXPECT_TRUE(accepted(revoked[0]));
++    auto delayed=p.control(subscribe("s","widget","lease"),2,now); ASSERT_EQ(delayed.size(),1u); EXPECT_FALSE(accepted(delayed[0]));
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(delayed[0])); EXPECT_EQ(doc.root()["error"].string().value_or(""),"cancelled");
++    sample(p,now); EXPECT_EQ(calls,0); EXPECT_FALSE(p.authorized(now));
++}
++
++TEST(WidgetPublisher, RejectsInvalidLeaseBoundariesAndZoneBeforePublishing) {
++    std::atomic<std::int64_t> now{start}; std::atomic<int> calls{0};
++    collector::WidgetPublisher::Options o; o.clock=[&]{return now.load();}; o.transport=[&](const auto&,const auto&){++calls; return collector::WidgetPublisher::Result{200};};
++    collector::WidgetPublisher p(o);
++    for (auto expiry : {std::int64_t(0), start, std::int64_t(start+2592000001LL)}) {
++        auto response=p.control(subscribe("r","widget","lease",expiry),1,now); ASSERT_EQ(response.size(),1u); EXPECT_FALSE(accepted(response[0]));
++    }
++    auto invalid=subscribe(); auto pos=invalid.find("\"UTC\""); ASSERT_NE(pos,std::string::npos); invalid.replace(pos,5,"\"../bad\"");
++    auto response=p.control(invalid,1,now); ASSERT_EQ(response.size(),1u); EXPECT_FALSE(accepted(response[0]));
++    sample(p,now); EXPECT_EQ(calls,0); EXPECT_FALSE(p.authorized(now));
++}
+diff --git a/linux/tests/widget_statistics_smoke.py b/linux/tests/widget_statistics_smoke.py
+new file mode 100755
+index 00000000..4a53c660
+--- /dev/null
++++ b/linux/tests/widget_statistics_smoke.py
+@@ -0,0 +1,298 @@
++#!/usr/bin/env python3
++"""Isolated real-SSH/HTTPS widget smoke; run only the test-relay collector binary.
++
++sudo python3 linux/tests/widget_statistics_smoke.py --collector /absolute/path/to/agentspeed-collector-ssh-smoke --evidence /tmp/widget-smoke-evidence.json
++Requires root, ssh, sshd, ssh-keygen, openssl, useradd, userdel, chpasswd,
++/proc, a free localhost:19443, and an absent /tmp/agent-speed-shared-ca.pem.
++The 30-minute cadence and expiry races require the separate C++ clock tests.
++"""
++import argparse
++import datetime
++import http.server
++import json
++import os
++import pathlib
++import pwd
++import secrets
++import shutil
++import signal
++import socket
++import ssl
++import subprocess
++import tempfile
++import threading
++import time
++
++from shared_collector_ssh_smoke import Client, CA, HOST_ID, HOST_NAME, ORIGIN, ack, command, eventually, processes, require
++
++
++class Relay(http.server.ThreadingHTTPServer):
++    daemon_threads = True
++    allow_reuse_address = True
++
++    def __init__(self):
++        super().__init__(('127.0.0.1', 19443), Handler)
++        self.lock = threading.Lock()
++        self.records = []
++        self.tokens = {}
++        self.gate = threading.Event()
++
++    def count(self, label):
++        with self.lock:
++            return sum(record['label'] == label for record in self.records)
++
++    def record(self, label):
++        with self.lock:
++            return next(record for record in self.records if record['label'] == label)
++
++
++class Handler(http.server.BaseHTTPRequestHandler):
++    def log_message(self, *args):
++        pass
++
++    def do_POST(self):
++        size = int(self.headers.get('Content-Length', '0'))
++        if size > 65536:
++            self.send_error(413)
++            return
++        body = self.rfile.read(size)
++        token = self.headers.get('Authorization', '').removeprefix('Bearer ')
++        with self.server.lock:
++            label = self.server.tokens.get(token, 'unknown')
++            self.server.records.append({'label': label, 'path': self.path, 'body': body})
++        if label == 'first':
++            self.server.gate.wait(20)
++        status = 401 if label in ('bad', 'unknown') else 200
++        try:
++            self.send_response(status)
++            self.send_header('Content-Length', '0')
++            self.end_headers()
++        except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
++            pass
++
++
++def assert_no_ack(client, request, seconds):
++    end = time.monotonic() + seconds
++    while time.monotonic() < end:
++        try:
++            item = client.messages.get(timeout=min(.1, max(.001, end-time.monotonic())))
++        except __import__('queue').Empty:
++            continue
++        require(not (item.get('requestId') == request and item.get('type', '').endswith('_ack')),
++                'subscribe acknowledged before HTTPS response')
++        require(not item.get('_invalid'), 'invalid NDJSON from collector')
++    require(client.process.poll() is None, 'SSH client exited unexpectedly')
++
++
++def check_snapshot(record, expected):
++    require(record['path'] == '/v1/widget-publish', 'wrong relay path')
++    require(len(record['body']) <= 65536, 'snapshot body exceeds limit')
++    body = json.loads(record['body'])
++    require(set(body) == {'snapshot'}, 'wrong publish envelope')
++    s = body['snapshot']
++    require(set(s) == {'version','hostId','hostName','sampledAt','timezone','usageDate','today','days','sources','historyComplete'}, 'wrong snapshot schema')
++    require(s['version'] == 1 and s['hostId'] == HOST_ID and s['hostName'] == HOST_NAME and s['timezone'] == 'UTC', 'wrong snapshot binding')
++    require(type(s['sampledAt']) is int and s['sampledAt'] > 0, 'invalid timestamp')
++    date = datetime.datetime.fromtimestamp(s['sampledAt']/1000, datetime.timezone.utc).date()
++    require(s['usageDate'] == date.isoformat(), 'wrong usage date')
++    def row(r, fields):
++        require(set(r) == fields | {'input','output','complete'}, 'wrong statistics row schema')
++        require(type(r['complete']) is bool, 'invalid completeness')
++        for key in ('input', 'output'):
++            require(r[key] is None or (type(r[key]) is int and 0 <= r[key] <= 9007199254740991), 'invalid token count')
++    row(s['today'], set())
++    require((s['today']['input'], s['today']['output']) == expected[date.isoformat()], 'incorrect normalized today usage')
++    require(type(s['historyComplete']) is bool and len(s['days']) == 7, 'invalid history')
++    for i, r in enumerate(s['days']):
++        row(r, {'date'})
++        require(r['date'] == (date - datetime.timedelta(days=6-i)).isoformat(), 'history dates not ascending calendar days')
++    require(all((r['input'], r['output']) == expected[r['date']] for r in s['days']), 'incorrect seven-day history totals')
++    require(s['historyComplete'] == all(r['complete'] for r in s['days']), 'incorrect history completeness')
++    require({k:s['days'][-1][k] for k in ('input','output','complete')} == s['today'], 'today history mismatch')
++    require(isinstance(s['sources'], list) and 0 < len(s['sources']) <= 32, 'invalid source count')
++    ids = set()
++    for r in s['sources']:
++        row(r, {'source'})
++        require(isinstance(r['source'], str) and 0 < len(r['source'].encode()) <= 64 and r['source'] not in ids, 'invalid source identity')
++        ids.add(r['source'])
++    omp = next((r for r in s['sources'] if r['source'] == 'omp'), None)
++    require(omp is not None and (omp['input'], omp['output']) == expected[date.isoformat()], 'incorrect normalized OMP source usage')
++    return {'today': s['today'], 'days': s['days'], 'sourceCount': len(s['sources']), 'usageDate': s['usageDate'], 'timezone': s['timezone'], 'historyComplete': s['historyComplete']}
++
++
++def run(args):
++    require(os.geteuid() == 0, 'must run as root (e.g. sudo)')
++    for name in ('ssh', 'sshd', 'ssh-keygen', 'openssl', 'useradd', 'userdel', 'chpasswd'):
++        require(shutil.which(name), 'missing prerequisite: ' + name)
++    require(pathlib.Path('/proc').is_dir(), '/proc is required')
++    require(os.path.isabs(args.collector) and os.access(args.collector, os.X_OK), 'collector must be an executable absolute path')
++    binary = pathlib.Path(args.collector).read_bytes()
++    require(b'https://localhost:19443/v1/widget-publish' in binary and b'/tmp/agent-speed-shared-ca.pem' in binary, 'collector is not the fixed local TLS test variant')
++    require(not CA.exists(), str(CA) + ' already exists; refusing to overwrite')
++    user = 'aw' + secrets.token_hex(6)
++    uid = None
++    made_user = made_ca = False
++    relay = sshd = sshd_log = None
++    relay_running = False
++    clients = []
++    result = {'passed': False, 'limits': ['Actual localhost TLS and SSH only; no production endpoint.', '30-minute cadence and expiry races require C++ clock tests; only short-term absence of repeats is checked.']}
++    with tempfile.TemporaryDirectory(prefix='agentspeed-widget-') as tmp:
++        root = pathlib.Path(tmp)
++        root.chmod(0o755)
++        home = root / 'home'
++        home.mkdir(mode=0o700)
++        try:
++            command('useradd', '-M', '-d', str(home), '-s', '/bin/sh', user)
++            made_user = True
++            account = pwd.getpwnam(user)
++            uid = account.pw_uid
++            os.chown(home, uid, account.pw_gid)
++            command('chpasswd', input=(user + ':' + secrets.token_hex(32) + '\n').encode())
++            for key in ('client', 'host'):
++                command('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(root/key))
++            sshdir = home/'.ssh'
++            sshdir.mkdir(mode=0o700)
++            authorized = sshdir/'authorized_keys'
++            authorized.write_bytes((root/'client.pub').read_bytes())
++            authorized.chmod(0o600)
++            for p in (sshdir, authorized): os.chown(p, uid, account.pw_gid)
++            fd = os.open(CA, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
++            os.close(fd)
++            made_ca = True
++            command('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(root/'ca.key'), '-out', str(CA), '-days', '1', '-subj', '/CN=Agent Speed Smoke CA')
++            command('openssl', 'req', '-newkey', 'rsa:2048', '-nodes', '-keyout', str(root/'server.key'), '-out', str(root/'server.csr'), '-subj', '/CN=localhost')
++            (root/'extensions').write_text('subjectAltName=DNS:localhost\nextendedKeyUsage=serverAuth\n')
++            command('openssl', 'x509', '-req', '-in', str(root/'server.csr'), '-CA', str(CA), '-CAkey', str(root/'ca.key'), '-CAcreateserial', '-CAserial', str(root/'serial'), '-out', str(root/'server.crt'), '-days', '1', '-extfile', str(root/'extensions'))
++            relay = Relay()
++            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
++            context.load_cert_chain(root/'server.crt', root/'server.key')
++            relay.socket = context.wrap_socket(relay.socket, server_side=True)
++            threading.Thread(target=relay.serve_forever, daemon=True).start()
++            relay_running = True
++            with socket.socket() as sock:
++                sock.bind(('127.0.0.1', 0))
++                port = sock.getsockname()[1]
++            config = root/'sshd_config'
++            config.write_text(f'Port {port}\nListenAddress 127.0.0.1\nHostKey {root}/host\nPidFile {root}/sshd.pid\nAuthorizedKeysFile .ssh/authorized_keys\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\nPermitRootLogin no\nAllowUsers {user}\nStrictModes yes\n')
++            pathlib.Path('/run/sshd').mkdir(mode=0o755, parents=True, exist_ok=True)
++            sshd_log = (root/'sshd.log').open('w+b', buffering=0)
++            sshd = subprocess.Popen([shutil.which('sshd'), '-D', '-e', '-f', str(config)], stdout=subprocess.DEVNULL, stderr=sshd_log)
++            def ready():
++                require(sshd.poll() is None, 'isolated sshd exited')
++                try:
++                    with socket.create_connection(('127.0.0.1', port), .2): return True
++                except OSError: return False
++            eventually(ready, 5, 'isolated sshd did not listen')
++            fixture = home/'.omp/agent/sessions/-private-project'
++            fixture.mkdir(parents=True)
++            for p in (home/'.omp', home/'.omp/agent', home/'.omp/agent/sessions', fixture): os.chown(p, uid, account.pw_gid)
++            now = datetime.datetime.now(datetime.timezone.utc)
++            expected = {}
++            for i in range(7):
++                when = now - datetime.timedelta(days=6-i)
++                stamp = when.isoformat(timespec='milliseconds').replace('+00:00', 'Z')
++                session = '01a158ec-db00-75e2-83a6-%012d' % (i+1)
++                f = fixture/(when.strftime('%Y-%m-%dT%H-%M-%S-000Z_') + session + '.jsonl')
++                # OMP normalizes input by adding cache read/write; reasoning is already in output.
++                expected[when.date().isoformat()] = (360+i, 410+i)
++                entries = [{'type':'session','version':3,'id':session,'timestamp':stamp,'cwd':'/private-project'}, {'type':'message','id':'response-%d' % i,'parentId':None,'timestamp':stamp,'message':{'role':'assistant','content':[],'api':'openai-responses','provider':'openai','model':'gpt-5.5','usage':{'input':300+i,'output':410+i,'cacheRead':40,'cacheWrite':20,'reasoningTokens':70,'totalTokens':770+2*i},'stopReason':'stop','timestamp':int(when.timestamp()*1000),'duration':3000}}]
++                f.write_text(''.join(json.dumps(x)+'\n' for x in entries))
++                os.chown(f, uid, account.pw_gid)
++            def connect():
++                c = Client(shutil.which('ssh'), user, port, root/'client', args.collector)
++                clients.append(c)
++                return c
++            tokens = {label: secrets.token_hex(32) for label in ('first','replacement','bad')}
++            relay.tokens = {token: label for label, token in tokens.items()}
++            expiry = int(time.time()*1000) + 300000
++            def subscribe(c, request, label, sub='widget-id'):
++                c.send({'version':1,'type':'widget_subscribe','controlVersion':2,'requestId':request,'subscriptionId':sub,'lease':tokens[label],'expiresAt':expiry,'hostId':HOST_ID,'hostName':HOST_NAME,'timezone':'UTC','intervalMs':1800000})
++            def unsubscribe(c, request, label):
++                c.send({'version':1,'type':'widget_unsubscribe','controlVersion':2,'requestId':request,'subscriptionId':'widget-id','lease':tokens[label]})
++                return ack(c, request)
++            def binding(a, request):
++                require(all(a.get(k) == v for k,v in {'version':1,'type':'widget_subscribe_ack','controlVersion':2,'requestId':request,'subscriptionId':'widget-id','hostId':HOST_ID,'hostName':HOST_NAME,'timezone':'UTC','expiresAt':expiry,'accepted':True}.items()), 'incorrect subscribe acknowledgement binding')
++            c = connect()
++            c.send({'version':1,'type':'capabilities','requestId':'caps'})
++            cap = c.get(lambda m: m.get('requestId') == 'caps')
++            require(cap.get('version') == 1 and cap.get('type') == 'capabilities' and cap.get('controlVersion') == 2 and {'live_activity_v2','shared_collector_v1','widget_statistics_v1'} <= set(cap.get('capabilities', [])) and 'live_activity_v1' not in cap.get('capabilities', []) and cap.get('subscribeTimeoutMs') == 75000 and cap.get('relayUrl') == ORIGIN and cap.get('minPublishIntervalMs') == 10000 and cap.get('widgetMinPublishIntervalMs') == 1800000 and cap.get('widgetMaxLeaseSeconds') == 2592000, 'unexpected capability contract')
++            c.send({'version':1,'type':'history_timezone','timezone':'UTC'})
++            def genuine_history(m):
++                if m.get('type') != 'history' or m.get('timezone') != 'UTC': return False
++                rows = {(r.get('day'), r.get('source')): (r.get('input'), r.get('output')) for r in m.get('days', [])}
++                return all(rows.get((day, 'omp')) == counts for day, counts in expected.items())
++            c.get(genuine_history, 60)
++            subscribe(c, 'first', 'first')
++            eventually(lambda: relay.count('first') >= 1, 20, 'first HTTPS POST missing')
++            assert_no_ack(c, 'first', 1.5)
++            snapshot = check_snapshot(relay.record('first'), expected)
++            relay.gate.set()
++            binding(ack(c, 'first'), 'first')
++            c.close()
++            clients.remove(c)
++            time.sleep(3)
++            require(processes(uid, args.collector), 'daemon exited despite authorized widget lease')
++            require(relay.count('first') == 1, 'immediate repeat POST after disconnect')
++            c = connect()
++            subscribe(c, 'repeat', 'first')
++            binding(ack(c, 'repeat'), 'repeat')
++            time.sleep(2)
++            require(relay.count('first') == 1, 'idempotent subscribe reset publishing cadence')
++            subscribe(c, 'replace', 'replacement')
++            eventually(lambda: relay.count('replacement') >= 1, 20, 'replacement HTTPS POST missing')
++            check_snapshot(relay.record('replacement'), expected)
++            binding(ack(c, 'replace'), 'replace')
++            require(unsubscribe(c, 'old-unsub', 'first').get('accepted') is False, 'old lease removed replacement')
++            subscribe(c, 'replacement-check', 'replacement')
++            binding(ack(c, 'replacement-check'), 'replacement-check')
++            time.sleep(2)
++            require(relay.count('replacement') == 1, 'replacement resubscribe caused immediate extra POST')
++            subscribe(c, 'bad', 'bad', 'bad-widget')
++            eventually(lambda: relay.count('bad') >= 1, 20, 'bad lease HTTPS POST missing')
++            require(ack(c, 'bad').get('accepted') is False, '401 lease falsely enabled')
++            require(unsubscribe(c, 'correct-unsub', 'replacement').get('accepted') is True, 'correct unsubscribe failed')
++            c.close()
++            clients.remove(c)
++            eventually(lambda: not processes(uid, args.collector), 45, 'daemon did not exit after unsubscribe')
++            result.update({'passed':True, 'capabilities':{'widgetMinPublishIntervalMs':1800000,'widgetMaxLeaseSeconds':2592000}, 'snapshot':snapshot, 'postCounts':{label:relay.count(label) for label in tokens}, 'checks':['ack gated on HTTPS 200','authorized daemon survives SSH disconnect','idempotent resubscribe','replacement and lease-scoped unsubscribe','401 rejected','bounded idle exit']})
++        finally:
++            if relay: relay.gate.set()
++            for c in clients: c.close()
++            if uid is not None:
++                for pid in processes(uid):
++                    try: os.kill(pid, signal.SIGTERM)
++                    except ProcessLookupError: pass
++                time.sleep(.2)
++                for pid in processes(uid):
++                    try: os.kill(pid, signal.SIGKILL)
++                    except ProcessLookupError: pass
++            if sshd:
++                sshd.terminate()
++                try: sshd.wait(timeout=5)
++                except subprocess.TimeoutExpired:
++                    sshd.kill(); sshd.wait()
++            if sshd_log: sshd_log.close()
++            if relay:
++                if relay_running: relay.shutdown()
++                relay.server_close()
++            if made_user: command('userdel', user)
++            if made_ca: CA.unlink(missing_ok=True)
++    return result
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--collector', required=True)
++    parser.add_argument('--evidence', required=True, help='path to write non-secret JSON evidence')
++    args = parser.parse_args()
++    try:
++        result = run(args)
++    except Exception as exc:
++        result = {'passed':False, 'error':str(exc), 'limits':['No full 30-minute cadence or expiry-race test.']}
++    pathlib.Path(args.evidence).write_text(json.dumps(result, indent=2) + '\n')
++    print(json.dumps(result, indent=2))
++    return 0 if result['passed'] else 1
++
++
++if __name__ == '__main__':
++    raise SystemExit(main())
+diff --git a/linux/tests/widget_statistics_test.cpp b/linux/tests/widget_statistics_test.cpp
+new file mode 100644
+index 00000000..2e64fb29
+--- /dev/null
++++ b/linux/tests/widget_statistics_test.cpp
+@@ -0,0 +1,154 @@
++#include <gtest/gtest.h>
++#include "widget_statistics.hpp"
++#include "agentspeed/json.hpp"
++
++namespace {
++using namespace collector;
++using agentspeed::SourceKind;
++Sample sample() {
++    Sample s;
++    s.snapshot.nowMs = 1710088200000LL; // 2024-03-10 19:10 UTC, US DST transition
++    s.snapshot.todayInput = 11;
++    s.snapshot.todayOutput = 7;
++    agentspeed::SourceRow row;
++    row.source = SourceKind::Codex;
++    row.available = true;
++    row.todayInput = 11;
++    row.todayOutput = 7;
++    s.snapshot.sources.push_back(row);
++    return s;
++}
++View view(const char* name = "UTC") { return {std::string(name), agentspeed::TimeZone::load(name)}; }
++std::shared_ptr<StatisticsHistory> history() {
++    auto h = std::make_shared<StatisticsHistory>();
++    h->timezone = "UTC";
++    h->usageDate = "2024-03-10";
++    h->complete = true;
++    for (int d = 4; d <= 10; ++d) {
++        agentspeed::history::DailyUsage row;
++        row.key.day = "2024-03-" + std::string(d < 10 ? "0" : "") + std::to_string(d);
++        row.key.source = SourceKind::Codex;
++        row.totals.input = d;
++        row.totals.output = d + 1;
++        h->days.push_back(row);
++    }
++    return h;
++}
++}
++TEST(WidgetStatistics, MissingHistoryAndTodayIdentity) {
++    auto json = widgetStatistics(sample(), view(), nullptr, "host", "name");
++    ASSERT_TRUE(json);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    auto root = doc.root(); auto days = root["days"];
++    ASSERT_EQ(days.size(), 7u);
++    EXPECT_TRUE(days.at(0)["input"].isNull());
++    EXPECT_FALSE(root["historyComplete"].isTrue());
++    EXPECT_EQ(days.at(6)["input"].raw(), root["today"]["input"].raw());
++    EXPECT_EQ(days.at(6)["output"].raw(), root["today"]["output"].raw());
++    EXPECT_EQ(days.at(6)["complete"].raw(), root["today"]["complete"].raw());
++}
++TEST(WidgetStatistics, PartialHistoryAndMissingCoverage) {
++    auto h = history(); h->complete = false;
++    auto s = sample(); s.snapshot.warnings.partialHistory = true;
++    auto json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
++    EXPECT_FALSE(doc.root()["days"].at(0)["complete"].isTrue());
++    EXPECT_FALSE(doc.root()["today"]["complete"].isTrue());
++    agentspeed::SourceRow other; other.source = SourceKind::Gemini; other.available = true; other.todayInput = 1;
++    s.snapshot.sources.push_back(other); h->complete = true;
++    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    EXPECT_TRUE(doc.root()["days"].at(0)["input"].isNull());
++    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
++}
++TEST(WidgetStatistics, UndetectedUnusedSourcesDoNotPoisonTotals) {
++    auto s = sample();
++    agentspeed::SourceRow unused; unused.source = SourceKind::Gemini; unused.available = false;
++    s.snapshot.sources.push_back(unused);
++    auto json = widgetStatistics(s, view(), history(), "h", "n"); ASSERT_TRUE(json);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    EXPECT_TRUE(doc.root()["today"]["complete"].isTrue());
++    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
++    EXPECT_TRUE(doc.root()["historyComplete"].isTrue());
++    EXPECT_TRUE(doc.root()["sources"].at(1)["input"].isNull());
++}
++TEST(WidgetStatistics, UnavailableSourcesAndStaleHistory) {
++    auto s = sample(); s.snapshot.sources[0].available = false;
++    auto h = history();
++    auto json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    EXPECT_TRUE(doc.root()["today"]["input"].isNull());
++    EXPECT_TRUE(doc.root()["sources"].at(0)["input"].isNull());
++    EXPECT_EQ(doc.root()["sources"].at(0)["source"].string(), "codex");
++    s = sample(); h->usageDate = "2024-03-09";
++    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    EXPECT_TRUE(doc.root()["days"].at(0)["input"].isNull());
++    h->usageDate = "2024-03-10"; h->timezone = "Europe/London";
++    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    EXPECT_TRUE(doc.root()["days"].at(0)["input"].isNull());
++}
++TEST(WidgetStatistics, CalendarAcrossDstAndTimezoneBoundary) {
++    auto s = sample(); s.snapshot.nowMs = 1710055800000LL; // March 10 07:30 UTC
++    auto ny = view("America/New_York"); ASSERT_TRUE(ny.zone);
++    auto json = widgetStatistics(s, ny, nullptr, "h", "n"); ASSERT_TRUE(json);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    EXPECT_EQ(doc.root()["usageDate"].string(), "2024-03-10");
++    EXPECT_EQ(doc.root()["days"].at(0)["date"].string(), "2024-03-04");
++    s.snapshot.nowMs = 1710052200000LL; // March 10 06:30 UTC, before transition
++    json = widgetStatistics(s, ny, nullptr, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    EXPECT_EQ(doc.root()["usageDate"].string(), "2024-03-10");
++    s.snapshot.nowMs = 1710034200000LL; // March 10 01:30 UTC, March 9 New York
++    json = widgetStatistics(s, ny, nullptr, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    EXPECT_EQ(doc.root()["usageDate"].string(), "2024-03-09");
++}
++TEST(WidgetStatistics, RejectsUnsafeDuplicatesAndInvalidText) {
++    auto s = sample();
++    EXPECT_FALSE(widgetStatistics(s, view(), nullptr, std::string(129, 'a'), "n"));
++    EXPECT_FALSE(widgetStatistics(s, view(), nullptr, std::string("\xc0\x80", 2), "n"));
++    s.snapshot.todayInput = 9007199254740992LL;
++    EXPECT_FALSE(widgetStatistics(s, view(), nullptr, "h", "n"));
++    s = sample(); s.snapshot.sources.push_back(s.snapshot.sources[0]);
++    EXPECT_FALSE(widgetStatistics(s, view(), nullptr, "h", "n"));
++    s = sample(); auto h = history(); h->days.push_back(h->days.front());
++    EXPECT_FALSE(widgetStatistics(s, view(), h, "h", "n"));
++}
++TEST(WidgetStatistics, HistoryCompletenessUsesFinalDays) {
++    auto s = sample(); s.snapshot.warnings.partialHistory = true;
++    auto json = widgetStatistics(s, view(), history(), "h", "n"); ASSERT_TRUE(json);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
++    EXPECT_FALSE(doc.root()["today"]["complete"].isTrue());
++    EXPECT_FALSE(doc.root()["days"].at(6)["complete"].isTrue());
++    s.snapshot.warnings.partialHistory = false;
++    auto h = history(); h->days.pop_back();
++    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    EXPECT_TRUE(doc.root()["today"]["complete"].isTrue());
++    EXPECT_TRUE(doc.root()["days"].at(6)["complete"].isTrue());
++    EXPECT_TRUE(doc.root()["historyComplete"].isTrue());
++}
++
++TEST(WidgetStatistics, RejectsOverflowAndMismatchedZone) {
++    auto s = sample(); auto h = history();
++    agentspeed::SourceRow other; other.source = SourceKind::Gemini; other.available = true;
++    s.snapshot.sources.push_back(other);
++    auto row = h->days.front(); row.key.source = SourceKind::Gemini; row.totals.input = 1;
++    h->days.front().totals.input = 9007199254740991LL;
++    h->days.push_back(row);
++    EXPECT_FALSE(widgetStatistics(s, view(), h, "h", "n"));
++    View mismatch{std::string("UTC"), agentspeed::TimeZone::load("America/New_York")};
++    ASSERT_TRUE(mismatch.zone);
++    EXPECT_FALSE(widgetStatistics(sample(), mismatch, nullptr, "h", "n"));
++    s = sample(); s.snapshot.sources[0].source = static_cast<SourceKind>(255);
++    EXPECT_FALSE(widgetStatistics(s, view(), nullptr, "h", "n"));
++}
++
++TEST(WidgetStatistics, MissingDayDoesNotBecomeZero) {
++    auto h = history();
++    h->days.erase(h->days.begin() + 2);
++    auto json = widgetStatistics(sample(), view(), h, "h", "n"); ASSERT_TRUE(json);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    EXPECT_TRUE(doc.root()["days"].at(2)["input"].isNull());
++    EXPECT_TRUE(doc.root()["days"].at(2)["output"].isNull());
++    EXPECT_FALSE(doc.root()["days"].at(2)["complete"].isTrue());
++    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
++}
+diff --git a/spec/NETWORK.md b/spec/NETWORK.md
+index 304cd25f..3a1d267c 100644
+--- a/spec/NETWORK.md
++++ b/spec/NETWORK.md
+@@ -337,3 +337,32 @@ or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup poli
+ service or linger policy is installed. Only existing activities are updated: no alert, sound, banner, ordinary
+ completion notification or push-to-start is sent. Local relay verification does not prove Cloudflare/APNs/iPhone delivery.
+ 
++
++## 9. Independent opt-in Widget statistics relay (unreleased)
++
++Foreground mobile consent may separately authorize the shared remote collector to POST a limited
++statistics projection to `https://agent-speed.yooztech.com/v1/widget-publish`. This is not ActivityKit
++authority: its scoped opaque publisher lease lasts at most 30 days, cannot be renewed by the daemon,
++and survives SSH close only within that authorization. Disable/forget/host changes revoke the Worker
++registration independently and attempt an exact lease-scoped collector unsubscribe. Ending a Live
++Activity does not revoke a separately authorized Widget feed. With no SSH clients or either kind of
++valid authorization, the daemon still exits after its bounded idle period.
++
++The body contains registered host identity, actual observation time/date/IANA timezone, today's input
++and output, the latest seven calendar days of input/output and coverage, and today's canonical source
++input/output and coverage. Unknown counts stay null, missing dates are not zero, and partial known
++values are not presented as complete accounting. No transcript, raw log, command, path, SSH credential,
++full history database or Apple provider secret is sent. The body is at most 64 KiB and has at most 32
++unique sources. Fixed endpoint TLS verifies certificates/hostname, prohibits redirects/proxies/netrc,
++and bounds connection/DNS to three seconds and the complete request to 15 seconds. Initial storage may
++occur immediately; later same-authorization attempts occur no more frequently than every 30 minutes,
++with a later Retry-After respected. There is no per-second Widget push or permanently authorized feed.
++
++HTTP 200 acknowledges storage only; a failed Apple push must not erase the stored projection. The Worker
++owns its independent installation-wide 30-minute push budget across host/token/lease replacements.
++WidgetKit push only invalidates a widget timeline; no ordinary notification, alert, sound or
++push-to-start is introduced. Narrow read/token-update credentials stay on the mobile/extension side,
++not the target host. Read access does not renew publisher authority, and removing widgets may stop
++pushes while a separately consented publisher lease continues storing bounded statistics until expiry.
++Local development checks and an unpublished ELF are not proof of production deployment or Apple delivery.
++

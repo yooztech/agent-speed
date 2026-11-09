@@ -1,7 +1,7 @@
-From 447aea4b0decb84dea3b7b574b4eefdb49ab169f Mon Sep 17 00:00:00 2001
+From 0619a4b475175890e9c6c5521b6d247416703068 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
-Subject: [PATCH 14/15] Connect remote performance and history metrics
+Subject: [PATCH 14/16] Connect remote performance and history metrics
 
 ---
  README.md                                     |  40 +-
@@ -21,7 +21,7 @@ Subject: [PATCH 14/15] Connect remote performance and history metrics
  linux/core/src/history_store.cpp              |  18 +-
  linux/core/src/monitor_snapshot.cpp           |   9 +
  linux/tests/CMakeLists.txt                    |  10 +-
- linux/tests/collector_daemon_test.cpp         | 227 ++++++++++
+ linux/tests/collector_daemon_test.cpp         | 306 +++++++++++++
  linux/tests/collector_integration_test.cpp    | 123 ++++++
  linux/tests/collector_publisher_test.cpp      | 282 ++++++++++++
  linux/tests/collector_test.cpp                |  60 +++
@@ -47,7 +47,7 @@ Subject: [PATCH 14/15] Connect remote performance and history metrics
  .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 ++++++
  .../EngineBehaviorTests.swift                 |   4 +
  spec/METRICS.md                               |  23 +-
- spec/NETWORK.md                               |  57 ++-
+ spec/NETWORK.md                               |  56 ++-
  spec/strings.json                             |   6 +
  .../src/AgentSpeed.Core/Engine/EngineFrame.cs |   1 +
  .../src/AgentSpeed.Core/Engine/SpeedEngine.cs |   3 +
@@ -73,7 +73,7 @@ Subject: [PATCH 14/15] Connect remote performance and history metrics
  .../RemoteProtocolLifecycleTests.cs           |   2 +-
  .../Perf/PerfHistoryTests.cs                  |  55 +++
  .../PerfPerformanceSectionTests.cs            |  28 ++
- 69 files changed, 2774 insertions(+), 307 deletions(-)
+ 69 files changed, 2852 insertions(+), 307 deletions(-)
  create mode 100644 linux/core/include/agentspeed/history_canonical.hpp
  create mode 100644 linux/core/src/history_canonical.cpp
  create mode 100644 linux/tests/collector_daemon_test.cpp
@@ -84,7 +84,7 @@ Subject: [PATCH 14/15] Connect remote performance and history metrics
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
 
 diff --git a/README.md b/README.md
-index 87352402..0968b8a2 100644
+index 35193b81..9f9eee7e 100644
 --- a/README.md
 +++ b/README.md
 @@ -61,7 +61,7 @@ Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uni
@@ -149,7 +149,7 @@ index 87352402..0968b8a2 100644
  After the client requests its time zone, snapshot today totals also use that zone. Untagged or null-zone snapshots
  retain collector-local compatibility behavior. History from older collectors without a matching time-zone tag is
  unavailable rather than being mislabeled as viewer-local.
-@@ -156,6 +174,12 @@ The flag covers known discovered-file and database errors: inaccessible director
+@@ -157,6 +175,12 @@ The flag covers known discovered-file and database errors: inaccessible director
  skipped during discovery, and unchanged cached files are not reopened. Thus `partial: false` does not guarantee
  exhaustive discovery or filesystem readability.
  
@@ -1407,13 +1407,14 @@ index 735e3a74..c65c934e 100644
  
 diff --git a/linux/tests/collector_daemon_test.cpp b/linux/tests/collector_daemon_test.cpp
 new file mode 100644
-index 00000000..50fc6c20
+index 00000000..3d370b42
 --- /dev/null
 +++ b/linux/tests/collector_daemon_test.cpp
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,306 @@
 +#include <gtest/gtest.h>
 +
 +#include "agentspeed/json.hpp"
++#include <openssl/evp.h>
 +
 +#include <chrono>
 +#include <cerrno>
@@ -1436,6 +1437,41 @@ index 00000000..50fc6c20
 +namespace fs = std::filesystem;
 +using Clock = std::chrono::steady_clock;
 +
++std::string digest(const fs::path& executable) {
++    std::ifstream input(executable, std::ios::binary);
++    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
++    if (!ctx || !input || EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1) {
++        EVP_MD_CTX_free(ctx); return {};
++    }
++    char buffer[16384];
++    while (input.read(buffer, sizeof(buffer)) || input.gcount())
++        if (EVP_DigestUpdate(ctx, buffer, static_cast<std::size_t>(input.gcount())) != 1) {
++            EVP_MD_CTX_free(ctx); return {};
++        }
++    unsigned char hash[EVP_MAX_MD_SIZE]; unsigned int size = 0;
++    bool ok = input.eof() && EVP_DigestFinal_ex(ctx, hash, &size) == 1;
++    EVP_MD_CTX_free(ctx);
++    if (!ok) return {};
++    const char hex[] = "0123456789abcdef"; std::string result;
++    for (unsigned int i = 0; i < size; ++i) { result += hex[hash[i] >> 4]; result += hex[hash[i] & 15]; }
++    return result;
++}
++
++pid_t socketPeer(const fs::path& directory) {
++    int dir = open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
++    if (dir < 0) return -1;
++    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
++    sockaddr_un address{}; address.sun_family = AF_UNIX;
++    std::string path = "/proc/self/fd/" + std::to_string(dir) + "/collector.sock";
++    std::strcpy(address.sun_path, path.c_str());
++    ucred cred{}; socklen_t size = sizeof(cred);
++    bool ok = fd >= 0 && connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
++              getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &size) == 0;
++    if (fd >= 0) close(fd);
++    close(dir);
++    return ok ? cred.pid : -1;
++}
++
 +class Home {
 +public:
 +    Home() {
@@ -1445,13 +1481,18 @@ index 00000000..50fc6c20
 +    ~Home() {
 +        // The test daemon has a one-second idle timeout; do not remove its lock
 +        // while it still owns it, even when an assertion terminates a test early.
-+        const auto socket = path / ".agent-speed/collector.sock";
 +        auto end = Clock::now() + std::chrono::seconds(8);
-+        while (!path.empty() && fs::is_socket(socket) && Clock::now() < end)
++        while (!path.empty() && Clock::now() < end) {
++            bool found = false; std::error_code ec;
++            for (const auto& entry : fs::recursive_directory_iterator(path, fs::directory_options::skip_permission_denied, ec))
++                if (entry.path().filename() == "collector.sock" && entry.is_socket(ec)) found = true;
++            if (!found) break;
 +            std::this_thread::sleep_for(std::chrono::milliseconds(50));
++        }
 +        if (!path.empty()) { std::error_code ec; fs::remove_all(path, ec); }
 +    }
-+    fs::path runtime() const { return path / ".agent-speed"; }
++    fs::path runtime() const { return path / ".agent-speed/daemons" / digest(AGENTSPEED_COLLECTOR_PATH); }
++    void makeRuntime() const { fs::create_directories(runtime()); chmod((path / ".agent-speed").c_str(), 0700); chmod((path / ".agent-speed/daemons").c_str(), 0700); chmod(runtime().c_str(), 0700); }
 +    fs::path path;
 +};
 +
@@ -1579,8 +1620,7 @@ index 00000000..50fc6c20
 +}
 +
 +TEST_F(DaemonProcessTest, RejectsSymlinkLockAndSocketWithoutTouchingTargets) {
-+    fs::create_directory(home.runtime());
-+    ASSERT_EQ(chmod(home.runtime().c_str(), 0700), 0);
++    home.makeRuntime();
 +    const auto target = home.path / "target";
 +    { std::ofstream file(target); file << "preserve"; }
 +    const auto lock = home.runtime() / "collector.lock";
@@ -1597,16 +1637,15 @@ index 00000000..50fc6c20
 +}
 +
 +TEST_F(DaemonProcessTest, RecoversStaleOwnedSocket) {
-+    fs::create_directory(home.runtime());
-+    ASSERT_EQ(chmod(home.runtime().c_str(), 0700), 0);
-+    auto path = home.runtime() / "collector.sock";
-+    ASSERT_LT(path.string().size(), sizeof(sockaddr_un::sun_path));
++    home.makeRuntime();
++    int dir = open(home.runtime().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC); ASSERT_GE(dir, 0);
 +    int fd = socket(AF_UNIX, SOCK_STREAM, 0); ASSERT_GE(fd, 0);
 +    sockaddr_un address{}; address.sun_family = AF_UNIX;
++    auto path = "/proc/self/fd/" + std::to_string(dir) + "/collector.sock";
 +    std::strcpy(address.sun_path, path.c_str());
 +    mode_t mask = umask(0177);
 +    int result = bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address));
-+    umask(mask); close(fd);
++    umask(mask); close(fd); close(dir);
 +    ASSERT_EQ(result, 0);
 +    Bridge bridge(home.path);
 +    ASSERT_TRUE(bridge.capabilities("restart"));
@@ -1614,15 +1653,55 @@ index 00000000..50fc6c20
 +}
 +
 +TEST_F(DaemonProcessTest, DifferentExecutableDigestDoesNotInterruptExistingBridge) {
-+    Bridge original(home.path);
-+    ASSERT_TRUE(original.capabilities("original"));
++    auto same = home.path / "same-collector";
 +    auto alternate = home.path / "alternate-collector";
++    ASSERT_TRUE(fs::copy_file(AGENTSPEED_COLLECTOR_PATH, same));
 +    ASSERT_TRUE(fs::copy_file(AGENTSPEED_COLLECTOR_PATH, alternate));
 +    { std::ofstream file(alternate, std::ios::binary | std::ios::app); ASSERT_TRUE(file.good()); file << "digest-change"; }
-+    ASSERT_EQ(chmod(alternate.c_str(), 0700), 0);
-+    { Bridge changed(home.path, alternate); EXPECT_TRUE(changed.failed()); }
-+    EXPECT_TRUE(original.capabilities("still-running"));
-+    EXPECT_TRUE(original.lineType("snapshot"));
++    ASSERT_EQ(chmod(same.c_str(), 0700), 0); ASSERT_EQ(chmod(alternate.c_str(), 0700), 0);
++    ASSERT_EQ(digest(same), digest(AGENTSPEED_COLLECTOR_PATH));
++    ASSERT_NE(digest(alternate), digest(same));
++    Bridge original(home.path), duplicate(home.path, same), changed(home.path, alternate);
++    ASSERT_TRUE(original.capabilities("original")); ASSERT_TRUE(duplicate.capabilities("duplicate"));
++    ASSERT_TRUE(changed.capabilities("changed"));
++    ASSERT_TRUE(original.lineType("snapshot")); ASSERT_TRUE(duplicate.lineType("snapshot"));
++    ASSERT_TRUE(changed.lineType("snapshot"));
++    const auto originalPid = socketPeer(home.runtime());
++    const auto changedDir = home.path / ".agent-speed/daemons" / digest(alternate);
++    const auto changedPid = socketPeer(changedDir);
++    ASSERT_GT(originalPid, 0); ASSERT_GT(changedPid, 0); EXPECT_NE(originalPid, changedPid);
++    EXPECT_EQ(socketPeer(home.path / ".agent-speed/daemons" / digest(same)), originalPid);
++    changed.closeInput(); ASSERT_TRUE(changed.wait(5000));
++    EXPECT_TRUE(original.capabilities("still-running")); EXPECT_TRUE(original.lineType("snapshot"));
++    EXPECT_EQ(socketPeer(home.runtime()), originalPid);
++}
++
++TEST_F(DaemonProcessTest, LongHomeAndLegacyEndpointsRemainUntouched) {
++    auto longHome = home.path / std::string(90, 'a');
++    fs::create_directory(longHome); ASSERT_EQ(chmod(longHome.c_str(), 0700), 0);
++    auto legacy = longHome / ".agent-speed"; fs::create_directory(legacy); ASSERT_EQ(chmod(legacy.c_str(), 0700), 0);
++    { std::ofstream(legacy / "collector.lock") << "legacy-lock"; std::ofstream(legacy / "collector.sock") << "legacy-socket"; }
++    {
++        Bridge bridge(longHome); ASSERT_TRUE(bridge.capabilities("long-home")); ASSERT_TRUE(bridge.lineType("snapshot"));
++        ASSERT_GT(socketPeer(legacy / "daemons" / digest(AGENTSPEED_COLLECTOR_PATH)), 0);
++    }
++    std::ifstream lock(legacy / "collector.lock"), socket(legacy / "collector.sock");
++    std::string a, b; lock >> a; socket >> b; EXPECT_EQ(a, "legacy-lock"); EXPECT_EQ(b, "legacy-socket");
++    auto end = Clock::now() + std::chrono::seconds(8);
++    while (fs::is_socket(legacy / "daemons" / digest(AGENTSPEED_COLLECTOR_PATH) / "collector.sock") && Clock::now() < end)
++        std::this_thread::sleep_for(std::chrono::milliseconds(50));
++}
++
++TEST_F(DaemonProcessTest, RejectsUnsafeDigestDirectory) {
++    auto dirs = home.path / ".agent-speed/daemons"; fs::create_directories(dirs);
++    ASSERT_EQ(chmod((home.path / ".agent-speed").c_str(), 0700), 0); ASSERT_EQ(chmod(dirs.c_str(), 0700), 0);
++    auto target = home.path / "target-dir"; fs::create_directory(target);
++    ASSERT_EQ(symlink(target.c_str(), home.runtime().c_str()), 0);
++    { Bridge bridge(home.path); ASSERT_TRUE(bridge.failed()); }
++    ASSERT_TRUE(fs::is_symlink(home.runtime())); ASSERT_TRUE(fs::is_empty(target));
++    fs::remove(home.runtime()); fs::create_directory(home.runtime()); ASSERT_EQ(chmod(home.runtime().c_str(), 0770), 0);
++    { Bridge bridge(home.path); ASSERT_TRUE(bridge.failed()); }
++    EXPECT_TRUE(fs::is_empty(home.runtime()));
 +}
 +
 +TEST_F(DaemonProcessTest, SlowReaderDoesNotPreventHealthyClientProgress) {
@@ -2058,7 +2137,7 @@ index 00000000..dc0189f4
 +    EXPECT_EQ(hosts[3], "host3");
 +}
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
-index d826d8c5..3feaf96e 100644
+index b8f1673d..db077a21 100644
 --- a/linux/tests/collector_test.cpp
 +++ b/linux/tests/collector_test.cpp
 @@ -39,6 +39,11 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
@@ -2098,7 +2177,7 @@ index d826d8c5..3feaf96e 100644
      EXPECT_EQ(root["sources"].at(0)["today_output"].raw(), "17");
      EXPECT_EQ(root["sources"].at(0)["available"].raw(), "true");
      EXPECT_EQ(root["agents"].at(0)["effort"].string(), "high");
-@@ -367,3 +383,47 @@ TEST(CollectorHistoryCache, RejectsSymlinkedCacheDirectory) {
+@@ -378,3 +394,47 @@ TEST(CollectorHistoryCache, RejectsSymlinkedCacheDirectory) {
      }
      std::filesystem::remove_all(root);
  }
@@ -2180,7 +2259,7 @@ index 8121f0bb..9421b2e5 100644
  constexpr double kTolerance = 1e-6;
 diff --git a/linux/tests/sampling_test.cpp b/linux/tests/sampling_test.cpp
 new file mode 100644
-index 00000000..8196a9fa
+index 00000000..a0f5132a
 --- /dev/null
 +++ b/linux/tests/sampling_test.cpp
 @@ -0,0 +1,117 @@
@@ -2231,7 +2310,7 @@ index 00000000..8196a9fa
 +        << R"({"type":"session","version":3,"id":"session-id","timestamp":"2026-10-19T23:30:00.000Z","cwd":"/project"})" << '\n'
 +        << R"({"type":"message","id":"response-id","parentId":null,"timestamp":"2026-10-19T23:30:00.000Z","message":{"role":"assistant","content":[],"api":"openai-responses","provider":"openai","model":"gpt-5.5","usage":{"input":300,"output":410,"cacheRead":40,"cacheWrite":20,"reasoningTokens":70,"totalTokens":770},"stopReason":"stop","timestamp":1792452600000,"duration":3000}})" << '\n';
 +
-+    collector::Sampler sampler;
++    collector::Sampler sampler(home, std::string(64, 'a'));
 +    const auto losAngeles = agentspeed::TimeZone::load("America/Los_Angeles");
 +    const auto kiritimati = agentspeed::TimeZone::load("Pacific/Kiritimati");
 +    ASSERT_TRUE(losAngeles);
@@ -2284,7 +2363,7 @@ index 00000000..8196a9fa
 +    ScopedEnv agentEnv("PI_CODING_AGENT_DIR", nullptr);
 +    ScopedEnv configEnv("PI_CONFIG_DIR", ".omp");
 +    {
-+        collector::Sampler sampler;
++        collector::Sampler sampler(home, std::string(64, 'a'));
 +        const auto now = static_cast<std::int64_t>(seconds) * 1000;
 +        sampler.poll(now);
 +        std::ofstream(file, std::ios::app)
@@ -3527,7 +3606,7 @@ index a87c8283..00b00cd5 100644
  
  性能表現 (DESIGN 12) over the window's range [`first`, `last`] — of every source, or only of the one source chosen in
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 803ab6b0..af8abf99 100644
+index c49834db..ba75a901 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -2,9 +2,11 @@
@@ -3568,11 +3647,10 @@ index 803ab6b0..af8abf99 100644
  Each configured host has a stable identity; remote sources are identified by host and source kind. Local sources and
  all enabled remote sources appear together in the native macOS dashboard. Local diagnostic reports and live reporting
  contain local data only. Snapshots and history replace the previous host state rather than accumulating on reconnect. The collector
-@@ -261,3 +280,37 @@ metadata checks may be skipped during discovery, and unchanged cached files are
- If the flag is absent, completeness is unknown, including when history is empty. On disconnect, last data is
+@@ -263,3 +282,36 @@ If the flag is absent, completeness is unknown, including when history is empty.
  stale/offline, not evidence of an idle agent or zero usage. Unavailable measurements remain unknown and in-progress
  rates derived from prior completions are estimates; see `spec/METRICS.md`.
-+
+ 
 +The shared daemon additionally persists timestamped canonical response metrics, execution-mode facts and ordered
 +action/completion timing and deduplication identifiers, allowing independent timezone projections without reparsing
 +each view. No prompt, transcript or command content is persisted in those canonical records. Each Hermes record
@@ -3587,7 +3665,7 @@ index 803ab6b0..af8abf99 100644
 +host-key-verified SSH. Only requested control-v2 frames negotiate this behavior; old clients receive no unsolicited
 +control frames. The exact schema, acknowledgment and timeout rules are in `docs/shared-collector.md`.
 +
-+The single effective-UID daemon may POST only to `https://agent-speed.yooztech.com/v1/publish`, using the opaque bearer
++Each effective-UID/executable-digest daemon may POST only to `https://agent-speed.yooztech.com/v1/publish`, using the opaque bearer
 +lease. The body contains one minimal `snapshot`: registered host identity, actual sample time, live speed/counts,
 +activity-timezone daily output and machine receive/transmit rates; unknown metrics remain null and title is null.
 +No raw logs, history, transcript, project path, command, SSH credential or provider secret is uploaded. The host never

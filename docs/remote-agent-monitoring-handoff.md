@@ -1,12 +1,26 @@
 # 远程 Agent 监控与 downstream patch 交接
 
-> 下文保留历史交接记录；最新共享 collector 实施及本地验证见紧接其后的“共享 collector 实施记录”。历史建议不代表待办，也不是运行证据。
+> 下文保留历史交接记录；最新摘要隔离行为见“按 collector 摘要隔离 daemon（未发布）”，其余段落保留各次实施时的契约与证据，不代表当前仍需全局单实例。
 > 当前 downstream macOS 和 Windows 原生界面通过 SSH 标准流运行 Linux 采集器；
 > 本机和已启用的远程主机同时作为标准数据源，按主机和来源分组并汇总，不切换目标。
 > 不可用数据不视为零，离线历史保留缺口，导出与可见历史一致；本机诊断报告
 > 不包含远程数据。fork.2 提供 Windows 便携 ZIP 和每用户安装程序；各平台更新器
 > 使用 fork 发布源。实际 GUI SSH 端到端仍未验证；限制及状态见
 > [fork.2 release notes](releases/v1.6.1-fork.2.md)，历史 [fork.1 notes](releases/v1.6.1-fork.1.md) 保留不变。
+
+## 按 collector 摘要隔离 daemon（未发布）
+
+- 同一有效 Unix UID、同一完整 ELF SHA-256 共用 daemon；同字节不同部署路径也复用。不同摘要并行运行，不替换、不终止旧 daemon，也不连接或清理旧全局 socket/lock。
+- runtime 为 passwd home 下 `.agent-speed/daemons/<sha256>/collector.{sock,lock}`；历史缓存为 `.cache/agentspeed-collector/<sha256>/history.sqlite3` 及同目录锁、WAL、SHM。旧数据库不导入，不同摘要不会重置彼此缓存。源日志只读共享，扫描与内存开销按摘要分别承担。
+- 每层 runtime 目录继续校验 owner、0700、非 symlink；锁为单链接 0600 常规文件，socket 为 0600，双方检查同 UID。通过仍持有的目录 FD 的 `/proc/self/fd/<fd>/collector.sock` 绑定/连接，避免完整摘要及长 home 超过 Unix socket 路径上限；精确身份握手仍保留。
+- 部署路径、无参数 bridge、`--identity`、数据 version 1 与 controlVersion 2 均不变；App 不传 namespace。每个摘要仅由自己的订阅和有效 lease 维持存活，空闲 30 秒退出。Activity/Widget relay 授权不按摘要隔离；清理授权必须由持有者定位原摘要 bridge，并独立撤销 relay，不能把一个 daemon 当作另一个的本地授权管理器。
+- 完整 16 项队列保留 Widget 功能；实现归入原功能补丁，不新增纠错补丁。测试树 `/tmp/agent-speed-digest-daemons`，队列整合树 `/tmp/agent-speed-digest-queue`。本地 production ELF 为前者 `build-digest/collector/agentspeed-collector`，实际 SHA-256 `f2dca601361f46f404aea039393292f6e1f7a5115a8118e245b60758e3e73f00`；不是正式 Release 资产，也未替换当前使用中的部署。
+- 整合应用 commit `4adfdc22705674e2735e24492ec5fa7d7adf5185`、完整 tree `2767eabad474bf5b1f0453a8b5f93f2fce52f401`；全 16 项已从固定 pin 重放至 `/tmp/agent-speed-digest-replay`，完整 tree 一致，Linux 子树 `f5ddc56d611fdb4f86e40e592493883a4316e356` 与已构建验证的源码一致。新构建使用 CMake 的 headless、tests、SSH smoke 开关，GCC 12.2；未复制未打补丁的根源码来构建。
+- 本地验证：31 项 collector/daemon/cache/sampler/integration 回归通过；强化的双摘要并发缓存持久化回归随后单独通过；现有 WidgetPublisher/WidgetStatistics 17 项通过。
+- 真实隔离 SSH/TLS 验收：`shared_collector_ssh_smoke.py --collector .../agentspeed-collector-ssh-smoke --production-collector .../agentspeed-collector --port 22491`，24 场景通过，29 次 relay 请求，schema 验证错误 0。包含同摘要复用、不同摘要同时输出、独立磁盘缓存与空闲退出、legacy 端点不变、正式二进制 canonical home 路径；syscall 观察为一个 daemon 读取受控源，三个 bridge 均未读该源。旧“异摘要必须失败”的场景已删除。
+- 完整 SSH JSON 证据：`/tmp/agent-speed-digest-ssh-smoke.json`。移动协调 owner 另外报告真实 dartssh2 对旧全局 daemon 与新摘要 daemon 同时连接通过；这是移动侧验收回报，不替代上述本侧隔离 SSH 证据。
+- 真实 `widget_statistics_smoke.py` 同时通过 ACK 门控、SSH EOF 后授权存活、幂等重订阅、替换/精确 lease 取消、401 拒绝与空闲退出；证据 `/tmp/agent-speed-digest-widget-smoke.json`。只验证 localhost SSH/TLS，不证明 production Worker、APNs、iPhone 或原生桌面 UI；完整 Release 平台门禁未运行。没有 push、打 tag 或发布。
+- 为移动端未来正式 Release 对齐 metadata：`protocol.shared_collector.capabilities` 增加已实测的 `widget_statistics_v1`，同步生成器、发布前精确校验与文档；未改 fork.8 已发布资产。打包与 ZIP 校验共 8 项测试通过，另用上述真实 production ELF 暂存三件资产，执行发布工作流相同的 descriptor 断言及 checksum 校验通过。临时本地 tag 明确为 `local-unreleased-digest-smoke`，不是发布候选。
 
 ## 共享 collector 实施记录
 
@@ -219,3 +233,78 @@ OmniRoute 维护方式参考（不是本项目已有命令）：
 1. 阅读本交接及上述相关入口，复核源码实际接口，不把设计建议当已实现事实。
 2. 给出可执行的 patch 分解、最小维护工具方案、协议与安全边界、平台验证路径；保持 upstream diff 小、可删除、可重放。
 3. 本轮仅确认接收并提交计划；等待用户在本 workspace 继续指示，不自动开始功能开发、改动源码或发布。
+
+## Widget 统计 feed（未发布的独立功能）
+
+维护队列新增 `0016-Add-independent-widget-statistics-feed.patch`；旧 0001–0015 字节保持不变。
+应用代码仍只来自 upstream pin `384ce020cc655133e95aaad5cc085f3985f0ed99` 加完整有序队列；
+没有修改维护 checkout 根应用源码，也没有改版本、push、标签、Release、生产 Worker 或 Apple 配置。
+移动/Worker/Native 由其 owner 独立实现；本节只证明维护端行为，不代替跨端或真机验收。
+
+### 接口和数据边界
+
+- 保留现有 `version:1`、`controlVersion:2`、LiveActivity v2/十秒行为，额外协商
+  `widget_statistics_v1`、`widgetMinPublishIntervalMs:1800000`、`widgetMaxLeaseSeconds:2592000`。
+- `widget_subscribe` 必填：`version`、`type`、`controlVersion`、`requestId`、`subscriptionId`、
+  opaque publisher `lease`、整数 Unix 毫秒 `expiresAt`、注册的 `hostId`/`hostName`、IANA
+  `timezone`、固定 `intervalMs:1800000`。不接收 URL、readToken 或 registrationToken。
+- `widget_subscribe_ack` 完整回显 `version:1`、`type:widget_subscribe_ack`、`controlVersion:2`、
+  `requestId`、`subscriptionId`、`hostId`、`hostName`、`timezone`、`expiresAt`，以及 Boolean
+  `accepted`；负确认含安全 `error`。仅真实统计首次 POST 得 Worker HTTP200 才正确认，
+  不把存储成功说成 APNs/设备送达；确认窗口最多 75 秒。
+- `widget_unsubscribe` 必填外层版本、controlVersion、requestId、subscriptionId 和当前 publisher
+  lease；ACK 回显 request/subscription/version/controlVersion 和 accepted。错误旧 lease 不影响替换；
+  缺席订阅也记录有界取消 tombstone，阻止另一条 SSH 上迟到的相同 lease subscribe 复活。
+- 新 lease/binding 首发可立即存储；同 lease 幂等重订阅不重置 30 分钟周期。确认后 SSH EOF
+  不撤销；Widget 与 ActivityKit 独立，到期不续权，授权最多 30 日。Worker 独立保持跨替换 push 预算。
+- 只向固定 `https://agent-speed.yooztech.com/v1/widget-publish` 发 `{snapshot:统计对象}`；TLS
+  校验证书/主机名、不跟随跳转、不用环境代理或 netrc，连接/DNS 三秒，总请求十五秒，响应有界。
+  除首发之外至少三十分钟一轮，429 尊重更晚 Retry-After；永久拒绝只清理匹配代次，
+  5xx/断网不排队重放或密集重试。已排队样本在真正发送前再次检查新鲜度/严格递增。
+
+统计投影来自现有唯一采集/历史管线及 immutable typed history，不从 ActivityKit 最小 payload 拼造，
+也不加新扫描器。结构为 version/hostId/hostName/sampledAt/timezone/usageDate/today/days/sources/historyComplete。
+七天是含今天的七个日历日，缺日/缺参与源覆盖为 null，不补零；今天 day 行三字段完全等于 today，
+historyComplete 等于七个最终 day.complete 全真。来源保留不可用状态；没有使用证据的未检测 harness
+不伪装成零贡献，也不毒化真实合计。已有 cached/reasoning 计数不再二次加入 input/output。
+统计不能诚实表示、整数溢出、过多来源或超过 64 KiB 时拒绝，不静默截断。
+
+### 已实际观察的隔离进程路径
+
+`artifacts/widget-statistics/verification/widget-ssh-tls-smoke.json` 保留真实 OpenSSH + daemon +
+固定 loopback TLS 测试 transport 的结果。七份实际 OMP JSONL 日期记录先通过 SSH 历史管线读取，
+再验证 Widget 发布；不是注入假的统计对象或 mocked HTTP transport。观测到七日 input 为
+360–366、output 为 410–416，今天 366/416，17 个规范来源，historyComplete=true。
+还验证：HTTP200 前无 ACK、全部 SSH 退出后已确认授权保持 daemon、相同 lease 重订阅不重复 POST、
+替换首发和旧 lease 取消隔离、401 不假启用、正确取消后空闲退出。
+
+三十分钟完整间隔、时钟跳变、过期和旧响应竞态由确定性 C++ 时钟回归覆盖；短时 SSH 冒烟不冒充
+实际等待三十分钟。固定 loopback variant 不分发，生产 ELF 没有 URL/CA 运行时覆盖能力。
+运行命令需要预先创建证据目录及本地 sudo，脚本只创建隔离用户/sshd/TLS，自动清理，不访问生产主机：
+
+```sh
+mkdir -p artifacts/widget-statistics/verification
+sudo -n python3 <prepared-tree>/linux/tests/widget_statistics_smoke.py \
+  --collector <prepared-tree>/build-widget/collector/agentspeed-collector-ssh-smoke \
+  --evidence /home/projects/agent-speed/artifacts/widget-statistics/verification/widget-ssh-tls-smoke.json
+```
+
+可复核来源保存在 `artifacts/widget-statistics/source.bundle`，含真实 Widget 功能开发 commit，
+以公开 pin 为 prerequisite，而不是仅引用易失的 `/tmp` 文件。最终 ELF、全队列摘要、构建命令、
+工具链与实际验证结论已写入同目录 `BUILDINFO.json` 并交付移动 owner。它们是本地未发布开发资产，
+不能编造 GitHub Release URL，也不能声称已签名 iPhone/WidgetKit/APNs 或 Android 原生验收通过。
+
+最终固定开发 commit：`c233521e0be608f00f8742761463252f3328a60b`；完整队列独立重放树为
+`7e95e5825ebd04c3b481b0cb8a30889a4ad34f4f`，与开发树相同。
+新增 0016 SHA-256：`f23653759341a6001b11a429cff0c99caef5230a8599b3d8ff4c8eee8bd07cab`。
+最终 focused 回归 47/47 通过，含 Widget 及已有相关 daemon/ActivityKit/采样/历史行为；维护 manage 测试
+3/3 通过。完整 Release/其他平台管线没有重复执行，也没有以旧测试数字替代本轮结果。
+
+实际生产 ELF 在 `artifacts/widget-statistics/linux-x86_64/agent-speed-collector`，SHA-256：
+`e71c0688f4d3336f531596c7d92e6cd1e52ecb37f1ce4dbbcaa8c219998a928f`。
+其 `--identity` 精确返回 `shared-collector-v2 ` 加该摘要及单个换行，实际 exit0；本机动态 loader 检查通过。
+只验证 Linux x86_64/glibc2.36/libcurl.so.4/libcrypto.so.3 及实际记录的其他依赖，不承诺 Ubuntu22.04/ARM64。
+正式生产 ELF 没有向本地/生产 relay 发送这轮测试请求；真实 TLS 请求来自固定 loopback test variant。
+最终 test variant 的 SHA-256 与实际 SSH 冒烟运行的字节完全一致：
+`a76b01dd40163be10d19061e10944473582cce8d69221c29ca6227bd84d7e384`。不得将它纳入移动 assets。
+最终跨侧 production SSH、Worker、App Attest、WidgetKit 与 Apple 真机验收由移动协调 owner 执行。

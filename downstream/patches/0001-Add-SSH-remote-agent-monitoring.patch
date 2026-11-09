@@ -1,17 +1,17 @@
-From 5df6f4a227de753ce985f13b1bd50bd3990aab65 Mon Sep 17 00:00:00 2001
+From 690489a41ebd3ac1a4448762c202f823cd8a53e6 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:10 +0800
-Subject: [PATCH 01/15] Add SSH remote agent monitoring
+Subject: [PATCH 01/16] Add SSH remote agent monitoring
 
 ---
  .github/workflows/linux.yml                   |   4 +-
- README.md                                     |  65 +-
+ README.md                                     |  66 +-
  docs/shared-collector.md                      |  86 +++
  linux/CMakeLists.txt                          |   1 +
  linux/collector/CMakeLists.txt                |   6 +
- linux/collector/daemon.cpp                    | 342 +++++++++
+ linux/collector/daemon.cpp                    | 347 +++++++++
  linux/collector/daemon.hpp                    |   6 +
- linux/collector/history_cache.cpp             |  77 ++
+ linux/collector/history_cache.cpp             |  82 ++
  linux/collector/history_cache.hpp             |  22 +
  linux/collector/main.cpp                      | 144 ++++
  linux/collector/protocol.cpp                  |  99 +++
@@ -19,7 +19,7 @@ Subject: [PATCH 01/15] Add SSH remote agent monitoring
  linux/collector/publisher.cpp                 | 385 ++++++++++
  linux/collector/publisher.hpp                 |  37 +
  linux/collector/sampling.cpp                  | 256 +++++++
- linux/collector/sampling.hpp                  |  41 ++
+ linux/collector/sampling.hpp                  |  41 +
  linux/core/include/agentspeed/engine.hpp      |   2 +
  linux/core/include/agentspeed/snapshot.hpp    |   2 +
  linux/core/src/engine.cpp                     |  17 +-
@@ -29,13 +29,13 @@ Subject: [PATCH 01/15] Add SSH remote agent monitoring
  linux/docker/Dockerfile                       |   2 +-
  linux/tests/CMakeLists.txt                    |   6 +-
  linux/tests/collector_integration_test.cpp    | 174 +++++
- linux/tests/collector_test.cpp                | 152 ++++
+ linux/tests/collector_test.cpp                | 163 ++++
  linux/tests/engine_fixture_test.cpp           |  27 +
  linux/tests/history_test.cpp                  |  44 ++
  linux/tests/parser_fixture_test.cpp           |  49 ++
- linux/tests/shared_collector_ssh_smoke.py     | 662 ++++++++++++++++++
+ linux/tests/shared_collector_ssh_smoke.py     | 700 ++++++++++++++++++
  macos/Sources/AgentSpeed/App/AppModel.swift   |   3 +
- .../Sources/AgentSpeed/App/RemoteHosts.swift  | 243 +++++++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  | 243 ++++++
  .../AgentSpeed/Dashboard/DashboardView.swift  |  24 +-
  .../Dashboard/RemoteHostsView.swift           | 131 ++++
  .../SettingsWindow/Panes/SourcesPane.swift    |   1 +
@@ -44,8 +44,8 @@ Subject: [PATCH 01/15] Add SSH remote agent monitoring
  macos/scripts/build-linux-collector.sh        |  45 ++
  spec/DESIGN.md                                |   7 +
  spec/METRICS.md                               |   9 +
- spec/NETWORK.md                               |  46 +-
- 41 files changed, 3350 insertions(+), 42 deletions(-)
+ spec/NETWORK.md                               |  49 +-
+ 41 files changed, 3413 insertions(+), 42 deletions(-)
  create mode 100644 docs/shared-collector.md
  create mode 100644 linux/collector/CMakeLists.txt
  create mode 100644 linux/collector/daemon.cpp
@@ -90,10 +90,10 @@ index c54ce9aa..27c30155 100644
              libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
              libxcb-xinerama0 libxcb-xinput0 libfontconfig1 libdbus-1-3 libfuse2
 diff --git a/README.md b/README.md
-index d2ab76a7..5f30dd9b 100644
+index d2ab76a7..e11a6f51 100644
 --- a/README.md
 +++ b/README.md
-@@ -105,9 +105,72 @@ The full, testable specification lives in [`spec/METRICS.md`](spec/METRICS.md).
+@@ -105,9 +105,73 @@ The full, testable specification lives in [`spec/METRICS.md`](spec/METRICS.md).
  
  Ordinary Claude Desktop chat conversations are not stored on your computer, so they cannot be measured; WorkBuddy conversations that run in the cloud are not counted either.
  
@@ -114,9 +114,10 @@ index d2ab76a7..5f30dd9b 100644
 +monitoring cannot measure per-token streaming speed or infer an unrecorded time to first token. End-to-end speed includes
 +the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
 +
-+The collector keeps a private history cache on the Linux host at `~/.cache/agentspeed-collector/history.sqlite3`.
-+An exclusive lock allows one collector to use it; concurrent collectors or an unsafe or unavailable cache use memory
-+instead. Changes to the monitored source configuration reset the cache. On reconnect, history is refreshed from the
++The collector keeps a private history cache at the Linux account's canonical home under
++`~/.cache/agentspeed-collector/<collector-sha256>/history.sqlite3`. Each digest has its own exclusive cache lock;
++different builds never reset or migrate each other's cache. An unsafe or unavailable optional cache uses memory
++instead. Changes to the monitored source configuration reset only that digest's cache. On reconnect, history is refreshed from the
 +cache and logs rather than added to the previous display. If a file cannot be read, its previous cached contribution
 +is retained when available, and the history frame is marked `partial: true`.
 +The flag covers known discovered-file and database errors: inaccessible directories or failed metadata checks may be
@@ -169,7 +170,7 @@ index d2ab76a7..5f30dd9b 100644
  
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
 new file mode 100644
-index 00000000..6592ad3f
+index 00000000..479bd336
 --- /dev/null
 +++ b/docs/shared-collector.md
 @@ -0,0 +1,86 @@
@@ -179,9 +180,9 @@ index 00000000..6592ad3f
 +
 +## Collection and process boundaries
 +
-+The no-argument executable is a stdin/stdout bridge. A detached daemon owns one live `Monitor` and one incremental historical parser pipeline for the effective Unix UID. The shared history analyzer captures parsed responses, action/performance inputs and source facts once and projects them into requested calendar views without opening or parsing the logs again. Different SSH keys for the same UID are not separate tenants. Different UIDs have separate daemon state.
++The no-argument executable is a stdin/stdout bridge. A detached daemon owns one live `Monitor` and one incremental historical parser pipeline for each effective Unix UID and full executable SHA-256 pair. Byte-identical executables share a daemon even when launched from different paths; different digests run independently. Each digest has its own scanning, parsing, memory and traffic baselines, so concurrent builds cost additional resources. The shared history analyzer projects requested calendar views without reparsing logs for each subscriber. Different SSH keys or digests for the same UID are not separate security tenants.
 +
-+The runtime directory is the canonical passwd home plus `.agent-speed`, not an SSH-supplied `HOME` or XDG runtime path. Home ownership and writable permissions are checked. The runtime directory must be an owned, nonsymlink directory with mode 0700; `collector.lock` must be an owned, single-link regular file with mode 0600; `collector.sock` must be an owned socket with mode 0600. Both socket peers must have the same effective UID through `SO_PEERCRED`.
++The runtime directory is the canonical passwd home plus `.agent-speed/daemons/<sha256>`, not an SSH-supplied `HOME` or XDG runtime path. Home ownership and writable permissions are checked. Every runtime directory component must be owned, nonsymlink and mode 0700; `collector.lock` must be an owned, single-link regular file with mode 0600; `collector.sock` must be an owned socket with mode 0600. Both socket peers must have the same effective UID through `SO_PEERCRED`. Bind and connect use `/proc/self/fd/<held-directory-fd>/collector.sock`, avoiding Unix socket path-length limits without truncating the digest.
 +
 +A stable `flock` is held for the daemon's entire lifetime. The lock file is never unlinked. Concurrent bridges wait for readiness and perform a private protocol/executable SHA-256 handshake before sending commands. Only the exclusive lifecycle-lock owner may recheck and remove a refused, verified stale endpoint. Connection failures do not authorize removing a socket or killing a process. The daemon uses no TCP listener and does not depend on PID files or PID-based killing.
 +
@@ -195,11 +196,11 @@ index 00000000..6592ad3f
 +
 +## Runtime identity and upgrades
 +
-+`agent-speed-collector --identity` prints exactly `shared-collector-v2 ` followed by the executable's SHA-256 and a newline. It does not start a daemon. The no-argument bridge compares its digest with the running daemon's digest. A different disk binary fails with a visible version-conflict error; it never kills another subscriber or attaches while pretending new code is running. The operator must close subscribers, revoke/unsubscribe leases, allow the idle exit, then reconnect the chosen version. There is no forced rolling upgrade.
++`agent-speed-collector --identity` prints exactly `shared-collector-v2 ` followed by the executable's full SHA-256 and a newline. It does not start a daemon. The no-argument bridge derives its namespace from those same bytes; callers do not pass a digest or namespace. It reuses only that digest's daemon, or starts one while holding that digest's lifecycle lock. The exact digest handshake remains mandatory: a mismatching daemon at the selected endpoint is an error, never a reason to attach, kill or fall back. Other digests, legacy global endpoints and their locks are neither contacted nor removed. Each daemon exits according to its own subscribers and authorizations; upgrading a client does not require stopping other versions. There is no forced rolling upgrade or `--stop` command.
 +
 +Maintained native deployment computes the bundled bytes' digest, uploads a private temporary file, verifies SHA-256, installs without replacing a conflicting file, and verifies `--identity`. It launches `~/.cache/agent-speed/collector-v2-<sha256>` without arguments. It does not overwrite the legacy `~/.cache/agent-speed/collector` path. Unsupported architecture, missing shared libraries, unsafe permissions and identity conflicts remain errors; there is no old-binary or demonstration-data fallback.
 +
-+Already shipped legacy applications do not implement this deployment protocol. Software running as the same UID can execute an old collector or replace files it owns; the new daemon cannot impose a security boundary on that UID. All participating Mac, Windows and mobile clients must migrate before using a shared account. Do not mix a legacy collector process with this daemon or claim that a previously installed mobile package has been upgraded. A versioned new asset cannot remotely retrofit those old clients.
++Already shipped applications do not acquire this namespace behavior remotely. Their global daemon may coexist with new digest-scoped daemons; this implementation does not replace their binaries, endpoints or cache. New clients use the same digest-addressed deployment and stdio/control contracts. Each digest's history cache is isolated at the canonical passwd home's `.cache/agentspeed-collector/<sha256>/history.sqlite3`, with its own `history.lock`, WAL and SHM files; old caches are not imported or reset. Unsafe or unavailable optional caches retain the existing in-memory behavior. Source logs remain read-only shared inputs. Activity and Widget lease identifiers and relay authorization are not digest-namespaced: do not publish the same authorization from two versions. Lease owners must use the originating digest's verified bridge for explicit unsubscribe and independently revoke or replace relay authorization. Missing old binaries or failed unsubscribe must not be reported as successful cleanup. Software running as the same UID can replace files it owns; digest namespaces are not a security boundary.
 +
 +## NDJSON control version 2
 +
@@ -285,10 +286,10 @@ index 00000000..b64cb4d1
 +target_link_libraries(agentspeed-collector PRIVATE agentspeed_collector_protocol Threads::Threads)
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
 new file mode 100644
-index 00000000..adab3b4d
+index 00000000..6309d1c4
 --- /dev/null
 +++ b/linux/collector/daemon.cpp
-@@ -0,0 +1,342 @@
+@@ -0,0 +1,347 @@
 +#include "daemon.hpp"
 +#include "protocol.hpp"
 +#include "publisher.hpp"
@@ -367,8 +368,8 @@ index 00000000..adab3b4d
 +    for (unsigned int i = 0; i < length; ++i) { result += hex[digest[i] >> 4]; result += hex[digest[i] & 15]; }
 +    return result;
 +}
-+struct Paths { std::string dir, socket; Fd directory; };
-+Paths paths() {
++struct Paths { std::string home, socket; Fd directory; };
++Paths paths(const std::string& hash) {
 +    long size = sysconf(_SC_GETPW_R_SIZE_MAX); if (size < 1024 || size > 1024 * 1024) size = 16384;
 +    std::vector<char> buffer(static_cast<std::size_t>(size)); struct passwd pw{}, *result = nullptr;
 +    if (getpwuid_r(geteuid(), &pw, buffer.data(), buffer.size(), &result) || !result || !pw.pw_dir || pw.pw_dir[0] != '/') fail("account directory");
@@ -386,10 +387,15 @@ index 00000000..adab3b4d
 +    if (mkdirat(home.value, ".agent-speed", 0700) && errno != EEXIST) fail("runtime directory");
 +    Fd dir(openat(home.value, ".agent-speed", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
 +    if (dir.value < 0 || fstat(dir.value, &st) || st.st_uid != geteuid() || (st.st_mode & 07777) != 0700) fail("runtime directory");
-+    std::string base = std::string(homePath) + "/.agent-speed";
-+    std::string socket = base + "/collector.sock";
-+    if (socket.size() >= sizeof(sockaddr_un::sun_path)) fail("runtime path");
-+    return {base, socket, std::move(dir)};
++    if (mkdirat(dir.value, "daemons", 0700) && errno != EEXIST) fail("runtime directory");
++    Fd daemons(openat(dir.value, "daemons", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
++    if (daemons.value < 0 || fstat(daemons.value, &st) || st.st_uid != geteuid() || (st.st_mode & 07777) != 0700) fail("runtime directory");
++    if (mkdirat(daemons.value, hash.c_str(), 0700) && errno != EEXIST) fail("runtime directory");
++    Fd digestDir(openat(daemons.value, hash.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
++    if (digestDir.value < 0 || fstat(digestDir.value, &st) || st.st_uid != geteuid() || (st.st_mode & 07777) != 0700) fail("runtime directory");
++    // Keep the verified directory FD alive: procfs avoids sun_path limits for long homes and full digests.
++    std::string socket = "/proc/self/fd/" + std::to_string(digestDir.value) + "/collector.sock";
++    return {homePath, socket, std::move(digestDir)};
 +}
 +Fd lockFile(const Paths& p) {
 +    Fd fd(openat(p.directory.value, "collector.lock", O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600));
@@ -501,7 +507,7 @@ index 00000000..adab3b4d
 +    mode_t mask = umask(0177); int bound = bind(listener.value, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)); umask(mask);
 +    if (bound || listen(listener.value, 64)) fail("socket bind");
 +    if (!socketValid(p, exists) || !exists) fail("runtime socket");
-+    Sampler sampler; Publisher publisher; Protocol protocol(machineIdentity());
++    Sampler sampler(p.home, hash); Publisher publisher; Protocol protocol(machineIdentity());
 +    if (!writeAll(ready, "R")) fail("readiness");
 +    close(ready);
 +    std::map<int, Client> clients; std::uint64_t nextId = 1;
@@ -611,7 +617,7 @@ index 00000000..adab3b4d
 +    signal(SIGPIPE, SIG_IGN);
 +    try {
 +        protectCredentials();
-+        auto hash = identity(); auto p = paths(); Fd lock = lockFile(p); Fd connection;
++        auto hash = identity(); auto p = paths(hash); Fd lock = lockFile(p); Fd connection;
 +        if (flock(lock.value, LOCK_EX | LOCK_NB) == 0) {
 +            connection = connectSocket(p);
 +            if (connection.value >= 0) fail("runtime busy");
@@ -645,10 +651,10 @@ index 00000000..bb06569a
 +}
 diff --git a/linux/collector/history_cache.cpp b/linux/collector/history_cache.cpp
 new file mode 100644
-index 00000000..571e0e2b
+index 00000000..cfc24fa1
 --- /dev/null
 +++ b/linux/collector/history_cache.cpp
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,82 @@
 +#include "history_cache.hpp"
 +
 +#include <cerrno>
@@ -670,8 +676,9 @@ index 00000000..571e0e2b
 +           st.st_nlink == 1 && !(st.st_mode & 0077);
 +}
 +}
-+HistoryCache::HistoryCache(const std::string& home) {
-+    if (home.empty() || home.front() != '/') return;
++HistoryCache::HistoryCache(const std::string& home, const std::string& digest) {
++    if (home.empty() || home.front() != '/' || digest.size() != 64 ||
++        digest.find_first_not_of("0123456789abcdef") != std::string::npos) return;
 +    const int root = ::open(home.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
 +    if (!safeDirectory(root, false)) { if (root >= 0) close(root); return; }
 +    if (mkdirat(root, ".cache", 0700) < 0 && errno != EEXIST) { close(root); return; }
@@ -679,8 +686,12 @@ index 00000000..571e0e2b
 +    close(root);
 +    if (!safeDirectory(cache, false)) { if (cache >= 0) close(cache); return; }
 +    if (mkdirat(cache, "agentspeed-collector", 0700) < 0 && errno != EEXIST) { close(cache); return; }
-+    dir_ = openat(cache, "agentspeed-collector", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
++    const int base = openat(cache, "agentspeed-collector", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
 +    close(cache);
++    if (!safeDirectory(base, true)) { if (base >= 0) close(base); return; }
++    if (mkdirat(base, digest.c_str(), 0700) < 0 && errno != EEXIST) { close(base); return; }
++    dir_ = openat(base, digest.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
++    close(base);
 +    if (!safeDirectory(dir_, true)) { if (dir_ >= 0) close(dir_); dir_ = -1; return; }
 +    lock_ = openat(dir_, "history.lock", O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
 +    if (!safeFile(lock_) || flock(lock_, LOCK_EX | LOCK_NB) < 0) {
@@ -691,7 +702,7 @@ index 00000000..571e0e2b
 +    const int db = openat(dir_, "history.sqlite3", O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
 +    if (!safeFile(db)) { if (db >= 0) close(db); return; }
 +    close(db);
-+    path_ = home + "/.cache/agentspeed-collector/history.sqlite3";
++    path_ = "/proc/self/fd/" + std::to_string(dir_) + "/history.sqlite3";
 +}
 +HistoryCache::~HistoryCache() {
 +    if (lock_ >= 0) close(lock_);
@@ -728,7 +739,7 @@ index 00000000..571e0e2b
 +}
 diff --git a/linux/collector/history_cache.hpp b/linux/collector/history_cache.hpp
 new file mode 100644
-index 00000000..637b823a
+index 00000000..6ef84688
 --- /dev/null
 +++ b/linux/collector/history_cache.hpp
 @@ -0,0 +1,22 @@
@@ -743,7 +754,7 @@ index 00000000..637b823a
 +// An exclusive process lock protects the analyzer's in-memory ownership ledger as well as SQLite writes.
 +class HistoryCache {
 +public:
-+    explicit HistoryCache(const std::string& home);
++    HistoryCache(const std::string& home, const std::string& digest);
 +    ~HistoryCache();
 +    HistoryCache(const HistoryCache&) = delete;
 +    HistoryCache& operator=(const HistoryCache&) = delete;
@@ -1473,7 +1484,7 @@ index 00000000..fc53d5f3
 +}
 diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
 new file mode 100644
-index 00000000..cb3dabde
+index 00000000..21b72bca
 --- /dev/null
 +++ b/linux/collector/sampling.cpp
 @@ -0,0 +1,256 @@
@@ -1558,6 +1569,7 @@ index 00000000..cb3dabde
 +        std::vector<agentspeed::perf::DayRecord> perf;
 +    };
 +
++    std::string home, digest;
 +    agentspeed::MonitorConfig config = agentspeed::MonitorConfig::fromEnvironment();
 +    agentspeed::Monitor monitor{config};
 +    std::shared_ptr<const agentspeed::TimeZone> local = agentspeed::localZone(agentspeed::processEnvironment());
@@ -1572,7 +1584,7 @@ index 00000000..cb3dabde
 +    bool started = false;
 +    std::thread worker;
 +
-+    Impl() {
++    Impl(const std::string& accountHome, const std::string& binaryDigest) : home(accountHome), digest(binaryDigest) {
 +        views.emplace(std::nullopt, Cached{View{std::nullopt, local}, {}, {}});
 +        worker = std::thread([this] { historyLoop(); });
 +    }
@@ -1627,8 +1639,7 @@ index 00000000..cb3dabde
 +        std::string scanIdentity;
 +        for (;;) {
 +            try {
-+                const char* home = std::getenv("HOME");
-+                HistoryCache cache(home ? home : "");
++                HistoryCache cache(home, digest);
 +                auto store = cache.open(cacheIdentity(config.locations, config.enabled));
 +                agentspeed::history::Analyzer analyzer(*store, std::make_shared<agentspeed::pricing::PriceBook>());
 +                auto nextScan = std::chrono::steady_clock::time_point::min();
@@ -1701,7 +1712,7 @@ index 00000000..cb3dabde
 +    }
 +};
 +
-+Sampler::Sampler() : impl_(std::make_unique<Impl>()) {}
++Sampler::Sampler(const std::string& home, const std::string& digest) : impl_(std::make_unique<Impl>(home, digest)) {}
 +Sampler::~Sampler() = default;
 +
 +void Sampler::poll(std::int64_t now) {
@@ -1735,7 +1746,7 @@ index 00000000..cb3dabde
 +}  // namespace collector
 diff --git a/linux/collector/sampling.hpp b/linux/collector/sampling.hpp
 new file mode 100644
-index 00000000..375f5f8f
+index 00000000..e1cb0181
 --- /dev/null
 +++ b/linux/collector/sampling.hpp
 @@ -0,0 +1,41 @@
@@ -1764,7 +1775,7 @@ index 00000000..375f5f8f
 +// All public methods are called by the collection thread. History analysis runs in the background.
 +class Sampler {
 +public:
-+    Sampler();
++    Sampler(const std::string& home, const std::string& digest);
 +    ~Sampler();
 +    Sampler(const Sampler&) = delete;
 +    Sampler& operator=(const Sampler&) = delete;
@@ -2171,10 +2182,10 @@ index 00000000..7a2293ef
 +}
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
 new file mode 100644
-index 00000000..479b9263
+index 00000000..a70b9e5b
 --- /dev/null
 +++ b/linux/tests/collector_test.cpp
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,163 @@
 +#include <gtest/gtest.h>
 +
 +#include "protocol.hpp"
@@ -2279,9 +2290,10 @@ index 00000000..479b9263
 +TEST(CollectorHistoryCache, PersistsPrivatelyAndIsolatesConcurrentAndDifferentConfigurations) {
 +    char home[] = "/tmp/agentspeed-cache-test-XXXXXX";
 +    ASSERT_NE(mkdtemp(home), nullptr);
-+    const auto dir = std::filesystem::path(home) / ".cache/agentspeed-collector";
++    const std::string digestA(64, 'a'), digestB(64, 'b');
++    const auto dir = std::filesystem::path(home) / ".cache/agentspeed-collector" / digestA;
 +    {
-+        collector::HistoryCache first(home);
++        collector::HistoryCache first(home, digestA);
 +        auto store = first.open("configuration-a");
 +        store->setMeta("test", "persisted");
 +        struct stat st{};
@@ -2289,26 +2301,36 @@ index 00000000..479b9263
 +        EXPECT_EQ(st.st_mode & 0077, 0);
 +        ASSERT_EQ(stat((dir / "history.sqlite3").c_str(), &st), 0);
 +        EXPECT_EQ(st.st_mode & 0077, 0);
-+        collector::HistoryCache second(home);
++        collector::HistoryCache second(home, digestA);
 +        auto isolated = second.open("configuration-a");
 +        EXPECT_FALSE(isolated->meta("test"));
 +        isolated->setMeta("test", "isolated");
++        collector::HistoryCache other(home, digestB);
++        auto independent = other.open("configuration-b");
++        EXPECT_FALSE(independent->meta("test"));
++        independent->setMeta("test", "different digest");
++        EXPECT_EQ(store->meta("test"), "persisted");
 +    }
 +    {
-+        collector::HistoryCache cache(home);
++        collector::HistoryCache cache(home, digestA);
 +        auto store = cache.open("configuration-a");
 +        EXPECT_EQ(store->meta("test"), "persisted");
 +    }
 +    {
-+        collector::HistoryCache cache(home);
++        collector::HistoryCache cache(home, digestA);
 +        auto store = cache.open("configuration-b");
 +        EXPECT_FALSE(store->meta("test"));
 +        store->setMeta("test", "new configuration");
 +    }
 +    {
-+        collector::HistoryCache cache(home);
++        collector::HistoryCache cache(home, digestA);
 +        auto store = cache.open("configuration-b");
 +        EXPECT_EQ(store->meta("test"), "new configuration");
++    }
++    {
++        collector::HistoryCache other(home, digestB);
++        auto store = other.open("configuration-b");
++        EXPECT_EQ(store->meta("test"), "different digest");
 +    }
 +    std::filesystem::remove_all(home);
 +}
@@ -2320,7 +2342,7 @@ index 00000000..479b9263
 +    std::filesystem::create_directory(root / "target");
 +    std::filesystem::create_directory_symlink(root / "target", root / ".cache");
 +    {
-+        collector::HistoryCache cache(home);
++        collector::HistoryCache cache(home, std::string(64, 'a'));
 +        auto store = cache.open("configuration");
 +        store->setMeta("test", "memory");
 +        EXPECT_TRUE(std::filesystem::is_empty(root / "target"));
@@ -2490,10 +2512,10 @@ index 18792ced..8118362f 100644
      fixtures::JsonFile expected(fixtures::fixtureDir() / "parser-expected.json");
 diff --git a/linux/tests/shared_collector_ssh_smoke.py b/linux/tests/shared_collector_ssh_smoke.py
 new file mode 100755
-index 00000000..64476dba
+index 00000000..959c1025
 --- /dev/null
 +++ b/linux/tests/shared_collector_ssh_smoke.py
-@@ -0,0 +1,662 @@
+@@ -0,0 +1,700 @@
 +#!/usr/bin/env python3
 +"""Root-only isolated SSH/TLS acceptance. Run after building the test collector.
 +
@@ -2519,6 +2541,7 @@ index 00000000..64476dba
 +import signal
 +import socket
 +import ssl
++import struct
 +import subprocess
 +import tempfile
 +import threading
@@ -2857,6 +2880,13 @@ index 00000000..64476dba
 +                scenario('native_upload_race_and_unsafe_paths', deployment)
 +            def connect(exe=None, slow=False):
 +                c = Client(shutil.which('ssh'), user, args.port, root/'client', exe or collector_path, slow); clients.append(c); return c
++            digest = hashlib.sha256(pathlib.Path(collector_path).read_bytes()).hexdigest()
++            runtime = home/'.agent-speed'
++            runtime.mkdir(mode=0o700, exist_ok=True)
++            os.chown(runtime, uid, pwd.getpwnam(user).pw_gid)
++            for name in ('collector.lock', 'collector.sock'):
++                (runtime/name).write_text('legacy-marker')
++                os.chown(runtime/name, uid, pwd.getpwnam(user).pw_gid)
 +            a, b, c = connect(), connect(), connect()
 +            def capabilities():
 +                a.send({'version':1, 'type':'capabilities', 'requestId':'capabilities'})
@@ -2873,6 +2903,40 @@ index 00000000..64476dba
 +                        seen.add(m['type'])
 +                require(len(processes(uid, collector_path)) >= 1, 'collector process not found')
 +            scenario('three_independent_timezone_views', views)
++            def multiple_digests():
++                same = home/'same-collector'
++                other = home/'other-collector'
++                payload = pathlib.Path(collector_path).read_bytes()
++                same.write_bytes(payload); other.write_bytes(payload + b'digest-change')
++                for executable in (same, other):
++                    executable.chmod(0o700); os.chown(executable, uid, pwd.getpwnam(user).pw_gid)
++                other_digest = hashlib.sha256(other.read_bytes()).hexdigest()
++                same_client, other_client = connect(same), connect(other)
++                for client in (same_client, other_client):
++                    client.get(lambda m: m.get('type') == 'snapshot', 30)
++                def daemon_pid(which):
++                    directory = os.open(runtime/'daemons'/which, os.O_RDONLY | os.O_DIRECTORY)
++                    try:
++                        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
++                            s.connect(f'/proc/self/fd/{directory}/collector.sock')
++                            return struct.unpack('3i', s.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))[0]
++                    finally:
++                        os.close(directory)
++                original_pid, other_pid = daemon_pid(digest), daemon_pid(other_digest)
++                require(original_pid > 0 and other_pid > 0 and original_pid != other_pid, 'different digests did not produce independent daemons')
++                require(original_pid in processes(uid, collector_path), 'same digest did not use existing daemon')
++                require(other_pid in processes(uid, other), 'alternate daemon executable mismatch')
++                require(len(processes(uid, same)) == 1, 'same-byte executable unexpectedly started a second daemon')
++                for which in (digest, other_digest):
++                    require((home/'.cache/agentspeed-collector'/which/'history.sqlite3').is_file(), 'digest cache missing: '+which)
++                other_client.close()
++                eventually(lambda: other_pid not in processes(uid, other), 40, 'alternate daemon did not idle exit')
++                require(daemon_pid(digest) == original_pid, 'other daemon exit interrupted original')
++                same_client.get(lambda m: m.get('type') == 'snapshot', 15)
++                same_client.close()
++                for name in ('collector.lock', 'collector.sock'):
++                    require((runtime/name).read_text() == 'legacy-marker', 'legacy endpoint modified')
++            scenario('independent_digest_daemons', multiple_digests)
 +            def fanout():
 +                tracer = None
 +                trace_log = None
@@ -2881,7 +2945,7 @@ index 00000000..64476dba
 +                if shutil.which('strace'):
 +                    pids = processes(uid, collector_path)
 +                    require(len(pids) >= 4, 'expected daemon and three live bridges before tracing')
-+                    lock_path = str(home/'.agent-speed/collector.lock')
++                    lock_path = str(home/'.agent-speed/daemons'/digest/'collector.lock')
 +                    owners = []
 +                    for pid in pids:
 +                        try:
@@ -3029,14 +3093,6 @@ index 00000000..64476dba
 +                    time.sleep(11)
 +                    require(relay.count(label) == 1, 'terminal relay error retried')
 +                scenario('relay_'+str(code)+'_stops', rejected)
-+            def digest():
-+                other = root/'different-collector'; shutil.copyfile(args.collector, other); other.chmod(0o755)
-+                with other.open('ab') as out: out.write(b'\nsmoke-digest-change\n')
-+                d = connect(other)
-+                eventually(lambda: d.process.poll() is not None, 15, 'digest mismatch did not terminate')
-+                require(d.process.returncode != 0, 'digest mismatch succeeded')
-+                a.get(lambda m: m.get('type') == 'snapshot', 15)
-+            scenario('digest_conflict_preserves_clients', digest)
 +            def confirmation_deadline():
 +                response = ack(timeout_client, 'deadline-request', 90)
 +                require(response.get('accepted') is False and response.get('error') == 'timeout', 'confirmation deadline did not reject')
@@ -3059,7 +3115,7 @@ index 00000000..64476dba
 +                eventually(lambda: not processes(uid, collector_path), 40, 'daemon did not idle exit')
 +            scenario('unsubscribe_and_idle_exit', unsubscribe)
 +            def socket_safety():
-+                runtime = home/'.agent-speed'
++                runtime = home/'.agent-speed/daemons'/digest
 +                sock = runtime/'collector.sock'
 +                lock = runtime/'collector.lock'
 +                sock.symlink_to(home/'sentinel')
@@ -3074,7 +3130,11 @@ index 00000000..64476dba
 +                require(bad.process.returncode != 0 and lock.is_symlink(), 'malicious lock accepted or modified')
 +                lock.unlink()
 +                stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-+                stale.bind(str(sock)); stale.close()
++                directory = os.open(runtime, os.O_RDONLY | os.O_DIRECTORY)
++                try:
++                    stale.bind(f'/proc/self/fd/{directory}/collector.sock')
++                finally:
++                    stale.close(); os.close(directory)
 +                os.chown(sock, uid, pwd.getpwnam(user).pw_gid); sock.chmod(0o600)
 +                restarted = connect()
 +                restarted.get(lambda m: m.get('type') == 'snapshot', 25)
@@ -3880,7 +3940,7 @@ index ec159b46..e0834f4e 100644
  
  | Term | Meaning |
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index c9233933..d3e50987 100644
+index c9233933..90dc57b6 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -1,17 +1,17 @@
@@ -3919,7 +3979,7 @@ index c9233933..d3e50987 100644
    settings apply; the platform HTTP cache is bypassed (`URLRequest.CachePolicy.reloadIgnoringLocalCacheData`,
    `HttpClient` without a cache handler) because the app does its own `ETag` handling. Timeout 15 s per request.
  - **Size**: bodies are read with a hard cap (per feature); exceeding it (by `Content-Length` or while streaming)
-@@ -222,3 +222,29 @@ Avatar input stays local until upload: PNG/JPEG up to 10 MiB is re-encoded witho
+@@ -222,3 +222,32 @@ Avatar input stays local until upload: PNG/JPEG up to 10 MiB is re-encoded witho
  256×256 PNG up to 512 KiB. Profile JSON responses are bounded to 64 KiB; these separate limits do not raise
  the existing 16 KiB periodic report limit. Avatar URLs are website metadata; native clients download their
  own avatar through the signed API endpoint rather than following an arbitrary external image URL.
@@ -3938,9 +3998,11 @@ index c9233933..d3e50987 100644
 +
 +Each configured host has a stable identity and a separate remote view and history. Snapshots and history replace the
 +previous state rather than accumulating on reconnect; the client must not combine remote history with local usage as
-+if it were local. The collector persists its history cache in `~/.cache/agentspeed-collector/history.sqlite3` on the
-+remote host, in an owned mode-0700 directory with a mode-0600 database. A nonblocking exclusive `flock` on `history.lock`
-+is held for the collector's lifetime; concurrent collectors and unsafe or unavailable caches fall back to memory.
++if it were local. The collector persists its history cache in the canonical account home's
++`~/.cache/agentspeed-collector/<collector-sha256>/history.sqlite3`, in owned mode-0700 directories with a mode-0600 database.
++A nonblocking exclusive `flock` on that digest's `history.lock` is held for the collector's lifetime; unsafe or unavailable
++optional caches fall back to memory. Different executable digests have separate daemon endpoints, cache locks, databases
++and WAL/SHM files. Old global endpoints and caches are not migrated or removed.
 +Changes to the source configuration reset the cache; analyzer version, time zone and pricing changes also invalidate
 +relevant cached analysis. Reconnection refreshes history from the cache and logs. An unreadable file retains its prior
 +cached contribution when available. History frames carry `partial: true` for known discovered-file or database errors;
@@ -3949,3 +4011,4 @@ index c9233933..d3e50987 100644
 +If the flag is absent, completeness is unknown, including when history is empty. On disconnect, last data is
 +stale/offline, not evidence of an idle agent or zero usage. Unavailable measurements remain unknown and in-progress
 +rates derived from prior completions are estimates; see `spec/METRICS.md`.
++

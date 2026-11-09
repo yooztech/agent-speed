@@ -1,7 +1,7 @@
-From 7319d898edc11ca2acc0841d00fbd29ff10b7dba Mon Sep 17 00:00:00 2001
+From 00f7de2da152c08462f003d5e4d5cb491356f21b Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:17 +0800
-Subject: [PATCH 03/15] Unify remote monitoring target statistics
+Subject: [PATCH 03/16] Unify remote monitoring target statistics
 
 ---
  README.md                                     |  17 +-
@@ -45,13 +45,13 @@ Subject: [PATCH 03/15] Unify remote monitoring target statistics
  .../AgentSpeedAppTests/RemoteHostsTests.swift | 165 ++++++++++++++++++
  spec/DESIGN.md                                |  16 +-
  spec/METRICS.md                               |   2 +
- spec/NETWORK.md                               |  16 +-
- 42 files changed, 956 insertions(+), 90 deletions(-)
+ spec/NETWORK.md                               |  23 ++-
+ 42 files changed, 959 insertions(+), 94 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
  create mode 100644 macos/Sources/AgentSpeed/Dashboard/RemoteDashboard.swift
 
 diff --git a/README.md b/README.md
-index 5f30dd9b..d1186168 100644
+index e11a6f51..749c8550 100644
 --- a/README.md
 +++ b/README.md
 @@ -110,18 +110,29 @@ Ordinary Claude Desktop chat conversations are not stored on your computer, so t
@@ -84,9 +84,9 @@ index 5f30dd9b..d1186168 100644
 +breakdown, that history is unavailable and cannot be exported. Partial log reads are marked as potentially incomplete;
 +network and performance history are not available for remote targets.
 +
- The collector keeps a private history cache on the Linux host at `~/.cache/agentspeed-collector/history.sqlite3`.
- An exclusive lock allows one collector to use it; concurrent collectors or an unsafe or unavailable cache use memory
- instead. Changes to the monitored source configuration reset the cache. On reconnect, history is refreshed from the
+ The collector keeps a private history cache at the Linux account's canonical home under
+ `~/.cache/agentspeed-collector/<collector-sha256>/history.sqlite3`. Each digest has its own exclusive cache lock;
+ different builds never reset or migrate each other's cache. An unsafe or unavailable optional cache uses memory
 diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
 index fc28c519..fcd22a9f 100644
 --- a/linux/collector/protocol.cpp
@@ -270,7 +270,7 @@ index 7a2293ef..9a072c82 100644
  }
  
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
-index 479b9263..22848da4 100644
+index a70b9e5b..3cf370d9 100644
 --- a/linux/tests/collector_test.cpp
 +++ b/linux/tests/collector_test.cpp
 @@ -16,12 +16,21 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
@@ -1987,16 +1987,20 @@ index e0834f4e..c4395a4a 100644
  ## 1. Vocabulary
  
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index d3e50987..17ab5cb0 100644
+index 90dc57b6..b73a559c 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
-@@ -235,9 +235,19 @@ newline-delimited JSON snapshots, replacement history and completion events. Onl
+@@ -235,13 +235,22 @@ newline-delimited JSON snapshots, replacement history and completion events. Onl
  labels needed for presentation cross the connection: raw transcripts, prompts, conversation content, tool arguments
  and outputs, and absolute working paths do not. SSH credentials are not embedded in the protocol or stored in logs.
  
 -Each configured host has a stable identity and a separate remote view and history. Snapshots and history replace the
 -previous state rather than accumulating on reconnect; the client must not combine remote history with local usage as
--if it were local. The collector persists its history cache in `~/.cache/agentspeed-collector/history.sqlite3` on the
+-if it were local. The collector persists its history cache in the canonical account home's
+-`~/.cache/agentspeed-collector/<collector-sha256>/history.sqlite3`, in owned mode-0700 directories with a mode-0600 database.
+-A nonblocking exclusive `flock` on that digest's `history.lock` is held for the collector's lifetime; unsafe or unavailable
+-optional caches fall back to memory. Different executable digests have separate daemon endpoints, cache locks, databases
+-and WAL/SHM files. Old global endpoints and caches are not migrated or removed.
 +Protocol v1 may include optional source summaries, agent mode details, today boundaries and cost, and history
 +aggregates. Missing live rates, peaks and history costs are unknown (`null`), not zero. Timestamps use Unix
 +milliseconds; history days use the remote host's local date and `measured_ms` is a duration in milliseconds. The
@@ -2009,7 +2013,10 @@ index d3e50987..17ab5cb0 100644
 +Each configured host has a stable identity and separate remote data and history. The macOS dashboard selects the
 +local machine or one remote host rather than adding their statistics; local collection and reporting continue in the
 +background. Snapshots and history replace the previous state rather than accumulating on reconnect. The collector
-+persists its history cache in `~/.cache/agentspeed-collector/history.sqlite3` on the
- remote host, in an owned mode-0700 directory with a mode-0600 database. A nonblocking exclusive `flock` on `history.lock`
- is held for the collector's lifetime; concurrent collectors and unsafe or unavailable caches fall back to memory.
++persists its history cache in the canonical account home's `~/.cache/agentspeed-collector/<collector-sha256>/history.sqlite3`,
++in owned mode-0700 directories with a mode-0600 database. A nonblocking exclusive `flock` on that digest's `history.lock`
++is held for the collector's lifetime; unsafe or unavailable optional caches fall back to memory. Different executable
++digests have separate daemon endpoints, cache locks, databases and WAL/SHM files. Old global endpoints and caches are not migrated or removed.
  Changes to the source configuration reset the cache; analyzer version, time zone and pricing changes also invalidate
+ relevant cached analysis. Reconnection refreshes history from the cache and logs. An unreadable file retains its prior
+ cached contribution when available. History frames carry `partial: true` for known discovered-file or database errors;
