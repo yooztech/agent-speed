@@ -1,4 +1,4 @@
-From 2b419e0755735cef5181bef8878f3c7828f44796 Mon Sep 17 00:00:00 2001
+From 114e25e3722b21822286fc2ef72d51e08097d2f0 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:28 +0800
 Subject: [PATCH 09/16] Integrate Windows SSH sources and fork updates
@@ -16,6 +16,7 @@ Subject: [PATCH 09/16] Integrate Windows SSH sources and fork updates
  .../UpdateRelaunchIntegration/Harness.swift   |   2 +-
  macos/scripts/test-update-relaunch.py         |   9 +-
  spec/UPDATES.md                               |  32 +-
+ windows/scripts/test-remote-ssh-script.py     |  62 ++++
  windows/src/AgentSpeed.Core/History.cs        |   2 +
  windows/src/AgentSpeed.Core/Models.cs         |  21 +-
  .../src/AgentSpeed.Core/RemoteAggregation.cs  | 126 ++++++++
@@ -60,9 +61,10 @@ Subject: [PATCH 09/16] Integrate Windows SSH sources and fork updates
  .../RemoteSshWorkerTests.cs                   |  80 +++++
  windows/tests/FakeSsh/FakeSsh.csproj          |  10 +
  windows/tests/FakeSsh/Program.cs              |  25 ++
- 56 files changed, 2386 insertions(+), 183 deletions(-)
+ 57 files changed, 2448 insertions(+), 183 deletions(-)
  create mode 100644 linux/app/src/update_release.hpp
  create mode 100644 linux/tests/update_release_test.cpp
+ create mode 100644 windows/scripts/test-remote-ssh-script.py
  create mode 100644 windows/src/AgentSpeed.Core/RemoteAggregation.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
  create mode 100644 windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
@@ -630,6 +632,74 @@ index 2d95e99d..bb68e71b 100644
  - The new process waits (≤ 10 s) for `--wait-pid` to exit before taking the single-instance mutex, deletes
    `AgentSpeed.exe.old` best-effort, and shows `update.done`.
  - The optional traffic helper service is not replaced by this flow; the new app offers its update with one
+diff --git a/windows/scripts/test-remote-ssh-script.py b/windows/scripts/test-remote-ssh-script.py
+new file mode 100644
+index 00000000..acdd734c
+--- /dev/null
++++ b/windows/scripts/test-remote-ssh-script.py
+@@ -0,0 +1,62 @@
++#!/usr/bin/env python3
++"""Check the upload script produced from a Windows-style source checkout."""
++
++import subprocess
++import sys
++import tempfile
++from pathlib import Path
++from xml.sax.saxutils import quoteattr
++
++
++if sys.platform != "linux":
++    sys.exit("This regression requires Linux and bash")
++
++windows = Path(__file__).resolve().parent.parent
++worker = windows / "src/AgentSpeed/Services/RemoteSshWorker.cs"
++presentation = windows / "src/AgentSpeed.Presentation/AgentSpeed.Presentation.csproj"
++
++with tempfile.TemporaryDirectory(prefix="agent-speed-ssh-regression-") as directory:
++    temp = Path(directory)
++    source = worker.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
++    (temp / "RemoteSshWorker.cs").write_bytes(source)
++    (temp / "Regression.csproj").write_text(
++        '<Project Sdk="Microsoft.NET.Sdk">\n'
++        '  <PropertyGroup>\n'
++        '    <OutputType>Exe</OutputType>\n'
++        '    <TargetFramework>net10.0</TargetFramework>\n'
++        '    <ImplicitUsings>enable</ImplicitUsings>\n'
++        '    <Nullable>enable</Nullable>\n'
++        '  </PropertyGroup>\n'
++        '  <ItemGroup>\n'
++        f'    <ProjectReference Include={quoteattr(str(presentation))} />\n'
++        '  </ItemGroup>\n'
++        '</Project>\n',
++        encoding="utf-8",
++    )
++    (temp / "Program.cs").write_text(
++        '''using System.Diagnostics;
++using System.Reflection;
++using AgentSpeed.Services;
++
++var method = typeof(RemoteSshWorker).GetMethod(
++    "UploadCommand", BindingFlags.NonPublic | BindingFlags.Static)
++    ?? throw new Exception("UploadCommand not found");
++var script = (string)(method.Invoke(null, new object[] { new string('a', 64) })
++    ?? throw new Exception("UploadCommand returned null"));
++var start = new ProcessStartInfo("bash") { UseShellExecute = false };
++start.ArgumentList.Add("-n");
++start.ArgumentList.Add("-c");
++start.ArgumentList.Add(script);
++using var bash = Process.Start(start) ?? throw new Exception("Could not start bash");
++bash.WaitForExit();
++if (bash.ExitCode != 0) throw new Exception($"bash -n failed: {bash.ExitCode}");
++''',
++        encoding="utf-8",
++    )
++    subprocess.run(
++        ["dotnet", "run", "--project", str(temp / "Regression.csproj"),
++         "--artifacts-path", str(temp / "artifacts"), "--verbosity", "quiet"],
++        check=True,
++    )
++
++print("Remote SSH upload script parses successfully with bash")
 diff --git a/windows/src/AgentSpeed.Core/History.cs b/windows/src/AgentSpeed.Core/History.cs
 index 65090c4c..2be48077 100644
 --- a/windows/src/AgentSpeed.Core/History.cs
@@ -2211,7 +2281,7 @@ index 00000000..44739ce9
 +}
 diff --git a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
 new file mode 100644
-index 00000000..1c7ba7c0
+index 00000000..a2585fcd
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
 @@ -0,0 +1,287 @@
@@ -2248,7 +2318,7 @@ index 00000000..1c7ba7c0
 +        t=$(mktemp "$d/.collector-v2.XXXXXXXXXX")
 +        "$f" --identity > "$t"
 +        printf 'shared-collector-v2 {{digest}}\n' | cmp -s - "$t" || { echo 'Collector identity mismatch' >&2; exit 1; }
-+        """;
++        """.Replace("\r\n", "\n");
 +    private static string CollectorCommand(string digest) => $"exec \"$HOME/.cache/agent-speed/collector-v2-{digest}\"";
 +    private const int MaxLineBytes = 4_194_304;
 +    private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);

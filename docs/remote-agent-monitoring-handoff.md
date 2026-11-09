@@ -325,13 +325,13 @@ sudo -n python3 <prepared-tree>/linux/tests/widget_statistics_smoke.py \
 Windows `RemoteSshWorker` 在上传 `WriteAsync`/关闭输入或最早 probe/collector 读管道时若抛
 `IOException`，原实现只显示本机 Windows 的管道错误，跳过远端子进程退出码和本来已界限为
 4 KiB 的 SSH stderr。`RemoteConnectionManager.Ended` 再每十秒重连、拼接相同错误，因此界面重复。
-这是已确认的**错误归因丢失与重复展示**；真正导致 SSH 提前结束的远端/网络原因尚未从该截图判定。
-修复仅保留失败路径有界的子进程退出信息并显示本次失败，不绕开 SHA/identity/主机密钥验证，
+最初只确认了**错误归因丢失与重复展示**；后续已定位 Windows 上传脚本 CRLF 缺陷，见本节末。
+诊断改动保留失败路径有界的子进程退出信息并显示本次失败，不绕开 SHA/identity/主机密钥验证，
 不删/杀现有 daemon，不把旧 collector 当成后备。新版本须独立验证并获发布授权后才可替代已发布 fork.9。
 
 维护实现已回收到原有 `downstream/patches/0009-Integrate-Windows-SSH-sources-and-fork-updates.patch`，
 没有增加修补编号；原 0010–0016 按序重放。该补丁 SHA-256：
-`d73245b43a7bdd963984f992c47f486235d29b45e584e8602684d5d53cd296ab`。
+`249adc9b4853c8078efa99c959391d9f23bb7c47843f68250fbbbb5568264797`（包含下述 CRLF 根因修复）。
 Windows 回归新增独立编译的 `ssh.exe` 测试子进程及隔离的 8 MiB 临时 collector，
 覆盖早退时的上传失败、退出码及 SSH stderr，以及 probe 的主机密钥错误；
 沿用 0009 已注册的 Windows.Tests 整套执行命令。没有修改共享打包的 collector。
@@ -344,11 +344,26 @@ Windows 回归新增独立编译的 `ssh.exe` 测试子进程及隔离的 8 MiB 
 `Collector upload failed (exit code 37): Unsafe collector directory`；
 它验证了客户端的错误传播，不等于在 Windows 上运行新回归或证明生产 SSH 最初为何退出。
 
-在可用的 Windows 机器上，先用源设置中**实际的 SSH 目标**（不是界面显示名称）运行
-`ssh.exe -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 <destination> "uname -m"`，
-记录原始退出码和 stderr；若通过，再运行该项目已注册的 Windows.Tests 针对性回归，
-并用尚未发布的新构建在故障现场观察首次 SSH/collector 错误。缺少 Windows 原生执行
-和故障现场的首次 SSH stderr，不能把这次原因进一步定为权限、认证或 daemon 异常。
+### 已确认：Windows 发布程序把 CRLF 带入 Linux 上传脚本
+
+直接检查保存的已发布 fork.9 Windows x64 ZIP 内 `AgentSpeed.exe`：UTF-16 字符串
+`set -eu\r\n` 出现在字节偏移 `29870129`，`set -eu\n` 不存在。仓库 `.gitattributes`
+只固定 fixtures，不限制 C# 源码换行；C# 多行 raw string 保留源码换行。
+Windows 编译产物因此把 CRLF 上传脚本交给 Linux shell；Mac 的 LF 脚本不受此问题影响。
+这是客户端部署脚本失败，不是 SSH 登录失败，也不是 collector 摘要错误。
+
+真实 Bash 执行同一上传脚本、使用实际发布 collector 和隔离的临时 HOME：
+原 Windows CRLF 版本 exit 2，出现 `set: -\r: invalid option`、`umask: 077\r: octal number out of range`
+和 `syntax error: unexpected end of file`，没有安装资产；LF 版本 exit 0，资产落盘且摘要匹配。
+上传脚本提前退出会关闭 SSH stdin，旧 Windows 客户端随后写入二进制时只报“管道已结束”。
+
+实际修复：`RemoteSshWorker.UploadCommand` 在构建完脚本后执行 `.Replace("\r\n", "\n")`。
+修复仍归入 0009；新增 `windows/scripts/test-remote-ssh-script.py` 并注册到 0009 Linux 回归。
+该测试把实际 worker 源码转成 CRLF 后编译，调用实际生成命令，再交给真实 `bash -n`：
+未修复版本 exit 2、测试失败；修复版本通过。它不是源码字符串匹配测试。
+完整 16 补丁重放到 `/tmp/agent-speed-fork9-crlf-verified`、上述 CRLF 回归、Windows.Tests
+Release 交叉编译均通过。未运行 Windows 原生 UI，未发布新安装包；已安装 fork.9 不会自动改变。
+
 未经单独授权不推送、不打标签、不运行 Release，也不声称 fork.9 已修复。
 
 
