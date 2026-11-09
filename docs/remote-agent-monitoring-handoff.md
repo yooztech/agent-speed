@@ -308,3 +308,47 @@ sudo -n python3 <prepared-tree>/linux/tests/widget_statistics_smoke.py \
 最终 test variant 的 SHA-256 与实际 SSH 冒烟运行的字节完全一致：
 `a76b01dd40163be10d19061e10944473582cce8d69221c29ca6227bd84d7e384`。不得将它纳入移动 assets。
 最终跨侧 production SSH、Worker、App Attest、WidgetKit 与 Apple 真机验收由移动协调 owner 执行。
+
+## Windows fork.9 SSH 管道提前结束：维护诊断
+
+用户在已安装的 `v1.6.1-fork.9` Windows 客户端报告远程主机 Code 离线，界面重复显示“管道已结束”。
+这是已报告的真实故障；没有重新运行生产 Windows 应用去“确认”用户现象。已发布的 fork.9 标签与资产不可变。
+
+已检查 GitHub fork.9 独立 collector、Windows x64 ZIP 内的 collector 和此工作站 `dev` 用户
+`~/.cache/agent-speed/collector-v2-7ace53bcc7aae824287e56949a9ed9b59fea882ebc691b5d892d9239deb29666`：
+三个 SHA-256 均为 `7ace53bcc7aae824287e56949a9ed9b59fea882ebc691b5d892d9239deb29666`。
+在此主机，`--identity` 返回同摘要，运行库解析正常；该用户 home/cache 权限、collector 700 单链接、
+按 digest 区分的 runtime 目录 700 与锁文件 600 均符合当前规则，磁盘尚有 27 GiB 可用。
+这些本机事实不能证明 Windows 的 SSH alias、实际 Unix UID、远端执行时的 stderr 或 SSH 网络状态。
+**不要清空**采集器资产、历史缓存、锁目录或 App 设置：它们不是已确认原因；清空会破坏证据或影响其他连接。
+
+Windows `RemoteSshWorker` 在上传 `WriteAsync`/关闭输入或最早 probe/collector 读管道时若抛
+`IOException`，原实现只显示本机 Windows 的管道错误，跳过远端子进程退出码和本来已界限为
+4 KiB 的 SSH stderr。`RemoteConnectionManager.Ended` 再每十秒重连、拼接相同错误，因此界面重复。
+这是已确认的**错误归因丢失与重复展示**；真正导致 SSH 提前结束的远端/网络原因尚未从该截图判定。
+修复仅保留失败路径有界的子进程退出信息并显示本次失败，不绕开 SHA/identity/主机密钥验证，
+不删/杀现有 daemon，不把旧 collector 当成后备。新版本须独立验证并获发布授权后才可替代已发布 fork.9。
+
+维护实现已回收到原有 `downstream/patches/0009-Integrate-Windows-SSH-sources-and-fork-updates.patch`，
+没有增加修补编号；原 0010–0016 按序重放。该补丁 SHA-256：
+`d73245b43a7bdd963984f992c47f486235d29b45e584e8602684d5d53cd296ab`。
+Windows 回归新增独立编译的 `ssh.exe` 测试子进程及隔离的 8 MiB 临时 collector，
+覆盖早退时的上传失败、退出码及 SSH stderr，以及 probe 的主机密钥错误；
+沿用 0009 已注册的 Windows.Tests 整套执行命令。没有修改共享打包的 collector。
+
+本轮执行：`python3 downstream/manage.py prepare /tmp/agent-speed-fork9-final` 完整重放 16 个补丁；
+`dotnet build /tmp/agent-speed-fork9-final/windows/tests/AgentSpeed.Windows.Tests/AgentSpeed.Windows.Tests.csproj --configuration Release -p:EnableWindowsTargeting=true`
+在 Linux 交叉编译成功，测试子进程产物为 x86-64 Windows PE；重放后的 Git tree
+`0eb174992bf7ea91ed1bb717574a7d92a3556cb0` 与最终导出开发树一致。
+隔离 Linux 实际进程冒烟以 8 MiB 输入喂给主动退出 37 的 SSH 替身，观测
+`Collector upload failed (exit code 37): Unsafe collector directory`；
+它验证了客户端的错误传播，不等于在 Windows 上运行新回归或证明生产 SSH 最初为何退出。
+
+在可用的 Windows 机器上，先用源设置中**实际的 SSH 目标**（不是界面显示名称）运行
+`ssh.exe -T -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 <destination> "uname -m"`，
+记录原始退出码和 stderr；若通过，再运行该项目已注册的 Windows.Tests 针对性回归，
+并用尚未发布的新构建在故障现场观察首次 SSH/collector 错误。缺少 Windows 原生执行
+和故障现场的首次 SSH stderr，不能把这次原因进一步定为权限、认证或 daemon 异常。
+未经单独授权不推送、不打标签、不运行 Release，也不声称 fork.9 已修复。
+
+

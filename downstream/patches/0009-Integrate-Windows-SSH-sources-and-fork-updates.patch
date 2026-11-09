@@ -1,62 +1,66 @@
-From 47736041cbc6539059020953aae239a11557c6d3 Mon Sep 17 00:00:00 2001
+From 2b419e0755735cef5181bef8878f3c7828f44796 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:28 +0800
-Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
+Subject: [PATCH 09/16] Integrate Windows SSH sources and fork updates
 
 ---
  README.md                                     |  10 +-
- linux/app/src/network_service.cpp             |  44 ++--
- linux/app/src/update_release.hpp              |  71 ++++++
+ linux/app/src/network_service.cpp             |  44 ++-
+ linux/app/src/update_release.hpp              |  71 +++++
  linux/tests/CMakeLists.txt                    |   1 +
- linux/tests/update_release_test.cpp           |  31 +++
+ linux/tests/update_release_test.cpp           |  31 ++
  .../Updates/UpdateConfiguration.swift         |   4 +-
  .../AgentSpeedCore/Updates/Release.swift      |  27 +-
- .../ReleaseFeedTests.swift                    |  46 ++--
+ .../ReleaseFeedTests.swift                    |  46 ++-
  .../FixtureConfiguration.swift                |   2 +-
  .../UpdateRelaunchIntegration/Harness.swift   |   2 +-
  macos/scripts/test-update-relaunch.py         |   9 +-
- spec/UPDATES.md                               |  32 ++-
+ spec/UPDATES.md                               |  32 +-
  windows/src/AgentSpeed.Core/History.cs        |   2 +
  windows/src/AgentSpeed.Core/Models.cs         |  21 +-
- .../src/AgentSpeed.Core/RemoteAggregation.cs  | 126 ++++++++++
- windows/src/AgentSpeed.Core/SpeedHub.cs       | 182 +++++++++++++-
+ .../src/AgentSpeed.Core/RemoteAggregation.cs  | 126 ++++++++
+ windows/src/AgentSpeed.Core/SpeedHub.cs       | 182 ++++++++++-
  .../History/ExecutionModeCsv.cs               |   4 +-
  .../History/HistoryCsv.cs                     |   9 +-
  .../Localization/Strings.Windows.json         |  36 +++
  .../Settings/AppSettings.cs                   |   2 +
  .../Settings/RemoteHost.cs                    |  38 +++
- .../Settings/SettingsSerializer.cs            |  30 +++
+ .../Settings/SettingsSerializer.cs            |  30 ++
  .../Updates/ReleaseFeed.cs                    |   4 +-
  .../Updates/ReleaseInfo.cs                    |   4 +-
  .../Updates/SemanticVersion.cs                |  17 ++
- .../Updates/UpdatePackage.cs                  |  49 +++-
+ .../Updates/UpdatePackage.cs                  |  49 ++-
  .../Updates/UpdateSource.cs                   |   2 +-
  windows/src/AgentSpeed/App/AppController.cs   |  12 +-
  windows/src/AgentSpeed/App/AppPaths.cs        |   2 +-
- .../Dashboard/DashboardViewModel.cs           |  40 +--
+ .../Dashboard/DashboardViewModel.cs           |  40 ++-
  .../AgentSpeed/History/HistoryController.cs   |   5 +-
  .../src/AgentSpeed/History/HistoryItems.cs    |   6 +
  .../History/HistoryViewModel.Perf.cs          |   2 +-
  .../History/HistoryViewModel.Traffic.cs       |   6 +-
- .../AgentSpeed/History/HistoryViewModel.cs    | 162 +++++++++++-
+ .../AgentSpeed/History/HistoryViewModel.cs    | 162 +++++++++-
  .../src/AgentSpeed/History/HistoryWindow.xaml |   4 +
  windows/src/AgentSpeed/Orb/OrbManager.cs      |   4 +-
- .../Services/RemoteConnectionManager.cs       | 231 ++++++++++++++++++
- .../AgentSpeed/Services/RemoteSshWorker.cs    | 228 +++++++++++++++++
+ .../Services/RemoteConnectionManager.cs       | 227 ++++++++++++++
+ .../AgentSpeed/Services/RemoteSshWorker.cs    | 287 ++++++++++++++++++
  .../Settings/Pages/SourcesPage.xaml           |  26 ++
- .../AgentSpeed/Settings/SettingsViewModel.cs  | 157 ++++++++++++
- .../src/AgentSpeed/Updates/ExecutableSwap.cs  |  49 +++-
- .../RemoteConsumerTests.cs                    | 189 ++++++++++++++
- .../RemoteExecutionModeTests.cs               |  64 +++++
- .../RemoteProtocolLifecycleTests.cs           | 138 +++++++++++
+ .../AgentSpeed/Settings/SettingsViewModel.cs  | 157 ++++++++++
+ .../src/AgentSpeed/Updates/ExecutableSwap.cs  |  49 ++-
+ .../RemoteConsumerTests.cs                    | 189 ++++++++++++
+ .../RemoteExecutionModeTests.cs               |  64 ++++
+ .../RemoteProtocolLifecycleTests.cs           | 138 +++++++++
  .../ReleaseFeedTests.cs                       |  53 ++--
  .../RemoteHistoryCsvTests.cs                  |  37 +++
- .../RemoteHostSettingsTests.cs                |  67 +++++
- .../RemoteHostStatusTextTests.cs              |  16 ++
- .../UpdatePackageTests.cs                     |  45 +++-
- .../UpdateScheduleTests.cs                    |  48 ++--
+ .../RemoteHostSettingsTests.cs                |  67 ++++
+ .../RemoteHostStatusTextTests.cs              |  16 +
+ .../UpdatePackageTests.cs                     |  45 ++-
+ .../UpdateScheduleTests.cs                    |  48 +--
  .../UpdateSourceTests.cs                      |   2 +-
- 52 files changed, 2215 insertions(+), 183 deletions(-)
+ .../AgentSpeed.Windows.Tests.csproj           |   1 +
+ .../RemoteSshWorkerTests.cs                   |  80 +++++
+ windows/tests/FakeSsh/FakeSsh.csproj          |  10 +
+ windows/tests/FakeSsh/Program.cs              |  25 ++
+ 56 files changed, 2386 insertions(+), 183 deletions(-)
  create mode 100644 linux/app/src/update_release.hpp
  create mode 100644 linux/tests/update_release_test.cpp
  create mode 100644 windows/src/AgentSpeed.Core/RemoteAggregation.cs
@@ -69,9 +73,12 @@ Subject: [PATCH 09/15] Integrate Windows SSH sources and fork updates
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHostSettingsTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteHostStatusTextTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/RemoteSshWorkerTests.cs
+ create mode 100644 windows/tests/FakeSsh/FakeSsh.csproj
+ create mode 100644 windows/tests/FakeSsh/Program.cs
 
 diff --git a/README.md b/README.md
-index cf9664f4..15817ee1 100644
+index 54efbd3c..ebfb6035 100644
 --- a/README.md
 +++ b/README.md
 @@ -107,14 +107,18 @@ The full, testable specification lives in [`spec/METRICS.md`](spec/METRICS.md).
@@ -1971,10 +1978,10 @@ index 8fa0e3da..84d2b461 100644
                      entry.Window.Surface.Pulse(speed, tokens);
 diff --git a/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
 new file mode 100644
-index 00000000..67b73d1b
+index 00000000..44739ce9
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
-@@ -0,0 +1,231 @@
+@@ -0,0 +1,227 @@
 +using System.Diagnostics;
 +using System.Windows.Threading;
 +using AgentSpeed.Core;
@@ -2126,14 +2133,10 @@ index 00000000..67b73d1b
 +        if (_disposed || !_connections.TryGetValue(id, out var connection) || connection.Worker?.Token != token) return;
 +        connection.Worker = null;
 +        connection.Online = false;
-+        connection.Error = AppendError(connection.Error, reason);
++        connection.Error = reason;
 +        Publish(connection);
 +        ScheduleReconnect(connection);
 +    }
-+    private static string AppendError(string? prior, string reason) => prior is { Length: > 0 }
-+        ? $"{prior[..Math.Min(prior.Length, 512)]}; {reason}"
-+        : reason;
-+
 +
 +    private void ScheduleReconnect(Connection connection)
 +    {
@@ -2179,7 +2182,7 @@ index 00000000..67b73d1b
 +        {
 +            if (connection.Worker is null || Stopwatch.GetElapsedTime(connection.LastReceived) < TimeSpan.FromSeconds(90)) continue;
 +            Stop(connection);
-+            connection.Error = AppendError(connection.Error, "Collector heartbeat timed out");
++            connection.Error = "Collector heartbeat timed out";
 +            Publish(connection);
 +            ScheduleReconnect(connection);
 +        }
@@ -2208,10 +2211,10 @@ index 00000000..67b73d1b
 +}
 diff --git a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
 new file mode 100644
-index 00000000..f22b39ae
+index 00000000..1c7ba7c0
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,287 @@
 +using System.Diagnostics;
 +using System.Security.Cryptography;
 +using System.Text;
@@ -2248,7 +2251,11 @@ index 00000000..f22b39ae
 +        """;
 +    private static string CollectorCommand(string digest) => $"exec \"$HOME/.cache/agent-speed/collector-v2-{digest}\"";
 +    private const int MaxLineBytes = 4_194_304;
++    private static readonly TimeSpan ExitTimeout = TimeSpan.FromSeconds(5);
 +    private readonly string destination;
++    private readonly string sshExecutable;
++    private readonly string? collectorAssetPath;
++    private readonly IReadOnlyDictionary<string, string>? sshEnvironment;
 +    private readonly object gate = new();
 +    private Process? process;
 +    private StreamWriter? collectorInput;
@@ -2256,7 +2263,19 @@ index 00000000..f22b39ae
 +    private bool started;
 +    private readonly Dictionary<Process, Task<string>> diagnostics = new();
 +
-+    public RemoteSshWorker(string destination) => this.destination = destination;
++    public RemoteSshWorker(string destination)
++    {
++        this.destination = destination;
++        sshExecutable = "ssh";
++    }
++
++    internal RemoteSshWorker(string destination, string sshExecutable, string collectorAssetPath, IReadOnlyDictionary<string, string> sshEnvironment)
++    {
++        this.destination = destination;
++        this.sshExecutable = sshExecutable;
++        this.collectorAssetPath = collectorAssetPath;
++        this.sshEnvironment = sshEnvironment;
++    }
 +    public Guid Token { get; } = Guid.NewGuid();
 +    public event Action<Guid, string>? LineReceived;
 +    public event Action<Guid, string>? Ended;
@@ -2295,11 +2314,13 @@ index 00000000..f22b39ae
 +
 +    private Process Launch(string command)
 +    {
-+        var info = new ProcessStartInfo("ssh")
++        var info = new ProcessStartInfo(sshExecutable)
 +        {
 +            UseShellExecute = false, CreateNoWindow = true,
 +            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
 +        };
++        if (sshEnvironment is not null)
++            foreach (var (key, value) in sshEnvironment) info.Environment[key] = value;
 +        foreach (var arg in new[] { "-T", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", destination, command })
 +            info.ArgumentList.Add(arg);
 +        var child = new Process { StartInfo = info };
@@ -2312,6 +2333,7 @@ index 00000000..f22b39ae
 +        diagnostics[child] = ReadDiagnosticsAsync(child.StandardError);
 +        return child;
 +    }
++
 +    private static async Task<string> ReadDiagnosticsAsync(StreamReader reader)
 +    {
 +        const int limit = 4096;
@@ -2333,9 +2355,29 @@ index 00000000..f22b39ae
 +
 +    private async Task<string> ExitReasonAsync(Process child, string prefix)
 +    {
-+        await child.WaitForExitAsync().ConfigureAwait(false);
-+        var detail = await diagnostics[child].ConfigureAwait(false);
-+        return $"{prefix} (exit code {child.ExitCode})" + (detail.Length == 0 ? "" : $": {detail}");
++        var exited = await WaitForExitAsync(child).ConfigureAwait(false);
++        var detail = await ReadDiagnosticsAsync(child).ConfigureAwait(false);
++        return exited
++            ? $"{prefix} (exit code {child.ExitCode})" + (detail.Length == 0 ? "" : $": {detail}")
++            : $"{prefix} (SSH did not exit within {(int)ExitTimeout.TotalSeconds} seconds)" + (detail.Length == 0 ? "" : $": {detail}");
++    }
++
++    private static async Task<bool> WaitForExitAsync(Process child)
++    {
++        try
++        {
++            await child.WaitForExitAsync().WaitAsync(ExitTimeout).ConfigureAwait(false);
++            return true;
++        }
++        catch (TimeoutException) { return false; }
++    }
++
++    private async Task<string> ReadDiagnosticsAsync(Process child)
++    {
++        try { return await diagnostics[child].WaitAsync(ExitTimeout).ConfigureAwait(false); }
++        catch (TimeoutException) { return ""; }
++        catch (IOException) { return ""; }
++        catch (ObjectDisposedException) { return ""; }
 +    }
 +
 +
@@ -2350,12 +2392,16 @@ index 00000000..f22b39ae
 +            var probe = Launch("uname -m");
 +            try
 +            {
-+                probe.StandardInput.Close();
++                try { probe.StandardInput.Close(); }
++                catch (Exception error)
++                {
++                    throw new IOException(await ExitReasonAsync(probe, "SSH connection failed; check host key and authentication").ConfigureAwait(false), error);
++                }
 +                var architecture = (await probe.StandardOutput.ReadToEndAsync().ConfigureAwait(false)).Trim();
 +                await probe.WaitForExitAsync().ConfigureAwait(false);
 +                if (probe.ExitCode != 0) throw new IOException(await ExitReasonAsync(probe, "SSH connection failed; check host key and authentication").ConfigureAwait(false));
 +                var arch = architecture switch { "x86_64" => "x86_64", "aarch64" or "arm64" => "aarch64", _ => throw new IOException("Unsupported remote architecture") };
-+                var path = Path.Combine(AppContext.BaseDirectory, "collectors", "linux-" + arch, "agent-speed-collector");
++                var path = collectorAssetPath ?? Path.Combine(AppContext.BaseDirectory, "collectors", "linux-" + arch, "agent-speed-collector");
 +                if (!File.Exists(path)) throw new IOException($"Linux collector for {arch} is missing from this application");
 +                var binary = await File.ReadAllBytesAsync(path).ConfigureAwait(false);
 +                digest = Convert.ToHexString(SHA256.HashData(binary)).ToLowerInvariant();
@@ -2363,8 +2409,15 @@ index 00000000..f22b39ae
 +                try
 +                {
 +                    var drain = upload.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
-+                    await upload.StandardInput.BaseStream.WriteAsync(binary).ConfigureAwait(false);
-+                    upload.StandardInput.Close();
++                    try
++                    {
++                        await upload.StandardInput.BaseStream.WriteAsync(binary).ConfigureAwait(false);
++                        upload.StandardInput.Close();
++                    }
++                    catch (Exception error)
++                    {
++                        throw new IOException(await ExitReasonAsync(upload, "Collector upload failed").ConfigureAwait(false), error);
++                    }
 +                    await drain.ConfigureAwait(false);
 +                    await upload.WaitForExitAsync().ConfigureAwait(false);
 +                    if (upload.ExitCode != 0) throw new IOException(await ExitReasonAsync(upload, "Collector upload failed").ConfigureAwait(false));
@@ -2382,7 +2435,12 @@ index 00000000..f22b39ae
 +                using var line = new MemoryStream();
 +                while (true)
 +                {
-+                    var count = await stream.ReadAsync(chunk).ConfigureAwait(false);
++                    int count;
++                    try { count = await stream.ReadAsync(chunk).ConfigureAwait(false); }
++                    catch (IOException error)
++                    {
++                        throw new IOException(await ExitReasonAsync(collector, "Collector disconnected; retrying").ConfigureAwait(false), error);
++                    }
 +                    if (count == 0) break;
 +                    for (var i = 0; i < count; i++)
 +                    {
@@ -2429,7 +2487,11 @@ index 00000000..f22b39ae
 +            }
 +            Kill(child);
 +        }
-+        try { await child.WaitForExitAsync().ConfigureAwait(false); await diagnostics[child].ConfigureAwait(false); }
++        try
++        {
++            await WaitForExitAsync(child).ConfigureAwait(false);
++            await ReadDiagnosticsAsync(child).ConfigureAwait(false);
++        }
 +        finally { diagnostics.Remove(child); child.Dispose(); }
 +    }
 +
@@ -3647,3 +3709,148 @@ index b071d18c..ac6dafaa 100644
          Assert.Equal(UpdateSource.GitHubFeedUrl, source.FeedUrl.OriginalString);
          Assert.False(source.IsOverride);
          Assert.True(UpdateSource.IsAllowedGitHubUrl(source.FeedUrl));
+diff --git a/windows/tests/AgentSpeed.Windows.Tests/AgentSpeed.Windows.Tests.csproj b/windows/tests/AgentSpeed.Windows.Tests/AgentSpeed.Windows.Tests.csproj
+index e553b409..50a29c91 100644
+--- a/windows/tests/AgentSpeed.Windows.Tests/AgentSpeed.Windows.Tests.csproj
++++ b/windows/tests/AgentSpeed.Windows.Tests/AgentSpeed.Windows.Tests.csproj
+@@ -28,6 +28,7 @@
+ 
+   <ItemGroup>
+     <ProjectReference Include="..\..\src\AgentSpeed\AgentSpeed.csproj" />
++    <ProjectReference Include="..\FakeSsh\FakeSsh.csproj" ReferenceOutputAssembly="false" />
+   </ItemGroup>
+ 
+   <ItemGroup>
+diff --git a/windows/tests/AgentSpeed.Windows.Tests/RemoteSshWorkerTests.cs b/windows/tests/AgentSpeed.Windows.Tests/RemoteSshWorkerTests.cs
+new file mode 100644
+index 00000000..ccc75f9b
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Windows.Tests/RemoteSshWorkerTests.cs
+@@ -0,0 +1,80 @@
++using System.IO;
++using System.Linq;
++using AgentSpeed.Services;
++
++namespace AgentSpeed.Windows.Tests;
++
++public sealed class RemoteSshWorkerTests
++{
++    [Fact]
++    public async Task UploadPipeCloseReportsExitCodeAndRemoteDiagnostic()
++    {
++        using var fixture = new FakeSshFixture("upload-pipe-close");
++        var reason = await fixture.RunAsync();
++
++        Assert.Contains("Collector upload failed", reason, StringComparison.Ordinal);
++        Assert.Contains("exit code 37", reason, StringComparison.Ordinal);
++        Assert.Contains("Unsafe collector directory", reason, StringComparison.Ordinal);
++    }
++
++    [Fact]
++    public async Task ProbeFailureReportsExitCodeAndHostKeyDiagnostic()
++    {
++        using var fixture = new FakeSshFixture("probe-failure");
++        var reason = await fixture.RunAsync();
++
++        Assert.Contains("SSH connection failed; check host key and authentication", reason, StringComparison.Ordinal);
++        Assert.Contains("exit code 29", reason, StringComparison.Ordinal);
++        Assert.Contains("Host key verification failed", reason, StringComparison.Ordinal);
++    }
++
++    private sealed class FakeSshFixture : IDisposable
++    {
++        private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
++        private readonly string root = Path.Combine(Path.GetTempPath(), "AgentSpeed.RemoteSshWorkerTests", Guid.NewGuid().ToString("N"));
++        private readonly string mode;
++
++        public FakeSshFixture(string mode)
++        {
++            this.mode = mode;
++            Directory.CreateDirectory(root);
++            CollectorAssetPath = Path.Combine(root, "collector");
++            using var collectorFile = File.Create(CollectorAssetPath);
++            collectorFile.SetLength(8 * 1024 * 1024);
++        }
++
++        private string CollectorAssetPath { get; }
++
++        public async Task<string> RunAsync()
++        {
++            var ended = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
++            var worker = new RemoteSshWorker(
++                "test@example.com",
++                FakeSshExecutablePath(),
++                CollectorAssetPath,
++                new Dictionary<string, string> { ["AGENT_SPEED_FAKE_SSH_MODE"] = mode });
++            worker.Ended += (_, reason) => ended.TrySetResult(reason);
++            worker.Start();
++            return await ended.Task.WaitAsync(Timeout);
++        }
++
++        public void Dispose()
++        {
++            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
++        }
++
++        private static string FakeSshExecutablePath()
++        {
++            var testOutput = Path.GetDirectoryName(typeof(RemoteSshWorkerTests).Assembly.Location)!;
++            var configuration = new DirectoryInfo(testOutput).Parent!.Name;
++            var testsDirectory = Directory.GetParent(testOutput)!.Parent!.Parent!.Parent!;
++            var fakeOutput = Path.Combine(testsDirectory.FullName, "FakeSsh", "bin", configuration, "net10.0");
++            var candidates = new[]
++            {
++                Path.Combine(fakeOutput, "win-x64", "ssh.exe"),
++                Path.Combine(fakeOutput, "ssh.exe"),
++            }.Where(File.Exists).ToArray();
++            return Assert.Single(candidates);
++        }
++    }
++}
+diff --git a/windows/tests/FakeSsh/FakeSsh.csproj b/windows/tests/FakeSsh/FakeSsh.csproj
+new file mode 100644
+index 00000000..f73a6bee
+--- /dev/null
++++ b/windows/tests/FakeSsh/FakeSsh.csproj
+@@ -0,0 +1,10 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <TargetFramework>net10.0</TargetFramework>
++    <OutputType>Exe</OutputType>
++    <AssemblyName>ssh</AssemblyName>
++    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
++    <UseAppHost>true</UseAppHost>
++    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
++  </PropertyGroup>
++</Project>
+diff --git a/windows/tests/FakeSsh/Program.cs b/windows/tests/FakeSsh/Program.cs
+new file mode 100644
+index 00000000..52fae7e4
+--- /dev/null
++++ b/windows/tests/FakeSsh/Program.cs
+@@ -0,0 +1,25 @@
++var command = args.Length == 0 ? "" : args[^1];
++var mode = Environment.GetEnvironmentVariable("AGENT_SPEED_FAKE_SSH_MODE");
++
++if (command == "uname -m")
++{
++    if (mode == "probe-failure")
++    {
++        Console.Error.Write("Host key verification failed");
++        return 29;
++    }
++
++    Console.OpenStandardInput().CopyTo(Stream.Null);
++    Console.Out.WriteLine("x86_64");
++    return 0;
++}
++
++if (mode == "upload-pipe-close")
++{
++    Console.OpenStandardInput().Dispose();
++    Console.Error.Write("Unsafe collector directory");
++    return 37;
++}
++
++Console.Error.Write("Unexpected fake SSH command");
++return 41;
