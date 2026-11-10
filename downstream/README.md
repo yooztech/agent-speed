@@ -74,9 +74,9 @@ Unpublished local assets and checks are not a Release, an upgrade of previously
 installed clients, or proof of APNs/iPhone delivery.
 
 The independent, unreleased Widget statistics feed is carried by feature patch
-`0016-Add-independent-widget-statistics-feed.patch`; it does not change the
-previous fifteen patches or ActivityKit's ten-second cadence. It adds negotiated
-`widget_statistics_v1` controls, a separately revocable authorization of at most
+`0016-Add-independent-widget-statistics-feed.patch`; it is independent of
+ActivityKit's ten-second routine cadence and immediate known-state edges. It adds negotiated
+`widget_statistics_v2` controls, a separately revocable authorization of at most
 30 days, and a fixed statistics-only relay path with 30-minute routine attempts.
 It reuses the single collector ingestion and per-timezone history projections;
 missing dates/counts remain unknown. A positive subscription ACK confirms a
@@ -141,7 +141,7 @@ on the target. Only Linux x86_64 is packaged; no ARM64 compatibility is implied.
 The pending shared collector retains metadata `format_version` 1 and outer
 stdio NDJSON `protocol.version` 1. Its separate `protocol.shared_collector`
 descriptor records `control_version` 2, capabilities `live_activity_v2`,
-`shared_collector_v1` and `widget_statistics_v1`, and the `--identity` contract:
+`live_activity_edges_v1`, `shared_collector_v1` and `widget_statistics_v2`, and the `--identity` contract:
 the prefix `shared-collector-v2`, a space, the executable SHA-256, and a newline. The
 release build opts into identity verification only for its trusted production
 collector; packaging runs the staged executable and rejects a mismatching

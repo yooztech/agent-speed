@@ -1,4 +1,4 @@
-From 0619a4b475175890e9c6c5521b6d247416703068 Mon Sep 17 00:00:00 2001
+From 75109a9f340e97b6b4602dd8b58695c2a3d613e1 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 14/16] Connect remote performance and history metrics
@@ -6,7 +6,7 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
 ---
  README.md                                     |  40 +-
  linux/collector/CMakeLists.txt                |  30 +-
- linux/collector/main.cpp                      | 234 +---------
+ linux/collector/main.cpp                      | 234 +--------
  linux/collector/protocol.cpp                  |  66 ++-
  linux/collector/protocol.hpp                  |   4 +-
  linux/core/CMakeLists.txt                     |   1 +
@@ -16,20 +16,20 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  .../core/include/agentspeed/history_store.hpp |   2 +
  linux/core/include/agentspeed/snapshot.hpp    |   3 +
  linux/core/src/engine.cpp                     |   7 +-
- linux/core/src/history_analyzer.cpp           | 201 ++++++++-
- linux/core/src/history_canonical.cpp          | 172 ++++++++
+ linux/core/src/history_analyzer.cpp           | 201 +++++++-
+ linux/core/src/history_canonical.cpp          | 172 +++++++
  linux/core/src/history_store.cpp              |  18 +-
  linux/core/src/monitor_snapshot.cpp           |   9 +
  linux/tests/CMakeLists.txt                    |  10 +-
- linux/tests/collector_daemon_test.cpp         | 306 +++++++++++++
- linux/tests/collector_integration_test.cpp    | 123 ++++++
- linux/tests/collector_publisher_test.cpp      | 282 ++++++++++++
+ linux/tests/collector_daemon_test.cpp         | 306 ++++++++++++
+ linux/tests/collector_integration_test.cpp    | 123 +++++
+ linux/tests/collector_publisher_test.cpp      | 449 ++++++++++++++++++
  linux/tests/collector_test.cpp                |  60 +++
  linux/tests/engine_fixture_test.cpp           |  21 +
  linux/tests/sampling_test.cpp                 | 117 +++++
- linux/tests/shared_history_test.cpp           | 406 ++++++++++++++++++
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 ++++
- .../AgentSpeed/App/RemoteSnapshot.swift       |  77 +++-
+ linux/tests/shared_history_test.cpp           | 406 ++++++++++++++++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 +++
+ .../AgentSpeed/App/RemoteSnapshot.swift       |  77 ++-
  .../AgentSpeed/History/HistoryViewModel.swift |  20 +-
  .../AgentSpeed/Localization/StringTable.swift |   1 +
  .../Perf/History/PerfHistoryContent.swift     |  37 +-
@@ -44,7 +44,7 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  macos/Sources/AgentSpeedCore/Models.swift     |   3 +
  .../Monitor/SnapshotBuilder.swift             |   5 +-
  .../AgentSpeedAppTests/PerfHistoryTests.swift |  23 +
- .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 ++++++
+ .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 +++++
  .../EngineBehaviorTests.swift                 |   4 +
  spec/METRICS.md                               |  23 +-
  spec/NETWORK.md                               |  56 ++-
@@ -68,12 +68,12 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  .../History/Perf/PerfHistoryViewModel.cs      |  24 +-
  .../History/Perf/PerfPerformanceSection.xaml  |   4 +
  .../AgentSpeed/History/Perf/PerfRowView.cs    |   6 +-
- .../RemoteConsumerTests.cs                    |  79 +++-
- .../RemotePerformanceTests.cs                 |  78 ++++
+ .../RemoteConsumerTests.cs                    |  79 ++-
+ .../RemotePerformanceTests.cs                 |  78 +++
  .../RemoteProtocolLifecycleTests.cs           |   2 +-
  .../Perf/PerfHistoryTests.cs                  |  55 +++
  .../PerfPerformanceSectionTests.cs            |  28 ++
- 69 files changed, 2852 insertions(+), 307 deletions(-)
+ 69 files changed, 3019 insertions(+), 307 deletions(-)
  create mode 100644 linux/core/include/agentspeed/history_canonical.hpp
  create mode 100644 linux/core/src/history_canonical.cpp
  create mode 100644 linux/tests/collector_daemon_test.cpp
@@ -1850,10 +1850,10 @@ index 6eca14f2..f70a18a2 100644
 +}
 diff --git a/linux/tests/collector_publisher_test.cpp b/linux/tests/collector_publisher_test.cpp
 new file mode 100644
-index 00000000..dc0189f4
+index 00000000..43ce16db
 --- /dev/null
 +++ b/linux/tests/collector_publisher_test.cpp
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,449 @@
 +#include <gtest/gtest.h>
 +#include "publisher.hpp"
 +#include "agentspeed/json.hpp"
@@ -1873,6 +1873,13 @@ index 00000000..dc0189f4
 +    collector::Publisher::Options o; o.clock=[] {return 1000000;}; o.transport=[](const auto&,const auto&){return collector::Publisher::Result{200};}; collector::Publisher p(o);
 +    auto response=p.control(subscribe("r","l","https://agent-speed.yooztech.com.evil"),1,1000000); ASSERT_EQ(response.size(),1u); EXPECT_FALSE(accepted(response[0])); EXPECT_FALSE(p.authorized(1000000));
 +    response=p.control("{\"version\":1,\"type\":\"live_activity_unsubscribe\",\"controlVersion\":1,\"requestId\":\"r\",\"leaseId\":\"l\"}",1,1000000); ASSERT_EQ(response.size(),1u); EXPECT_FALSE(accepted(response[0]));
++}
++TEST(CollectorPublisher, AdvertisesActivityEdgeCapability) {
++    collector::Publisher p;
++    auto response = p.control("{\"version\":1,\"type\":\"capabilities\",\"requestId\":\"caps\"}", 1, 1000000);
++    ASSERT_EQ(response.size(), 1u);
++    EXPECT_NE(response[0].find("\"live_activity_edges_v1\""), std::string::npos);
++    EXPECT_NE(response[0].find("\"minPublishIntervalMs\":10000"), std::string::npos);
 +}
 +TEST(CollectorPublisher, ConfirmsOnlyRealSampleAndProjectsAllowedFields) {
 +    std::atomic<std::int64_t> now{1000000}; std::mutex m; std::string captured; std::atomic<int> calls{0}; collector::Publisher::Options o; o.clock=[&]{return now.load();}; o.transport=[&](const auto& token,const auto& body){EXPECT_EQ(token,"bearer"); {std::lock_guard<std::mutex> lock(m); captured=body;} ++calls; return collector::Publisher::Result{200};}; collector::Publisher p(o);
@@ -2135,6 +2142,166 @@ index 00000000..dc0189f4
 +    EXPECT_EQ(hosts[1], "host1");
 +    EXPECT_EQ(hosts[2], "host2");
 +    EXPECT_EQ(hosts[3], "host3");
++}
++
++TEST(CollectorPublisher, ActivityEdgesUseKnownCountsAndRoutineCadence) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto&) { ++calls; return collector::Publisher::Result{200}; };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto view = publisher.views().at(0);
++    auto sample = [&](int generating, int tools, double speed = 0) {
++        collector::Sample s;
++        s.snapshot.nowMs = now;
++        s.snapshot.generating = generating;
++        s.snapshot.tools = tools;
++        s.snapshot.liveRateComplete = true;
++        s.snapshot.liveOutput = speed;
++        publisher.sample(view, s);
++    };
++    auto unchanged = [&](int expected) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(150));
++        EXPECT_EQ(calls.load(), expected);
++    };
++    sample(-1, -1);
++    ASSERT_TRUE(eventually([&] { return calls == 1; }));
++    now += 1000; sample(0, -1, 100); unchanged(1);
++    now += 1000; sample(0, 0, 100); unchanged(1); // first known state is a baseline
++    now += 1000; sample(-1, 1); ASSERT_TRUE(eventually([&] { return calls == 2; }));
++    now += 1000; sample(-1, 0); unchanged(2); // unknown does not become idle
++    now += 1000; sample(0, 0); ASSERT_TRUE(eventually([&] { return calls == 3; }));
++    now += 1000; sample(1, -1); ASSERT_TRUE(eventually([&] { return calls == 4; }));
++    now += 9999; sample(2, 0); unchanged(4);
++    now += 1; sample(2, 0); ASSERT_TRUE(eventually([&] { return calls == 5; }));
++}
++
++TEST(CollectorPublisher, RoutineIntervalStartsAtSuccessfulResponseButEdgesBypassIt) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto&) {
++        if (++calls == 1) now += 3000; // Response arrives after the attempt began.
++        return collector::Publisher::Result{200};
++    };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto view = publisher.views().at(0);
++    auto sample = [&](int generating) {
++        collector::Sample s; s.snapshot.nowMs = now; s.snapshot.generating = generating;
++        publisher.sample(view, s);
++    };
++    sample(0);
++    std::vector<std::pair<std::uint64_t, std::string>> replies;
++    ASSERT_TRUE(eventually([&] { replies = publisher.replies(); return !replies.empty(); }));
++    ASSERT_TRUE(accepted(replies[0].second)); // Success completion and its deadline are committed.
++    now += 9999; sample(0);
++    std::this_thread::sleep_for(std::chrono::milliseconds(150));
++    EXPECT_EQ(calls.load(), 1);
++    now += 1; sample(0);
++    ASSERT_TRUE(eventually([&] { return calls == 2; }));
++    now += 1; sample(1);
++    ASSERT_TRUE(eventually([&] { return calls == 3; }));
++}
++
++TEST(CollectorPublisher, FailedEdgeIsConsumedAndBackoffBlocksFurtherEdges) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto&) {
++        int call = ++calls;
++        if (call == 2) return collector::Publisher::Result{429, "apns_backoff", 90000};
++        if (call == 3) return collector::Publisher::Result{502};
++        return collector::Publisher::Result{200};
++    };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto view = publisher.views().at(0);
++    auto sample = [&](int generating) {
++        collector::Sample s; s.snapshot.nowMs = now; s.snapshot.generating = generating;
++        publisher.sample(view, s);
++    };
++    auto unchanged = [&](int expected) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(150));
++        EXPECT_EQ(calls.load(), expected);
++    };
++    sample(0); ASSERT_TRUE(eventually([&] { return calls == 1; }));
++    now += 1000; sample(1); ASSERT_TRUE(eventually([&] { return calls == 2; }));
++    std::this_thread::sleep_for(std::chrono::milliseconds(20));
++    now += 1000; sample(0); unchanged(2);
++    now += 88000; sample(0); unchanged(2);
++    now += 1000; sample(0); ASSERT_TRUE(eventually([&] { return calls == 3; }));
++    std::this_thread::sleep_for(std::chrono::milliseconds(20));
++    now += 1000; sample(1); unchanged(3);
++    now += 18000; sample(1); unchanged(3);
++    now += 1000; sample(1); ASSERT_TRUE(eventually([&] { return calls == 4; }));
++    now += 1000; sample(1); unchanged(4);
++}
++TEST(CollectorPublisher, FailedEdgeDoesNotRepeatAfterBackoff) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.intervalMs = 60000;
++    options.transport = [&](const auto&, const auto&) {
++        return collector::Publisher::Result{++calls == 2 ? 502L : 200L};
++    };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto view = publisher.views().at(0);
++    auto sample = [&](int generating) {
++        collector::Sample s; s.snapshot.nowMs = now; s.snapshot.generating = generating;
++        publisher.sample(view, s);
++    };
++    sample(0); ASSERT_TRUE(eventually([&] { return calls == 1; }));
++    now += 1000; sample(1); ASSERT_TRUE(eventually([&] { return calls == 2; }));
++    std::this_thread::sleep_for(std::chrono::milliseconds(20));
++    now += 11000; sample(1);
++    std::this_thread::sleep_for(std::chrono::milliseconds(150));
++    EXPECT_EQ(calls.load(), 2);
++    now += 1000; sample(0); ASSERT_TRUE(eventually([&] { return calls == 3; }));
++}
++
++
++TEST(CollectorPublisher, InflightSamplesCollapseToLatestEdge) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    std::atomic<bool> release{false};
++    std::mutex mutex;
++    std::vector<std::int64_t> timestamps;
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto& body) {
++        agentspeed::json::Document doc;
++        if (doc.parse(body)) {
++            std::lock_guard<std::mutex> lock(mutex);
++            timestamps.push_back(doc.root()["snapshot"]["sampledAt"].truncated().value_or(0));
++        }
++        int call = ++calls;
++        if (call == 1) while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
++        return collector::Publisher::Result{200};
++    };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto view = publisher.views().at(0);
++    auto sample = [&](int generating) {
++        collector::Sample s; s.snapshot.nowMs = now; s.snapshot.generating = generating;
++        publisher.sample(view, s);
++    };
++    sample(0);
++    ASSERT_TRUE(eventually([&] { return calls == 1; }));
++    now += 1000; sample(1);
++    now += 1000; sample(0);
++    now += 1000; sample(1);
++    release = true;
++    ASSERT_TRUE(eventually([&] { return calls == 2; }));
++    std::lock_guard<std::mutex> lock(mutex);
++    ASSERT_EQ(timestamps.size(), 2u);
++    EXPECT_EQ(timestamps[1], now.load());
 +}
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
 index b8f1673d..db077a21 100644

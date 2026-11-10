@@ -1,4 +1,4 @@
-From 690489a41ebd3ac1a4448762c202f823cd8a53e6 Mon Sep 17 00:00:00 2001
+From 2369b302bb84a07acfef4302e3edeb43886a2108 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:10 +0800
 Subject: [PATCH 01/16] Add SSH remote agent monitoring
@@ -16,7 +16,7 @@ Subject: [PATCH 01/16] Add SSH remote agent monitoring
  linux/collector/main.cpp                      | 144 ++++
  linux/collector/protocol.cpp                  |  99 +++
  linux/collector/protocol.hpp                  |  22 +
- linux/collector/publisher.cpp                 | 385 ++++++++++
+ linux/collector/publisher.cpp                 | 410 ++++++++++
  linux/collector/publisher.hpp                 |  37 +
  linux/collector/sampling.cpp                  | 256 +++++++
  linux/collector/sampling.hpp                  |  41 +
@@ -45,7 +45,7 @@ Subject: [PATCH 01/16] Add SSH remote agent monitoring
  spec/DESIGN.md                                |   7 +
  spec/METRICS.md                               |   9 +
  spec/NETWORK.md                               |  49 +-
- 41 files changed, 3413 insertions(+), 42 deletions(-)
+ 41 files changed, 3438 insertions(+), 42 deletions(-)
  create mode 100644 docs/shared-collector.md
  create mode 100644 linux/collector/CMakeLists.txt
  create mode 100644 linux/collector/daemon.cpp
@@ -170,7 +170,7 @@ index d2ab76a7..e11a6f51 100644
  
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
 new file mode 100644
-index 00000000..479bd336
+index 00000000..3680715f
 --- /dev/null
 +++ b/docs/shared-collector.md
 @@ -0,0 +1,86 @@
@@ -208,7 +208,7 @@ index 00000000..479bd336
 +
 +A `capabilities` request contains `version`, `type`, and `requestId`. Its response echoes the ID and returns:
 +
-+- `capabilities: ["live_activity_v2", "shared_collector_v1"]` (not `live_activity_v1`);
++- `capabilities` includes `live_activity_v2`, `live_activity_edges_v1` and `shared_collector_v1` (not `live_activity_v1`); clients requiring immediate activity edges must require `live_activity_edges_v1`;
 +- `controlVersion: 2`;
 +- `subscribeTimeoutMs: 75000`;
 +- `minPublishIntervalMs: 10000`;
@@ -236,7 +236,7 @@ index 00000000..479bd336
 +
 +## Publishing and failures
 +
-+Publishing runs on a dedicated worker thread; socket clients and the collection thread do not perform network I/O. There is one latest sample per lease, not a retry backlog. The default interval is at least ten seconds. The body contains only `snapshot` with the Worker-supported minimal fields:
++Publishing runs on a dedicated worker thread; socket clients and the collection thread do not perform network I/O. There is one latest sample per lease, not a retry backlog. Sampling remains approximately once per second; after a successful response, ordinary attempts wait at least ten seconds from response completion, so network latency cannot shorten the relay's arrival-based window. A known idle-to-active or active-to-idle transition may send the latest sample immediately, bypassing only that routine interval. A positive `generating` or `tools` count means active; both zero mean idle; negative or otherwise unknown counts do not imply idle. Speed is not used. The first known state establishes a baseline; unknown samples do not change it. The state is consumed when an attempt starts, not when it succeeds, and transitions during a request or backoff collapse to the latest state. Failure backoff, `Retry-After`, freshness and lease limits still apply. No priority field is added: the relay determines priority itself. The body contains only `snapshot` with the Worker-supported minimal fields:
 +
 +`version`, `hostId`, `hostName`, `sampledAt`, `status`, `speed`, `generating`, `tools`, `todayOutput`, `rxBytesPerSecond`, `txBytesPerSecond`, `title`.
 +
@@ -1050,10 +1050,10 @@ index 00000000..b01ec5ef
 +}
 diff --git a/linux/collector/publisher.cpp b/linux/collector/publisher.cpp
 new file mode 100644
-index 00000000..a7da4600
+index 00000000..5e6633cd
 --- /dev/null
 +++ b/linux/collector/publisher.cpp
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,410 @@
 +#include "publisher.hpp"
 +#include "agentspeed/json.hpp"
 +#include "agentspeed/report_json.hpp"
@@ -1141,9 +1141,17 @@ index 00000000..a7da4600
 +}
 +struct Publisher::Impl {
 +    struct Waiter { std::uint64_t client; std::string request; };
++    enum class Activity { unknown, idle, active };
++    static Activity activity(int generating, int tools) {
++        if (generating > 0 || tools > 0) return Activity::active;
++        if (generating == 0 && tools == 0) return Activity::idle;
++        return Activity::unknown;
++    }
 +    struct Lease {
 +        std::string activity, id, token, host, name, zone;
 +        std::int64_t expires = 0, deadline = 0, created = 0, last = 0, next = 0;
++        std::int64_t failureUntil = 0;
++        Activity sampledActivity = Activity::unknown, attemptedActivity = Activity::unknown;
 +        std::uint64_t generation = 0;
 +        View view;
 +        bool confirmed = false;
@@ -1214,8 +1222,18 @@ index 00000000..a7da4600
 +            for (auto candidate = leases.begin(); candidate != leases.end(); ++candidate) {
 +                if (candidate->sampled <= candidate->last || candidate->sampled < candidate->created ||
 +                    candidate->sampled > now || now - candidate->sampled > 30000 ||
-+                    now < candidate->next || candidate->payload.empty()) continue;
-+                if (it == leases.end() || candidate->next < it->next) it = candidate;
++                    now < candidate->failureUntil || candidate->payload.empty()) continue;
++                const bool edge = candidate->sampledActivity != Activity::unknown &&
++                    candidate->attemptedActivity != Activity::unknown &&
++                    candidate->sampledActivity != candidate->attemptedActivity;
++                if (!edge && now < candidate->next) continue;
++                const auto due = edge ? candidate->sampled : candidate->next;
++                if (it == leases.end()) it = candidate;
++                else {
++                    const bool selectedEdge = it->sampledActivity != Activity::unknown &&
++                        it->attemptedActivity != Activity::unknown && it->sampledActivity != it->attemptedActivity;
++                    if (due < (selectedEdge ? it->sampled : it->next)) it = candidate;
++                }
 +            }
 +            if (it == leases.end()) {
 +                cv.wait_for(lock, std::chrono::milliseconds(100));
@@ -1226,6 +1244,7 @@ index 00000000..a7da4600
 +            auto token = it->token;
 +            auto body = it->payload;
 +            it->last = it->sampled;
++            if (it->sampledActivity != Activity::unknown) it->attemptedActivity = it->sampledActivity;
 +            it->next = now + std::max<std::int64_t>(10000, options.intervalMs);
 +            lock.unlock();
 +            Result result;
@@ -1238,8 +1257,11 @@ index 00000000..a7da4600
 +            });
 +            if (it == leases.end()) continue;
 +            if (result.status >= 200 && result.status < 300) {
++                // The relay reserves its window after request arrival, not at our attempt start.
++                it->next = std::max(it->next, now + std::max<std::int64_t>(10000, options.intervalMs));
 +                it->failures = 0;
 +                it->invalidSnapshots = 0;
++                it->failureUntil = 0;
 +                if (!it->confirmed) {
 +                    it->confirmed = true;
 +                    finish(*it, true, nullptr);
@@ -1264,7 +1286,7 @@ index 00000000..a7da4600
 +                        delay = std::max<std::int64_t>(60000, delay);
 +                    delay = std::min<std::int64_t>(delay, 28800000);
 +                }
-+                it->next = std::max(it->next, now + delay);
++                it->failureUntil = now + delay;
 +            }
 +        }
 +    }
@@ -1287,7 +1309,7 @@ index 00000000..a7da4600
 +    if (type == "capabilities") {
 +        if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 || !text(request, 128)) return {};
 +        return {J::object({{"version", J::of(1)}, {"type", J::of("capabilities")},
-+            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("shared_collector_v1")})},
++            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("shared_collector_v1")})},
 +            {"controlVersion", J::of(2)}, {"subscribeTimeoutMs", J::of(75000)},
 +            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)}}).compact() + "\n"};
 +    }
@@ -1398,6 +1420,9 @@ index 00000000..a7da4600
 +        if (body.size() <= 4096) {
 +            lease.payload = std::move(body);
 +            lease.sampled = snapshot.nowMs;
++            lease.sampledActivity = Impl::activity(snapshot.generating, snapshot.tools);
++            if (lease.attemptedActivity == Impl::Activity::unknown && lease.sampledActivity != Impl::Activity::unknown)
++                lease.attemptedActivity = lease.sampledActivity;
 +        }
 +    }
 +    impl_->cv.notify_one();

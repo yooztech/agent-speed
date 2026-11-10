@@ -1,27 +1,34 @@
-From 4adfdc22705674e2735e24492ec5fa7d7adf5185 Mon Sep 17 00:00:00 2001
+From 13b4d57e6e7698eaacb44d2af25659b7965b65fe Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Mon, 9 Nov 2026 09:50:00 +0800
-Subject: [PATCH 16/16] Add independent widget statistics feed
+Subject: [PATCH] Add independent widget statistics feed
 
 ---
- README.md                              |  14 +-
- docs/shared-collector.md               |  64 ++++++
- linux/collector/CMakeLists.txt         |   4 +-
- linux/collector/daemon.cpp             |  18 +-
- linux/collector/publisher.cpp          |   9 +-
- linux/collector/relay_http.hpp         |  16 ++
- linux/collector/sampling.cpp           |  21 ++
- linux/collector/sampling.hpp           |   9 +
- linux/collector/widget_publisher.cpp   | 230 +++++++++++++++++++
- linux/collector/widget_publisher.hpp   |  32 +++
- linux/collector/widget_statistics.cpp  | 161 +++++++++++++
- linux/collector/widget_statistics.hpp  |   9 +
- linux/tests/CMakeLists.txt             |   2 +
- linux/tests/widget_publisher_test.cpp  | 136 +++++++++++
- linux/tests/widget_statistics_smoke.py | 298 +++++++++++++++++++++++++
- linux/tests/widget_statistics_test.cpp | 154 +++++++++++++
- spec/NETWORK.md                        |  29 +++
- 17 files changed, 1193 insertions(+), 13 deletions(-)
+ README.md                                 |  14 +-
+ docs/shared-collector.md                  |  63 +++++
+ linux/collector/CMakeLists.txt            |   4 +-
+ linux/collector/daemon.cpp                |  18 +-
+ linux/collector/protocol.cpp              |   1 +
+ linux/collector/publisher.cpp             |   9 +-
+ linux/collector/relay_http.hpp            |  16 ++
+ linux/collector/sampling.cpp              |  21 ++
+ linux/collector/sampling.hpp              |   9 +
+ linux/collector/widget_publisher.cpp      | 230 +++++++++++++++++
+ linux/collector/widget_publisher.hpp      |  32 +++
+ linux/collector/widget_statistics.cpp     | 210 +++++++++++++++
+ linux/collector/widget_statistics.hpp     |   9 +
+ linux/core/include/agentspeed/history.hpp |   2 +
+ linux/core/src/history.cpp                |  10 +-
+ linux/core/src/history_store.cpp          |   3 +
+ linux/tests/CMakeLists.txt                |   2 +
+ linux/tests/collector_publisher_test.cpp  |   7 +
+ linux/tests/collector_test.cpp            |   5 +-
+ linux/tests/history_test.cpp              |  64 +++++
+ linux/tests/widget_publisher_test.cpp     | 136 ++++++++++
+ linux/tests/widget_statistics_smoke.py    | 300 ++++++++++++++++++++++
+ linux/tests/widget_statistics_test.cpp    | 203 +++++++++++++++
+ spec/NETWORK.md                           |  30 +++
+ 24 files changed, 1383 insertions(+), 15 deletions(-)
  create mode 100644 linux/collector/relay_http.hpp
  create mode 100644 linux/collector/widget_publisher.cpp
  create mode 100644 linux/collector/widget_publisher.hpp
@@ -32,7 +39,7 @@ Subject: [PATCH 16/16] Add independent widget statistics feed
  create mode 100644 linux/tests/widget_statistics_test.cpp
 
 diff --git a/README.md b/README.md
-index 51ccd86c..13700853 100644
+index 51ccd86c..3e26d13e 100644
 --- a/README.md
 +++ b/README.md
 @@ -123,8 +123,10 @@ Duplicate SSH destinations are rejected when saving; an existing host can keep i
@@ -52,9 +59,9 @@ index 51ccd86c..13700853 100644
  activities only and does not request alerts or promise ten-second iOS rendering. See the complete
  [shared collector/control-v2 contract](docs/shared-collector.md) and [network specification](spec/NETWORK.md#8-activity-scoped-mobile-relay).
  
-+An independently consented mobile Widget statistics feed can additionally forward only today's
-+input/output, seven calendar days of count aggregates and today's source aggregates, with explicit
-+unknown/partial coverage. It uses a separate revocable publisher authorization of at most 30 days and
++An independently consented mobile Widget statistics feed can additionally forward today's and seven
++calendar days' usage aggregates and a bounded current-day model breakdown, with explicit unknown/partial
++coverage. It uses a separate revocable publisher authorization of at most 30 days and
 +at most one routine publish attempt per 30 minutes after initial storage; it neither extends the
 +ActivityKit lease nor uploads raw history/logs. The daemon cannot renew this authorization. Widget
 +push invalidates timelines rather than sending ordinary alerts. This queue feature is unpublished;
@@ -64,10 +71,10 @@ index 51ccd86c..13700853 100644
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
  stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
-index 479bd336..c60741f3 100644
+index 3680715f..ddc14389 100644
 --- a/docs/shared-collector.md
 +++ b/docs/shared-collector.md
-@@ -84,3 +84,67 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
+@@ -84,3 +84,66 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
  CMake's normal test executable uses a separately compiled test-only HOME namespace and one-second idle period so process tests cannot attach to the maintainer's canonical daemon. Neither override exists in the distribution executable. `AGENTSPEED_BUILD_SSH_SMOKE=ON` additionally builds the explicitly non-distributable `agentspeed-collector-ssh-smoke`: it uses the same libcurl path but a compile-time fixed localhost TLS endpoint and test CA, with canonical passwd-home and production 30-second idle behavior. Never package that executable.
  
  `linux/tests/shared_collector_ssh_smoke.py` runs a local sshd, a disposable Unix account and an isolated TLS relay, then cleans them up. It requires local root only for that isolated account/sshd; it never accesses a production host or modifies a system SSH service. Its JSON results identify actual scenarios and limits. It does not prove Cloudflare deployment, APNs acceptance or iPhone delivery. Real signed-iPhone testing, deployed Worker/App Attest configuration, Apple credentials, ARM64 runtime, and native Mac/Windows UI remain separate acceptance prerequisites.
@@ -77,7 +84,7 @@ index 479bd336..c60741f3 100644
 +Widget statistics are a separate opt-in authorization, not an extension of ActivityKit's eight-hour lease.
 +The same effective-UID/executable-digest daemon and existing scan/parser pipeline supply timestamped input/output counts;
 +there is no extra Monitor, per-widget scanner, ordinary notification, or indefinite mobile SSH session.
-+Negotiation requires outer `version: 1`, `controlVersion: 2`, capability `widget_statistics_v1`,
++Negotiation requires outer `version: 1`, `controlVersion: 2`, capability `widget_statistics_v2`,
 +`widgetMinPublishIntervalMs: 1800000`, and `widgetMaxLeaseSeconds: 2592000` alongside existing capabilities.
 +Unresponsive or incomplete capabilities do not permit a legacy collector fallback.
 +
@@ -87,22 +94,21 @@ index 479bd336..c60741f3 100644
 +from the command. The only destination is `https://agent-speed.yooztech.com/v1/widget-publish` with
 +`Authorization: Bearer <lease>` and body `{ "snapshot": <statistics> }`.
 +
-+The statistics object has version 1, registered host identity, genuine snapshot `sampledAt`, fixed
-+`timezone`, its calendar `usageDate`, `today: {input, output, complete}`, exactly seven ascending `days`
-+ending today with `{date, input, output, complete}`, canonical `sources` with
-+`{source, input, output, complete}`, and `historyComplete`. Total means input plus output only when both
-+are known; cached input and reasoning are already included and must not be added again. Missing counts
-+and missing historical dates are null, not zero. Current-day fields come from the actual timezone-view
-+snapshot, including the final day row; absent history leaves the previous six dates unknown. Typed
-+history must match the view's timezone and calendar date. Calendar stepping respects DST, not fixed
-+24-hour subtraction. Partial known counts remain visibly incomplete. Known unavailable sources remain
-+explicit null/incomplete rows, not fabricated zeros. Unsafe integers, unrepresentable coverage, more than
-+32 unique sources or a body larger than 64 KiB fail rather than being silently truncated.
-+The final day row's counts and `complete` exactly equal `today`; `historyComplete` is true only when
-+all seven final day rows are complete. It cannot be copied from today's flag or from an older cached
-+history report. Historical participation requires actual source rows or current usage evidence;
-+undetected never-used harnesses are not fabricated as zero contributors. Missing coverage of a
-+participating source makes the daily aggregate unknown. This does not prove undiscovered usage absent.
++The statistics object has version 2, registered host identity, genuine snapshot `sampledAt`, fixed
++`timezone`, its calendar `usageDate`, `today`, exactly seven ascending `days`, `models`,
++`modelsComplete`, and `historyComplete`. Today contains `input`, `output`, `requests`,
++`costMicroUsd`, `unpricedRequests`, and `complete`; each day adds `date`. The last day equals
++today in every metric. Counts are nullable nonnegative safe integers. Partial today nulls all
++three request/cost fields; historical request/cost fields require complete source coverage and
++nonpartial matching history. Known priced cost is not a full bill when requests are unpriced.
++Model rows contain only `model`, `input`, and `output`: the three highest fully known named models
++by total (name breaks ties), followed by one null-model bucket for all remaining and unnamed usage.
++Each bucket component preserves unknowns. Models come from actual current-date history and may lag
++the live counters. `modelsComplete` requires complete today and matching nonpartial history, all
++participating sources covered, all model components known, and both sums matching today. Missing
++counts and dates are null, never fabricated zeros. `historyComplete` requires all seven days complete.
++Cached input and reasoning are already included; do not add them again. Invalid model IDs, unsafe
++integers or a body larger than 64 KiB fail closed.
 +
 +`widget_subscribe_ack` echoes `version`, `controlVersion`, `requestId`, `subscriptionId`, `hostId`,
 +`hostName`, `timezone`, `expiresAt` and Boolean `accepted`, plus a safe `error` on failure. A positive ACK
@@ -225,8 +231,20 @@ index ed4e98b1..e72ec39b 100644
                      }
                  }
              }
+diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
+index 8b946cce..69e17fe6 100644
+--- a/linux/collector/protocol.cpp
++++ b/linux/collector/protocol.cpp
+@@ -236,6 +236,7 @@ std::string Protocol::history(const std::vector<agentspeed::history::DailyUsage>
+             if (!firstItem) o << ',';
+             firstItem = false;
+             o << "{\"model\":"; text(o, model);
++            o << ",\"input\":"; optionalNumber(o, value.input);
+             o << ",\"requests\":" << value.requests << ",\"output\":" << value.output
+               << ",\"measured_output\":" << value.measuredOutput << ",\"measured_ms\":" << value.measuredMs
+               << ",\"cost_micro_usd\":"; optionalNumber(o, value.costMicroUsd);
 diff --git a/linux/collector/publisher.cpp b/linux/collector/publisher.cpp
-index a7da4600..88468b4a 100644
+index 5e6633cd..12f4d8fa 100644
 --- a/linux/collector/publisher.cpp
 +++ b/linux/collector/publisher.cpp
 @@ -1,3 +1,4 @@
@@ -244,12 +262,12 @@ index a7da4600..88468b4a 100644
      CURL* c=curl_easy_init(); if (!c) return r;
   #ifdef AGENTSPEED_COLLECTOR_TEST_RELAY
      curl_easy_setopt(c,CURLOPT_URL,"https://localhost:19443/v1/publish");
-@@ -231,9 +231,10 @@ std::vector<std::string> Publisher::control(const std::string& line, std::uint64
+@@ -253,9 +253,10 @@ std::vector<std::string> Publisher::control(const std::string& line, std::uint64
      if (type == "capabilities") {
          if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 || !text(request, 128)) return {};
          return {J::object({{"version", J::of(1)}, {"type", J::of("capabilities")},
--            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("shared_collector_v1")})},
-+            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("shared_collector_v1"), J::of("widget_statistics_v1")})},
+-            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("shared_collector_v1")})},
++            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("shared_collector_v1"), J::of("widget_statistics_v2")})},
              {"controlVersion", J::of(2)}, {"subscribeTimeoutMs", J::of(75000)},
 -            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)}}).compact() + "\n"};
 +            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)},
@@ -656,12 +674,13 @@ index 00000000..3a37e0ed
 +}
 diff --git a/linux/collector/widget_statistics.cpp b/linux/collector/widget_statistics.cpp
 new file mode 100644
-index 00000000..0f22b22f
+index 00000000..e917b5c9
 --- /dev/null
 +++ b/linux/collector/widget_statistics.cpp
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,210 @@
 +#include "widget_statistics.hpp"
 +
++#include <algorithm>
 +#include <array>
 +#include <chrono>
 +#include <cstdio>
@@ -701,14 +720,25 @@ index 00000000..0f22b22f
 +}
 +bool safe(std::int64_t value) { return value >= 0 && value <= maxInteger; }
 +struct Counts {
-+    std::optional<std::int64_t> input, output;
++    std::optional<std::int64_t> input, output, requests, cost, unpriced;
 +    bool complete = false;
 +};
++void number(std::ostream& out, const std::optional<std::int64_t>& value) {
++    if (value) out << *value; else out << "null";
++}
++bool add(std::optional<std::int64_t>& sum, const std::optional<std::int64_t>& value) {
++    if (value && !safe(*value)) return false;
++    if (!sum || !value) { sum.reset(); return true; }
++    if (*sum > maxInteger - *value) return false;
++    *sum += *value;
++    return true;
++}
 +void counts(std::ostream& out, const Counts& c) {
-+    out << "\"input\":";
-+    if (c.input) out << *c.input; else out << "null";
-+    out << ",\"output\":";
-+    if (c.output) out << *c.output; else out << "null";
++    out << "\"input\":"; number(out, c.input);
++    out << ",\"output\":"; number(out, c.output);
++    out << ",\"requests\":"; number(out, c.requests);
++    out << ",\"costMicroUsd\":"; number(out, c.cost);
++    out << ",\"unpricedRequests\":"; number(out, c.unpriced);
 +    out << ",\"complete\":" << (c.complete ? "true" : "false");
 +}
 +std::optional<std::array<std::string, 7>> dates(const std::string& date) {
@@ -750,52 +780,86 @@ index 00000000..0f22b22f
 +        if (static_cast<unsigned>(row.source) > static_cast<unsigned>(agentspeed::SourceKind::Droid)) return std::nullopt;
 +        auto id = agentspeed::sourceId(row.source);
 +        if (!validText(id, 64) || !identifiers.insert(id).second || !sources.emplace(row.source, &row).second) return std::nullopt;
-+        if (row.available && (!safe(row.todayInput) || !safe(row.todayOutput))) return std::nullopt;
-+        if (row.enabled && row.available) {
-+            anyAvailable = true;
-+            if (row.todayInput != 0 || row.todayOutput != 0) participating.insert(row.source);
-+        }
++        if (!safe(row.todayInput) || !safe(row.todayOutput) || !safe(row.todayRequests) || !safe(row.todayCostMicroUsd) || !safe(row.unpricedRequests)) return std::nullopt;
++        if (row.enabled && (row.todayInput || row.todayOutput || row.todayRequests || row.todayCostMicroUsd || row.unpricedRequests)) participating.insert(row.source);
++        if (row.enabled && row.available) anyAvailable = true;
 +    }
 +    if (sources.size() > 32) return std::nullopt;
-+    if (!safe(snapshot.todayInput) || !safe(snapshot.todayOutput)) return std::nullopt;
++    if (!safe(snapshot.todayInput) || !safe(snapshot.todayOutput) || !safe(snapshot.todayRequests) ||
++        !safe(snapshot.todayCostMicroUsd) || !safe(snapshot.todayUnpricedRequests)) return std::nullopt;
 +    Counts today;
 +    if (anyAvailable) { today.input = snapshot.todayInput; today.output = snapshot.todayOutput; }
 +    today.complete = anyAvailable && !snapshot.warnings.partialHistory;
++    if (today.complete) { today.requests = snapshot.todayRequests; today.cost = snapshot.todayCostMicroUsd; today.unpriced = snapshot.todayUnpricedRequests; }
 +
 +    const bool matching = history && history->timezone == *view.name && history->usageDate == *date;
 +    std::array<Counts, 7> days;
++    using Model = std::pair<std::optional<std::int64_t>, std::optional<std::int64_t>>;
++    std::map<std::string, Model> models;
++    bool currentCovered = false;
 +    if (matching) {
 +        std::map<std::pair<std::string, agentspeed::SourceKind>, const agentspeed::history::DailyUsage*> rows;
 +        for (const auto& row : history->days) {
 +            if (row.key.day < calendar->front() || row.key.day > calendar->back()) continue;
-+            if (!safe(row.totals.input) || !safe(row.totals.output) ||
++            if (!safe(row.totals.input) || !safe(row.totals.output) || !safe(row.totals.requests) ||
++                (row.totals.costMicroUsd && !safe(*row.totals.costMicroUsd)) ||
++                (row.totals.unpricedRequests && !safe(*row.totals.unpricedRequests)) ||
 +                !rows.emplace(std::make_pair(row.key.day, row.key.source), &row).second) return std::nullopt;
 +            participating.insert(row.key.source);
 +        }
 +        for (std::size_t i = 0; i < days.size(); ++i) {
-+            std::int64_t input = 0, output = 0;
++            Counts sum; sum.input = sum.output = sum.requests = sum.cost = sum.unpriced = 0;
 +            bool covered = true, found = false;
 +            for (const auto kind : participating) {
 +                auto sourceIt = sources.find(kind);
-+                if (sourceIt == sources.end() || !sourceIt->second->enabled) { covered = false; continue; }
-+                const auto* source = sourceIt->second;
 +                auto it = rows.find({(*calendar)[i], kind});
-+                if (!source->available || it == rows.end()) { covered = false; continue; }
++                if (sourceIt == sources.end() || !sourceIt->second->enabled || !sourceIt->second->available || it == rows.end()) { covered = false; continue; }
 +                found = true;
 +                const auto& totals = it->second->totals;
-+                if (input > maxInteger - totals.input || output > maxInteger - totals.output) return std::nullopt;
-+                input += totals.input; output += totals.output;
++                if (!add(sum.input, totals.input) || !add(sum.output, totals.output) || !add(sum.requests, totals.requests) ||
++                    !add(sum.cost, totals.costMicroUsd) || !add(sum.unpriced, totals.unpricedRequests)) return std::nullopt;
 +            }
-+            // Unknown coverage cannot be represented as a complete sum, even if other rows exist.
-+            if (covered && found) { days[i].input = input; days[i].output = output; }
++            if (covered && found) { days[i].input = sum.input; days[i].output = sum.output; }
 +            days[i].complete = covered && found && history->complete;
++            if (days[i].complete) { days[i].requests = sum.requests; days[i].cost = sum.cost; days[i].unpriced = sum.unpriced; }
++            if (i == 6) currentCovered = covered && found;
 +        }
++        for (const auto& [key, row] : rows) {
++            if (key.first != *date) continue;
++            for (const auto& [name, value] : row->totals.models) {
++                if (!name.empty() && !validText(name, 256)) return std::nullopt;
++                auto [it, inserted] = models.try_emplace(name, Model{0, 0});
++                if (!add(it->second.first, value.input) || !add(it->second.second, value.output)) return std::nullopt;
++            }
++        }
++    }
++    bool modelsComplete = today.complete && matching && history->complete && currentCovered;
++    std::optional<std::int64_t> modelInput = 0, modelOutput = 0;
++    for (const auto& [name, value] : models) {
++        if (!value.first || !value.second) modelsComplete = false;
++        if (!add(modelInput, value.first) || !add(modelOutput, value.second)) return std::nullopt;
++    }
++    modelsComplete = modelsComplete && modelInput == today.input && modelOutput == today.output;
++    std::vector<std::pair<std::string, Model>> ranked;
++    for (const auto& entry : models) if (!entry.first.empty() && entry.second.first && entry.second.second) ranked.push_back(entry);
++    std::sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) {
++        auto at = static_cast<std::uint64_t>(*a.second.first) + *a.second.second;
++        auto bt = static_cast<std::uint64_t>(*b.second.first) + *b.second.second;
++        return at != bt ? at > bt : a.first < b.first;
++    });
++    if (ranked.size() > 3) ranked.resize(3);
++    std::set<std::string> selected;
++    for (const auto& entry : ranked) selected.insert(entry.first);
++    Model other{0, 0}; bool hasOther = false;
++    for (const auto& [name, value] : models) if (!selected.count(name)) {
++        hasOther = true;
++        if (!add(other.first, value.first) || !add(other.second, value.second)) return std::nullopt;
 +    }
 +    days.back() = today;
 +    bool historyComplete = true;
 +    for (const auto& day : days) historyComplete &= day.complete;
 +    std::ostringstream out;
-+    out << "{\"version\":1,\"hostId\":"; text(out, hostId);
++    out << "{\"version\":2,\"hostId\":"; text(out, hostId);
 +    out << ",\"hostName\":"; text(out, hostName);
 +    out << ",\"sampledAt\":" << snapshot.nowMs << ",\"timezone\":"; text(out, *view.name);
 +    out << ",\"usageDate\":"; text(out, *date);
@@ -804,18 +868,21 @@ index 00000000..0f22b22f
 +        if (i) out << ',';
 +        out << "{\"date\":"; text(out, (*calendar)[i]); out << ','; counts(out, days[i]); out << '}';
 +    }
-+    out << "],\"sources\":[";
++    out << "],\"models\":[";
 +    bool first = true;
-+    for (const auto& [kind, source] : sources) {
-+        if (!first) out << ',';
-+        first = false;
-+        out << "{\"source\":"; text(out, agentspeed::sourceId(kind)); out << ',';
-+        Counts value;
-+        if (source->available && source->enabled) { value.input = source->todayInput; value.output = source->todayOutput; }
-+        value.complete = source->available && source->enabled && !snapshot.warnings.partialHistory;
-+        counts(out, value); out << '}';
++    for (const auto& [name, value] : ranked) {
++        if (!first) out << ','; first = false;
++        out << "{\"model\":"; text(out, name);
++        out << ",\"input\":"; number(out, value.first);
++        out << ",\"output\":"; number(out, value.second); out << '}';
 +    }
-+    out << "],\"historyComplete\":" << (historyComplete ? "true" : "false") << '}';
++    if (hasOther) {
++        if (!first) out << ',';
++        out << "{\"model\":null,\"input\":"; number(out, other.first);
++        out << ",\"output\":"; number(out, other.second); out << '}';
++    }
++    out << "],\"modelsComplete\":" << (modelsComplete ? "true" : "false")
++        << ",\"historyComplete\":" << (historyComplete ? "true" : "false") << '}';
 +    auto result = out.str();
 +    if (result.size() > 65536) return std::nullopt;
 +    return result;
@@ -836,6 +903,68 @@ index 00000000..71def423
 +    const std::shared_ptr<const StatisticsHistory>& history, const std::string& hostId,
 +    const std::string& hostName);
 +}
+diff --git a/linux/core/include/agentspeed/history.hpp b/linux/core/include/agentspeed/history.hpp
+index 4269f90a..5fb7d008 100644
+--- a/linux/core/include/agentspeed/history.hpp
++++ b/linux/core/include/agentspeed/history.hpp
+@@ -45,6 +45,8 @@ struct UnpricedFact {
+ struct ModelTotals {
+     std::int64_t requests = 0, output = 0, measuredOutput = 0, measuredMs = 0;
+     std::optional<std::int64_t> costMicroUsd, unpricedRequests;
++    // Unknown for model totals loaded from history written before input was recorded.
++    std::optional<std::int64_t> input;
+ };
+ 
+ // EXECUTION-MODES Local aggregates and history: a model's usage under one attributed mode of one kind (effort and the
+diff --git a/linux/core/src/history.cpp b/linux/core/src/history.cpp
+index 9aacf6d4..f8d34b1e 100644
+--- a/linux/core/src/history.cpp
++++ b/linux/core/src/history.cpp
+@@ -97,7 +97,10 @@ void DayAggregate::add(const ParsedResponse& r, std::optional<std::int64_t> cost
+     cacheWriteInput += r.tokens.cacheWriteInput;
+     output += r.tokens.output;
+     reasoning += r.tokens.reasoning;
+-    auto& model = models[r.model.value_or("")];
++    auto [modelIt, inserted] = models.try_emplace(r.model.value_or(""));
++    auto& model = modelIt->second;
++    if (inserted) model.input = 0;
++    if (model.input) *model.input += r.tokens.input;
+     model.requests += r.requestCount;
+     model.output += r.tokens.output;
+     addCost(model.costMicroUsd, model.unpricedRequests, cost, r.requestCount);
+@@ -153,6 +156,11 @@ void DayAggregate::merge(const DayAggregate& other) {
+             continue;
+         }
+         auto& known = it->second;
++        if (known.input && usage.input) {
++            *known.input += *usage.input;
++        } else {
++            known.input.reset();
++        }
+         mergeCost(known.costMicroUsd, known.unpricedRequests, known.requests, usage.costMicroUsd, usage.unpricedRequests, usage.requests);
+         known.requests += usage.requests;
+         known.output += usage.output;
+diff --git a/linux/core/src/history_store.cpp b/linux/core/src/history_store.cpp
+index faec15a8..84463d91 100644
+--- a/linux/core/src/history_store.cpp
++++ b/linux/core/src/history_store.cpp
+@@ -121,6 +121,8 @@ std::string encode(const DayAggregate& d) {
+         appendOptional(out, m.costMicroUsd);
+         out += ',';
+         appendOptional(out, m.unpricedRequests);
++        out += ',';
++        appendOptional(out, m.input);
+         out += ']';
+     }
+     out += "},\"unpriced\":[";
+@@ -191,6 +193,7 @@ std::optional<DayAggregate> decode(std::string_view text) {
+         t.measuredMs = m.at(3).truncated().value_or(0);
+         t.costMicroUsd = optionalOf(m.at(4));
+         t.unpricedRequests = optionalOf(m.at(5));
++        t.input = optionalOf(m.at(6));
+         d.models[name] = t;
+     }
+     for (const auto& f : r["unpriced"].elements()) {
 diff --git a/linux/tests/CMakeLists.txt b/linux/tests/CMakeLists.txt
 index c65c934e..5e18f84d 100644
 --- a/linux/tests/CMakeLists.txt
@@ -849,6 +978,126 @@ index c65c934e..5e18f84d 100644
      sampling_test.cpp
      shared_history_test.cpp
      current_values_test.cpp
+diff --git a/linux/tests/collector_publisher_test.cpp b/linux/tests/collector_publisher_test.cpp
+index 43ce16db..8ecda8c8 100644
+--- a/linux/tests/collector_publisher_test.cpp
++++ b/linux/tests/collector_publisher_test.cpp
+@@ -24,6 +24,13 @@ TEST(CollectorPublisher, AdvertisesActivityEdgeCapability) {
+     ASSERT_EQ(response.size(), 1u);
+     EXPECT_NE(response[0].find("\"live_activity_edges_v1\""), std::string::npos);
+     EXPECT_NE(response[0].find("\"minPublishIntervalMs\":10000"), std::string::npos);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(response[0]));
++    bool widgetV2 = false, widgetV1 = false;
++    for (const auto& cap : doc.root()["capabilities"].elements()) {
++        widgetV2 |= cap.string() == "widget_statistics_v2";
++        widgetV1 |= cap.string() == "widget_statistics_v1";
++    }
++    EXPECT_TRUE(widgetV2); EXPECT_FALSE(widgetV1);
+ }
+ TEST(CollectorPublisher, ConfirmsOnlyRealSampleAndProjectsAllowedFields) {
+     std::atomic<std::int64_t> now{1000000}; std::mutex m; std::string captured; std::atomic<int> calls{0}; collector::Publisher::Options o; o.clock=[&]{return now.load();}; o.transport=[&](const auto& token,const auto& body){EXPECT_EQ(token,"bearer"); {std::lock_guard<std::mutex> lock(m); captured=body;} ++calls; return collector::Publisher::Result{200};}; collector::Publisher p(o);
+diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
+index fbf903af..3d5e68be 100644
+--- a/linux/tests/collector_test.cpp
++++ b/linux/tests/collector_test.cpp
+@@ -252,6 +252,7 @@ TEST(CollectorProtocol, HistoryAndCompletionPreserveUnknowns) {
+     day.totals.unfinalized = 3;
+     day.totals.models["model"].output = 15;
+     day.totals.models["model"].costMicroUsd = 9007199254740993LL;
++    day.totals.models["known"].input = 125;
+     agentspeed::history::ModeKey mode;
+     mode.model = "model";
+     mode.kind = agentspeed::ModeKind::Effort;
+@@ -284,7 +285,9 @@ TEST(CollectorProtocol, HistoryAndCompletionPreserveUnknowns) {
+     EXPECT_EQ(row["agents"].raw(), "2");
+     EXPECT_EQ(row["unfinalized"].raw(), "3");
+     EXPECT_TRUE(row["cost_micro_usd"].isNull());
+-    EXPECT_EQ(row["models"].at(0)["cost_micro_usd"].raw(), "9007199254740993");
++    EXPECT_EQ(row["models"].at(1)["cost_micro_usd"].raw(), "9007199254740993");
++    EXPECT_EQ(row["models"].at(0)["input"].raw(), "125");
++    EXPECT_TRUE(row["models"].at(1)["input"].isNull());
+     EXPECT_EQ(row["modes"].at(0)["kind"].string(), "effort");
+     EXPECT_EQ(row["modes"].at(0)["measured_ms"].raw(), "2000");
+     EXPECT_TRUE(row["unpriced"].at(0)["provider"].isNull());
+diff --git a/linux/tests/history_test.cpp b/linux/tests/history_test.cpp
+index 178a2af3..461be9b3 100644
+--- a/linux/tests/history_test.cpp
++++ b/linux/tests/history_test.cpp
+@@ -9,6 +9,7 @@
+ #include "agentspeed/fs_util.hpp"
+ #include "protocol.hpp"
+ #include "agentspeed/history_analyzer.hpp"
++#include "agentspeed/history_store.hpp"
+ #include "agentspeed/price_book.hpp"
+ #include "agentspeed/tz.hpp"
+ #include "fixture_support.hpp"
+@@ -265,3 +266,66 @@ TEST(History, UnreadableSourceDoesNotCommitTimezoneInvalidation) {
+     EXPECT_EQ(store->meta("timeZone"), "zone-b");
+     fs::remove_all(temp);
+ }
++
++TEST(History, ModelInputAccumulatesAndMergesWithoutInventingUnknownValues) {
++    ParsedResponse response;
++    response.model = "alpha";
++    response.tokens.input = 12;
++    response.tokens.cachedInput = 5;
++    response.tokens.output = 3;
++    DayAggregate first;
++    first.add(response, 0);
++    response.tokens.input = 8;
++    response.tokens.output = 4;
++    first.add(response, 0);
++    EXPECT_EQ(first.models.at("alpha").input, 20);
++    EXPECT_EQ(first.models.at("alpha").output, 7);
++
++    DayAggregate second;
++    response.tokens.input = 6;
++    second.add(response, 0);
++    response.model.reset();
++    response.tokens.input = 2;
++    second.add(response, 0);
++    first.merge(second);
++    EXPECT_EQ(first.models.at("alpha").input, 26);
++    EXPECT_EQ(first.models.at("").input, 2);
++
++    auto legacy = decode(R"({"models":{"alpha":[1,4,0,0,null,null]}})");
++    ASSERT_TRUE(legacy);
++    EXPECT_FALSE(legacy->models.at("alpha").input);
++    first.merge(*legacy);
++    EXPECT_FALSE(first.models.at("alpha").input);
++    response.model = "alpha";
++    first.add(response, 0);
++    EXPECT_FALSE(first.models.at("alpha").input);
++
++    DayAggregate legacyFirst = *legacy;
++    legacyFirst.merge(second);
++    EXPECT_FALSE(legacyFirst.models.at("alpha").input);
++    EXPECT_EQ(legacyFirst.models.at("").input, 2);
++}
++
++TEST(History, ModelInputPersistenceIsAdditiveAndLegacyInputIsUnknown) {
++    auto legacy = decode(R"({"models":{"old":[2,9,7,100,4,0],"null":[1,3,0,0,null,null,null]}})");
++    ASSERT_TRUE(legacy);
++    EXPECT_FALSE(legacy->models.at("old").input);
++    EXPECT_FALSE(legacy->models.at("null").input);
++    EXPECT_EQ(legacy->models.at("old").output, 9);
++    EXPECT_EQ(legacy->models.at("old").costMicroUsd, 4);
++
++    ParsedResponse response;
++    response.model = "new";
++    response.tokens.input = 42;
++    response.tokens.output = 11;
++    legacy->add(response, 0);
++    const auto encoded = encode(*legacy);
++    EXPECT_NE(encoded.find("\"new\":[1,11,0,0,0,0,42]"), std::string::npos);
++    EXPECT_NE(encoded.find("\"old\":[2,9,7,100,4,0,null]"), std::string::npos);
++    const auto restored = decode(encoded);
++    ASSERT_TRUE(restored);
++    EXPECT_EQ(restored->models.at("new").input, 42);
++    EXPECT_EQ(restored->models.at("new").output, 11);
++    EXPECT_FALSE(restored->models.at("old").input);
++    EXPECT_FALSE(restored->models.at("null").input);
++}
 diff --git a/linux/tests/widget_publisher_test.cpp b/linux/tests/widget_publisher_test.cpp
 new file mode 100644
 index 00000000..8074f45c
@@ -993,10 +1242,10 @@ index 00000000..8074f45c
 +}
 diff --git a/linux/tests/widget_statistics_smoke.py b/linux/tests/widget_statistics_smoke.py
 new file mode 100755
-index 00000000..4a53c660
+index 00000000..f820efc2
 --- /dev/null
 +++ b/linux/tests/widget_statistics_smoke.py
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,300 @@
 +#!/usr/bin/env python3
 +"""Isolated real-SSH/HTTPS widget smoke; run only the test-relay collector binary.
 +
@@ -1089,15 +1338,15 @@ index 00000000..4a53c660
 +    body = json.loads(record['body'])
 +    require(set(body) == {'snapshot'}, 'wrong publish envelope')
 +    s = body['snapshot']
-+    require(set(s) == {'version','hostId','hostName','sampledAt','timezone','usageDate','today','days','sources','historyComplete'}, 'wrong snapshot schema')
-+    require(s['version'] == 1 and s['hostId'] == HOST_ID and s['hostName'] == HOST_NAME and s['timezone'] == 'UTC', 'wrong snapshot binding')
++    require(set(s) == {'version','hostId','hostName','sampledAt','timezone','usageDate','today','days','models','modelsComplete','historyComplete'}, 'wrong snapshot schema')
++    require(s['version'] == 2 and s['hostId'] == HOST_ID and s['hostName'] == HOST_NAME and s['timezone'] == 'UTC', 'wrong snapshot binding')
 +    require(type(s['sampledAt']) is int and s['sampledAt'] > 0, 'invalid timestamp')
 +    date = datetime.datetime.fromtimestamp(s['sampledAt']/1000, datetime.timezone.utc).date()
 +    require(s['usageDate'] == date.isoformat(), 'wrong usage date')
 +    def row(r, fields):
-+        require(set(r) == fields | {'input','output','complete'}, 'wrong statistics row schema')
++        require(set(r) == fields | {'input','output','requests','costMicroUsd','unpricedRequests','complete'}, 'wrong statistics row schema')
 +        require(type(r['complete']) is bool, 'invalid completeness')
-+        for key in ('input', 'output'):
++        for key in ('input', 'output', 'requests', 'costMicroUsd', 'unpricedRequests'):
 +            require(r[key] is None or (type(r[key]) is int and 0 <= r[key] <= 9007199254740991), 'invalid token count')
 +    row(s['today'], set())
 +    require((s['today']['input'], s['today']['output']) == expected[date.isoformat()], 'incorrect normalized today usage')
@@ -1107,16 +1356,18 @@ index 00000000..4a53c660
 +        require(r['date'] == (date - datetime.timedelta(days=6-i)).isoformat(), 'history dates not ascending calendar days')
 +    require(all((r['input'], r['output']) == expected[r['date']] for r in s['days']), 'incorrect seven-day history totals')
 +    require(s['historyComplete'] == all(r['complete'] for r in s['days']), 'incorrect history completeness')
-+    require({k:s['days'][-1][k] for k in ('input','output','complete')} == s['today'], 'today history mismatch')
-+    require(isinstance(s['sources'], list) and 0 < len(s['sources']) <= 32, 'invalid source count')
-+    ids = set()
-+    for r in s['sources']:
-+        row(r, {'source'})
-+        require(isinstance(r['source'], str) and 0 < len(r['source'].encode()) <= 64 and r['source'] not in ids, 'invalid source identity')
-+        ids.add(r['source'])
-+    omp = next((r for r in s['sources'] if r['source'] == 'omp'), None)
-+    require(omp is not None and (omp['input'], omp['output']) == expected[date.isoformat()], 'incorrect normalized OMP source usage')
-+    return {'today': s['today'], 'days': s['days'], 'sourceCount': len(s['sources']), 'usageDate': s['usageDate'], 'timezone': s['timezone'], 'historyComplete': s['historyComplete']}
++    require({k:v for k,v in s['days'][-1].items() if k != 'date'} == s['today'], 'today history mismatch')
++    require(type(s['modelsComplete']) is bool and isinstance(s['models'], list) and len(s['models']) <= 4, 'invalid models')
++    for i, r in enumerate(s['models']):
++        require(set(r) == {'model','input','output'}, 'wrong model schema')
++        require(r['model'] is None or (isinstance(r['model'], str) and 0 < len(r['model'].encode()) <= 256), 'invalid model identity')
++        require(r['model'] is not None or i == len(s['models'])-1, 'other bucket must be last')
++        for key in ('input', 'output'):
++            require(r[key] is None or (type(r[key]) is int and 0 <= r[key] <= 9007199254740991), 'invalid model count')
++    if s['modelsComplete']:
++        require(all(r['input'] is not None and r['output'] is not None for r in s['models']), 'complete models contain unknowns')
++        require(sum(r['input'] for r in s['models']) == s['today']['input'] and sum(r['output'] for r in s['models']) == s['today']['output'], 'complete models do not match today')
++    return {'today': s['today'], 'days': s['days'], 'models': s['models'], 'modelsComplete': s['modelsComplete'], 'usageDate': s['usageDate'], 'timezone': s['timezone'], 'historyComplete': s['historyComplete']}
 +
 +
 +def run(args):
@@ -1214,7 +1465,7 @@ index 00000000..4a53c660
 +            c = connect()
 +            c.send({'version':1,'type':'capabilities','requestId':'caps'})
 +            cap = c.get(lambda m: m.get('requestId') == 'caps')
-+            require(cap.get('version') == 1 and cap.get('type') == 'capabilities' and cap.get('controlVersion') == 2 and {'live_activity_v2','shared_collector_v1','widget_statistics_v1'} <= set(cap.get('capabilities', [])) and 'live_activity_v1' not in cap.get('capabilities', []) and cap.get('subscribeTimeoutMs') == 75000 and cap.get('relayUrl') == ORIGIN and cap.get('minPublishIntervalMs') == 10000 and cap.get('widgetMinPublishIntervalMs') == 1800000 and cap.get('widgetMaxLeaseSeconds') == 2592000, 'unexpected capability contract')
++            require(cap.get('version') == 1 and cap.get('type') == 'capabilities' and cap.get('controlVersion') == 2 and {'live_activity_v2','live_activity_edges_v1','shared_collector_v1','widget_statistics_v2'} <= set(cap.get('capabilities', [])) and 'widget_statistics_v1' not in cap.get('capabilities', []) and 'live_activity_v1' not in cap.get('capabilities', []) and cap.get('subscribeTimeoutMs') == 75000 and cap.get('relayUrl') == ORIGIN and cap.get('minPublishIntervalMs') == 10000 and cap.get('widgetMinPublishIntervalMs') == 1800000 and cap.get('widgetMaxLeaseSeconds') == 2592000, 'unexpected capability contract')
 +            c.send({'version':1,'type':'history_timezone','timezone':'UTC'})
 +            def genuine_history(m):
 +                if m.get('type') != 'history' or m.get('timezone') != 'UTC': return False
@@ -1297,10 +1548,10 @@ index 00000000..4a53c660
 +    raise SystemExit(main())
 diff --git a/linux/tests/widget_statistics_test.cpp b/linux/tests/widget_statistics_test.cpp
 new file mode 100644
-index 00000000..2e64fb29
+index 00000000..28a0f801
 --- /dev/null
 +++ b/linux/tests/widget_statistics_test.cpp
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,203 @@
 +#include <gtest/gtest.h>
 +#include "widget_statistics.hpp"
 +#include "agentspeed/json.hpp"
@@ -1373,7 +1624,6 @@ index 00000000..2e64fb29
 +    EXPECT_TRUE(doc.root()["today"]["complete"].isTrue());
 +    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
 +    EXPECT_TRUE(doc.root()["historyComplete"].isTrue());
-+    EXPECT_TRUE(doc.root()["sources"].at(1)["input"].isNull());
 +}
 +TEST(WidgetStatistics, UnavailableSourcesAndStaleHistory) {
 +    auto s = sample(); s.snapshot.sources[0].available = false;
@@ -1381,8 +1631,6 @@ index 00000000..2e64fb29
 +    auto json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json);
 +    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
 +    EXPECT_TRUE(doc.root()["today"]["input"].isNull());
-+    EXPECT_TRUE(doc.root()["sources"].at(0)["input"].isNull());
-+    EXPECT_EQ(doc.root()["sources"].at(0)["source"].string(), "codex");
 +    s = sample(); h->usageDate = "2024-03-09";
 +    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
 +    EXPECT_TRUE(doc.root()["days"].at(0)["input"].isNull());
@@ -1455,11 +1703,63 @@ index 00000000..2e64fb29
 +    EXPECT_FALSE(doc.root()["days"].at(2)["complete"].isTrue());
 +    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
 +}
++
++TEST(WidgetStatistics, ModelRankingUnknownBucketAndCompleteness) {
++    auto s = sample(); auto h = history(); auto& totals = h->days.back().totals;
++    auto model = [&](const std::string& name, std::optional<std::int64_t> input, std::int64_t output) {
++        auto& m = totals.models[name]; m.input = input; m.output = output;
++    };
++    model("b", 3, 2); model("a", 3, 2); model("c", 2, 1); model("d", 1, 0); model("", 2, 2);
++    auto result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*result)); auto root = doc.root();
++    EXPECT_EQ(root["version"].raw(), "2"); EXPECT_FALSE(root["sources"].valid());
++    auto rows = root["models"]; ASSERT_EQ(rows.size(), 4u);
++    EXPECT_EQ(rows.at(0)["model"].string(), "a"); EXPECT_EQ(rows.at(1)["model"].string(), "b");
++    EXPECT_EQ(rows.at(2)["model"].string(), "c"); EXPECT_TRUE(rows.at(3)["model"].isNull());
++    EXPECT_EQ(rows.at(3)["input"].raw(), "3"); EXPECT_EQ(rows.at(3)["output"].raw(), "2");
++    EXPECT_TRUE(root["modelsComplete"].isTrue());
++    totals.models["d"].input.reset();
++    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(*result));
++    EXPECT_FALSE(doc.root()["modelsComplete"].isTrue());
++    EXPECT_TRUE(doc.root()["models"].at(3)["input"].isNull());
++    EXPECT_EQ(doc.root()["models"].at(3)["output"].raw(), "2");
++    totals.models["d"].input = 1; s.snapshot.todayInput++;
++    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(*result));
++    EXPECT_FALSE(doc.root()["modelsComplete"].isTrue());
++}
++
++TEST(WidgetStatistics, MetricsCoverageAndParticipatingRequestOnlySource) {
++    auto s = sample(); auto h = history();
++    s.snapshot.todayRequests = 3; s.snapshot.todayCostMicroUsd = 20; s.snapshot.todayUnpricedRequests = 1;
++    h->days.front().totals.requests = 2; h->days.front().totals.costMicroUsd = 12;
++    auto result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*result));
++    EXPECT_EQ(doc.root()["today"]["requests"].raw(), "3");
++    EXPECT_EQ(doc.root()["days"].at(0)["costMicroUsd"].raw(), "12");
++    EXPECT_TRUE(doc.root()["days"].at(0)["unpricedRequests"].isNull());
++    agentspeed::SourceRow extra; extra.source = SourceKind::Gemini; extra.available = true; extra.todayRequests = 1;
++    s.snapshot.sources.push_back(extra);
++    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(*result));
++    EXPECT_TRUE(doc.root()["days"].at(0)["requests"].isNull()); EXPECT_FALSE(doc.root()["modelsComplete"].isTrue());
++    s.snapshot.warnings.partialHistory = true;
++    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(*result));
++    for (const auto* key : {"requests", "costMicroUsd", "unpricedRequests"}) {
++        EXPECT_TRUE(doc.root()["today"][key].isNull()); EXPECT_TRUE(doc.root()["days"].at(6)[key].isNull());
++    }
++}
++
++TEST(WidgetStatistics, RejectsUnsafeModelValuesAndNames) {
++    auto h = history(); auto& model = h->days.back().totals.models[std::string(257, 'a')]; model.input = 1; model.output = 1;
++    EXPECT_FALSE(widgetStatistics(sample(), view(), h, "h", "n"));
++    h->days.back().totals.models.clear(); auto& bad = h->days.back().totals.models["model"];
++    bad.input = 9007199254740992LL; bad.output = 1;
++    EXPECT_FALSE(widgetStatistics(sample(), view(), h, "h", "n"));
++}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 304cd25f..3a1d267c 100644
+index 304cd25f..d8baac2c 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
-@@ -337,3 +337,32 @@ or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup poli
+@@ -337,3 +337,33 @@ or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup poli
  service or linger policy is installed. Only existing activities are updated: no alert, sound, banner, ordinary
  completion notification or push-to-start is sent. Local relay verification does not prove Cloudflare/APNs/iPhone delivery.
  
@@ -1474,14 +1774,15 @@ index 304cd25f..3a1d267c 100644
 +Activity does not revoke a separately authorized Widget feed. With no SSH clients or either kind of
 +valid authorization, the daemon still exits after its bounded idle period.
 +
-+The body contains registered host identity, actual observation time/date/IANA timezone, today's input
-+and output, the latest seven calendar days of input/output and coverage, and today's canonical source
-+input/output and coverage. Unknown counts stay null, missing dates are not zero, and partial known
-+values are not presented as complete accounting. No transcript, raw log, command, path, SSH credential,
-+full history database or Apple provider secret is sent. The body is at most 64 KiB and has at most 32
-+unique sources. Fixed endpoint TLS verifies certificates/hostname, prohibits redirects/proxies/netrc,
-+and bounds connection/DNS to three seconds and the complete request to 15 seconds. Initial storage may
-+occur immediately; later same-authorization attempts occur no more frequently than every 30 minutes,
++The version 2 body contains registered host identity, actual observation time/date/IANA timezone,
++today and seven calendar days of input, output, requests, known priced micro-USD and unpriced requests,
++and up to three named models plus a null-model remainder from actual current-date history. Coverage and
++model completeness are explicit; missing values remain null, not zero. Cost is not a complete bill when
++unpriced requests exist. The widget projection contains no source breakdown, transcript, raw log,
++command, path, SSH credential, full history database or Apple provider secret. It is at most 64 KiB.
++Fixed endpoint TLS verifies certificates/hostname, prohibits redirects/proxies/netrc, and bounds
++connection/DNS to three seconds and the complete request to 15 seconds. Initial storage may occur
++immediately; later same-authorization attempts occur no more frequently than every 30 minutes,
 +with a later Retry-After respected. There is no per-second Widget push or permanently authorized feed.
 +
 +HTTP 200 acknowledges storage only; a failed Apple push must not erase the stored projection. The Worker
@@ -1492,3 +1793,6 @@ index 304cd25f..3a1d267c 100644
 +pushes while a separately consented publisher lease continues storing bounded statistics until expiry.
 +Local development checks and an unpublished ELF are not proof of production deployment or Apple delivery.
 +
+-- 
+2.41.0
+

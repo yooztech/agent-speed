@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
         self.assertEqual(metadata['protocol']['version'], 1)
         self.assertEqual(metadata['protocol']['shared_collector'], {
             'control_version': 2,
-            'capabilities': ['live_activity_v2', 'shared_collector_v1', 'widget_statistics_v1'],
+            'capabilities': ['live_activity_v2', 'live_activity_edges_v1', 'shared_collector_v1', 'widget_statistics_v2'],
             'identity': {'command': '--identity', 'prefix': 'shared-collector-v2', 'sha256': self.digest},
         })
         self.assertEqual(hashlib.sha256((self.output / NAME).read_bytes()).hexdigest(), self.digest)

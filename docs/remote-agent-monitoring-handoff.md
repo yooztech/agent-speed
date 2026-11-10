@@ -1,4 +1,21 @@
 # 远程 Agent 监控与 downstream patch 交接
+## Widget statistics v2（未发布）
+
+当前队列协商 `widget_statistics_v2`；外层 NDJSON 仍为版本 1、control 版本 2。
+Widget snapshot v2 不含 sources；today 与七日行提供 tokens、requests、已定价的
+`costMicroUsd`、`unpricedRequests` 和完整性。已知成本只是已定价部分；未定价
+请求存在时不是完整费用。模型来自同日实际 history，可能落后实时 today，因此
+`modelsComplete` 可为 false；旧缓存模型 input 未知，不伪造比例拆分。前三个已知
+模型之外归入保留分量未知性的 null-model 桶。ActivityKit 边沿与 responseClock 行为不变。
+尚未发布、部署或证明 Worker/APNs/设备交付；本节不改变下方既有证据。
+
+- 实现归入原功能补丁 0016，完整队列仍为 16 项；最终源码 commit `13b4d57e6e7698eaacb44d2af25659b7965b65fe`、tree `e330093b8ed0c77329c6c1ea391c56eef3ca6990`，从固定 upstream pin 重放至 `/tmp/agent-speed-widget-v2-final-replay-1110` 后 tree 相同。模型 input 使用实际归一化响应 input，合并任一未知保持未知；持久化 positional JSON 在 index 6 追加可空 input，旧六项缓存不补零，不删除旧历史。普通 history 协议同步提供可空模型 input。
+- production 本地资产目录 `artifacts/widget-statistics-v2/`；ELF 为 `linux-x86_64/agent-speed-collector-linux-x86_64`，SHA-256 `c6d4756739301d1bcb056ac19d2c7fd49416340b1b17c440e0df0e65bc65269d`，精确 identity 已校验。metadata 标签 `local-unreleased-widget-statistics-v2`，不是 GitHub Release；同目录 checksum/metadata，根目录 BUILDINFO、SHA256SUMS、source.bundle 和 verification 记录来源。旧 9593 资产保留不覆写，固定 TLS 测试 variant 未启用。
+- 定向验证覆盖 WidgetStatistics、WidgetPublisher、CollectorProtocol、CollectorPublisher 与两个 History.ModelInput 回归：首轮 55 项中 54 通过，1 项错误地将缺失 sources 字段视作显式 null；修正为缺失断言后单独重跑该项通过，其余 54 项未重复执行。metadata 3 项通过。production 构建成功；最终源码较已构建 commit `1b147c847b22cfe4a9ad9c3588b6d8fdf5a04718` 仅改测试断言，runtime/core/build 源码完全一致。原始首轮输出保留失败，BUILDINFO 不隐藏此过程。真实 production SSH/TLS 联验交移动 owner 执行，本侧不宣称已通过；未 push、发布或部署。
+- OMP fixture 的真实 input 为 `usage.input + cacheRead + cacheWrite`，一天与模型使用相同归一化值；唯一未知计价响应产生 requests 1、unpricedRequests 1、已定价成本 0。已定价成本 0 不代表完整零费用；不能在 UI 将未知部分伪装为总费用。七日窗口含今日及前六个日历日，今天模型来自真实当前日异步历史，不伪称实时逐 token 一致。
+- 移动 owner 回报 c6d4 production 的 OMP 真链已通过：隔离 OpenSSH 上七天真实 OMP 日志进入真实 snapshot/history，经生产 Dart projection 得到 today input 366、output 416、total 782，每日 requests 1、unpricedRequests 1、costMicroUsd 0，以及真实模型 input/output 和 modelsComplete；再经生产 HTTP/SQLite relay（software-seeded P256 trust）及窄 read 返回完全相同 payload，生产 Swift v2 解码与未计价费用 nil 验证通过，sampledAt 未修改。原 SSH 认证、指纹、密钥轮换、后台缓存及静默恢复路径亦由移动侧报告通过。这是移动 owner 提供的隔离软件链路证据，不代表真实设备信任证明或 Apple/APNs/iPhone 投递。
+- 独立 Claude TLS smoke 首次超时已由移动 smoke owner 定位为测试谓词 source 写成 `claude`，实际 CLI sourceId 为 `claudeCode`；只精准修正谓词，未改 collector、指标断言或等待窗口。移动 owner 随后回报第二次指定 smoke 在 29.74 秒通过：bundled c6d4 production 经 OpenSSH、固定 origin trusted TLS 到 production server/SQLite，Widget input 150、output 20、requests 1、costMicroUsd 0、unpricedRequests 1、model input 150；ACK、scoped read、cancel、revoke 通过。原 ActivityKit 边沿保持 start 834 ms、idle 976 ms、ordinary 10119 ms，优先级 `[5,10,10,5]`。身份为 software-seeded，APNs 为 double，不是 Apple/真实设备投递证据。本维护侧仅记录跨仓实际结果，未再调查或测试，未修改代码或资产，未发布、部署。
+
 
 > 下文保留历史交接记录；最新摘要隔离行为见“按 collector 摘要隔离 daemon（未发布）”，其余段落保留各次实施时的契约与证据，不代表当前仍需全局单实例。
 > 当前 downstream macOS 和 Windows 原生界面通过 SSH 标准流运行 Linux 采集器；
@@ -7,6 +24,19 @@
 > 不包含远程数据。fork.2 提供 Windows 便携 ZIP 和每用户安装程序；各平台更新器
 > 使用 fork 发布源。实际 GUI SSH 端到端仍未验证；限制及状态见
 > [fork.2 release notes](releases/v1.6.1-fork.2.md)，历史 [fork.1 notes](releases/v1.6.1-fork.1.md) 保留不变。
+
+## ActivityKit 状态边沿瞬发（未发布）
+
+- 约一秒采样不变；`generating` 或 `tools` 任一正数为 active，两者均为有效零才为 idle，其余为 unknown；不使用 speed。首个已知状态只建立基线，unknown 不制造 idle，也不清除已知基线。
+- 每个 lease 保留最新样本及最后尝试的已知状态；已知 idle↔active 可绕过常规十秒间隔一次，在 HTTP attempt 时消费，不等待 APNs accepted。持续同态仍走十秒；HTTP in-flight 继续采样，仅保留最新状态，不补发积压或折返期间的过期边沿。
+- 失败期限 `failureUntil` 与普通 `next` 分离；网络失败、指数退避、429 Retry-After 与 APNs backoff 均不可被边沿绕过。控制版本仍为 2，`minPublishIntervalMs` 仍为 10000，无新增 snapshot/priority 字段；能力协商及资产 metadata 新增 `live_activity_edges_v1`，移动刷新必须拒绝缺失该能力的旧资产。
+- 实现折入原功能补丁 0001、0014、0016，完整队列仍为 16 项；源码 `/tmp/agent-speed-edge-dev-1110`，commit `ec57b387502e1e2fea4ca676d12f7b25be8b7a6d`，tree `d37c6a8a9ddc459481d40d683246c12bac961f8c`。从固定 upstream pin 全量重放至 `/tmp/agent-speed-edge-replay-1110`，tree 相同。
+- 本地产物在 `artifacts/activitykit-edges/`：`linux-x86_64/agent-speed-collector-linux-x86_64` 及同目录 metadata/checksum，根目录 `BUILDINFO.json`、`SHA256SUMS`、`source.bundle`。ELF SHA-256 为 `f96982107d23b887598b1543681568eb8650a22b02e4743bdd754c8c9933c133`，`--identity` 已逐字节校验。仅为未发布本地 production 配置开发产物，metadata 标签 `local-unreleased-activitykit-edges` 不是 GitHub Release；不替换旧发布资产，不含固定 TLS 测试 variant。
+- 定向验证：`CollectorPublisher.*` 19 项与资产 metadata 3 项通过；Release CMake 的 `agentspeed-collector` production target 构建成功，`AGENTSPEED_BUILD_SSH_SMOKE=OFF`，测试 runtime 独立。实际本机 Linux x86_64/glibc 2.36 loader 依赖解析通过；不宣称其他发行版兼容。构建/测试原始输出在 `verification/build-and-publisher-tests.log`，其余结果在 `verification/results.json`。跨仓真实 SSH/TLS 联验由移动 owner 执行；此处不宣称 APNs/iPhone 投递或完整 Release 门禁通过。没有 push、打 tag、发布或生产部署。
+- 后续真实 production Docker 隔离 SSH/TLS 联验由移动 owner 回报：f969 资产首个 idle 与普通周期成功，两次 tools/idle 边沿均小于十秒且 priority 10，稳定五秒无额外发布；随后普通 idle 在距离上次成功仅 9987 ms 到达 relay，被实际返回 `429 rate_limited`。脱敏相对时间依次为 `0 idle200p5 / 10026 idle200p5 / 11015 tools200p10 / 12028 idle200p10 / 22015 idle429`。HTTP attempt-start 与 server request-arrival 的时钟边界差异导致下一普通请求可提前，失败保底退避十秒后超出 harness 观察窗口；不是边沿失效。
+- 修正：2xx 响应完成后，普通期限取 `max(next, responseClock + max(10000, intervalMs))`，不使用任意 epsilon；边沿继续绕过普通期限，失败期限与 Retry-After 不变。普通间隔现在从成功响应完成计时，包含响应耗时；不承诺慢请求或失败时二十秒内必有成功。修正源码 commit `52b34f715922371a79e9c72aa72157e3f5eff6a7`、tree `d77712aab5ec46ad4c5eac9968c70e95fd57762b`，新十六项重放 tree 一致；旧 f969 资产证据保留，不覆写。
+- 修正后本地产物为 `artifacts/activitykit-edges-completion-clock/`，ELF SHA-256 `959399b1145a800872d35b30aac67dc796419c29233b489c08a471e535de5bee`；同目录结构继续提供 metadata/checksum、BUILDINFO、source bundle、完整清单与证据。production 构建和精确 identity 验证通过；`CollectorPublisher.*` 20 项通过，含 transport 推进假时钟的响应完成期限回归，并证明该期限内边沿仍可立即发送。新资产交由移动 owner 重新执行隔离 SSH/TLS 联验；此处未宣称新资产联合场景已经通过。
+- 最终联合验收由移动 owner 回报：上述 `959399b1…` production ELF 已同步移动侧六处并校验，`bash server/test/collector-smoke/run.sh` 完整通过。真实 Claude 日志经 SSH 2222、固定 origin 的可信 TLS 443 到真实 relay/SQLite；`startPublishMs=869`、`idlePublishMs=970`、`ordinaryIntervalMs=10155`，优先级序列 `[5,10,10,5]`。稳定状态无按秒发布，Activity/Widget ACK、cancel、revoke 均通过。环境使用 Docker `--network none`，CA 与 hosts 仅在容器内隔离；APNs 为可观察替身，不是 Apple/iPhone 投递证据。此为跨仓 owner 提供的实际联验结果，本维护侧未重跑测试，未 push、发布或生产部署。
 
 ## 按 collector 摘要隔离 daemon（未发布）
 
