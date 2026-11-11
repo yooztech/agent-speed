@@ -339,6 +339,25 @@ sudo -n python3 <prepared-tree>/linux/tests/widget_statistics_smoke.py \
 `a76b01dd40163be10d19061e10944473582cce8d69221c29ca6227bd84d7e384`。不得将它纳入移动 assets。
 最终跨侧 production SSH、Worker、App Attest、WidgetKit 与 Apple 真机验收由移动协调 owner 执行。
 
+### fork.12：已知下界语义（已发布）
+
+移动侧把小组件口径改为“缺参来源的日期保留已知 input/output 下界、`complete=false`”，relay 快照由
+collector 生成，因此在原 0016 内同步：日聚合改为 `found` 即写入已知部分和；今日 input/output
+始终取快照、`complete` 仅由 `partialHistory` 决定；请求/费用仍只在完整覆盖且非 partial 时发射。
+stale 历史、时区不匹配或无任何行的日期仍为 unknown。没有新增字段、协议版本或能力变化。
+
+更新后 0016 SHA-256：`6b2c0e40a3950dd41b5d6c495add1832f81045cb773cb208ef3ac9ec312d4ea8`。
+维护 commit `7625e1da79ecfcb049b1ce70e304016da2a708ad`；完整队列重放树
+`f9ae7094d4c55e7a2f920c8cc5a8ac44bc17a595`。本地 focused 回归 53/53 通过（含 12 个
+`WidgetStatistics.*`）；Release preflight 的 Linux CTest 226/226 通过，Windows 与 macOS job 成功。
+
+已发布 `v1.6.1-fork.12`（run 42951904524）。正式 collector asset 实际下载并重新校验：
+SHA-256 `ebfcc03ba92a5f5996ba9b6f144153ae9847317f855ed5aa63671d47b7db862b`，
+`--identity` 返回 `shared-collector-v2 ebfcc03b...862b` 且 exit0；metadata 的
+`release_tag`、`maintenance_commit`、`upstream_commit` 与上列值一致，能力含
+`widget_statistics_v2`。该资产只声明 Linux x86_64 与记录到的 ELF 依赖，不代表 Apple/Android
+真机或生产 Worker 验收。
+
 ## Windows fork.9 SSH 管道提前结束：维护诊断
 
 用户在已安装的 `v1.6.1-fork.9` Windows 客户端报告远程主机 Code 离线，界面重复显示“管道已结束”。
