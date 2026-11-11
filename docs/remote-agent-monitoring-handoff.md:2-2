@@ -1,0 +1,30 @@
+## 订阅历史帧按投影版本比较（未发布）
+
+只读审查确认的问题：`linux/collector/daemon.cpp` 每秒 tick 对每个订阅调用 `sampler.history()`
+（按值返回整串）再与 `Client.lastHistory` 比较。本机真实 history 投影为 251,291 B，等于每个订阅
+每秒复制并比较约 245 KB；该成本随投影（天数×源×模型×模式）线性增长，且与内容是否变化无关。
+
+修复折入原功能补丁 0001 与 0014（队列仍 16 项）：
+
+- `sampling.cpp` 的 `Cached` 增加 `historyGeneration`，仅当**新序列化文本与缓存不同**时赋值并自增；
+  成功路径与 partial/失败回退路径同规则，时区身份变化清空历史时也自增。
+- 新增 `Sampler::historyGeneration(view)`；daemon 每 tick 只比较整数，变化时才取文本、记录并发送。
+  先读 generation 再取文本，并发替换最多一次冗余重发，不会漏发。
+- `history_timezone` 切换把该订阅的 generation 复位为 0，保证切回同一视图仍重发当前投影。
+
+边界（未改）：`Monitor::snapshot()` 字段与语义、`Publisher::sample` 的 ActivityKit 载荷与
+idle/active 边沿输入、`widgetStatistics` 输入与 `StatisticsHistory`、`requestHistoryRefresh`
+语义、`protocol.cpp` 的 live incomplete→null。ActivityKit 与 WidgetKit 都不读 socket 帧，
+本改动不改变其数据来源、载荷或发送节奏。
+
+读数：复制+比较 17.5 µs/订阅/tick（251 KB），改后为一次整数比较。该绝对值很小，问题在于它随投影
+线性增长。本轮**不改变发送字节数**：1 Hz snapshot 仍为 16.4 KB/客户端（剥离 0014/0015 新增字段后
+4.7 KB），history 帧仍约每 60 s 一次并与 snapshot 同流，慢链路上的秒级停顿仍存在；瘦身或分流需要
+两个客户端同批改动，另案处理。
+
+定向验证：`DaemonProcessTest.*`、`CollectorSampler.*`、`CollectorPublisher.*`、`WidgetPublisher.*`、
+`WidgetStatistics.*` 全部通过，含新增 `UnchangedProjectionIsNotResentEachTick`、
+`ZoneSwitchRedeliversTheCurrentProjection`、`ProjectionGenerationTracksTheProjectionText`；队列从
+固定 pin 重放后 tree `bb1c154aa40f51e36512dbfc71ef70a0ddab8de7` 与开发树一致。未运行 Release
+门禁，未 push、未打 tag、未发布、未部署。
+
