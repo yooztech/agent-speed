@@ -17,6 +17,81 @@ Widget snapshot v2 不含 sources；today 与七日行提供 tokens、requests�
 - 独立 Claude TLS smoke 首次超时已由移动 smoke owner 定位为测试谓词 source 写成 `claude`，实际 CLI sourceId 为 `claudeCode`；只精准修正谓词，未改 collector、指标断言或等待窗口。移动 owner 随后回报第二次指定 smoke 在 29.74 秒通过：bundled c6d4 production 经 OpenSSH、固定 origin trusted TLS 到 production server/SQLite，Widget input 150、output 20、requests 1、costMicroUsd 0、unpricedRequests 1、model input 150；ACK、scoped read、cancel、revoke 通过。原 ActivityKit 边沿保持 start 834 ms、idle 976 ms、ordinary 10119 ms，优先级 `[5,10,10,5]`。身份为 software-seeded，APNs 为 double，不是 Apple/真实设备投递证据。本维护侧仅记录跨仓实际结果，未再调查或测试，未修改代码或资产，未发布、部署。
 
 
+## Widget 统计只发布已扫描窗口（未发布）
+
+真机现象：iPhone 小组件在 App 长时间后台后「近7日」只剩今天一根柱，`较昨日` 与 `总量` 均为
+`—`，而同一份 relay 快照的 today 真实、`sampledAt` 新鲜。移动端后台刷新目前还会先用
+`historyStale: true` 发布一份 today 真实、过去六日 null 的投影；该读取端兼容层在本发布端
+规则生效后删除，因此 null 不能作为长期可接受输出。
+
+修复前三处叠加（行号为修复前 `linux/collector` 源码）：
+
+- `widget_publisher.cpp:208` 的时隙判断只看 `l.next>now`，`:210` 把当次 `widgetStatistics`
+  结果直接写入 lease 并发送。常规 30 分钟时隙没有「历史是否扫描过这一窗口」的概念，可以把
+  上一份有效快照覆盖成六天 null。
+- `widget_statistics.cpp:113` 的 `matching`（同一时区且 `usageDate` 等于样本日历日）是全有或
+  全无门禁：不匹配时 `days[0..5]` 保持默认 null，今天仍用实时计数，正好生成该 payload。
+- `widget_statistics.cpp:134` 逐日求和把「当前 snapshot 未检测/不可用」的历史来源整行丢弃，
+  一个退役来源即可让整周归零为 null；`found` 也随之不成立。
+- `sampling.cpp:203` 投影的 `usageDate` 取采集进程自己的 `system_clock`，与样本 `nowMs` 无统一
+  时钟；跨午夜时该门禁会持续到下一次 60 秒投影，且测试无法构造该边界。
+
+修复（全部折入原功能补丁 0016，wire 对象与字段不变）：
+
+- `widget_statistics.{hpp,cpp}`：`widgetStatistics` 返回 `WidgetSnapshot{payload, pastCovered}`；
+  `pastCovered` 仅在时区一致且 `usageDate` 等于样本日历日时为真。逐日求和只依据已记录 history
+  行（`widget_statistics.cpp:135`），来源当前是否检测/启用只决定今天；缺行仅置
+  `complete=false`，已知下界照常给出，无行日期仍为 null，不补零。
+- `widget_publisher.cpp`：lease 增加 `needsCoverage`/`mustPublish`/`notBefore`/`probe`。已确认
+  lease 遇到未覆盖投影时不写入 payload（`:230`），保留已存快照；覆盖就绪时以一次
+  `mustPublish` 立即补发（`:240`），不受 30 分钟常规时隙限制，但仍遵守 Retry-After（`:161`）；
+  首次确认允许一次未覆盖投影。`views()`/`needsCoverage()`（`:254`）把等待暴露给 daemon，
+  拒绝重试间隔为 2 秒（`:85`）。
+- `sampling.{hpp,cpp}`：`Sampler` 接受可注入时钟；`requestHistoryRefresh()`（`:284`）立即重新
+  投影（2 秒节流）并请求一次文件重扫（10 秒节流）；投影 `usageDate` 改用该时钟。
+- `daemon.cpp:239`：`widgets.needsCoverage()` 时请求刷新；不再用未扫描日历覆盖已存 payload。
+
+测试（先失败后修复，均为行为断言而不是「返回 null 也正常」）：
+
+- `WidgetPublisher.RoutineSlotKeepsStoredPayloadWhenHistoryIsNotScanned`：修复前 30 分钟时隙
+  `calls` 从 1 涨到 2、再涨到 3（未扫描窗口与 `usageDate` 落后一天的窗口都覆盖了已存 payload），
+  修复后保持 1，并报告 coverage 需求；覆盖完成后 2 秒内补发。
+- `WidgetPublisher.PublishesTheCorrectionAsSoonAsCoverageArrives`：修复前 1 秒内没有第二次
+  POST（`eventually(calls==2)` 为 false），修复后首次确认 2 秒后即补发，六个过去日 input 为真实值。
+- `WidgetPublisher.RoutineCadenceRepublishesCoveredWindows`：覆盖投影后仍按 30 分钟常规时隙。
+- `WidgetStatistics.UndetectedHistoricalSourceKeepsKnownLowerBound`（修复前 `"null"` vs `"4"`）与
+  `HistoricalSourceWithoutSnapshotRowKeepsItsDay`（修复前 `"null"` vs `"100"`）：来源未检测、
+  不可用或不在 snapshot 时历史行仍计入已知下界，整天不为 null，只是不完整。
+- `CollectorSampler.WidgetHistoryStaysCoveredAcrossMidnight`：注入时钟从 23:50 推进到次日 00:10；
+  同一份投影对次日样本 `pastCovered=false`，`requestHistoryRefresh()` 后 `usageDate` 跟进，六个
+  过去日仍为真实值、今天为 0。A/B：把 `usageDate` 临时换回进程时钟后该用例失败
+  （`projection->usageDate` 为 `2026-11-11`、样本日历为 `2026-11-10`，六天 null），恢复后通过。
+
+队列与树：完整队列仍为 16 项；本次只有 `0016-Add-independent-widget-statistics-feed.patch`
+变化（`series`、`tests.json` 与其余 15 个补丁字节未变）。开发树应用 commit
+`9aa08b06b796bee2e566103727d1dd6acf6a6b5e`、整树 `446ea456b87b347872bf75b07d9900d843c407c7`、
+`linux` 子树 `24aa8b7701720170f1c3a08860241b4742bf934e`；用 `downstream/manage.py prepare`
+从更新后的队列重放到 `/tmp/agent-speed-widget-replay-1111`（HEAD `7d28b8de`），整树与 `linux`
+子树与开发树完全一致。
+
+验证命令与结果（Linux，GCC 12，CMake；录制内容为该次运行的实际输出）：
+
+```sh
+cmake -S linux -B build-widget -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest
+cmake --build build-widget -j8
+ctest --test-dir build-widget --output-on-failure
+# 100% tests passed, 0 tests failed out of 232
+build-widget/tests/agentspeed_tests \
+  --gtest_filter='Widget*:CollectorSampler.*:CollectorProtocol.*:CollectorPublisher.*'
+# [  PASSED  ] 61 tests.
+cmake --build build-widget --target agentspeed-collector -j8   # production target, AGENTSPEED_BUILD_SSH_SMOKE 默认关闭
+# [100%] Built target agentspeed-collector
+```
+
+未覆盖：真实墙钟的跨午夜与 30 分钟时隙只由注入时钟与假 transport 的单元/集成测试覆盖，未在
+真机等待真实午夜；Worker 存储、APNs/WidgetKit 投递、iPhone 真机渲染未验证；未运行完整
+Release 平台门禁，未打 tag、未 push、未发布、未部署，未改移动仓库。
+
 > 下文保留历史交接记录；最新摘要隔离行为见“按 collector 摘要隔离 daemon（未发布）”，其余段落保留各次实施时的契约与证据，不代表当前仍需全局单实例。
 > 当前 downstream macOS 和 Windows 原生界面通过 SSH 标准流运行 Linux 采集器；
 > 本机和已启用的远程主机同时作为标准数据源，按主机和来源分组并汇总，不切换目标。

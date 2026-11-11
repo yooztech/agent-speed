@@ -1,22 +1,41 @@
-From 1b2d27dde793555d2d9b14ac094aa9874b696863 Mon Sep 17 00:00:00 2001
+From 9aa08b06b796bee2e566103727d1dd6acf6a6b5e Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Mon, 9 Nov 2026 09:50:00 +0800
 Subject: [PATCH 16/16] Add independent widget statistics feed
 
+An unscanned projection could replace a lease's stored statistics with six null past days
+beside a real today. The projection's calendar day came from the collector's own clock, the
+day loop dropped recorded rows whose source was no longer detected, and the publisher sent
+whatever the next 30-minute slot produced. A widget-only daemon, which has no SSH client to
+observe the gap, therefore appeared to lose its seven-day history after a long background
+period even though the relay snapshot carried a fresh today.
+
+Publish only scanned windows. A lease keeps its stored payload while the history is missing,
+labelled for an earlier day or built for another timezone; the daemon asks the sampler to
+re-project at once and to rescan changed files, and the covering correction is published as
+soon as it exists without waiting for the routine slot, as one bounded attempt that still
+observes Retry-After. Only the first confirmation attempt may store a real today beside
+unscanned past days, and it is corrected immediately afterwards. Recorded rows stay facts
+when their source is no longer detected, available or enabled, so a past day keeps its known
+input/output lower bound and is merely incomplete. The wire object is unchanged.
+
+The mobile reader currently merges tolerantly to support older daemons that store unscanned
+windows. That compatibility layer is temporary and is removed once this publisher rule is
+deployed, so null past days are not an acceptable long-term output of the collector.
 ---
- README.md                                 |  15 +-
- docs/shared-collector.md                  |  67 +++++
+ README.md                                 |  17 +-
+ docs/shared-collector.md                  |  85 ++++++
  linux/collector/CMakeLists.txt            |   4 +-
- linux/collector/daemon.cpp                |  18 +-
+ linux/collector/daemon.cpp                |  21 +-
  linux/collector/protocol.cpp              |   1 +
  linux/collector/publisher.cpp             |   9 +-
  linux/collector/relay_http.hpp            |  16 ++
- linux/collector/sampling.cpp              |  21 ++
- linux/collector/sampling.hpp              |   9 +
- linux/collector/widget_publisher.cpp      | 230 +++++++++++++++++
- linux/collector/widget_publisher.hpp      |  32 +++
- linux/collector/widget_statistics.cpp     | 208 +++++++++++++++
- linux/collector/widget_statistics.hpp     |   9 +
+ linux/collector/sampling.cpp              |  56 +++-
+ linux/collector/sampling.hpp              |  19 +-
+ linux/collector/widget_publisher.cpp      | 270 +++++++++++++++++++
+ linux/collector/widget_publisher.hpp      |  35 +++
+ linux/collector/widget_statistics.cpp     | 210 +++++++++++++++
+ linux/collector/widget_statistics.hpp     |  18 ++
  linux/core/include/agentspeed/history.hpp |   2 +
  linux/core/src/history.cpp                |  10 +-
  linux/core/src/history_store.cpp          |   3 +
@@ -24,11 +43,12 @@ Subject: [PATCH 16/16] Add independent widget statistics feed
  linux/tests/collector_publisher_test.cpp  |   7 +
  linux/tests/collector_test.cpp            |   5 +-
  linux/tests/history_test.cpp              |  64 +++++
- linux/tests/widget_publisher_test.cpp     | 136 ++++++++++
+ linux/tests/sampling_test.cpp             | 121 +++++++++
+ linux/tests/widget_publisher_test.cpp     | 281 ++++++++++++++++++++
  linux/tests/widget_statistics_smoke.py    | 300 ++++++++++++++++++++++
- linux/tests/widget_statistics_test.cpp    | 218 ++++++++++++++++
- spec/NETWORK.md                           |  30 +++
- 24 files changed, 1401 insertions(+), 15 deletions(-)
+ linux/tests/widget_statistics_test.cpp    | 278 ++++++++++++++++++++
+ spec/NETWORK.md                           |  35 +++
+ 25 files changed, 1851 insertions(+), 18 deletions(-)
  create mode 100644 linux/collector/relay_http.hpp
  create mode 100644 linux/collector/widget_publisher.cpp
  create mode 100644 linux/collector/widget_publisher.hpp
@@ -39,7 +59,7 @@ Subject: [PATCH 16/16] Add independent widget statistics feed
  create mode 100644 linux/tests/widget_statistics_test.cpp
 
 diff --git a/README.md b/README.md
-index 51ccd86c..72bca35d 100644
+index 51ccd86c..b7eae6b1 100644
 --- a/README.md
 +++ b/README.md
 @@ -123,8 +123,10 @@ Duplicate SSH destinations are rejected when saving; an existing host can keep i
@@ -55,15 +75,17 @@ index 51ccd86c..72bca35d 100644
  
  Optional mobile live-activity authorization is separate: after the user creates an activity in the foreground, an
  activity-scoped lease can authorize the daemon to send only minimal current metrics over verified HTTPS to
-@@ -134,6 +136,15 @@ commands, conversation content or SSH credentials; the target host receives no A
+@@ -134,6 +136,17 @@ commands, conversation content or SSH credentials; the target host receives no A
  activities only and does not request alerts or promise ten-second iOS rendering. See the complete
  [shared collector/control-v2 contract](docs/shared-collector.md) and [network specification](spec/NETWORK.md#8-activity-scoped-mobile-relay).
  
 +An independently consented mobile Widget statistics feed can additionally forward today's and seven
 +calendar days' usage aggregates and a bounded current-day model breakdown, with explicit unknown/partial
-+coverage. Incomplete days retain their known input/output lower bound but remain marked incomplete;
-+days with no rows or stale history stay unknown. It uses a separate revocable publisher authorization of at most 30 days and
-+at most one routine publish attempt per 30 minutes after initial storage; it neither extends the
++coverage. Incomplete days retain their known input/output lower bound, including rows of a source
++that is no longer detected; days with no rows stay unknown. A stored projection is never replaced by
++an unscanned window, and the covering correction is published as soon as the scan reaches it. It
++uses a separate revocable publisher authorization of at most 30 days and at most one routine publish
++attempt per 30 minutes after initial storage, plus that correction; it neither extends the
 +ActivityKit lease nor uploads raw history/logs. The daemon cannot renew this authorization. Widget
 +push invalidates timelines rather than sending ordinary alerts. This queue feature is unpublished;
 +see the [separate Widget network boundary](spec/NETWORK.md#9-independent-opt-in-widget-statistics-relay-unreleased).
@@ -72,10 +94,10 @@ index 51ccd86c..72bca35d 100644
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
  stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
-index 3680715f..0e698119 100644
+index 3680715f..0dd33e87 100644
 --- a/docs/shared-collector.md
 +++ b/docs/shared-collector.md
-@@ -84,3 +84,70 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
+@@ -84,3 +84,88 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
  CMake's normal test executable uses a separately compiled test-only HOME namespace and one-second idle period so process tests cannot attach to the maintainer's canonical daemon. Neither override exists in the distribution executable. `AGENTSPEED_BUILD_SSH_SMOKE=ON` additionally builds the explicitly non-distributable `agentspeed-collector-ssh-smoke`: it uses the same libcurl path but a compile-time fixed localhost TLS endpoint and test CA, with canonical passwd-home and production 30-second idle behavior. Never package that executable.
  
  `linux/tests/shared_collector_ssh_smoke.py` runs a local sshd, a disposable Unix account and an isolated TLS relay, then cleans them up. It requires local root only for that isolated account/sshd; it never accesses a production host or modifies a system SSH service. Its JSON results identify actual scenarios and limits. It does not prove Cloudflare deployment, APNs acceptance or iPhone delivery. Real signed-iPhone testing, deployed Worker/App Attest configuration, Apple credentials, ARM64 runtime, and native Mac/Windows UI remain separate acceptance prerequisites.
@@ -102,10 +124,11 @@ index 3680715f..0e698119 100644
 +today in every metric. Counts are nullable nonnegative safe integers. Today's input/output are the
 +snapshot's known totals regardless of source availability; today is complete unless history is
 +partial, and a partial today nulls all three request/cost fields. A past day retains the known
-+input/output sum of participating sources that have rows, but is incomplete when any participating
-+source lacks a row or is unavailable; its request/cost fields require complete source coverage and
-+nonpartial matching history. Days with no rows, stale history or a mismatched timezone remain
-+unknown. Known priced cost is not a full bill when requests are unpriced.
++input/output sum of the rows of participating sources; a recorded row stays a fact after its source
++is no longer detected, available or enabled, because detection decides only today's live counts.
++The day is incomplete when any participating source lacks a row for that day; its request/cost
++fields require complete source coverage and nonpartial matching history. A day without rows is
++unknown, never zero. Known priced cost is not a full bill when requests are unpriced.
 +Model rows contain only `model`, `input`, and `output`: the three highest fully known named models
 +by total (name breaks ties), followed by one null-model bucket for all remaining and unnamed usage.
 +Each bucket component preserves unknowns. Models come from actual current-date history and may lag
@@ -114,6 +137,21 @@ index 3680715f..0e698119 100644
 +counts and dates are null, never fabricated zeros. `historyComplete` requires all seven days complete.
 +Cached input and reasoning are already included; do not add them again. Invalid model IDs, unsafe
 +integers or a body larger than 64 KiB fail closed.
++
++A null past day may only mean that the scan covered that day and found no records, or that the
++coverage is incomplete (`complete: false`). It must never mean that the history was not ready. The
++publisher therefore compares a projection's `usageDate` and `timezone` with the sample's own
++calendar day before publishing: a missing, stale or differently labelled projection may not replace
++the statistics already stored for a lease. The lease keeps the stored payload, the daemon asks the
++sampler to re-project at once and to rescan changed source files, and the publisher retries well
++below the routine interval. A covering projection is published as soon as it exists, even inside
++the 30-minute window, as one bounded attempt that still observes Retry-After and does not move the
++routine cadence backwards. The only unscanned projection a lease may store is its first
++confirmation attempt, whose real today counts let the 75-second ACK complete; the covering
++correction follows immediately. The mobile client currently performs an additional reader-side
++merge to tolerate older daemons that store unscanned windows. That compatibility layer is temporary
++and is removed once this publisher rule is deployed, so null past days are not an acceptable
++long-term output of the collector.
 +
 +`widget_subscribe_ack` echoes `version`, `controlVersion`, `requestId`, `subscriptionId`, `hostId`,
 +`hostName`, `timezone`, `expiresAt` and Boolean `accepted`, plus a safe `error` on failure. A positive ACK
@@ -132,8 +170,10 @@ index 3680715f..0e698119 100644
 +credential, App Attest key or Apple provider secret is sent to the collector. Host logout/cgroup policy
 +can still kill the daemon; no linger policy or root service is installed.
 +
-+After the initial attempt, publish attempts are at least 30 minutes apart. Latest real source/history
-+changes coalesce; unchanged counts still receive a genuine fresh observation/date at the next slot.
++After the initial attempt, routine publish attempts are at least 30 minutes apart; the covering
++correction above is the one extra attempt and never turns into a retry storm. Latest real
++source/history changes coalesce; unchanged counts still receive a genuine fresh observation/date at
++the next slot.
 +Publishing uses a separate bounded single-flight HTTPS worker, verifies certificates and hostname,
 +disables redirects/environment proxies/netrc, limits connection/DNS to three seconds and total request
 +time to 15 seconds, and bounds response bytes. No credential appears in argv, environment, URL or logs.
@@ -165,7 +205,7 @@ index 1eb5023e..12d6cb04 100644
  endfunction()
  
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
-index ed4e98b1..e72ec39b 100644
+index ed4e98b1..bf296f49 100644
 --- a/linux/collector/daemon.cpp
 +++ b/linux/collector/daemon.cpp
 @@ -2,6 +2,7 @@
@@ -203,10 +243,13 @@ index ed4e98b1..e72ec39b 100644
      if (!writeAll(ready, "R")) fail("readiness");
      close(ready);
      std::map<int, Client> clients; std::uint64_t nextId = 1;
-@@ -231,6 +234,10 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -231,6 +234,13 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
                  if (!history.empty() && history != c.lastHistory) { c.lastHistory = history; enqueue(c, std::move(history), false, true); }
              }
              for (const auto& view : publisher.views()) { auto sample = sampler.sample(now, view); publisher.sample(view, sample); }
++            // A widget lease that cannot publish a scanned window asks the sampler to catch up
++            // instead of replacing its stored payload with unknown past days.
++            if (widgets.needsCoverage()) sampler.requestHistoryRefresh();
 +            for (const auto& view : widgets.views()) {
 +                auto sample = sampler.sample(now, view);
 +                widgets.sample(view, sample, sampler.statisticsHistory(view));
@@ -214,7 +257,7 @@ index ed4e98b1..e72ec39b 100644
              auto completions = sampler.takeCompletions();
              for (const auto& completion : completions) {
                  auto line = Protocol::completion(completion);
-@@ -239,9 +246,10 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -239,9 +249,10 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
              tick = steady + std::chrono::seconds(1);
          }
          for (auto& reply : publisher.replies()) for (auto& [fd, c] : clients) if (c.id == reply.first && c.handshaken) { enqueue(c, std::move(reply.second)); break; }
@@ -227,7 +270,7 @@ index ed4e98b1..e72ec39b 100644
  #ifdef AGENTSPEED_COLLECTOR_TESTING
          else if (steady - idle >= std::chrono::seconds(1)) break;
  #else
-@@ -273,7 +281,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -273,7 +284,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
                          if (!c.handshaken) {
                              if (line != "shared-collector-v2 " + hash) { enqueue(c, "version-conflict"); c.handshaken = true; c.dead = true; break; }
                              c.handshaken = true; enqueue(c, "shared-collector-v2 " + hash);
@@ -303,10 +346,22 @@ index 00000000..16d21855
 +}
 +}
 diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
-index bd17339e..adcb07f9 100644
+index bd17339e..d826d4dd 100644
 --- a/linux/collector/sampling.cpp
 +++ b/linux/collector/sampling.cpp
-@@ -77,6 +77,7 @@ struct Sampler::Impl {
+@@ -59,6 +59,11 @@ std::string cacheIdentity(const agentspeed::SourceLocations& locations, const st
+     return out.str();
+ }
+ 
++std::int64_t wallMs() {
++    return std::chrono::duration_cast<std::chrono::milliseconds>(
++        std::chrono::system_clock::now().time_since_epoch()).count();
++}
++
+ std::string localIdentity() {
+     const char* tz = std::getenv("TZ");
+     std::string id = tz ? tz : "";
+@@ -77,9 +82,11 @@ struct Sampler::Impl {
          View view;
          std::string history;
          std::vector<agentspeed::perf::DayRecord> perf;
@@ -314,7 +369,36 @@ index bd17339e..adcb07f9 100644
      };
  
      std::string home, digest;
-@@ -174,6 +175,7 @@ struct Sampler::Impl {
++    Clock clock;
+     agentspeed::MonitorConfig config = agentspeed::MonitorConfig::fromEnvironment();
+     agentspeed::Monitor monitor{config};
+     std::shared_ptr<const agentspeed::TimeZone> local = agentspeed::localZone(agentspeed::processEnvironment());
+@@ -91,10 +98,13 @@ struct Sampler::Impl {
+     std::optional<std::string> baselineDay;
+     bool stopping = false;
+     bool requested = true;
++    bool rescan = false;
++    std::int64_t refreshBlockedUntil = 0, scanBlockedUntil = 0;
+     bool started = false;
+     std::thread worker;
+ 
+-    Impl(const std::string& accountHome, const std::string& binaryDigest) : home(accountHome), digest(binaryDigest) {
++    Impl(const std::string& accountHome, const std::string& binaryDigest, Clock given)
++        : home(accountHome), digest(binaryDigest), clock(given ? std::move(given) : Clock(&wallMs)) {
+         views.emplace(std::nullopt, Cached{View{std::nullopt, local}, {}, {}});
+         worker = std::thread([this] { historyLoop(); });
+     }
+@@ -162,6 +172,9 @@ struct Sampler::Impl {
+                         if (stopping) return;
+                         requested = false;
+                         for (const auto& [key, value] : views) todo.emplace(key, value.view);
++                        // A consumer refused a projection it could not verify; re-run the scan now
++                        // instead of waiting for the periodic pass so its next projection is current.
++                        if (rescan) { rescan = false; nextScan = std::chrono::steady_clock::now(); }
+                     }
+                     if (std::chrono::steady_clock::now() >= nextScan) {
+                         auto identity = localIdentity();
+@@ -174,6 +187,7 @@ struct Sampler::Impl {
                                  value.view.zone = zone;
                                  value.history.clear();
                                  value.perf.clear();
@@ -322,21 +406,19 @@ index bd17339e..adcb07f9 100644
                                  ++baselineGeneration;
                                  todo.at(std::nullopt).zone = zone;
                              }
-@@ -195,6 +197,13 @@ struct Sampler::Impl {
+@@ -195,6 +209,11 @@ struct Sampler::Impl {
                          if (!projection.complete && !viewReport.filesUnreadable) viewReport.filesUnreadable = 1;
                          auto line = Protocol::history(projection.days, viewReport, view.name, projection.perfRecords);
                          auto perf = projection.perfRecords;
 +                        auto statistics = std::make_shared<StatisticsHistory>();
 +                        statistics->timezone = view.name.value_or("");
-+                        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-+                            std::chrono::system_clock::now().time_since_epoch()).count();
-+                        statistics->usageDate = agentspeed::history::DayLabeler(view.zone).label(now).value_or("");
++                        statistics->usageDate = agentspeed::history::DayLabeler(view.zone).label(clock()).value_or("");
 +                        statistics->days = projection.days;
 +                        statistics->complete = projection.complete && !viewReport.filesUnreadable && !viewReport.cancelled;
                          saved.insert_or_assign(key, Saved{view, std::move(projection), viewReport});
                          std::lock_guard lock(mutex);
                          if (stopping) return;
-@@ -202,6 +211,7 @@ struct Sampler::Impl {
+@@ -202,6 +221,7 @@ struct Sampler::Impl {
                          value.history = std::move(line);
                          value.perf = std::move(perf);
                          if (!key) ++baselineGeneration;
@@ -344,7 +426,7 @@ index bd17339e..adcb07f9 100644
                      }
                  }
              } catch (const std::exception&) {
-@@ -212,6 +222,11 @@ struct Sampler::Impl {
+@@ -212,6 +232,11 @@ struct Sampler::Impl {
                                                    value.projection.perfRecords);
                      std::lock_guard lock(mutex);
                      if (stopping) return;
@@ -356,7 +438,17 @@ index bd17339e..adcb07f9 100644
                      views.at(key).history = std::move(line);
                  }
                  std::unique_lock lock(mutex);
-@@ -249,6 +264,12 @@ std::string Sampler::history(const View& view) {
+@@ -222,7 +247,8 @@ struct Sampler::Impl {
+     }
+ };
+ 
+-Sampler::Sampler(const std::string& home, const std::string& digest) : impl_(std::make_unique<Impl>(home, digest)) {}
++Sampler::Sampler(const std::string& home, const std::string& digest, Clock clock)
++    : impl_(std::make_unique<Impl>(home, digest, std::move(clock))) {}
+ Sampler::~Sampler() = default;
+ 
+ void Sampler::poll(std::int64_t now) {
+@@ -249,6 +275,32 @@ std::string Sampler::history(const View& view) {
      return impl_->views.at(view.name).history;
  }
  
@@ -366,14 +458,40 @@ index bd17339e..adcb07f9 100644
 +    return impl_->views.at(view.name).statistics;
 +}
 +
++void Sampler::requestHistoryRefresh() {
++    const auto now = impl_->clock();
++    bool wake = false;
++    {
++        std::lock_guard lock(impl_->mutex);
++        if (now >= impl_->refreshBlockedUntil) {
++            impl_->refreshBlockedUntil = now + 2000;
++            impl_->requested = true;
++            wake = true;
++        }
++        if (now >= impl_->scanBlockedUntil) {
++            impl_->scanBlockedUntil = now + 10000;
++            impl_->rescan = true;
++            impl_->requested = true;
++            wake = true;
++        }
++    }
++    if (wake) impl_->changed.notify_one();
++}
++
  std::vector<agentspeed::Completion> Sampler::takeCompletions() {
      return impl_->monitor.takeCompletions();
  }
 diff --git a/linux/collector/sampling.hpp b/linux/collector/sampling.hpp
-index 738c9b4c..9b1b5ba6 100644
+index 738c9b4c..f23cc2ee 100644
 --- a/linux/collector/sampling.hpp
 +++ b/linux/collector/sampling.hpp
-@@ -6,6 +6,7 @@
+@@ -1,11 +1,13 @@
+ #pragma once
+ 
+ #include <cstdint>
++#include <functional>
+ #include <memory>
+ #include <optional>
  #include <string>
  #include <vector>
  
@@ -381,7 +499,7 @@ index 738c9b4c..9b1b5ba6 100644
  #include "agentspeed/monitor.hpp"
  #include "agentspeed/tz.hpp"
  
-@@ -21,6 +22,13 @@ struct Sample {
+@@ -21,10 +23,20 @@ struct Sample {
      std::vector<agentspeed::traffic::HistoryRow> traffic;
  };
  
@@ -395,20 +513,32 @@ index 738c9b4c..9b1b5ba6 100644
  // All public methods are called by the collection thread. History analysis runs in the background.
  class Sampler {
  public:
-@@ -32,6 +40,7 @@ public:
+-    Sampler(const std::string& home, const std::string& digest);
++    // Wall-clock milliseconds; a caller may supply a deterministic clock for tests.
++    using Clock = std::function<std::int64_t()>;
++
++    Sampler(const std::string& home, const std::string& digest, Clock clock = {});
+     ~Sampler();
+     Sampler(const Sampler&) = delete;
+     Sampler& operator=(const Sampler&) = delete;
+@@ -32,6 +44,11 @@ public:
      void poll(std::int64_t now);
      Sample sample(std::int64_t now, const View& view);
      std::string history(const View& view);
 +    std::shared_ptr<const StatisticsHistory> statisticsHistory(const View& view);
++    // Re-derive the projections from their current scan without waiting for the periodic pass,
++    // and re-read changed source files soon after. A consumer that refuses to publish a window
++    // the scan has not reached uses this instead of publishing an unscanned calendar.
++    void requestHistoryRefresh();
      std::vector<agentspeed::Completion> takeCompletions();
  
  private:
 diff --git a/linux/collector/widget_publisher.cpp b/linux/collector/widget_publisher.cpp
 new file mode 100644
-index 00000000..a1791f39
+index 00000000..76663b47
 --- /dev/null
 +++ b/linux/collector/widget_publisher.cpp
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,270 @@
 +#include "widget_publisher.hpp"
 +#include "widget_statistics.hpp"
 +#include "relay_http.hpp"
@@ -491,13 +621,21 @@ index 00000000..a1791f39
 +}
 +}
 +struct WidgetPublisher::Impl {
++    // A refused projection is retried this often, far below the routine interval, so coverage is
++    // published as soon as the history scan reaches it.
++    static constexpr std::int64_t probeMs = 2000;
 +    struct Waiter { std::uint64_t client; std::string request; };
 +    struct Lease {
 +        std::string id, token, host, name, zone, payload;
-+        std::int64_t expiry=0, created=0, deadline=0, next=0;
++        std::int64_t expiry=0, created=0, deadline=0, next=0, probe=0, notBefore=0;
 +        std::int64_t payloadSampledAt=0, lastAttemptSample=-1;
 +        std::uint64_t generation=0;
 +        View view; bool confirmed=false, inFlight=false;
++        // The stored payload's past days were not scanned; no routine publish may replace it with
++        // a null window until a covered projection arrives.
++        bool needsCoverage=false;
++        // A pending payload is a coverage correction and bypasses the routine interval.
++        bool mustPublish=false, correction=false;
 +        std::vector<Waiter> waiters;
 +    };
 +    struct Request { std::string binding, response; std::int64_t expiry; };
@@ -538,14 +676,17 @@ index 00000000..a1791f39
 +        std::unique_lock<std::mutex> lock(mutex);
 +        while (!stop) {
 +            auto now=options.clock(); prune(now);
-+            auto it=std::find_if(leases.begin(),leases.end(),[&](const Lease& l){ return !l.inFlight && !l.payload.empty() && l.next<=now; });
++            auto it=std::find_if(leases.begin(),leases.end(),[&](const Lease& l){
++                return !l.inFlight && !l.payload.empty() && l.notBefore<=now && (l.mustPublish || l.next<=now); });
 +            if (it==leases.end()) { cv.wait_for(lock,std::chrono::milliseconds(100)); continue; }
 +            if (it->payloadSampledAt>now || now-it->payloadSampledAt>300000 || it->payloadSampledAt<=it->lastAttemptSample) {
 +                it->payload.clear();
++                if (it->correction) { it->correction=false; it->needsCoverage=true; }
 +                continue;
 +            }
 +            auto id=it->id, token=it->token, payload=std::move(it->payload); auto gen=it->generation;
-+            it->inFlight=true; it->next=now+options.intervalMs; it->lastAttemptSample=it->payloadSampledAt;
++            it->inFlight=true; it->mustPublish=false; it->correction=false; it->next=now+options.intervalMs;
++            it->lastAttemptSample=it->payloadSampledAt;
 +            lock.unlock(); auto result=options.transport(token,payload); lock.lock();
 +            if (stop) break;
 +            now=options.clock(); prune(now);
@@ -555,7 +696,11 @@ index 00000000..a1791f39
 +            if (result.status==200) { if (!it->confirmed) { it->confirmed=true; finish(*it,true); } }
 +            else if (!it->confirmed) { finish(*it,false,"publish_failed"); retire(*it); leases.erase(it); }
 +            else if (result.status>=400 && result.status<500 && result.status!=429) { retire(*it); leases.erase(it); }
-+            else if (result.status==429 && result.retryAfterMs>0) it->next=std::max(it->next,now+std::min<std::int64_t>(result.retryAfterMs,2592000000LL));
++            else if (result.status==429 && result.retryAfterMs>0) {
++                it->next=std::max(it->next,now+std::min<std::int64_t>(result.retryAfterMs,2592000000LL));
++                // A correction may not bypass a server-mandated delay.
++                it->notBefore=std::max(it->notBefore,it->next);
++            }
 +        }
 +    }
 +};
@@ -616,16 +761,41 @@ index 00000000..a1791f39
 +void WidgetPublisher::sample(const View& view,const Sample& sample,const std::shared_ptr<const StatisticsHistory>& history) {
 +    std::lock_guard<std::mutex> lock(impl_->mutex); auto now=impl_->options.clock(); impl_->prune(now);
 +    for (auto& l:impl_->leases) {
-+        if (l.view.name!=view.name || l.view.zone!=view.zone || l.inFlight || l.next>now || sample.snapshot.nowMs<l.created || sample.snapshot.nowMs>now || now-sample.snapshot.nowMs>30000 || sample.snapshot.nowMs<=l.lastAttemptSample) continue;
++        if (l.view.name!=view.name || l.view.zone!=view.zone || l.inFlight) continue;
++        const bool routine=l.next<=now;
++        if (!routine && !l.needsCoverage) continue;
++        if (now<l.probe || now<l.notBefore) continue;
++        if (sample.snapshot.nowMs<l.created || sample.snapshot.nowMs>now || now-sample.snapshot.nowMs>30000 || sample.snapshot.nowMs<=l.lastAttemptSample) continue;
 +        auto stats=widgetStatistics(sample,view,history,l.host,l.name);
-+        if (stats && stats->size()<=65536-sizeof("{\"snapshot\":}")+1) { l.payload="{\"snapshot\":"+*stats+"}"; l.payloadSampledAt=sample.snapshot.nowMs; }
++        if (!stats || stats->payload.size()>65536-sizeof("{\"snapshot\":}")+1) continue;
++        if (!stats->pastCovered) {
++            // A null past day is reserved for a scanned day without records. The history did not
++            // reach this window (missing, stale or another zone), so the stored payload stays and
++            // the sampler is asked to catch up instead. Retry far below the routine interval.
++            l.needsCoverage=true;
++            l.probe=now+Impl::probeMs;
++            if (l.confirmed) continue;
++        } else {
++            l.needsCoverage=false;
++            l.correction=!routine;
++            if (!routine) l.mustPublish=true;
++        }
++        l.payload="{\"snapshot\":"+stats->payload+"}"; l.payloadSampledAt=sample.snapshot.nowMs;
 +    }
 +    impl_->cv.notify_one();
 +}
 +std::vector<View> WidgetPublisher::views() const {
 +    std::lock_guard<std::mutex> lock(impl_->mutex); auto now=impl_->options.clock(); std::vector<View> out;
-+    for (const auto& l:impl_->leases) if (l.expiry>now && (l.confirmed || l.deadline>now) && !l.inFlight && l.payload.empty() && l.next<=now && std::none_of(out.begin(),out.end(),[&](const View& v){return v.name==l.view.name && v.zone==l.view.zone;})) out.push_back(l.view);
++    for (const auto& l:impl_->leases)
++        if (l.expiry>now && (l.confirmed || l.deadline>now) && !l.inFlight && l.payload.empty() && now>=l.notBefore &&
++            now>=l.probe && (l.next<=now || l.needsCoverage) &&
++            std::none_of(out.begin(),out.end(),[&](const View& v){return v.name==l.view.name && v.zone==l.view.zone;})) out.push_back(l.view);
 +    return out;
++}
++bool WidgetPublisher::needsCoverage() const {
++    std::lock_guard<std::mutex> lock(impl_->mutex); auto now=impl_->options.clock();
++    return std::any_of(impl_->leases.begin(),impl_->leases.end(),[&](const Impl::Lease& l){
++        return l.needsCoverage && l.expiry>now && (l.confirmed || l.deadline>now); });
 +}
 +std::vector<std::pair<std::uint64_t,std::string>> WidgetPublisher::replies() { std::lock_guard<std::mutex> lock(impl_->mutex); impl_->prune(impl_->options.clock()); auto out=std::move(impl_->pending); impl_->pending.clear(); return out; }
 +void WidgetPublisher::disconnected(std::uint64_t client) {
@@ -641,10 +811,10 @@ index 00000000..a1791f39
 +}
 diff --git a/linux/collector/widget_publisher.hpp b/linux/collector/widget_publisher.hpp
 new file mode 100644
-index 00000000..3a37e0ed
+index 00000000..ed9aaca3
 --- /dev/null
 +++ b/linux/collector/widget_publisher.hpp
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,35 @@
 +#pragma once
 +
 +#include "publisher.hpp"
@@ -669,6 +839,9 @@ index 00000000..3a37e0ed
 +    std::vector<std::string> control(const std::string&, std::uint64_t, std::int64_t);
 +    void sample(const View&, const Sample&, const std::shared_ptr<const StatisticsHistory>&);
 +    std::vector<View> views() const;
++    // True while a lease is waiting for a projection whose history covers the published window.
++    // The sampler should be asked to refresh its history rather than the lease being republished.
++    bool needsCoverage() const;
 +    std::vector<std::pair<std::uint64_t, std::string>> replies();
 +    void disconnected(std::uint64_t);
 +    bool authorized(std::int64_t) const;
@@ -679,10 +852,10 @@ index 00000000..3a37e0ed
 +}
 diff --git a/linux/collector/widget_statistics.cpp b/linux/collector/widget_statistics.cpp
 new file mode 100644
-index 00000000..04ff987b
+index 00000000..8a74f4af
 --- /dev/null
 +++ b/linux/collector/widget_statistics.cpp
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,210 @@
 +#include "widget_statistics.hpp"
 +
 +#include <algorithm>
@@ -766,7 +939,7 @@ index 00000000..04ff987b
 +}
 +}
 +
-+std::optional<std::string> widgetStatistics(const Sample& sample, const View& view,
++std::optional<WidgetSnapshot> widgetStatistics(const Sample& sample, const View& view,
 +    const std::shared_ptr<const StatisticsHistory>& history, const std::string& hostId, const std::string& hostName) {
 +    if (!view.name || !view.zone || !validText(*view.name, 128) || !validText(hostId, 128) || !validText(hostName, 128) ||
 +        sample.snapshot.nowMs < -maxInteger || sample.snapshot.nowMs > maxInteger) return std::nullopt;
@@ -814,9 +987,11 @@ index 00000000..04ff987b
 +            Counts sum; sum.input = sum.output = sum.requests = sum.cost = sum.unpriced = 0;
 +            bool covered = true, found = false;
 +            for (const auto kind : participating) {
-+                auto sourceIt = sources.find(kind);
++                // A recorded row is a fact about that day. Whether the source is detected or enabled
++                // right now only decides today's live counts, so it must not erase yesterday's sum:
++                // one retired source would otherwise empty the whole window beside a real today.
 +                auto it = rows.find({(*calendar)[i], kind});
-+                if (sourceIt == sources.end() || !sourceIt->second->enabled || !sourceIt->second->available || it == rows.end()) { covered = false; continue; }
++                if (it == rows.end()) { covered = false; continue; }
 +                found = true;
 +                const auto& totals = it->second->totals;
 +                if (!add(sum.input, totals.input) || !add(sum.output, totals.output) || !add(sum.requests, totals.requests) ||
@@ -888,21 +1063,30 @@ index 00000000..04ff987b
 +        << ",\"historyComplete\":" << (historyComplete ? "true" : "false") << '}';
 +    auto result = out.str();
 +    if (result.size() > 65536) return std::nullopt;
-+    return result;
++    return WidgetSnapshot{std::move(result), matching};
 +}
 +}
 diff --git a/linux/collector/widget_statistics.hpp b/linux/collector/widget_statistics.hpp
 new file mode 100644
-index 00000000..71def423
+index 00000000..c7c687a8
 --- /dev/null
 +++ b/linux/collector/widget_statistics.hpp
-@@ -0,0 +1,9 @@
+@@ -0,0 +1,18 @@
 +#pragma once
 +
 +#include "sampling.hpp"
 +
 +namespace collector {
-+std::optional<std::string> widgetStatistics(const Sample& sample, const View& view,
++// A v2 Widget projection and whether it may replace a stored one. `payload` is the snapshot
++// object; `pastCovered` is true only when the history projection was built for this view's
++// timezone and current calendar day, so a null past day there means the scan found no records.
++// A projection that is not covered must not replace a stored payload on a routine slot.
++struct WidgetSnapshot {
++    std::string payload;
++    bool pastCovered = false;
++};
++
++std::optional<WidgetSnapshot> widgetStatistics(const Sample& sample, const View& view,
 +    const std::shared_ptr<const StatisticsHistory>& history, const std::string& hostId,
 +    const std::string& hostName);
 +}
@@ -1101,16 +1285,158 @@ index 178a2af3..461be9b3 100644
 +    EXPECT_FALSE(restored->models.at("old").input);
 +    EXPECT_FALSE(restored->models.at("null").input);
 +}
+diff --git a/linux/tests/sampling_test.cpp b/linux/tests/sampling_test.cpp
+index a0f5132a..5f87db4f 100644
+--- a/linux/tests/sampling_test.cpp
++++ b/linux/tests/sampling_test.cpp
+@@ -1,11 +1,16 @@
+ #include <gtest/gtest.h>
+ 
+ #include "sampling.hpp"
++#include "widget_statistics.hpp"
++#include "agentspeed/json.hpp"
+ #include "agentspeed/tz.hpp"
++#include <atomic>
++#include <chrono>
+ #include <cstdlib>
+ #include <ctime>
+ #include <filesystem>
+ #include <fstream>
++#include <thread>
+ 
+ namespace {
+ class ScopedEnv {
+@@ -115,3 +120,119 @@ TEST(CollectorSampler, SamplingNeverDrainsCompletions) {
+     }
+     std::filesystem::remove_all(home);
+ }
++
++namespace {
++std::string stampOf(std::int64_t ms) {
++    const std::time_t seconds = static_cast<std::time_t>(ms / 1000);
++    std::tm utc{};
++    gmtime_r(&seconds, &utc);
++    char text[32];
++    std::strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
++    return text;
++}
++std::string labelOf(std::int64_t ms) {
++    const auto label = agentspeed::history::DayLabeler(agentspeed::TimeZone::utc()).label(ms);
++    return label.value_or(std::string());
++}
++}
++
++// A widget-only daemon has no SSH client to drive a rescan: its projection must follow the
++// calendar by itself, and a sample taken after local midnight may not be paired with the
++// previous day's projection (that pairing is what produces six null past days beside a real
++// today). The past days stay real once the projection catches up.
++TEST(CollectorSampler, WidgetHistoryStaysCoveredAcrossMidnight) {
++    char home[] = "/tmp/agentspeed-sampler-widget-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    struct TempHome {
++        const char* path;
++        ~TempHome() { std::filesystem::remove_all(path); }
++    } tempHome{home};
++    ScopedEnv homeEnv("HOME", home);
++    ScopedEnv agentEnv("PI_CODING_AGENT_DIR", nullptr);
++    ScopedEnv sessionEnv("PI_CODING_AGENT_SESSION_DIR", nullptr);
++    ScopedEnv configEnv("PI_CONFIG_DIR", ".omp");
++    ScopedEnv codexEnv("CODEX_HOME", nullptr);
++    ScopedEnv claudeEnv("CLAUDE_CONFIG_DIR", nullptr);
++    ScopedEnv deepseekEnv("DSH_HOME", nullptr);
++    ScopedEnv xdgEnv("XDG_DATA_HOME", nullptr);
++    ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
++    ScopedEnv tzEnv("TZ", "UTC");
++
++    using namespace std::chrono;
++    const auto today = floor<days>(system_clock::now());
++    const auto yesterday = today - days{1};
++    const auto t0 = yesterday + hours{23} + minutes{50};
++    const auto t1 = t0 + minutes{20};  // the following civil day, 00:10
++    const auto t0ms = duration_cast<milliseconds>(t0.time_since_epoch()).count();
++    const auto t1ms = duration_cast<milliseconds>(t1.time_since_epoch()).count();
++    ASSERT_NE(labelOf(t0ms), labelOf(t1ms));
++
++    const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-widget-project";
++    std::filesystem::create_directories(dir);
++    for (int i = 0; i < 7; ++i) {
++        const auto when = yesterday - days{6 - i} + hours{12};
++        const auto ms = duration_cast<milliseconds>(when.time_since_epoch()).count();
++        const auto stamp = stampOf(ms);
++        std::ofstream(dir / ("session-" + std::to_string(i) + ".jsonl"))
++            << R"({"type":"session","version":3,"id":"session-)" << i << R"(","timestamp":")" << stamp << R"(","cwd":"/project"})" << '\n'
++            << R"({"type":"message","id":"response-)" << i << R"(","parentId":null,"timestamp":")" << stamp
++            << R"(","message":{"role":"assistant","content":[],"api":"openai-responses","provider":"openai","model":"gpt-5.5","usage":{"input":300,"output":410,"cacheRead":40,"cacheWrite":20,"reasoningTokens":70,"totalTokens":770},"stopReason":"stop","timestamp":)"
++            << ms << R"(,"duration":3000}})" << '\n';
++    }
++
++    std::atomic<std::int64_t> clock{t0ms};
++    collector::Sampler sampler(home, std::string(64, 'a'), [&] { return clock.load(); });
++    sampler.poll(t0ms);
++    const collector::View utc{std::string("UTC"), agentspeed::TimeZone::utc()};
++    const auto before = sampler.sample(t0ms, utc);
++    EXPECT_EQ(before.snapshot.nowMs, t0ms);
++    EXPECT_EQ(before.snapshot.todayInput, 360);
++    EXPECT_EQ(before.snapshot.todayOutput, 410);
++
++    std::shared_ptr<const collector::StatisticsHistory> projection;
++    for (int i = 0; i < 500 && !projection; ++i) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(20));
++        projection = sampler.statisticsHistory(utc);
++    }
++    ASSERT_TRUE(projection);
++    EXPECT_EQ(projection->usageDate, labelOf(t0ms));
++    auto covered = collector::widgetStatistics(before, utc, projection, "h", "n");
++    ASSERT_TRUE(covered);
++    EXPECT_TRUE(covered->pastCovered);
++    agentspeed::json::Document doc;
++    ASSERT_TRUE(doc.parse(covered->payload));
++    for (std::size_t i = 0; i < 6; ++i) {
++        EXPECT_EQ(doc.root()["days"].at(int(i))["input"].raw(), "360") << "past day " << i;
++        EXPECT_EQ(doc.root()["days"].at(int(i))["output"].raw(), "410") << "past day " << i;
++    }
++
++    // The same projection cannot describe a sample taken after midnight: it is not covered.
++    clock = t1ms;
++    const auto after = sampler.sample(t1ms, utc);
++    EXPECT_EQ(after.snapshot.todayInput, 0);
++    auto stale = collector::widgetStatistics(after, utc, projection, "h", "n");
++    ASSERT_TRUE(stale);
++    EXPECT_FALSE(stale->pastCovered);
++
++    sampler.requestHistoryRefresh();
++    std::shared_ptr<const collector::StatisticsHistory> refreshed;
++    for (int i = 0; i < 250; ++i) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(20));
++        refreshed = sampler.statisticsHistory(utc);
++        if (refreshed && refreshed.get() != projection.get() && refreshed->usageDate == labelOf(t1ms)) break;
++    }
++    ASSERT_TRUE(refreshed);
++    ASSERT_NE(refreshed.get(), projection.get());
++    EXPECT_EQ(refreshed->usageDate, labelOf(t1ms));
++    auto fresh = collector::widgetStatistics(after, utc, refreshed, "h", "n");
++    ASSERT_TRUE(fresh);
++    EXPECT_TRUE(fresh->pastCovered);
++    ASSERT_TRUE(doc.parse(fresh->payload));
++    for (std::size_t i = 0; i < 6; ++i) {
++        EXPECT_EQ(doc.root()["days"].at(int(i))["input"].raw(), "360") << "past day " << i;
++        EXPECT_EQ(doc.root()["days"].at(int(i))["output"].raw(), "410") << "past day " << i;
++    }
++    EXPECT_EQ(doc.root()["days"].at(6)["input"].raw(), "0");
++    EXPECT_EQ(doc.root()["days"].at(6)["output"].raw(), "0");
++    EXPECT_EQ(doc.root()["usageDate"].string(), labelOf(t1ms));
++}
 diff --git a/linux/tests/widget_publisher_test.cpp b/linux/tests/widget_publisher_test.cpp
 new file mode 100644
-index 00000000..8074f45c
+index 00000000..f56f309d
 --- /dev/null
 +++ b/linux/tests/widget_publisher_test.cpp
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,281 @@
 +#include <gtest/gtest.h>
 +#include "widget_publisher.hpp"
 +#include "agentspeed/json.hpp"
 +#include <algorithm>
++#include <cstdio>
 +#include <atomic>
 +#include <chrono>
 +#include <condition_variable>
@@ -1126,9 +1452,53 @@ index 00000000..8074f45c
 +}
 +bool accepted(const std::string& s) { agentspeed::json::Document d; return d.parse(s) && d.root()["accepted"].isTrue(); }
 +template<class F> bool eventually(F f) { for(int i=0;i<200;++i) { if(f()) return true; std::this_thread::sleep_for(std::chrono::milliseconds(5)); } return false; }
++collector::Sample sampleAt(std::int64_t now, std::int64_t input = 3, std::int64_t output = 4) {
++    collector::Sample s;
++    s.snapshot.nowMs = now;
++    s.snapshot.todayInput = input;
++    s.snapshot.todayOutput = output;
++    agentspeed::SourceRow row;
++    row.source = agentspeed::SourceKind::Omp;
++    row.enabled = true;
++    row.available = true;
++    row.todayInput = input;
++    row.todayOutput = output;
++    s.snapshot.sources.push_back(row);
++    return s;
++}
++std::string dayLabel(const std::string& zone, std::int64_t ms) {
++    const auto label = agentspeed::history::DayLabeler(agentspeed::TimeZone::load(zone)).label(ms);
++    return label.value_or(std::string());
++}
++// Seven ascending scanned days ending at the calendar day of `now` in `zone`.
++std::shared_ptr<collector::StatisticsHistory> scanned(const std::string& zone, std::int64_t now, std::int64_t base = 300) {
++    auto h = std::make_shared<collector::StatisticsHistory>();
++    h->timezone = zone;
++    h->usageDate = dayLabel(zone, now);
++    h->complete = true;
++    for (int i = 0; i < 7; ++i) {
++        agentspeed::history::DailyUsage row;
++        row.key.day = dayLabel(zone, now - std::int64_t(6 - i) * 86400000LL);
++        row.key.source = agentspeed::SourceKind::Omp;
++        row.totals.input = base + i;
++        row.totals.output = base + i;
++        row.totals.requests = 1;
++        h->days.push_back(row);
++    }
++    return h;
++}
++std::shared_ptr<collector::StatisticsHistory> scannedYesterday(const std::string& zone, std::int64_t now) {
++    auto h = scanned(zone, now - 86400000LL);
++    h->usageDate = dayLabel(zone, now - 86400000LL);
++    return h;
++}
++void pump(collector::WidgetPublisher& p, std::int64_t now,
++          const std::shared_ptr<const collector::StatisticsHistory>& history) {
++    for (const auto& view : p.views()) p.sample(view, sampleAt(now), history);
++}
 +void sample(collector::WidgetPublisher& p, std::int64_t now) {
-+    collector::Sample s; s.snapshot.nowMs=now; s.snapshot.todayInput=3; s.snapshot.todayOutput=4;
-+    for (const auto& v:p.views()) p.sample(v,s,nullptr);
++    for (const auto& view : p.views())
++        p.sample(view, sampleAt(now), scanned(view.name.value_or("UTC"), now));
 +}
 +constexpr std::int64_t start=1710088200000LL;
 +}
@@ -1242,6 +1612,106 @@ index 00000000..8074f45c
 +    auto invalid=subscribe(); auto pos=invalid.find("\"UTC\""); ASSERT_NE(pos,std::string::npos); invalid.replace(pos,5,"\"../bad\"");
 +    auto response=p.control(invalid,1,now); ASSERT_EQ(response.size(),1u); EXPECT_FALSE(accepted(response[0]));
 +    sample(p,now); EXPECT_EQ(calls,0); EXPECT_FALSE(p.authorized(now));
++}
++
++// A null past day may only mean "scanned, no records". A projection whose history is missing or
++// labelled for an earlier day must never replace the payload stored for the lease.
++TEST(WidgetPublisher, RoutineSlotKeepsStoredPayloadWhenHistoryIsNotScanned) {
++    std::atomic<std::int64_t> now{start};
++    std::atomic<int> calls{0};
++    collector::WidgetPublisher::Options o;
++    o.clock = [&] { return now.load(); };
++    o.transport = [&](const auto&, const auto&) {
++        ++calls;
++        return collector::WidgetPublisher::Result{200};
++    };
++    collector::WidgetPublisher p(o);
++    EXPECT_TRUE(p.control(subscribe("a", "one", "l1", start + 9000000), 1, now).empty());
++    pump(p, now, nullptr);
++    ASSERT_TRUE(eventually([&] { return p.authorized(now); }));
++    EXPECT_EQ(calls.load(), 1);  // the confirmation projection may still be unscanned
++    EXPECT_TRUE(p.needsCoverage());
++    now += 1800000;  // routine slot, history still missing
++    pump(p, now, nullptr);
++    std::this_thread::sleep_for(std::chrono::milliseconds(200));
++    EXPECT_EQ(calls.load(), 1) << "an unscanned window replaced the stored payload";
++    EXPECT_TRUE(p.needsCoverage());
++    now += 1800000;  // next routine slot, history labelled for yesterday
++    pump(p, now, scannedYesterday("UTC", now));
++    std::this_thread::sleep_for(std::chrono::milliseconds(200));
++    EXPECT_EQ(calls.load(), 1) << "a stale projection replaced the stored payload";
++    EXPECT_TRUE(p.needsCoverage());
++    now += 2000;  // coverage completes: the correction is not held back by the interval
++    pump(p, now, scanned("UTC", now));
++    ASSERT_TRUE(eventually([&] { return calls.load() == 2; })) << "coverage completion was throttled";
++    EXPECT_FALSE(p.needsCoverage());
++}
++
++TEST(WidgetPublisher, PublishesTheCorrectionAsSoonAsCoverageArrives) {
++    std::atomic<std::int64_t> now{start};
++    std::atomic<int> calls{0};
++    std::mutex mutex;
++    std::vector<std::string> bodies;
++    collector::WidgetPublisher::Options o;
++    o.clock = [&] { return now.load(); };
++    o.transport = [&](const auto&, const auto& body) {
++        std::lock_guard<std::mutex> lock(mutex);
++        bodies.push_back(body);
++        ++calls;
++        return collector::WidgetPublisher::Result{200};
++    };
++    collector::WidgetPublisher p(o);
++    EXPECT_TRUE(p.control(subscribe("a", "one", "l1", start + 9000000), 1, now).empty());
++    pump(p, now, nullptr);
++    ASSERT_TRUE(eventually([&] { return p.authorized(now); }));
++    ASSERT_EQ(calls.load(), 1);
++    now += 2000;
++    pump(p, now, scanned("UTC", now));
++    ASSERT_TRUE(eventually([&] { return calls.load() == 2; }));
++    agentspeed::json::Document doc;
++    {
++        std::lock_guard<std::mutex> lock(mutex);
++        ASSERT_EQ(bodies.size(), 2u);
++        ASSERT_TRUE(doc.parse(bodies.at(1)));
++    }
++    auto days = doc.root()["snapshot"]["days"];
++    ASSERT_EQ(days.size(), 7u);
++    for (std::size_t i = 0; i < 6; ++i) {
++        EXPECT_FALSE(days.at(i)["input"].isNull()) << "past day " << i << " is still unscanned";
++        EXPECT_EQ(days.at(i)["input"].raw(), std::to_string(300 + int(i)));
++    }
++    EXPECT_EQ(doc.root()["snapshot"]["usageDate"].string(), dayLabel("UTC", now));
++    EXPECT_FALSE(p.needsCoverage());
++    agentspeed::json::Document first;
++    {
++        std::lock_guard<std::mutex> lock(mutex);
++        ASSERT_TRUE(first.parse(bodies.at(0)));
++    }
++    EXPECT_TRUE(first.root()["snapshot"]["days"].at(0)["input"].isNull());
++}
++
++// The routine interval still paces ordinary republishing after a covered projection.
++TEST(WidgetPublisher, RoutineCadenceRepublishesCoveredWindows) {
++    std::atomic<std::int64_t> now{start};
++    std::atomic<int> calls{0};
++    collector::WidgetPublisher::Options o;
++    o.clock = [&] { return now.load(); };
++    o.transport = [&](const auto&, const auto&) {
++        ++calls;
++        return collector::WidgetPublisher::Result{200};
++    };
++    collector::WidgetPublisher p(o);
++    EXPECT_TRUE(p.control(subscribe("a", "one", "l1", start + 9000000), 1, now).empty());
++    pump(p, now, scanned("UTC", now));
++    ASSERT_TRUE(eventually([&] { return p.authorized(now); }));
++    ASSERT_EQ(calls.load(), 1);
++    now += 1799000;
++    EXPECT_TRUE(p.views().empty());
++    pump(p, now, scanned("UTC", now));
++    EXPECT_EQ(calls.load(), 1);
++    now += 1000;
++    pump(p, now, scanned("UTC", now));
++    ASSERT_TRUE(eventually([&] { return calls.load() == 2; }));
 +}
 diff --git a/linux/tests/widget_statistics_smoke.py b/linux/tests/widget_statistics_smoke.py
 new file mode 100755
@@ -1551,10 +2021,10 @@ index 00000000..f820efc2
 +    raise SystemExit(main())
 diff --git a/linux/tests/widget_statistics_test.cpp b/linux/tests/widget_statistics_test.cpp
 new file mode 100644
-index 00000000..df9d06b9
+index 00000000..7cbef844
 --- /dev/null
 +++ b/linux/tests/widget_statistics_test.cpp
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,278 @@
 +#include <gtest/gtest.h>
 +#include "widget_statistics.hpp"
 +#include "agentspeed/json.hpp"
@@ -1595,7 +2065,8 @@ index 00000000..df9d06b9
 +TEST(WidgetStatistics, MissingHistoryAndTodayIdentity) {
 +    auto json = widgetStatistics(sample(), view(), nullptr, "host", "name");
 +    ASSERT_TRUE(json);
-+    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    EXPECT_FALSE(json->pastCovered);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(json->payload));
 +    auto root = doc.root(); auto days = root["days"];
 +    ASSERT_EQ(days.size(), 7u);
 +    EXPECT_TRUE(days.at(0)["input"].isNull());
@@ -1608,13 +2079,13 @@ index 00000000..df9d06b9
 +    auto h = history(); h->complete = false;
 +    auto s = sample(); s.snapshot.warnings.partialHistory = true;
 +    auto json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json);
-+    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
 +    EXPECT_FALSE(doc.root()["days"].at(0)["complete"].isTrue());
 +    EXPECT_FALSE(doc.root()["today"]["complete"].isTrue());
 +    agentspeed::SourceRow other; other.source = SourceKind::Gemini; other.available = true; other.todayInput = 1;
 +    s.snapshot.sources.push_back(other); h->complete = true;
-+    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
 +    EXPECT_EQ(doc.root()["days"].at(0)["output"].raw(), "5");
 +    EXPECT_FALSE(doc.root()["days"].at(0)["complete"].isTrue());
@@ -1625,33 +2096,41 @@ index 00000000..df9d06b9
 +    agentspeed::SourceRow unused; unused.source = SourceKind::Gemini; unused.available = false;
 +    s.snapshot.sources.push_back(unused);
 +    auto json = widgetStatistics(s, view(), history(), "h", "n"); ASSERT_TRUE(json);
-+    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    EXPECT_TRUE(json->pastCovered);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_TRUE(doc.root()["today"]["complete"].isTrue());
 +    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
 +    EXPECT_TRUE(doc.root()["historyComplete"].isTrue());
 +}
 +TEST(WidgetStatistics, UnavailableSourcesAndStaleHistory) {
++    // Today's counts come from the snapshot whatever the source detection says; a past day keeps
++    // the rows it recorded, because "not detected now" is not evidence about a finished day.
 +    auto s = sample(); s.snapshot.sources[0].available = false;
 +    auto h = history();
 +    auto json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json);
-+    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    EXPECT_TRUE(json->pastCovered);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_EQ(doc.root()["today"]["input"].raw(), "11");
 +    EXPECT_EQ(doc.root()["today"]["output"].raw(), "7");
 +    EXPECT_TRUE(doc.root()["today"]["complete"].isTrue());
-+    EXPECT_TRUE(doc.root()["days"].at(0)["input"].isNull());
++    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
++    EXPECT_EQ(doc.root()["days"].at(0)["output"].raw(), "5");
++    EXPECT_TRUE(doc.root()["days"].at(0)["complete"].isTrue());
 +    s = sample(); h->usageDate = "2024-03-09";
-+    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); EXPECT_FALSE(json->pastCovered);
++    ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_TRUE(doc.root()["days"].at(0)["input"].isNull());
 +    h->usageDate = "2024-03-10"; h->timezone = "Europe/London";
-+    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); EXPECT_FALSE(json->pastCovered);
++    ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_TRUE(doc.root()["days"].at(0)["input"].isNull());
 +    h->timezone = "UTC"; h->days.clear();
-+    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_TRUE(doc.root()["days"].at(0)["input"].isNull());
 +    EXPECT_FALSE(doc.root()["days"].at(0)["complete"].isTrue());
 +    agentspeed::SourceRow other; other.source = SourceKind::Gemini; other.available = true; other.todayInput = 1;
 +    s.snapshot.sources.push_back(other);
-+    json = widgetStatistics(s, view(), history(), "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    json = widgetStatistics(s, view(), history(), "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
 +    EXPECT_FALSE(doc.root()["days"].at(0)["complete"].isTrue());
 +    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
@@ -1660,14 +2139,14 @@ index 00000000..df9d06b9
 +    auto s = sample(); s.snapshot.nowMs = 1710055800000LL; // March 10 07:30 UTC
 +    auto ny = view("America/New_York"); ASSERT_TRUE(ny.zone);
 +    auto json = widgetStatistics(s, ny, nullptr, "h", "n"); ASSERT_TRUE(json);
-+    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_EQ(doc.root()["usageDate"].string(), "2024-03-10");
 +    EXPECT_EQ(doc.root()["days"].at(0)["date"].string(), "2024-03-04");
 +    s.snapshot.nowMs = 1710052200000LL; // March 10 06:30 UTC, before transition
-+    json = widgetStatistics(s, ny, nullptr, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    json = widgetStatistics(s, ny, nullptr, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_EQ(doc.root()["usageDate"].string(), "2024-03-10");
 +    s.snapshot.nowMs = 1710034200000LL; // March 10 01:30 UTC, March 9 New York
-+    json = widgetStatistics(s, ny, nullptr, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    json = widgetStatistics(s, ny, nullptr, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_EQ(doc.root()["usageDate"].string(), "2024-03-09");
 +}
 +TEST(WidgetStatistics, RejectsUnsafeDuplicatesAndInvalidText) {
@@ -1684,13 +2163,13 @@ index 00000000..df9d06b9
 +TEST(WidgetStatistics, HistoryCompletenessUsesFinalDays) {
 +    auto s = sample(); s.snapshot.warnings.partialHistory = true;
 +    auto json = widgetStatistics(s, view(), history(), "h", "n"); ASSERT_TRUE(json);
-+    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
 +    EXPECT_FALSE(doc.root()["today"]["complete"].isTrue());
 +    EXPECT_FALSE(doc.root()["days"].at(6)["complete"].isTrue());
 +    s.snapshot.warnings.partialHistory = false;
 +    auto h = history(); h->days.pop_back();
-+    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(*json));
++    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_TRUE(doc.root()["today"]["complete"].isTrue());
 +    EXPECT_TRUE(doc.root()["days"].at(6)["complete"].isTrue());
 +    EXPECT_TRUE(doc.root()["historyComplete"].isTrue());
@@ -1715,7 +2194,7 @@ index 00000000..df9d06b9
 +    auto h = history();
 +    h->days.erase(h->days.begin() + 2);
 +    auto json = widgetStatistics(sample(), view(), h, "h", "n"); ASSERT_TRUE(json);
-+    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*json));
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_TRUE(doc.root()["days"].at(2)["input"].isNull());
 +    EXPECT_TRUE(doc.root()["days"].at(2)["output"].isNull());
 +    EXPECT_FALSE(doc.root()["days"].at(2)["complete"].isTrue());
@@ -1729,7 +2208,7 @@ index 00000000..df9d06b9
 +    };
 +    model("b", 3, 2); model("a", 3, 2); model("c", 2, 1); model("d", 1, 0); model("", 2, 2);
 +    auto result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result);
-+    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*result)); auto root = doc.root();
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(result->payload)); auto root = doc.root();
 +    EXPECT_EQ(root["version"].raw(), "2"); EXPECT_FALSE(root["sources"].valid());
 +    auto rows = root["models"]; ASSERT_EQ(rows.size(), 4u);
 +    EXPECT_EQ(rows.at(0)["model"].string(), "a"); EXPECT_EQ(rows.at(1)["model"].string(), "b");
@@ -1737,12 +2216,12 @@ index 00000000..df9d06b9
 +    EXPECT_EQ(rows.at(3)["input"].raw(), "3"); EXPECT_EQ(rows.at(3)["output"].raw(), "2");
 +    EXPECT_TRUE(root["modelsComplete"].isTrue());
 +    totals.models["d"].input.reset();
-+    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(*result));
++    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(result->payload));
 +    EXPECT_FALSE(doc.root()["modelsComplete"].isTrue());
 +    EXPECT_TRUE(doc.root()["models"].at(3)["input"].isNull());
 +    EXPECT_EQ(doc.root()["models"].at(3)["output"].raw(), "2");
 +    totals.models["d"].input = 1; s.snapshot.todayInput++;
-+    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(*result));
++    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(result->payload));
 +    EXPECT_FALSE(doc.root()["modelsComplete"].isTrue());
 +}
 +
@@ -1751,16 +2230,16 @@ index 00000000..df9d06b9
 +    s.snapshot.todayRequests = 3; s.snapshot.todayCostMicroUsd = 20; s.snapshot.todayUnpricedRequests = 1;
 +    h->days.front().totals.requests = 2; h->days.front().totals.costMicroUsd = 12;
 +    auto result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result);
-+    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(*result));
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(result->payload));
 +    EXPECT_EQ(doc.root()["today"]["requests"].raw(), "3");
 +    EXPECT_EQ(doc.root()["days"].at(0)["costMicroUsd"].raw(), "12");
 +    EXPECT_TRUE(doc.root()["days"].at(0)["unpricedRequests"].isNull());
 +    agentspeed::SourceRow extra; extra.source = SourceKind::Gemini; extra.available = true; extra.todayRequests = 1;
 +    s.snapshot.sources.push_back(extra);
-+    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(*result));
++    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(result->payload));
 +    EXPECT_TRUE(doc.root()["days"].at(0)["requests"].isNull()); EXPECT_FALSE(doc.root()["modelsComplete"].isTrue());
 +    s.snapshot.warnings.partialHistory = true;
-+    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(*result));
++    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(result->payload));
 +    for (const auto* key : {"requests", "costMicroUsd", "unpricedRequests"}) {
 +        EXPECT_TRUE(doc.root()["today"][key].isNull()); EXPECT_TRUE(doc.root()["days"].at(6)[key].isNull());
 +    }
@@ -1773,11 +2252,62 @@ index 00000000..df9d06b9
 +    bad.input = 9007199254740992LL; bad.output = 1;
 +    EXPECT_FALSE(widgetStatistics(sample(), view(), h, "h", "n"));
 +}
++
++// A recorded history row stays a known fact even when its source is no longer detected now.
++// Dropping such rows empties whole days: a widget-only daemon whose snapshot describes today
++// while the window's rows belong to a source that has since disappeared would publish six
++// null days beside a real today.
++TEST(WidgetStatistics, UndetectedHistoricalSourceKeepsKnownLowerBound) {
++    auto s = sample();
++    s.snapshot.sources[0].available = false;  // Codex has no detected root in this snapshot
++    agentspeed::SourceRow gemini;
++    gemini.source = SourceKind::Gemini;
++    gemini.available = true;
++    gemini.todayInput = 5;
++    gemini.todayOutput = 1;
++    s.snapshot.sources.push_back(gemini);  // active today, but no history row for any past day
++    auto result = widgetStatistics(s, view(), history(), "h", "n");
++    ASSERT_TRUE(result);
++    EXPECT_TRUE(result->pastCovered);
++    agentspeed::json::Document doc;
++    ASSERT_TRUE(doc.parse(result->payload));
++    auto day = doc.root()["days"].at(0);
++    EXPECT_EQ(day["input"].raw(), "4");
++    EXPECT_EQ(day["output"].raw(), "5");
++    EXPECT_FALSE(day["complete"].isTrue());
++    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
++    EXPECT_TRUE(doc.root()["days"].at(6)["input"].raw() == "11");
++}
++
++TEST(WidgetStatistics, HistoricalSourceWithoutSnapshotRowKeepsItsDay) {
++    auto s = sample();
++    auto h = history();
++    h->days.erase(h->days.begin() + 3);  // Codex recorded nothing on 2024-03-07
++    auto claude = h->days.front();       // only a source the current snapshot does not list
++    claude.key.day = "2024-03-07";
++    claude.key.source = SourceKind::ClaudeCode;
++    claude.totals.input = 100;
++    claude.totals.output = 50;
++    claude.totals.requests = 2;
++    claude.totals.costMicroUsd = 7;
++    claude.totals.unpricedRequests = 0;
++    h->days.push_back(claude);
++    auto result = widgetStatistics(s, view(), h, "h", "n");
++    ASSERT_TRUE(result);
++    EXPECT_TRUE(result->pastCovered);
++    agentspeed::json::Document doc;
++    ASSERT_TRUE(doc.parse(result->payload));
++    auto day = doc.root()["days"].at(3);
++    EXPECT_EQ(day["input"].raw(), "100");
++    EXPECT_EQ(day["output"].raw(), "50");
++    EXPECT_FALSE(day["complete"].isTrue());
++    EXPECT_TRUE(day["requests"].isNull());
++}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 304cd25f..d8baac2c 100644
+index 304cd25f..3dd04167 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
-@@ -337,3 +337,33 @@ or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup poli
+@@ -337,3 +337,38 @@ or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup poli
  service or linger policy is installed. Only existing activities are updated: no alert, sound, banner, ordinary
  completion notification or push-to-start is sent. Local relay verification does not prove Cloudflare/APNs/iPhone delivery.
  
@@ -1800,8 +2330,13 @@ index 304cd25f..d8baac2c 100644
 +command, path, SSH credential, full history database or Apple provider secret. It is at most 64 KiB.
 +Fixed endpoint TLS verifies certificates/hostname, prohibits redirects/proxies/netrc, and bounds
 +connection/DNS to three seconds and the complete request to 15 seconds. Initial storage may occur
-+immediately; later same-authorization attempts occur no more frequently than every 30 minutes,
-+with a later Retry-After respected. There is no per-second Widget push or permanently authorized feed.
++immediately; later same-authorization routine attempts occur no more frequently than every 30
++minutes, with a later Retry-After respected. A past day is null only when the scan covered that day
++and found no records; a projection whose history is missing, stale or labelled for another calendar
++day never replaces the stored one, and the covering correction is published as soon as it exists as
++one bounded attempt. Only the first confirmation attempt may carry real today counts beside
++unscanned past days, and it is corrected immediately afterwards. There is no per-second Widget push
++or permanently authorized feed.
 +
 +HTTP 200 acknowledges storage only; a failed Apple push must not erase the stored projection. The Worker
 +owns its independent installation-wide 30-minute push budget across host/token/lease replacements.

@@ -79,8 +79,18 @@ ActivityKit's ten-second routine cadence and immediate known-state edges. It add
 `widget_statistics_v2` controls, a separately revocable authorization of at most
 30 days, and a fixed statistics-only relay path with 30-minute routine attempts.
 It reuses the single collector ingestion and per-timezone history projections;
-missing dates/counts remain unknown. A positive subscription ACK confirms a
-genuine HTTP 200 storage response, not WidgetKit/APNs delivery. New local
+missing dates/counts remain unknown. A null past day may only mean that the
+scan covered that day and found no records, never that the history was not
+ready: a projection whose history is missing, stale or labelled for another
+calendar day does not replace a lease's stored statistics, the daemon refreshes
+its own projection instead, and the covering correction is published as soon as
+it exists as one bounded attempt that still observes Retry-After. Only the first
+confirmation attempt may carry unscanned past days. Recorded rows keep counting
+after their source is no longer detected, so a day keeps a known lower bound.
+The mobile reader's temporary merge that tolerates older daemons storing
+unscanned windows is removed once this publisher rule is deployed; null past
+days are not an acceptable long-term output. A positive subscription ACK
+confirms a genuine HTTP 200 storage response, not WidgetKit/APNs delivery. New local
 development assets must retain pin, full ordered queue hashes, source commit/tree,
 build commands/toolchain and actual ELF SHA/identity provenance. Never distribute
 the compile-time loopback test-transport executable or call an unpublished
