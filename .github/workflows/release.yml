@@ -40,7 +40,7 @@ jobs:
       - name: Prepare downstream tree
         run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
       - name: Install zstd and brotli
-        run: (command -v zstd && command -v brotli) || (python3 downstream/release_network.py -- sudo apt-get update && python3 downstream/release_network.py -- sudo apt-get install -y zstd brotli)
+        run: (command -v zstd && command -v brotli) || (python3 downstream/release_network.py -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && python3 downstream/release_network.py -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y zstd brotli)
       - name: Check version and contracts
         working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: |
@@ -68,7 +68,7 @@ jobs:
       - name: Prepare downstream tree
         run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
       - name: Install dependencies
-        run: python3 downstream/release_network.py -- sudo apt-get update && python3 downstream/release_network.py -- sudo apt-get install -y cmake g++ pkg-config libzstd-dev libbrotli-dev libsqlite3-dev libicu-dev libssl-dev libcurl4-openssl-dev libgtest-dev
+        run: python3 downstream/release_network.py -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && python3 downstream/release_network.py -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y cmake g++ pkg-config libzstd-dev libbrotli-dev libsqlite3-dev libicu-dev libssl-dev libcurl4-openssl-dev libgtest-dev
       - name: Build and test Linux
         working-directory: ${{ runner.temp }}/agent-speed-prepared
         run: |

@@ -8,7 +8,7 @@ import time
 _TRANSIENT = re.compile(
     r'connection (?:reset|refused|timed out|aborted)|could not resolve host|'
     r'(?:unexpected|early) EOF|EOF occurred in violation of protocol|'
-    r'temporary failure in name resolution|name or service not known|'
+    r'temporary failure (?:in name resolution|resolving)|name or service not known|'
     r'network (?:is unreachable|error)|timed? out|timeout|'
     r'HTTP[/ ](?:408|429|500|502|503|504)\b|'
     r'\b(?:408|429|500|502|503|504)\b[^\n]*(?:HTTP|response|status)|'

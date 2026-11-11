@@ -15,8 +15,8 @@ jobs:
         run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed"
       - name: Dependencies
         run: |
-          python3 downstream/release_network.py -- sudo apt-get update
-          python3 downstream/release_network.py -- sudo apt-get install -y --no-install-recommends g++-12 cmake ninja-build pkg-config \
+          python3 downstream/release_network.py -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          python3 downstream/release_network.py -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends g++-12 cmake ninja-build pkg-config \
             libzstd-dev libbrotli-dev libsqlite3-dev libssl-dev libpcre2-dev libicu-dev libcurl4-openssl-dev
       - name: Build and test the core
         env:
@@ -52,8 +52,8 @@ jobs:
         run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed"
       - name: Dependencies
         run: |
-          python3 downstream/release_network.py -- sudo apt-get update
-          python3 downstream/release_network.py -- sudo apt-get install -y --no-install-recommends g++-12 cmake ninja-build pkg-config file dpkg-dev \
+          python3 downstream/release_network.py -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          python3 downstream/release_network.py -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends g++-12 cmake ninja-build pkg-config file dpkg-dev \
             libzstd-dev libbrotli-dev libsqlite3-dev libssl-dev libpcre2-dev libicu-dev libcurl4-openssl-dev \
             libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 libxcb1-dev libxcb-shape0-dev \
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
