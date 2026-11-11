@@ -1,7 +1,7 @@
-From 39259340c06f57fbd4f116aba2a4a3bc6ac41874 Mon Sep 17 00:00:00 2001
+From 883b20cdb1119bdfd04429e43a0d84a41e1c4f48 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
-Subject: [PATCH 15/15] Integrate remote network traffic by host and source
+Subject: [PATCH 15/16] Integrate remote network traffic by host and source
 
 ---
  README.md                                     |   2 +
@@ -53,7 +53,7 @@ Subject: [PATCH 15/15] Integrate remote network traffic by host and source
  create mode 100644 windows/src/AgentSpeed.Core/RemoteTraffic.cs
 
 diff --git a/README.md b/README.md
-index 0968b8a2..bb06b6af 100644
+index 9f9eee7e..51ccd86c 100644
 --- a/README.md
 +++ b/README.md
 @@ -153,6 +153,8 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
@@ -66,18 +66,18 @@ index 0968b8a2..bb06b6af 100644
  the client from the collector. Partial log reads are marked as potentially incomplete. Supported collectors provide
  remote performance scores and host-specific baselines, plus real daily performance history from analyzed logs. A
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
-index adab3b4d..d7107cc1 100644
+index 8351316c..86c8f99a 100644
 --- a/linux/collector/daemon.cpp
 +++ b/linux/collector/daemon.cpp
-@@ -221,7 +221,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -226,7 +226,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
              sampler.poll(now);
              for (auto& [fd, c] : clients) if (c.handshaken && !c.dead) {
                  auto sample = sampler.sample(now, c.view);
 -                enqueue(c, protocol.snapshot(sample.snapshot, c.view.name, c.view.zone), true);
 +                enqueue(c, protocol.snapshot(sample.snapshot, c.view.name, c.view.zone, sample.traffic), true);
-                 auto history = sampler.history(c.view);
-                 if (!history.empty() && history != c.lastHistory) { c.lastHistory = history; enqueue(c, std::move(history), false, true); }
-             }
+                 // Compare the projection's generation before reading its text: a replacement
+                 // that lands in between can then only cause one redundant resend, never a
+                 // skipped projection, and the unchanged case copies nothing.
 diff --git a/linux/collector/protocol.cpp b/linux/collector/protocol.cpp
 index 59392499..8b946cce 100644
 --- a/linux/collector/protocol.cpp
@@ -164,10 +164,10 @@ index 9ea0c9d4..14e5ef65 100644
                                 const std::optional<std::string>& timezone = std::nullopt,
                                 const std::vector<agentspeed::perf::DayRecord>& perfRecords = {});
 diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
-index cb3dabde..8fef2b41 100644
+index 003b0a14..6cece63a 100644
 --- a/linux/collector/sampling.cpp
 +++ b/linux/collector/sampling.cpp
-@@ -240,7 +240,7 @@ void Sampler::poll(std::int64_t now) {
+@@ -247,7 +247,7 @@ void Sampler::poll(std::int64_t now) {
  Sample Sampler::sample(std::int64_t now, const View& view) {
      impl_->registerView(view);
      const auto zone = view.name ? view.zone : impl_->localZone();
@@ -177,7 +177,7 @@ index cb3dabde..8fef2b41 100644
  
  std::string Sampler::history(const View& view) {
 diff --git a/linux/collector/sampling.hpp b/linux/collector/sampling.hpp
-index 375f5f8f..3ab7964b 100644
+index 341bfc62..7a9f786d 100644
 --- a/linux/collector/sampling.hpp
 +++ b/linux/collector/sampling.hpp
 @@ -18,6 +18,7 @@ struct View {
@@ -235,7 +235,7 @@ index 31d6d904..59ef90a8 100644
      for (const auto* p : order) {
          const Key key{p->pid, p->start};
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
-index 3feaf96e..769479c0 100644
+index db077a21..fbf903af 100644
 --- a/linux/tests/collector_test.cpp
 +++ b/linux/tests/collector_test.cpp
 @@ -97,6 +97,56 @@ TEST(CollectorProtocol, SnapshotWhitelistsAndAnonymizes) {
@@ -894,7 +894,7 @@ index 00000000..fdaa60b8
 +    }
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index af8abf99..bfeff804 100644
+index ba75a901..304cd25f 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -240,8 +240,8 @@ and outputs, and absolute working paths do not. SSH credentials are not embedded

@@ -1,4 +1,4 @@
-From 9aa08b06b796bee2e566103727d1dd6acf6a6b5e Mon Sep 17 00:00:00 2001
+From 9cdc8752fb5cceb50fd3be84febd1f019feaf456 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Mon, 9 Nov 2026 09:50:00 +0800
 Subject: [PATCH 16/16] Add independent widget statistics feed
@@ -43,12 +43,12 @@ deployed, so null past days are not an acceptable long-term output of the collec
  linux/tests/collector_publisher_test.cpp  |   7 +
  linux/tests/collector_test.cpp            |   5 +-
  linux/tests/history_test.cpp              |  64 +++++
- linux/tests/sampling_test.cpp             | 121 +++++++++
+ linux/tests/sampling_test.cpp             | 133 +++++++++-
  linux/tests/widget_publisher_test.cpp     | 281 ++++++++++++++++++++
  linux/tests/widget_statistics_smoke.py    | 300 ++++++++++++++++++++++
  linux/tests/widget_statistics_test.cpp    | 278 ++++++++++++++++++++
  spec/NETWORK.md                           |  35 +++
- 25 files changed, 1851 insertions(+), 18 deletions(-)
+ 25 files changed, 1853 insertions(+), 28 deletions(-)
  create mode 100644 linux/collector/relay_http.hpp
  create mode 100644 linux/collector/widget_publisher.cpp
  create mode 100644 linux/collector/widget_publisher.hpp
@@ -94,7 +94,7 @@ index 51ccd86c..b7eae6b1 100644
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
  stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
-index 3680715f..0dd33e87 100644
+index 62b11cb3..24a2ecf3 100644
 --- a/docs/shared-collector.md
 +++ b/docs/shared-collector.md
 @@ -84,3 +84,88 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
@@ -205,7 +205,7 @@ index 1eb5023e..12d6cb04 100644
  endfunction()
  
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
-index ed4e98b1..bf296f49 100644
+index 86c8f99a..7cc6d6df 100644
 --- a/linux/collector/daemon.cpp
 +++ b/linux/collector/daemon.cpp
 @@ -2,6 +2,7 @@
@@ -226,7 +226,7 @@ index ed4e98b1..bf296f49 100644
      auto root = doc.root(); if (root["version"].raw() != "1") return;
      auto type = root["type"].string(); if (!type) return;
 @@ -199,6 +200,8 @@ void command(Client& c, const std::string& line, Publisher& publisher, std::int6
-         c.lastHistory.clear();
+         c.historyGeneration = 0;
      } else if (*type == "capabilities" || *type == "live_activity_subscribe" || *type == "live_activity_unsubscribe") {
          for (auto& response : publisher.control(line, c.id, now)) enqueue(c, std::move(response));
 +    } else if (*type == "widget_subscribe" || *type == "widget_unsubscribe") {
@@ -243,8 +243,8 @@ index ed4e98b1..bf296f49 100644
      if (!writeAll(ready, "R")) fail("readiness");
      close(ready);
      std::map<int, Client> clients; std::uint64_t nextId = 1;
-@@ -231,6 +234,13 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
-                 if (!history.empty() && history != c.lastHistory) { c.lastHistory = history; enqueue(c, std::move(history), false, true); }
+@@ -237,6 +240,13 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+                 }
              }
              for (const auto& view : publisher.views()) { auto sample = sampler.sample(now, view); publisher.sample(view, sample); }
 +            // A widget lease that cannot publish a scanned window asks the sampler to catch up
@@ -257,7 +257,7 @@ index ed4e98b1..bf296f49 100644
              auto completions = sampler.takeCompletions();
              for (const auto& completion : completions) {
                  auto line = Protocol::completion(completion);
-@@ -239,9 +249,10 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -245,9 +255,10 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
              tick = steady + std::chrono::seconds(1);
          }
          for (auto& reply : publisher.replies()) for (auto& [fd, c] : clients) if (c.id == reply.first && c.handshaken) { enqueue(c, std::move(reply.second)); break; }
@@ -270,7 +270,7 @@ index ed4e98b1..bf296f49 100644
  #ifdef AGENTSPEED_COLLECTOR_TESTING
          else if (steady - idle >= std::chrono::seconds(1)) break;
  #else
-@@ -273,7 +284,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -279,7 +290,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
                          if (!c.handshaken) {
                              if (line != "shared-collector-v2 " + hash) { enqueue(c, "version-conflict"); c.handshaken = true; c.dead = true; break; }
                              c.handshaken = true; enqueue(c, "shared-collector-v2 " + hash);
@@ -346,7 +346,7 @@ index 00000000..16d21855
 +}
 +}
 diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
-index bd17339e..d826d4dd 100644
+index 6cece63a..f31997f7 100644
 --- a/linux/collector/sampling.cpp
 +++ b/linux/collector/sampling.cpp
 @@ -59,6 +59,11 @@ std::string cacheIdentity(const agentspeed::SourceLocations& locations, const st
@@ -361,11 +361,14 @@ index bd17339e..d826d4dd 100644
  std::string localIdentity() {
      const char* tz = std::getenv("TZ");
      std::string id = tz ? tz : "";
-@@ -77,9 +82,11 @@ struct Sampler::Impl {
+@@ -77,12 +82,14 @@ struct Sampler::Impl {
          View view;
          std::string history;
          std::vector<agentspeed::perf::DayRecord> perf;
 +        std::shared_ptr<const StatisticsHistory> statistics;
+         // Advances whenever this view's projection is replaced, so a subscriber decides
+         // "changed" by comparing integers instead of copying and comparing the projection.
+         std::uint64_t historyGeneration = 0;
      };
  
      std::string home, digest;
@@ -373,7 +376,7 @@ index bd17339e..d826d4dd 100644
      agentspeed::MonitorConfig config = agentspeed::MonitorConfig::fromEnvironment();
      agentspeed::Monitor monitor{config};
      std::shared_ptr<const agentspeed::TimeZone> local = agentspeed::localZone(agentspeed::processEnvironment());
-@@ -91,10 +98,13 @@ struct Sampler::Impl {
+@@ -94,10 +101,13 @@ struct Sampler::Impl {
      std::optional<std::string> baselineDay;
      bool stopping = false;
      bool requested = true;
@@ -388,7 +391,7 @@ index bd17339e..d826d4dd 100644
          views.emplace(std::nullopt, Cached{View{std::nullopt, local}, {}, {}});
          worker = std::thread([this] { historyLoop(); });
      }
-@@ -162,6 +172,9 @@ struct Sampler::Impl {
+@@ -165,6 +175,9 @@ struct Sampler::Impl {
                          if (stopping) return;
                          requested = false;
                          for (const auto& [key, value] : views) todo.emplace(key, value.view);
@@ -398,15 +401,15 @@ index bd17339e..d826d4dd 100644
                      }
                      if (std::chrono::steady_clock::now() >= nextScan) {
                          auto identity = localIdentity();
-@@ -174,6 +187,7 @@ struct Sampler::Impl {
-                                 value.view.zone = zone;
+@@ -178,6 +191,7 @@ struct Sampler::Impl {
                                  value.history.clear();
+                                 ++value.historyGeneration;
                                  value.perf.clear();
 +                                value.statistics.reset();
                                  ++baselineGeneration;
                                  todo.at(std::nullopt).zone = zone;
                              }
-@@ -195,6 +209,11 @@ struct Sampler::Impl {
+@@ -199,6 +213,11 @@ struct Sampler::Impl {
                          if (!projection.complete && !viewReport.filesUnreadable) viewReport.filesUnreadable = 1;
                          auto line = Protocol::history(projection.days, viewReport, view.name, projection.perfRecords);
                          auto perf = projection.perfRecords;
@@ -418,15 +421,15 @@ index bd17339e..d826d4dd 100644
                          saved.insert_or_assign(key, Saved{view, std::move(projection), viewReport});
                          std::lock_guard lock(mutex);
                          if (stopping) return;
-@@ -202,6 +221,7 @@ struct Sampler::Impl {
-                         value.history = std::move(line);
+@@ -208,6 +227,7 @@ struct Sampler::Impl {
+                         if (value.history != line) { value.history = std::move(line); ++value.historyGeneration; }
                          value.perf = std::move(perf);
                          if (!key) ++baselineGeneration;
 +                        value.statistics = std::move(statistics);
                      }
                  }
              } catch (const std::exception&) {
-@@ -212,6 +232,11 @@ struct Sampler::Impl {
+@@ -218,6 +238,11 @@ struct Sampler::Impl {
                                                    value.projection.perfRecords);
                      std::lock_guard lock(mutex);
                      if (stopping) return;
@@ -435,10 +438,10 @@ index bd17339e..d826d4dd 100644
 +                        partial->complete = false;
 +                        views.at(key).statistics = std::move(partial);
 +                    }
-                     views.at(key).history = std::move(line);
+                     auto& cached = views.at(key);
+                     if (cached.history != line) { cached.history = std::move(line); ++cached.historyGeneration; }
                  }
-                 std::unique_lock lock(mutex);
-@@ -222,7 +247,8 @@ struct Sampler::Impl {
+@@ -229,7 +254,8 @@ struct Sampler::Impl {
      }
  };
  
@@ -448,8 +451,8 @@ index bd17339e..d826d4dd 100644
  Sampler::~Sampler() = default;
  
  void Sampler::poll(std::int64_t now) {
-@@ -249,6 +275,32 @@ std::string Sampler::history(const View& view) {
-     return impl_->views.at(view.name).history;
+@@ -262,6 +288,32 @@ std::uint64_t Sampler::historyGeneration(const View& view) {
+     return impl_->views.at(view.name).historyGeneration;
  }
  
 +std::shared_ptr<const StatisticsHistory> Sampler::statisticsHistory(const View& view) {
@@ -482,7 +485,7 @@ index bd17339e..d826d4dd 100644
      return impl_->monitor.takeCompletions();
  }
 diff --git a/linux/collector/sampling.hpp b/linux/collector/sampling.hpp
-index 738c9b4c..f23cc2ee 100644
+index 7a9f786d..ef2fd2ab 100644
 --- a/linux/collector/sampling.hpp
 +++ b/linux/collector/sampling.hpp
 @@ -1,11 +1,13 @@
@@ -521,10 +524,10 @@ index 738c9b4c..f23cc2ee 100644
      ~Sampler();
      Sampler(const Sampler&) = delete;
      Sampler& operator=(const Sampler&) = delete;
-@@ -32,6 +44,11 @@ public:
-     void poll(std::int64_t now);
-     Sample sample(std::int64_t now, const View& view);
-     std::string history(const View& view);
+@@ -35,6 +47,11 @@ public:
+     // Advances when the cached projection is replaced; an unchanged generation means the
+     // text still equals what this view last produced, so it need not be copied to compare.
+     std::uint64_t historyGeneration(const View& view);
 +    std::shared_ptr<const StatisticsHistory> statisticsHistory(const View& view);
 +    // Re-derive the projections from their current scan without waiting for the periodic pass,
 +    // and re-read changed source files soon after. A consumer that refuses to publish a window
@@ -1286,7 +1289,7 @@ index 178a2af3..461be9b3 100644
 +    EXPECT_FALSE(restored->models.at("null").input);
 +}
 diff --git a/linux/tests/sampling_test.cpp b/linux/tests/sampling_test.cpp
-index a0f5132a..5f87db4f 100644
+index c2990e28..5d9675f4 100644
 --- a/linux/tests/sampling_test.cpp
 +++ b/linux/tests/sampling_test.cpp
 @@ -1,11 +1,16 @@
@@ -1306,11 +1309,10 @@ index a0f5132a..5f87db4f 100644
  
  namespace {
  class ScopedEnv {
-@@ -115,3 +120,119 @@ TEST(CollectorSampler, SamplingNeverDrainsCompletions) {
-     }
+@@ -116,6 +121,122 @@ TEST(CollectorSampler, SamplingNeverDrainsCompletions) {
      std::filesystem::remove_all(home);
  }
-+
+ 
 +namespace {
 +std::string stampOf(std::int64_t ms) {
 +    const std::time_t seconds = static_cast<std::time_t>(ms / 1000);
@@ -1426,6 +1428,37 @@ index a0f5132a..5f87db4f 100644
 +    EXPECT_EQ(doc.root()["days"].at(6)["output"].raw(), "0");
 +    EXPECT_EQ(doc.root()["usageDate"].string(), labelOf(t1ms));
 +}
++
+ // A subscriber decides whether to resend the whole projection by comparing one integer, so the
+ // sampler must advance that generation exactly when the projection text changes: re-deriving the
+ // same days must not look like a new projection, and each view has its own generation.
+@@ -137,14 +258,6 @@ TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
+     ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
+     ScopedEnv tzEnv("TZ", "UTC");
+ 
+-    auto formatStamp = [](std::int64_t ms) {
+-        const std::time_t seconds = static_cast<std::time_t>(ms / 1000);
+-        std::tm utc{};
+-        gmtime_r(&seconds, &utc);
+-        char text[32];
+-        std::strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
+-        return std::string(text);
+-    };
+     using namespace std::chrono;
+     const auto today = floor<days>(system_clock::now());
+     const auto noon = today + hours{12};
+@@ -154,9 +267,9 @@ TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
+     const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-generation-project";
+     std::filesystem::create_directories(dir);
+     std::ofstream(dir / "session.jsonl")
+-        << R"({"type":"session","version":3,"id":"generation-session","timestamp":")" << formatStamp(ms)
++        << R"({"type":"session","version":3,"id":"generation-session","timestamp":")" << stampOf(ms)
+         << R"(","cwd":"/project"})" << '\n'
+-        << R"({"type":"message","id":"generation-response","parentId":null,"timestamp":")" << formatStamp(ms)
++        << R"({"type":"message","id":"generation-response","parentId":null,"timestamp":")" << stampOf(ms)
+         << R"(","message":{"role":"assistant","content":[],"api":"openai-responses","provider":"openai","model":"gpt-5.5","usage":{"input":300,"output":410,"cacheRead":40,"cacheWrite":20,"reasoningTokens":70,"totalTokens":770},"stopReason":"stop","timestamp":)"
+         << ms << R"(,"duration":3000}})" << '\n';
+ 
 diff --git a/linux/tests/widget_publisher_test.cpp b/linux/tests/widget_publisher_test.cpp
 new file mode 100644
 index 00000000..f56f309d

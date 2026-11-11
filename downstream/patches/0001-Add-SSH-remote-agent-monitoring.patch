@@ -1,4 +1,4 @@
-From 2369b302bb84a07acfef4302e3edeb43886a2108 Mon Sep 17 00:00:00 2001
+From 74a5ec2d1e9bc7e551dcef00d8c87af7efe0f833 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:10 +0800
 Subject: [PATCH 01/16] Add SSH remote agent monitoring
@@ -9,7 +9,7 @@ Subject: [PATCH 01/16] Add SSH remote agent monitoring
  docs/shared-collector.md                      |  86 +++
  linux/CMakeLists.txt                          |   1 +
  linux/collector/CMakeLists.txt                |   6 +
- linux/collector/daemon.cpp                    | 347 +++++++++
+ linux/collector/daemon.cpp                    | 353 +++++++++
  linux/collector/daemon.hpp                    |   6 +
  linux/collector/history_cache.cpp             |  82 ++
  linux/collector/history_cache.hpp             |  22 +
@@ -18,8 +18,8 @@ Subject: [PATCH 01/16] Add SSH remote agent monitoring
  linux/collector/protocol.hpp                  |  22 +
  linux/collector/publisher.cpp                 | 410 ++++++++++
  linux/collector/publisher.hpp                 |  37 +
- linux/collector/sampling.cpp                  | 256 +++++++
- linux/collector/sampling.hpp                  |  41 +
+ linux/collector/sampling.cpp                  | 269 +++++++
+ linux/collector/sampling.hpp                  |  44 ++
  linux/core/include/agentspeed/engine.hpp      |   2 +
  linux/core/include/agentspeed/snapshot.hpp    |   2 +
  linux/core/src/engine.cpp                     |  17 +-
@@ -45,7 +45,7 @@ Subject: [PATCH 01/16] Add SSH remote agent monitoring
  spec/DESIGN.md                                |   7 +
  spec/METRICS.md                               |   9 +
  spec/NETWORK.md                               |  49 +-
- 41 files changed, 3438 insertions(+), 42 deletions(-)
+ 41 files changed, 3460 insertions(+), 42 deletions(-)
  create mode 100644 docs/shared-collector.md
  create mode 100644 linux/collector/CMakeLists.txt
  create mode 100644 linux/collector/daemon.cpp
@@ -170,7 +170,7 @@ index d2ab76a7..e11a6f51 100644
  
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
 new file mode 100644
-index 00000000..3680715f
+index 00000000..62b11cb3
 --- /dev/null
 +++ b/docs/shared-collector.md
 @@ -0,0 +1,86 @@
@@ -186,7 +186,7 @@ index 00000000..3680715f
 +
 +A stable `flock` is held for the daemon's entire lifetime. The lock file is never unlinked. Concurrent bridges wait for readiness and perform a private protocol/executable SHA-256 handshake before sending commands. Only the exclusive lifecycle-lock owner may recheck and remove a refused, verified stale endpoint. Connection failures do not authorize removing a socket or killing a process. The daemon uses no TCP listener and does not depend on PID files or PID-based killing.
 +
-+Each subscription has its own input buffer, named timezone, history generation and bounded nonblocking output. Unsent snapshots may coalesce. History and completion frames do not silently coalesce or disappear: a subscriber exceeding the output bound is disconnected and receives a nonzero interrupted-stream failure. Consumers must treat interruption as an incomplete stream and reconnect. A destructive completion drain occurs once per sampler tick and is fanned out to connected subscribers.
++Each subscription has its own input buffer, named timezone, history generation and bounded nonblocking output. A subscriber compares the view's projection generation, not its text, so an unchanged projection is never re-sent and a changed one is always delivered whole; the worker advances that generation only when the newly serialized projection differs from the cached one. Unsent snapshots may coalesce. History and completion frames do not silently coalesce or disappear: a subscriber exceeding the output bound is disconnected and receives a nonzero interrupted-stream failure. Consumers must treat interruption as an incomplete stream and reconnect. A destructive completion drain occurs once per sampler tick and is fanned out to connected subscribers.
 +
 +The live monitor retains a rolling 48-hour input window so changing a viewer's day boundary does not rebuild discovery, parsing, performance or traffic state. Calendar totals use each view's day start, including offset transitions. History projections are per view; live performance baselines retain the existing host-local-calendar meaning and do not change with an SSH viewer's timezone. Physical traffic sampling and its baseline remain shared; viewing it does not resample the machine. Unknown rates, partial histories and offline gaps retain the existing v1 semantics.
 +
@@ -286,10 +286,10 @@ index 00000000..b64cb4d1
 +target_link_libraries(agentspeed-collector PRIVATE agentspeed_collector_protocol Threads::Threads)
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
 new file mode 100644
-index 00000000..6309d1c4
+index 00000000..8351316c
 --- /dev/null
 +++ b/linux/collector/daemon.cpp
-@@ -0,0 +1,347 @@
+@@ -0,0 +1,353 @@
 +#include "daemon.hpp"
 +#include "protocol.hpp"
 +#include "publisher.hpp"
@@ -459,7 +459,7 @@ index 00000000..6309d1c4
 +struct Frame { std::string data; std::size_t offset = 0; bool snapshot = false; bool viewFrame = false; std::uint64_t generation = 0; };
 +struct Client {
 +    Fd fd; std::uint64_t id; std::string input; std::deque<Frame> output; std::size_t bytes = 0;
-+    View view; std::string lastHistory; std::uint64_t viewGeneration = 0; bool handshaken = false; bool dead = false; Clock::time_point deadline = Clock::now() + std::chrono::seconds(5);
++    View view; std::uint64_t historyGeneration = 0; std::uint64_t viewGeneration = 0; bool handshaken = false; bool dead = false; Clock::time_point deadline = Clock::now() + std::chrono::seconds(5);
 +};
 +void enqueue(Client& c, std::string line, bool snapshot = false, bool viewFrame = false) {
 +    if (line.empty() || c.dead) return;
@@ -488,7 +488,7 @@ index 00000000..6309d1c4
 +            } else ++it;
 +        }
 +        c.view = {*name, std::move(zone)};
-+        c.lastHistory.clear();
++        c.historyGeneration = 0;
 +    } else if (*type == "capabilities" || *type == "live_activity_subscribe" || *type == "live_activity_unsubscribe") {
 +        for (auto& response : publisher.control(line, c.id, now)) enqueue(c, std::move(response));
 +    }
@@ -519,8 +519,14 @@ index 00000000..6309d1c4
 +            for (auto& [fd, c] : clients) if (c.handshaken && !c.dead) {
 +                auto sample = sampler.sample(now, c.view);
 +                enqueue(c, protocol.snapshot(sample.snapshot, c.view.name, c.view.zone), true);
-+                auto history = sampler.history(c.view);
-+                if (!history.empty() && history != c.lastHistory) { c.lastHistory = history; enqueue(c, std::move(history), false, true); }
++                // Compare the projection's generation before reading its text: a replacement
++                // that lands in between can then only cause one redundant resend, never a
++                // skipped projection, and the unchanged case copies nothing.
++                const auto historyGeneration = sampler.historyGeneration(c.view);
++                if (historyGeneration != c.historyGeneration) {
++                    auto history = sampler.history(c.view);
++                    if (!history.empty()) { c.historyGeneration = historyGeneration; enqueue(c, std::move(history), false, true); }
++                }
 +            }
 +            for (const auto& view : publisher.views()) { auto sample = sampler.sample(now, view); publisher.sample(view, sample); }
 +            auto completions = sampler.takeCompletions();
@@ -1509,10 +1515,10 @@ index 00000000..fc53d5f3
 +}
 diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
 new file mode 100644
-index 00000000..21b72bca
+index 00000000..003b0a14
 --- /dev/null
 +++ b/linux/collector/sampling.cpp
-@@ -0,0 +1,256 @@
+@@ -0,0 +1,269 @@
 +#include "sampling.hpp"
 +
 +#include "history_cache.hpp"
@@ -1592,6 +1598,9 @@ index 00000000..21b72bca
 +        View view;
 +        std::string history;
 +        std::vector<agentspeed::perf::DayRecord> perf;
++        // Advances whenever this view's projection is replaced, so a subscriber decides
++        // "changed" by comparing integers instead of copying and comparing the projection.
++        std::uint64_t historyGeneration = 0;
 +    };
 +
 +    std::string home, digest;
@@ -1688,6 +1697,7 @@ index 00000000..21b72bca
 +                                auto& value = views.at(std::nullopt);
 +                                value.view.zone = zone;
 +                                value.history.clear();
++                                ++value.historyGeneration;
 +                                value.perf.clear();
 +                                ++baselineGeneration;
 +                                todo.at(std::nullopt).zone = zone;
@@ -1714,7 +1724,9 @@ index 00000000..21b72bca
 +                        std::lock_guard lock(mutex);
 +                        if (stopping) return;
 +                        auto& value = views.at(key);
-+                        value.history = std::move(line);
++                        // Only a different projection is a new generation: re-deriving the
++                        // same text must not resend what a subscriber already holds.
++                        if (value.history != line) { value.history = std::move(line); ++value.historyGeneration; }
 +                        value.perf = std::move(perf);
 +                        if (!key) ++baselineGeneration;
 +                    }
@@ -1727,7 +1739,8 @@ index 00000000..21b72bca
 +                                                  value.projection.perfRecords);
 +                    std::lock_guard lock(mutex);
 +                    if (stopping) return;
-+                    views.at(key).history = std::move(line);
++                    auto& cached = views.at(key);
++                    if (cached.history != line) { cached.history = std::move(line); ++cached.historyGeneration; }
 +                }
 +                std::unique_lock lock(mutex);
 +                if (changed.wait_for(lock, std::chrono::seconds(10), [&] { return stopping; })) return;
@@ -1764,6 +1777,12 @@ index 00000000..21b72bca
 +    return impl_->views.at(view.name).history;
 +}
 +
++std::uint64_t Sampler::historyGeneration(const View& view) {
++    impl_->registerView(view);
++    std::lock_guard lock(impl_->mutex);
++    return impl_->views.at(view.name).historyGeneration;
++}
++
 +std::vector<agentspeed::Completion> Sampler::takeCompletions() {
 +    return impl_->monitor.takeCompletions();
 +}
@@ -1771,10 +1790,10 @@ index 00000000..21b72bca
 +}  // namespace collector
 diff --git a/linux/collector/sampling.hpp b/linux/collector/sampling.hpp
 new file mode 100644
-index 00000000..e1cb0181
+index 00000000..341bfc62
 --- /dev/null
 +++ b/linux/collector/sampling.hpp
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,44 @@
 +#pragma once
 +
 +#include <cstdint>
@@ -1808,6 +1827,9 @@ index 00000000..e1cb0181
 +    void poll(std::int64_t now);
 +    Sample sample(std::int64_t now, const View& view);
 +    std::string history(const View& view);
++    // Advances when the cached projection is replaced; an unchanged generation means the
++    // text still equals what this view last produced, so it need not be copied to compare.
++    std::uint64_t historyGeneration(const View& view);
 +    std::vector<agentspeed::Completion> takeCompletions();
 +
 +private:

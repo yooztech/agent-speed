@@ -1,4 +1,4 @@
-From 75109a9f340e97b6b4602dd8b58695c2a3d613e1 Mon Sep 17 00:00:00 2001
+From afea6d3e9cea5114071e19e7b2ea605e6fe77b41 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 14/16] Connect remote performance and history metrics
@@ -21,12 +21,12 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  linux/core/src/history_store.cpp              |  18 +-
  linux/core/src/monitor_snapshot.cpp           |   9 +
  linux/tests/CMakeLists.txt                    |  10 +-
- linux/tests/collector_daemon_test.cpp         | 306 ++++++++++++
+ linux/tests/collector_daemon_test.cpp         | 363 ++++++++++++++
  linux/tests/collector_integration_test.cpp    | 123 +++++
  linux/tests/collector_publisher_test.cpp      | 449 ++++++++++++++++++
  linux/tests/collector_test.cpp                |  60 +++
  linux/tests/engine_fixture_test.cpp           |  21 +
- linux/tests/sampling_test.cpp                 | 117 +++++
+ linux/tests/sampling_test.cpp                 | 196 ++++++++
  linux/tests/shared_history_test.cpp           | 406 ++++++++++++++++
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 +++
  .../AgentSpeed/App/RemoteSnapshot.swift       |  77 ++-
@@ -73,7 +73,7 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  .../RemoteProtocolLifecycleTests.cs           |   2 +-
  .../Perf/PerfHistoryTests.cs                  |  55 +++
  .../PerfPerformanceSectionTests.cs            |  28 ++
- 69 files changed, 3019 insertions(+), 307 deletions(-)
+ 69 files changed, 3155 insertions(+), 307 deletions(-)
  create mode 100644 linux/core/include/agentspeed/history_canonical.hpp
  create mode 100644 linux/core/src/history_canonical.cpp
  create mode 100644 linux/tests/collector_daemon_test.cpp
@@ -1407,10 +1407,10 @@ index 735e3a74..c65c934e 100644
  
 diff --git a/linux/tests/collector_daemon_test.cpp b/linux/tests/collector_daemon_test.cpp
 new file mode 100644
-index 00000000..3d370b42
+index 00000000..ceae5a4a
 --- /dev/null
 +++ b/linux/tests/collector_daemon_test.cpp
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,363 @@
 +#include <gtest/gtest.h>
 +
 +#include "agentspeed/json.hpp"
@@ -1571,6 +1571,34 @@ index 00000000..3d370b42
 +    bool capabilities(const std::string& request) {
 +        return send("{\"version\":1,\"type\":\"capabilities\",\"requestId\":\"" + request + "\"}\n") && lineType("capabilities");
 +    }
++    // Reads frames for `ms` and reports how many snapshots and history projections arrived.
++    std::pair<int, int> countFrames(int ms) {
++        auto end = Clock::now() + std::chrono::milliseconds(ms);
++        int snapshots = 0, histories = 0;
++        while (Clock::now() < end) {
++            auto newline = buffer.find('\n');
++            if (newline != std::string::npos) {
++                std::string line = buffer.substr(0, newline); buffer.erase(0, newline + 1);
++                agentspeed::json::Document doc;
++                if (doc.parse(line)) {
++                    const auto type = doc.root()["type"].string();
++                    if (type && *type == "snapshot") ++snapshots;
++                    if (type && *type == "history") ++histories;
++                }
++                continue;
++            }
++            auto left = std::chrono::duration_cast<std::chrono::milliseconds>(end - Clock::now()).count();
++            if (left <= 0) break;
++            pollfd fd{output, POLLIN, 0};
++            int r = poll(&fd, 1, static_cast<int>(left));
++            if (r < 0 && errno == EINTR) continue;
++            if (r <= 0) break;
++            char data[8192]; ssize_t n = read(output, data, sizeof(data));
++            if (n <= 0) break;
++            buffer.append(data, static_cast<std::size_t>(n));
++        }
++        return {snapshots, histories};
++    }
 +    pid_t pid = -1;
 +    int input = -1, output = -1, status = 0;
 +    std::string timezone;
@@ -1702,6 +1730,35 @@ index 00000000..3d370b42
 +    fs::remove(home.runtime()); fs::create_directory(home.runtime()); ASSERT_EQ(chmod(home.runtime().c_str(), 0770), 0);
 +    { Bridge bridge(home.path); ASSERT_TRUE(bridge.failed()); }
 +    EXPECT_TRUE(fs::is_empty(home.runtime()));
++}
++
++TEST_F(DaemonProcessTest, UnchangedProjectionIsNotResentEachTick) {
++    Bridge bridge(home.path);
++    ASSERT_GT(bridge.pid, 0);
++    ASSERT_TRUE(bridge.capabilities("projection-generation"));
++    ASSERT_TRUE(bridge.send("{\"version\":1,\"type\":\"history_timezone\",\"timezone\":\"UTC\"}\n"));
++    bridge.timezone = "UTC";
++    // The first projection is delivered as soon as it exists.
++    ASSERT_TRUE(bridge.lineType("history", 15000));
++    // Ticks keep flowing, but the unchanged projection stays unsent: the daemon compares the
++    // view's projection generation rather than copying and comparing the projection text.
++    const auto [snapshots, histories] = bridge.countFrames(4000);
++    EXPECT_GE(snapshots, 2);
++    EXPECT_EQ(histories, 0);
++}
++
++TEST_F(DaemonProcessTest, ZoneSwitchRedeliversTheCurrentProjection) {
++    Bridge bridge(home.path);
++    ASSERT_GT(bridge.pid, 0);
++    ASSERT_TRUE(bridge.capabilities("projection-switch"));
++    ASSERT_TRUE(bridge.send("{\"version\":1,\"type\":\"history_timezone\",\"timezone\":\"UTC\"}\n"));
++    bridge.timezone = "UTC";
++    ASSERT_TRUE(bridge.lineType("history", 15000));
++    bridge.timezone = "Asia/Tokyo";
++    ASSERT_TRUE(bridge.send("{\"version\":1,\"type\":\"history_timezone\",\"timezone\":\"Asia/Tokyo\"}\n"));
++    // Switching view resets the subscriber's generation, so the current projection is sent again
++    // even when the text happens to match one already delivered.
++    EXPECT_TRUE(bridge.lineType("history", 15000));
 +}
 +
 +TEST_F(DaemonProcessTest, SlowReaderDoesNotPreventHealthyClientProgress) {
@@ -2426,10 +2483,10 @@ index 8121f0bb..9421b2e5 100644
  constexpr double kTolerance = 1e-6;
 diff --git a/linux/tests/sampling_test.cpp b/linux/tests/sampling_test.cpp
 new file mode 100644
-index 00000000..a0f5132a
+index 00000000..c2990e28
 --- /dev/null
 +++ b/linux/tests/sampling_test.cpp
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,196 @@
 +#include <gtest/gtest.h>
 +
 +#include "sampling.hpp"
@@ -2546,6 +2603,85 @@ index 00000000..a0f5132a
 +        EXPECT_TRUE(sampler.takeCompletions().empty());
 +    }
 +    std::filesystem::remove_all(home);
++}
++
++// A subscriber decides whether to resend the whole projection by comparing one integer, so the
++// sampler must advance that generation exactly when the projection text changes: re-deriving the
++// same days must not look like a new projection, and each view has its own generation.
++TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
++    char home[] = "/tmp/agentspeed-sampler-generation-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    struct TempHome {
++        const char* path;
++        ~TempHome() { std::filesystem::remove_all(path); }
++    } tempHome{home};
++    ScopedEnv homeEnv("HOME", home);
++    ScopedEnv agentEnv("PI_CODING_AGENT_DIR", nullptr);
++    ScopedEnv sessionEnv("PI_CODING_AGENT_SESSION_DIR", nullptr);
++    ScopedEnv configEnv("PI_CONFIG_DIR", ".omp");
++    ScopedEnv codexEnv("CODEX_HOME", nullptr);
++    ScopedEnv claudeEnv("CLAUDE_CONFIG_DIR", nullptr);
++    ScopedEnv deepseekEnv("DSH_HOME", nullptr);
++    ScopedEnv xdgEnv("XDG_DATA_HOME", nullptr);
++    ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
++    ScopedEnv tzEnv("TZ", "UTC");
++
++    auto formatStamp = [](std::int64_t ms) {
++        const std::time_t seconds = static_cast<std::time_t>(ms / 1000);
++        std::tm utc{};
++        gmtime_r(&seconds, &utc);
++        char text[32];
++        std::strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
++        return std::string(text);
++    };
++    using namespace std::chrono;
++    const auto today = floor<days>(system_clock::now());
++    const auto noon = today + hours{12};
++    const auto ms = duration_cast<milliseconds>(noon.time_since_epoch()).count();
++    const auto nowMs = duration_cast<milliseconds>((today + hours{13}).time_since_epoch()).count();
++
++    const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-generation-project";
++    std::filesystem::create_directories(dir);
++    std::ofstream(dir / "session.jsonl")
++        << R"({"type":"session","version":3,"id":"generation-session","timestamp":")" << formatStamp(ms)
++        << R"(","cwd":"/project"})" << '\n'
++        << R"({"type":"message","id":"generation-response","parentId":null,"timestamp":")" << formatStamp(ms)
++        << R"(","message":{"role":"assistant","content":[],"api":"openai-responses","provider":"openai","model":"gpt-5.5","usage":{"input":300,"output":410,"cacheRead":40,"cacheWrite":20,"reasoningTokens":70,"totalTokens":770},"stopReason":"stop","timestamp":)"
++        << ms << R"(,"duration":3000}})" << '\n';
++
++    std::atomic<std::int64_t> clock{nowMs};
++    collector::Sampler sampler(home, std::string(64, 'a'), [&] { return clock.load(); });
++    sampler.poll(nowMs);
++    const collector::View utc{std::string("UTC"), agentspeed::TimeZone::utc()};
++    sampler.sample(nowMs, utc);
++
++    std::uint64_t first = 0;
++    for (int i = 0; i < 500 && !(first = sampler.historyGeneration(utc)); ++i)
++        std::this_thread::sleep_for(std::chrono::milliseconds(20));
++    ASSERT_NE(first, 0u);
++    const auto text = sampler.history(utc);
++    ASSERT_FALSE(text.empty());
++
++    for (int i = 0; i < 20; ++i) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(10));
++        EXPECT_EQ(sampler.historyGeneration(utc), first);
++    }
++
++    sampler.requestHistoryRefresh();
++    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
++    const auto refreshed = sampler.history(utc);
++    const auto refreshedGeneration = sampler.historyGeneration(utc);
++    EXPECT_EQ(refreshed, text);
++    EXPECT_EQ(refreshedGeneration, first);
++
++    const auto tokyo = agentspeed::TimeZone::load("Asia/Tokyo");
++    ASSERT_TRUE(tokyo);
++    const collector::View east{std::string("Asia/Tokyo"), tokyo};
++    std::uint64_t eastGeneration = 0;
++    for (int i = 0; i < 500 && !(eastGeneration = sampler.historyGeneration(east)); ++i)
++        std::this_thread::sleep_for(std::chrono::milliseconds(20));
++    ASSERT_NE(eastGeneration, 0u);
++    EXPECT_NE(sampler.history(east), text);
 +}
 diff --git a/linux/tests/shared_history_test.cpp b/linux/tests/shared_history_test.cpp
 new file mode 100644
