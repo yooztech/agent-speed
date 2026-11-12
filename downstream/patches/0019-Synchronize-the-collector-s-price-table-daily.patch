@@ -1,4 +1,4 @@
-From cbece64a195477d42d49772cb4e36cea3632fe0a Mon Sep 17 00:00:00 2001
+From 67f106264efc5b8cdcbc96b1516040ec8a8d8de0 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Thu, 12 Nov 2026 22:20:04 +0800
 Subject: [PATCH 19/19] Synchronize the collector's price table daily
@@ -29,13 +29,13 @@ refusals, accepting a table without its own `tests`, atomic state round-trip
 across a restart, ETag use and a newly priced model becoming known.
 ---
  linux/collector/CMakeLists.txt  |   4 +-
- linux/collector/price_sync.cpp  | 438 ++++++++++++++++++++++++++++++++
- linux/collector/price_sync.hpp  |  72 ++++++
+ linux/collector/price_sync.cpp  | 492 ++++++++++++++++++++++++++++++++
+ linux/collector/price_sync.hpp  |  81 ++++++
  linux/collector/sampling.cpp    |  10 +-
  linux/tests/CMakeLists.txt      |   1 +
- linux/tests/price_sync_test.cpp | 221 ++++++++++++++++
+ linux/tests/price_sync_test.cpp | 248 ++++++++++++++++
  spec/NETWORK.md                 |   3 +
- 7 files changed, 746 insertions(+), 3 deletions(-)
+ 7 files changed, 836 insertions(+), 3 deletions(-)
  create mode 100644 linux/collector/price_sync.cpp
  create mode 100644 linux/collector/price_sync.hpp
  create mode 100644 linux/tests/price_sync_test.cpp
@@ -57,10 +57,10 @@ index 12d6cb04..f09caaa3 100644
      add_library(${name} STATIC daemon.cpp publisher.cpp widget_publisher.cpp)
 diff --git a/linux/collector/price_sync.cpp b/linux/collector/price_sync.cpp
 new file mode 100644
-index 00000000..31f7f63a
+index 00000000..98b9a761
 --- /dev/null
 +++ b/linux/collector/price_sync.cpp
-@@ -0,0 +1,438 @@
+@@ -0,0 +1,492 @@
 +#include "price_sync.hpp"
 +#include "relay_http.hpp"
 +
@@ -72,6 +72,7 @@ index 00000000..31f7f63a
 +#include <curl/curl.h>
 +
 +#include <algorithm>
++#include <cctype>
 +#include <cerrno>
 +#include <chrono>
 +#include <cstdio>
@@ -229,6 +230,46 @@ index 00000000..31f7f63a
 +    return s;
 +}
 +
++bool iequals(std::string_view a, std::string_view b) {
++    if (a.size() != b.size()) return false;
++    for (std::size_t i = 0; i < a.size(); ++i) {
++        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) return false;
++    }
++    return true;
++}
++
++std::string_view trim(std::string_view text) {
++    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
++    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r' || text.back() == '\n')) {
++        text.remove_suffix(1);
++    }
++    return text;
++}
++
++// True for `"..."` or `W/"..."`: a non-empty opaque value with no quote or control character inside.
++bool validEntityTag(std::string_view value) {
++    if (value.size() > 200) return false;
++    if (value.size() > 2 && value[0] == 'W' && value[1] == '/') value.remove_prefix(2);
++    if (value.size() < 3 || value.front() != '"' || value.back() != '"') return false;
++    const auto opaque = value.substr(1, value.size() - 2);
++    for (const unsigned char c : opaque) {
++        if (c < 0x20 || c == 0x7f || c == '"') return false;
++    }
++    return true;
++}
++
++// One header line of the response; the first usable ETag wins and nothing here can fail the transfer.
++std::size_t etagWrite(char* p, std::size_t size, std::size_t count, void* opaque) {
++    auto& etag = *static_cast<std::string*>(opaque);
++    const std::string_view line(p, size * count);
++    const auto colon = line.find(':');
++    if (colon != std::string_view::npos && etag.empty() && iequals(line.substr(0, colon), "etag")) {
++        const auto value = trim(line.substr(colon + 1));
++        if (validEntityTag(value)) etag.assign(value);
++    }
++    return size * count;
++}
++
 +std::size_t bodyWrite(char* p, std::size_t size, std::size_t count, void* opaque) {
 +    auto& out = *static_cast<std::string*>(opaque);
 +    const std::size_t n = size * count;
@@ -245,9 +286,8 @@ index 00000000..31f7f63a
 +    CURL* c = curl_easy_init();
 +    if (!c) { result.error = "curl init"; return result; }
 +    curl_easy_setopt(c, CURLOPT_URL, PriceSync::url);
-+    curl_slist* headers = curl_slist_append(nullptr, "Accept: application/json");
-+    const std::string noneMatch = etag.empty() ? std::string() : "If-None-Match: " + etag;
-+    if (!noneMatch.empty()) headers = curl_slist_append(headers, noneMatch.c_str());
++    curl_slist* headers = nullptr;
++    for (const auto& header : priceRequestHeaders(etag)) headers = curl_slist_append(headers, header.c_str());
 +    curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers);
 +#if LIBCURL_VERSION_NUM >= 0x075500
 +    curl_easy_setopt(c, CURLOPT_PROTOCOLS_STR, "https");
@@ -264,6 +304,8 @@ index 00000000..31f7f63a
 +    curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
 +    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, bodyWrite);
 +    curl_easy_setopt(c, CURLOPT_WRITEDATA, &result.body);
++    curl_easy_setopt(c, CURLOPT_HEADERFUNCTION, etagWrite);
++    curl_easy_setopt(c, CURLOPT_HEADERDATA, &result.etag);
 +    const CURLcode code = curl_easy_perform(c);
 +    if (code == CURLE_OK) curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &result.status);
 +    else result.error = code == CURLE_WRITE_ERROR ? "too large" : curl_easy_strerror(code);
@@ -282,6 +324,18 @@ index 00000000..31f7f63a
 +    if (!localDay) return true;
 +    return *tableDay > *localDay + static_cast<std::int64_t>(PriceSync::maxUpdatedAheadDays) * 86'400'000;
 +}
++}
++
++std::string parseEtagHeader(std::string_view line) {
++    std::string etag;
++    etagWrite(const_cast<char*>(line.data()), line.size(), 1, &etag);
++    return etag;
++}
++
++std::vector<std::string> priceRequestHeaders(const std::string& ifNoneMatch) {
++    std::vector<std::string> headers{"Accept: application/json"};
++    if (!ifNoneMatch.empty()) headers.push_back("If-None-Match: " + ifNoneMatch);
++    return headers;
 +}
 +
 +struct PriceSync::Impl {
@@ -501,10 +555,10 @@ index 00000000..31f7f63a
 +}
 diff --git a/linux/collector/price_sync.hpp b/linux/collector/price_sync.hpp
 new file mode 100644
-index 00000000..66298a8c
+index 00000000..2da055b3
 --- /dev/null
 +++ b/linux/collector/price_sync.hpp
-@@ -0,0 +1,72 @@
+@@ -0,0 +1,81 @@
 +#pragma once
 +
 +#include <cstdint>
@@ -514,11 +568,20 @@ index 00000000..66298a8c
 +#include <mutex>
 +#include <optional>
 +#include <string>
++#include <string_view>
 +#include <thread>
++#include <vector>
 +
 +#include "agentspeed/price_book.hpp"
 +
 +namespace collector {
++// The value of an `ETag` response header, case-insensitively matched and trimmed, or empty when the line is not a
++// usable strong or weak entity tag: a quoted, non-empty opaque value of at most 200 bytes with no control characters.
++// A malformed header never fails the round; it just leaves the request unconditional.
++std::string parseEtagHeader(std::string_view line);
++// The request headers of one round, including `If-None-Match` only when a stored tag is given.
++std::vector<std::string> priceRequestHeaders(const std::string& ifNoneMatch);
++
 +// The headless collector's daily price-table sync of spec/NETWORK.md 3. The service relay is asked first and the
 +// existing native validator decides whether a download becomes current; nothing here parses a table itself.
 +// Storage follows the collector's cache convention: <home>/.cache/agentspeed-collector/<digest>/ with 0700/0600,
@@ -638,10 +701,10 @@ index 5e18f84d..c06bb1e9 100644
      sampling_test.cpp
 diff --git a/linux/tests/price_sync_test.cpp b/linux/tests/price_sync_test.cpp
 new file mode 100644
-index 00000000..5ac9cea5
+index 00000000..ed183fc2
 --- /dev/null
 +++ b/linux/tests/price_sync_test.cpp
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,248 @@
 +#include <gtest/gtest.h>
 +
 +#include "price_sync.hpp"
@@ -845,6 +908,33 @@ index 00000000..5ac9cea5
 +        EXPECT_EQ(book->currentVersion(), 2);
 +        EXPECT_EQ(sync.state().version, 2);
 +    }
++}
++
++TEST(PriceSync, EtagHeadersAreParsedAndMalformedOnesIgnored) {
++    EXPECT_EQ(collector::parseEtagHeader("ETag: \"abc123\"\r\n"), "\"abc123\"");
++    EXPECT_EQ(collector::parseEtagHeader("etag: W/\"weak-1\"\r\n"), "W/\"weak-1\"");
++    EXPECT_EQ(collector::parseEtagHeader("ETAG:\t\"v1000\" \r\n"), "\"v1000\"");
++    EXPECT_EQ(collector::parseEtagHeader("Etag: \"<sha256>\"\r\n"), "\"<sha256>\"");
++    // Not an entity tag, not the ETag header, or unusable: the round stays unconditional.
++    EXPECT_EQ(collector::parseEtagHeader("Content-Type: application/json\r\n"), "");
++    EXPECT_EQ(collector::parseEtagHeader("ETag: abc\r\n"), "");
++    EXPECT_EQ(collector::parseEtagHeader("ETag: \"\"\r\n"), "");
++    EXPECT_EQ(collector::parseEtagHeader("ETag: W/abc\r\n"), "");
++    EXPECT_EQ(collector::parseEtagHeader("ETag: \"a\"b\"\r\n"), "");
++    EXPECT_EQ(collector::parseEtagHeader("ETag: \"a\x01b\"\r\n"), "");
++    std::string longTag(210, 'a');
++    EXPECT_EQ(collector::parseEtagHeader("ETag: \"" + longTag + "\"\r\n"), "");
++    EXPECT_EQ(collector::parseEtagHeader(""), "");
++}
++
++TEST(PriceSync, RequestHeadersCarryOnlyAStoredEtagConditionally) {
++    const auto plain = collector::priceRequestHeaders("");
++    EXPECT_EQ(plain.size(), 1u);
++    EXPECT_EQ(plain.front(), "Accept: application/json");
++    const auto conditional = collector::priceRequestHeaders("\"v1000\"");
++    ASSERT_EQ(conditional.size(), 2u);
++    EXPECT_EQ(conditional[0], "Accept: application/json");
++    EXPECT_EQ(conditional[1], "If-None-Match: \"v1000\"");
 +}
 +
 +TEST(PriceSync, ConditionalRequestUsesTheStoredETagOnlyForItsOwnURL) {
