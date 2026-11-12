@@ -16,15 +16,18 @@ re-project at once and to rescan changed files, and the covering correction is p
 soon as it exists without waiting for the routine slot, as one bounded attempt that still
 observes Retry-After. Only the first confirmation attempt may store a real today beside
 unscanned past days, and it is corrected immediately afterwards. Recorded rows stay facts
-when their source is no longer detected, available or enabled, so a past day keeps its known
-input/output lower bound and is merely incomplete. The wire object is unchanged.
+when their source is no longer detected, available or enabled, so a past day sums every row
+recorded for it. A source without a row on a day had no recorded usage that day; it no longer
+makes the day incomplete, so a multi-source week keeps complete request, cost and average
+totals instead of a permanent dash. The wire object is unchanged.
 
 The mobile reader currently merges tolerantly to support older daemons that store unscanned
-windows. That compatibility layer is temporary and is removed once this publisher rule is
+windows and keeps finalized complete days and today's models across a stale publish. That
+read-side compatibility layer is temporary and is removed once this publisher rule is
 deployed, so null past days are not an acceptable long-term output of the collector.
 ---
- README.md                                 |  17 +-
- docs/shared-collector.md                  |  85 ++++++
+ README.md                                 |  18 +-
+ docs/shared-collector.md                  |  87 +++++++
  linux/collector/CMakeLists.txt            |   4 +-
  linux/collector/daemon.cpp                |  21 +-
  linux/collector/protocol.cpp              |   1 +
@@ -34,7 +37,7 @@ deployed, so null past days are not an acceptable long-term output of the collec
  linux/collector/sampling.hpp              |  19 +-
  linux/collector/widget_publisher.cpp      | 270 +++++++++++++++++++
  linux/collector/widget_publisher.hpp      |  35 +++
- linux/collector/widget_statistics.cpp     | 210 +++++++++++++++
+ linux/collector/widget_statistics.cpp     | 208 +++++++++++++++
  linux/collector/widget_statistics.hpp     |  18 ++
  linux/core/include/agentspeed/history.hpp |   2 +
  linux/core/src/history.cpp                |  10 +-
@@ -46,9 +49,9 @@ deployed, so null past days are not an acceptable long-term output of the collec
  linux/tests/sampling_test.cpp             | 133 +++++++++-
  linux/tests/widget_publisher_test.cpp     | 281 ++++++++++++++++++++
  linux/tests/widget_statistics_smoke.py    | 300 ++++++++++++++++++++++
- linux/tests/widget_statistics_test.cpp    | 278 ++++++++++++++++++++
+ linux/tests/widget_statistics_test.cpp    | 282 ++++++++++++++++++++
  spec/NETWORK.md                           |  35 +++
- 25 files changed, 1853 insertions(+), 28 deletions(-)
+ 25 files changed, 1858 insertions(+), 28 deletions(-)
  create mode 100644 linux/collector/relay_http.hpp
  create mode 100644 linux/collector/widget_publisher.cpp
  create mode 100644 linux/collector/widget_publisher.hpp
@@ -59,7 +62,7 @@ deployed, so null past days are not an acceptable long-term output of the collec
  create mode 100644 linux/tests/widget_statistics_test.cpp
 
 diff --git a/README.md b/README.md
-index 51ccd86c..b7eae6b1 100644
+index 51ccd86c..11f3d372 100644
 --- a/README.md
 +++ b/README.md
 @@ -123,8 +123,10 @@ Duplicate SSH destinations are rejected when saving; an existing host can keep i
@@ -75,15 +78,16 @@ index 51ccd86c..b7eae6b1 100644
  
  Optional mobile live-activity authorization is separate: after the user creates an activity in the foreground, an
  activity-scoped lease can authorize the daemon to send only minimal current metrics over verified HTTPS to
-@@ -134,6 +136,17 @@ commands, conversation content or SSH credentials; the target host receives no A
+@@ -134,6 +136,18 @@ commands, conversation content or SSH credentials; the target host receives no A
  activities only and does not request alerts or promise ten-second iOS rendering. See the complete
  [shared collector/control-v2 contract](docs/shared-collector.md) and [network specification](spec/NETWORK.md#8-activity-scoped-mobile-relay).
  
 +An independently consented mobile Widget statistics feed can additionally forward today's and seven
 +calendar days' usage aggregates and a bounded current-day model breakdown, with explicit unknown/partial
-+coverage. Incomplete days retain their known input/output lower bound, including rows of a source
-+that is no longer detected; days with no rows stay unknown. A stored projection is never replaced by
-+an unscanned window, and the covering correction is published as soon as the scan reaches it. It
++coverage. Days with recorded rows are complete and carry request/cost, including rows of a source
++that is no longer detected; a source without a row that day had no recorded usage, and days with no
++rows stay unknown. A stored projection is never replaced by an unscanned window, and the covering
++correction is published as soon as the scan reaches it. It
 +uses a separate revocable publisher authorization of at most 30 days and at most one routine publish
 +attempt per 30 minutes after initial storage, plus that correction; it neither extends the
 +ActivityKit lease nor uploads raw history/logs. The daemon cannot renew this authorization. Widget
@@ -94,10 +98,10 @@ index 51ccd86c..b7eae6b1 100644
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
  stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
-index 9044b287..c07563ff 100644
+index 9044b287..d767384b 100644
 --- a/docs/shared-collector.md
 +++ b/docs/shared-collector.md
-@@ -84,3 +84,88 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
+@@ -84,3 +84,90 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
  CMake's normal test executable uses a separately compiled test-only HOME namespace and one-second idle period so process tests cannot attach to the maintainer's canonical daemon. Neither override exists in the distribution executable. `AGENTSPEED_BUILD_SSH_SMOKE=ON` additionally builds the explicitly non-distributable `agentspeed-collector-ssh-smoke`: it uses the same libcurl path but a compile-time fixed localhost TLS endpoint and test CA, with canonical passwd-home and production 30-second idle behavior. Never package that executable.
  
  `linux/tests/shared_collector_ssh_smoke.py` runs a local sshd, a disposable Unix account and an isolated TLS relay, then cleans them up. It requires local root only for that isolated account/sshd; it never accesses a production host or modifies a system SSH service. Its JSON results identify actual scenarios and limits. It does not prove Cloudflare deployment, APNs acceptance or iPhone delivery. Real signed-iPhone testing, deployed Worker/App Attest configuration, Apple credentials, ARM64 runtime, and native Mac/Windows UI remain separate acceptance prerequisites.
@@ -124,22 +128,24 @@ index 9044b287..c07563ff 100644
 +today in every metric. Counts are nullable nonnegative safe integers. Today's input/output are the
 +snapshot's known totals regardless of source availability; today is complete unless history is
 +partial, and a partial today nulls all three request/cost fields. A past day retains the known
-+input/output sum of the rows of participating sources; a recorded row stays a fact after its source
++input/output sum of every row recorded for that day; a recorded row stays a fact after its source
 +is no longer detected, available or enabled, because detection decides only today's live counts.
-+The day is incomplete when any participating source lacks a row for that day; its request/cost
-+fields require complete source coverage and nonpartial matching history. A day without rows is
++A source without a row on a day had no recorded usage that day (zero), not unknown coverage;
++requiring a row from every source that appears anywhere in the window made almost every
++multi-source week incomplete. A day is complete when the scan is nonpartial and it has at least
++one recorded row; its request/cost fields also require those rows' values. A day without rows is
 +unknown, never zero. Known priced cost is not a full bill when requests are unpriced.
 +Model rows contain only `model`, `input`, and `output`: the three highest fully known named models
 +by total (name breaks ties), followed by one null-model bucket for all remaining and unnamed usage.
 +Each bucket component preserves unknowns. Models come from actual current-date history and may lag
-+the live counters. `modelsComplete` requires complete today and matching nonpartial history, all
-+participating sources covered, all model components known, and both sums matching today. Missing
++the live counters. `modelsComplete` requires complete today and matching nonpartial history, at
++least one recorded today row, all model components known, and both sums matching today. Missing
 +counts and dates are null, never fabricated zeros. `historyComplete` requires all seven days complete.
 +Cached input and reasoning are already included; do not add them again. Invalid model IDs, unsafe
 +integers or a body larger than 64 KiB fail closed.
 +
-+A null past day may only mean that the scan covered that day and found no records, or that the
-+coverage is incomplete (`complete: false`). It must never mean that the history was not ready. The
++A null past day means it has no recorded rows or the scan is partial; a source without a row is
++zero recorded usage, not unknown coverage. It must never mean that the history was not ready. The
 +publisher therefore compares a projection's `usageDate` and `timezone` with the sample's own
 +calendar day before publishing: a missing, stale or differently labelled projection may not replace
 +the statistics already stored for a lease. The lease keeps the stored payload, the daemon asks the
@@ -855,10 +861,10 @@ index 00000000..ed9aaca3
 +}
 diff --git a/linux/collector/widget_statistics.cpp b/linux/collector/widget_statistics.cpp
 new file mode 100644
-index 00000000..8a74f4af
+index 00000000..8dbbbb1f
 --- /dev/null
 +++ b/linux/collector/widget_statistics.cpp
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,208 @@
 +#include "widget_statistics.hpp"
 +
 +#include <algorithm>
@@ -955,13 +961,11 @@ index 00000000..8a74f4af
 +    const auto& snapshot = sample.snapshot;
 +    std::map<agentspeed::SourceKind, const agentspeed::SourceRow*> sources;
 +    std::set<std::string_view> identifiers;
-+    std::set<agentspeed::SourceKind> participating;
 +    for (const auto& row : snapshot.sources) {
 +        if (static_cast<unsigned>(row.source) > static_cast<unsigned>(agentspeed::SourceKind::Droid)) return std::nullopt;
 +        auto id = agentspeed::sourceId(row.source);
 +        if (!validText(id, 64) || !identifiers.insert(id).second || !sources.emplace(row.source, &row).second) return std::nullopt;
 +        if (!safe(row.todayInput) || !safe(row.todayOutput) || !safe(row.todayRequests) || !safe(row.todayCostMicroUsd) || !safe(row.unpricedRequests)) return std::nullopt;
-+        if (row.enabled && (row.todayInput || row.todayOutput || row.todayRequests || row.todayCostMicroUsd || row.unpricedRequests)) participating.insert(row.source);
 +    }
 +    if (sources.size() > 32) return std::nullopt;
 +    if (!safe(snapshot.todayInput) || !safe(snapshot.todayOutput) || !safe(snapshot.todayRequests) ||
@@ -984,26 +988,26 @@ index 00000000..8a74f4af
 +                (row.totals.costMicroUsd && !safe(*row.totals.costMicroUsd)) ||
 +                (row.totals.unpricedRequests && !safe(*row.totals.unpricedRequests)) ||
 +                !rows.emplace(std::make_pair(row.key.day, row.key.source), &row).second) return std::nullopt;
-+            participating.insert(row.key.source);
 +        }
 +        for (std::size_t i = 0; i < days.size(); ++i) {
 +            Counts sum; sum.input = sum.output = sum.requests = sum.cost = sum.unpriced = 0;
-+            bool covered = true, found = false;
-+            for (const auto kind : participating) {
-+                // A recorded row is a fact about that day. Whether the source is detected or enabled
-+                // right now only decides today's live counts, so it must not erase yesterday's sum:
-+                // one retired source would otherwise empty the whole window beside a real today.
-+                auto it = rows.find({(*calendar)[i], kind});
-+                if (it == rows.end()) { covered = false; continue; }
++            bool found = false;
++            for (const auto& [key, row] : rows) {
++                if (key.first != (*calendar)[i]) continue;
++                // A recorded row is a fact about that day. A source without a
++                // row simply had no recorded usage that day; requiring a row
++                // from every source that appears anywhere in the window made
++                // almost every multi-source week incomplete. Detection and
++                // enablement decide only today's live counts.
 +                found = true;
-+                const auto& totals = it->second->totals;
++                const auto& totals = row->totals;
 +                if (!add(sum.input, totals.input) || !add(sum.output, totals.output) || !add(sum.requests, totals.requests) ||
 +                    !add(sum.cost, totals.costMicroUsd) || !add(sum.unpriced, totals.unpricedRequests)) return std::nullopt;
 +            }
 +            if (found) { days[i].input = sum.input; days[i].output = sum.output; }
-+            days[i].complete = covered && found && history->complete;
++            days[i].complete = found && history->complete;
 +            if (days[i].complete) { days[i].requests = sum.requests; days[i].cost = sum.cost; days[i].unpriced = sum.unpriced; }
-+            if (i == 6) currentCovered = covered && found;
++            if (i == 6) currentCovered = found;
 +        }
 +        for (const auto& [key, row] : rows) {
 +            if (key.first != *date) continue;
@@ -2054,10 +2058,10 @@ index 00000000..f820efc2
 +    raise SystemExit(main())
 diff --git a/linux/tests/widget_statistics_test.cpp b/linux/tests/widget_statistics_test.cpp
 new file mode 100644
-index 00000000..7cbef844
+index 00000000..e7612b9e
 --- /dev/null
 +++ b/linux/tests/widget_statistics_test.cpp
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,282 @@
 +#include <gtest/gtest.h>
 +#include "widget_statistics.hpp"
 +#include "agentspeed/json.hpp"
@@ -2108,7 +2112,7 @@ index 00000000..7cbef844
 +    EXPECT_EQ(days.at(6)["output"].raw(), root["today"]["output"].raw());
 +    EXPECT_EQ(days.at(6)["complete"].raw(), root["today"]["complete"].raw());
 +}
-+TEST(WidgetStatistics, PartialHistoryAndMissingCoverage) {
++TEST(WidgetStatistics, PartialHistoryAndTodayOnlySource) {
 +    auto h = history(); h->complete = false;
 +    auto s = sample(); s.snapshot.warnings.partialHistory = true;
 +    auto json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json);
@@ -2121,7 +2125,7 @@ index 00000000..7cbef844
 +    json = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
 +    EXPECT_EQ(doc.root()["days"].at(0)["output"].raw(), "5");
-+    EXPECT_FALSE(doc.root()["days"].at(0)["complete"].isTrue());
++    EXPECT_TRUE(doc.root()["days"].at(0)["complete"].isTrue());
 +    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
 +}
 +TEST(WidgetStatistics, UndetectedUnusedSourcesDoNotPoisonTotals) {
@@ -2165,8 +2169,8 @@ index 00000000..7cbef844
 +    s.snapshot.sources.push_back(other);
 +    json = widgetStatistics(s, view(), history(), "h", "n"); ASSERT_TRUE(json); ASSERT_TRUE(doc.parse(json->payload));
 +    EXPECT_EQ(doc.root()["days"].at(0)["input"].raw(), "4");
-+    EXPECT_FALSE(doc.root()["days"].at(0)["complete"].isTrue());
-+    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
++    EXPECT_TRUE(doc.root()["days"].at(0)["complete"].isTrue());
++    EXPECT_TRUE(doc.root()["historyComplete"].isTrue());
 +}
 +TEST(WidgetStatistics, CalendarAcrossDstAndTimezoneBoundary) {
 +    auto s = sample(); s.snapshot.nowMs = 1710055800000LL; // March 10 07:30 UTC
@@ -2258,7 +2262,7 @@ index 00000000..7cbef844
 +    EXPECT_FALSE(doc.root()["modelsComplete"].isTrue());
 +}
 +
-+TEST(WidgetStatistics, MetricsCoverageAndParticipatingRequestOnlySource) {
++TEST(WidgetStatistics, MetricsKeepRecordedRowsWhenARequestOnlySourceAppearsToday) {
 +    auto s = sample(); auto h = history();
 +    s.snapshot.todayRequests = 3; s.snapshot.todayCostMicroUsd = 20; s.snapshot.todayUnpricedRequests = 1;
 +    h->days.front().totals.requests = 2; h->days.front().totals.costMicroUsd = 12;
@@ -2270,7 +2274,9 @@ index 00000000..7cbef844
 +    agentspeed::SourceRow extra; extra.source = SourceKind::Gemini; extra.available = true; extra.todayRequests = 1;
 +    s.snapshot.sources.push_back(extra);
 +    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(result->payload));
-+    EXPECT_TRUE(doc.root()["days"].at(0)["requests"].isNull()); EXPECT_FALSE(doc.root()["modelsComplete"].isTrue());
++    EXPECT_EQ(doc.root()["days"].at(0)["requests"].raw(), "2");
++    EXPECT_EQ(doc.root()["days"].at(0)["costMicroUsd"].raw(), "12");
++    EXPECT_FALSE(doc.root()["modelsComplete"].isTrue());
 +    s.snapshot.warnings.partialHistory = true;
 +    result = widgetStatistics(s, view(), h, "h", "n"); ASSERT_TRUE(result); ASSERT_TRUE(doc.parse(result->payload));
 +    for (const auto* key : {"requests", "costMicroUsd", "unpricedRequests"}) {
@@ -2290,7 +2296,7 @@ index 00000000..7cbef844
 +// Dropping such rows empties whole days: a widget-only daemon whose snapshot describes today
 +// while the window's rows belong to a source that has since disappeared would publish six
 +// null days beside a real today.
-+TEST(WidgetStatistics, UndetectedHistoricalSourceKeepsKnownLowerBound) {
++TEST(WidgetStatistics, UndetectedHistoricalSourceKeepsItsDayComplete) {
 +    auto s = sample();
 +    s.snapshot.sources[0].available = false;  // Codex has no detected root in this snapshot
 +    agentspeed::SourceRow gemini;
@@ -2307,12 +2313,12 @@ index 00000000..7cbef844
 +    auto day = doc.root()["days"].at(0);
 +    EXPECT_EQ(day["input"].raw(), "4");
 +    EXPECT_EQ(day["output"].raw(), "5");
-+    EXPECT_FALSE(day["complete"].isTrue());
-+    EXPECT_FALSE(doc.root()["historyComplete"].isTrue());
++    EXPECT_TRUE(day["complete"].isTrue());
++    EXPECT_TRUE(doc.root()["historyComplete"].isTrue());
 +    EXPECT_TRUE(doc.root()["days"].at(6)["input"].raw() == "11");
 +}
 +
-+TEST(WidgetStatistics, HistoricalSourceWithoutSnapshotRowKeepsItsDay) {
++TEST(WidgetStatistics, HistoricalSourceWithoutSnapshotRowCompletesItsDay) {
 +    auto s = sample();
 +    auto h = history();
 +    h->days.erase(h->days.begin() + 3);  // Codex recorded nothing on 2024-03-07
@@ -2333,11 +2339,13 @@ index 00000000..7cbef844
 +    auto day = doc.root()["days"].at(3);
 +    EXPECT_EQ(day["input"].raw(), "100");
 +    EXPECT_EQ(day["output"].raw(), "50");
-+    EXPECT_FALSE(day["complete"].isTrue());
-+    EXPECT_TRUE(day["requests"].isNull());
++    EXPECT_TRUE(day["complete"].isTrue());
++    EXPECT_EQ(day["requests"].raw(), "2");
++    EXPECT_EQ(day["costMicroUsd"].raw(), "7");
++    EXPECT_EQ(day["unpricedRequests"].raw(), "0");
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 304cd25f..3dd04167 100644
+index 304cd25f..b599a365 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -337,3 +337,38 @@ or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup poli
@@ -2364,10 +2372,10 @@ index 304cd25f..3dd04167 100644
 +Fixed endpoint TLS verifies certificates/hostname, prohibits redirects/proxies/netrc, and bounds
 +connection/DNS to three seconds and the complete request to 15 seconds. Initial storage may occur
 +immediately; later same-authorization routine attempts occur no more frequently than every 30
-+minutes, with a later Retry-After respected. A past day is null only when the scan covered that day
-+and found no records; a projection whose history is missing, stale or labelled for another calendar
-+day never replaces the stored one, and the covering correction is published as soon as it exists as
-+one bounded attempt. Only the first confirmation attempt may carry real today counts beside
++minutes, with a later Retry-After respected. A past day is null when it has no recorded rows or the scan is partial; a source without a row
++is zero recorded usage, not unknown coverage. A projection whose history is missing, stale or
++labelled for another calendar day never replaces the stored one, and the covering correction is
++published as soon as it exists as one bounded attempt. Only the first confirmation attempt may carry real today counts beside
 +unscanned past days, and it is corrected immediately afterwards. There is no per-second Widget push
 +or permanently authorized feed.
 +
