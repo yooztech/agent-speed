@@ -1,0 +1,357 @@
+From e75c71fde74afbc7824c1c7ef3521ea871890b0c Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Thu, 12 Nov 2026 16:57:42 +0800
+Subject: [PATCH 17/17] Backfill measured history peaks from canonical data
+
+---
+ docs/shared-collector.md                      |  2 +-
+ linux/collector/sampling.cpp                  | 20 ++++-
+ .../include/agentspeed/history_analyzer.hpp   |  4 +
+ linux/core/src/history_analyzer.cpp           | 88 ++++++++++++++++---
+ linux/tests/sampling_test.cpp                 | 55 ++++++++++++
+ linux/tests/shared_history_test.cpp           | 31 +++++++
+ spec/METRICS.md                               |  4 +-
+ spec/NETWORK.md                               |  5 +-
+ 8 files changed, 193 insertions(+), 16 deletions(-)
+
+diff --git a/docs/shared-collector.md b/docs/shared-collector.md
+index 2f949024..53023f6c 100644
+--- a/docs/shared-collector.md
++++ b/docs/shared-collector.md
+@@ -14,7 +14,7 @@ Each subscription has its own input buffer, named timezone, history generation a
+ 
+ The live monitor retains a rolling 48-hour input window so changing a viewer's day boundary does not rebuild discovery, parsing, performance or traffic state. Calendar totals use each view's day start, including offset transitions. History projections are per view; live performance baselines retain the existing host-local-calendar meaning and do not change with an SSH viewer's timezone. Physical traffic sampling and its baseline remain shared; viewing it does not resample the machine. Unknown rates, partial histories and offline gaps retain the existing v1 semantics.
+ 
+-Daily history peaks are observed live, not derived from log aggregates. For each view, the sampler raises that view time zone's `peakToday` maximum per calendar day and the history worker persists it in the private cache's `peak_days(zone, day, peak)` table. A projection merges only the peaks stored for its own time zone; the unnamed local view uses the empty zone key. Days the daemon did not observe while running stay unknown (`null`); the collector does not fabricate or backfill them from logs. A local time-zone identity change clears the unnamed view's stored peaks with its other cached projections.
++Daily history peaks are observed live. For each view, the sampler raises that view time zone's `peakToday` maximum per calendar day and the history worker persists it in the private cache's `peak_days(zone, day, peak)` table. A projection merges only the peaks stored for its own time zone; the unnamed local view uses the empty zone key. On first use of a zone, the history worker also backfills the measured-bucket peak for every day present in the canonical history and persists it with the same maximum rule; the live-only component is unavailable for days the daemon did not observe. Unobserved days with no canonical responses stay unknown. A local time-zone identity change clears the unnamed view's stored peaks and backfill marker with its other cached projections.
+ 
+ Any connected subscriber or live/pending authorized lease keeps the daemon active. Closing one bridge's stdin removes only that subscriber. A confirmed lease survives the last SSH exit until expiry, explicit unsubscribe, replacement, terminal relay rejection or bounded invalid-snapshot failure. With no subscribers or leases the daemon exits after 30 seconds. Candidate leases awaiting their first successful publish expire after 75 seconds even when the SSH channel remains open; disconnecting the last waiter cancels an unconfirmed candidate.
+ 
+diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
+index d147553e..f4172749 100644
+--- a/linux/collector/sampling.cpp
++++ b/linux/collector/sampling.cpp
+@@ -220,7 +220,10 @@ struct Sampler::Impl {
+                             scanIdentity = identity;
+                             clearLocalPeaks = true;
+                         }
+-                        if (clearLocalPeaks) store->clearPeakDays("");
++                        if (clearLocalPeaks) {
++                            store->clearPeakDays("");
++                            store->setMeta("peakBackfill:", "");
++                        }
+                         auto zone = localZone();
+                         analyzer.setHermesZone(zone);
+                         report = analyzer.runShared(config.locations, config.enabled, zone, identity, [this] {
+@@ -242,7 +245,20 @@ struct Sampler::Impl {
+                             }
+                         }
+                         const auto zone = view.name.value_or("");
+-                        const auto persisted = store->peakDays(zone);
++                        auto persisted = store->peakDays(zone);
++                        const auto marker = "peakBackfill:" + zone;
++                        const auto backfilled = store->meta(marker);
++                        if ((!backfilled || backfilled->empty()) && !report.cancelled) {
++                            const auto measured = analyzer.measuredPeaks(view.zone);
++                            if (!measured.empty()) {
++                                store->savePeakDays(zone, measured);
++                                for (const auto& [day, peak] : measured) {
++                                    auto& stored = persisted[day];
++                                    if (peak > stored) stored = peak;
++                                }
++                            }
++                            store->setMeta(marker, "1");
++                        }
+                         std::map<std::string, double> raised;
+                         for (const auto& [day, peak] : viewPeaks) {
+                             const auto it = persisted.find(day);
+diff --git a/linux/core/include/agentspeed/history_analyzer.hpp b/linux/core/include/agentspeed/history_analyzer.hpp
+index d3a1d7dc..94211fce 100644
+--- a/linux/core/include/agentspeed/history_analyzer.hpp
++++ b/linux/core/include/agentspeed/history_analyzer.hpp
+@@ -64,6 +64,9 @@ public:
+     // Day rows, by day then source id; live peaks raise the stored ones.
+     std::vector<DailyUsage> days(const std::set<SourceKind>* sources = nullptr, const std::map<std::string, double>* livePeaks = nullptr) const;
+     bool recordPeaks(const std::map<std::string, double>& peaks);
++    // METRICS 6.6/8: the measured-bucket peak of every day available in the canonical history, labelled in `zone`.
++    // Used only to fill days that were not observed live.
++    std::map<std::string, double> measuredPeaks(std::shared_ptr<const TimeZone> zone) const;
+     // Every stored performance record (METRICS 6.11): per file, day, source and raw model; a day's record of a
+     // (source, model) is the sum over files.
+     std::vector<perf::DayRecord> perfRecords(const std::set<SourceKind>* sources = nullptr) const;
+@@ -109,6 +112,7 @@ private:
+     bool repricing_ = false;
+     using ProjectFile = std::function<void(StoredFile&, const DayLabeler&)>;
+     std::map<std::string, ProjectFile> canonical_;
++    std::map<std::string, std::shared_ptr<const canonical::File>> canonicalFiles_;
+     bool sharedMode_ = false;
+     std::shared_ptr<const TimeZone> sharedZone_;
+     std::string sharedZoneId_;
+diff --git a/linux/core/src/history_analyzer.cpp b/linux/core/src/history_analyzer.cpp
+index 213f0846..10f6c7f7 100644
+--- a/linux/core/src/history_analyzer.cpp
++++ b/linux/core/src/history_analyzer.cpp
+@@ -4,6 +4,7 @@
+ #include <chrono>
+ #include <cmath>
+ #include <fstream>
++#include <queue>
+ 
+ #include "agentspeed/discovery.hpp"
+ #include "agentspeed/droid.hpp"
+@@ -224,22 +225,24 @@ const StoredFile* Analyzer::previousOf(const std::string& path) const {
+ }
+ void Analyzer::setCanonical(StoredFile& entry, canonical::File data) {
+     entry.canonical = canonical::serialize(data);
+-    canonical_[entry.path] = [this, data = std::move(data)](StoredFile& projected, const DayLabeler& day) {
+-        projected.days = contributionsOf(data.items, data.source, day, *prices_);
+-        if (data.emitted) {
+-            projected.perf = emittedRecords(data.items, data.source, day);
++    auto file = std::make_shared<const canonical::File>(std::move(data));
++    canonicalFiles_[entry.path] = file;
++    canonical_[entry.path] = [this, file](StoredFile& projected, const DayLabeler& day) {
++        projected.days = contributionsOf(file->items, file->source, day, *prices_);
++        if (file->emitted) {
++            projected.perf = emittedRecords(file->items, file->source, day);
+             return;
+         }
+         std::map<std::string, const ParsedResponse*> byKey;
+-        for (const auto& response : data.perfItems.empty() ? data.items : data.perfItems) byKey[response.key] = &response;
++        for (const auto& response : file->perfItems.empty() ? file->items : file->perfItems) byKey[response.key] = &response;
+         perf::Recorder recorder([&](std::int64_t ms) { return day.label(ms); });
+-        for (const auto& event : data.events) {
++        for (const auto& event : file->events) {
+             if (event.action) {
+-                recorder.action(data.agent, data.source, *event.action);
++                recorder.action(file->agent, file->source, *event.action);
+             } else if (const auto it = byKey.find(event.key); it != byKey.end()) {
+                 const auto& response = *it->second;
+-                if (!data.onlyAgent || response.agentId == *data.onlyAgent)
+-                    recorder.response(response.agentId, data.source, engineOf(response));
++                if (!file->onlyAgent || response.agentId == *file->onlyAgent)
++                    recorder.response(response.agentId, file->source, engineOf(response));
+             }
+         }
+         projected.perf = recorder.rows();
+@@ -300,7 +303,10 @@ Report Analyzer::runShared(const SourceLocations& locations, const std::set<Sour
+     const auto sourceIdentity = (sourceZone ? sourceZone : TimeZone::utc())->identity();
+     for (auto& [path, entry] : entries_) {
+         const bool hermes = entry.family == kHermesFamily || entry.family == kHermesLogFamily;
+-        if (hermes) canonical_.erase(path);
++        if (hermes) {
++            canonical_.erase(path);
++            canonicalFiles_.erase(path);
++        }
+         if (entry.version != kVersion || !entry.canonical || (!hermes && canonical_.contains(path))) continue;
+         if (auto data = canonical::deserialize(*entry.canonical)) {
+             if (!hermes || data->hermesSourceZone == sourceIdentity) setCanonical(entry, std::move(*data));
+@@ -929,10 +935,72 @@ bool Analyzer::recordPeaks(const std::map<std::string, double>& peaks) {
+     return true;
+ }
+ 
++std::map<std::string, double> Analyzer::measuredPeaks(std::shared_ptr<const TimeZone> zone) const {
++    const DayLabeler labeler(std::move(zone));
++    struct Stream {
++        std::int64_t start = 0, end = 0, output = 0, bucket = 0, key = 0;
++        double value = 0;
++        bool next() {
++            if (bucket >= end) return false;
++            key = bucket;
++            const auto high = std::min(bucket + 1000, end);
++            const auto low = std::max(bucket, start);
++            value = static_cast<double>(output) * static_cast<double>(high - low) / static_cast<double>(end - start);
++            bucket += 1000;
++            return true;
++        }
++    };
++    struct Later {
++        bool operator()(const Stream& a, const Stream& b) const { return a.key > b.key; }
++    };
++    std::priority_queue<Stream, std::vector<Stream>, Later> pending;
++    for (const auto& [path, file] : canonicalFiles_) {
++        if (!file) continue;
++        for (const auto& response : file->items) {
++            if (!response.final) continue;
++            const auto engineResponse = engineOf(response);
++            const auto interval = engine::interval(engineResponse);
++            if (!interval || interval->second <= interval->first || engineResponse.output <= 0) continue;
++            Stream stream;
++            stream.start = interval->first;
++            stream.end = interval->second;
++            stream.output = engineResponse.output;
++            stream.bucket = (stream.start >= 0 ? stream.start / 1000 : (stream.start - 999) / 1000) * 1000;
++            if (stream.next()) pending.push(stream);
++        }
++    }
++    std::map<std::int64_t, double> window;
++    std::map<std::string, double> peaks;
++    while (!pending.empty()) {
++        const auto key = pending.top().key;
++        double value = 0;
++        while (!pending.empty() && pending.top().key == key) {
++            auto stream = pending.top();
++            pending.pop();
++            value += stream.value;
++            if (stream.next()) pending.push(stream);
++        }
++        window[key] = value;
++        if (const auto day = labeler.label(key)) {
++            double sum = 0;
++            for (int i = 0; i < 3; ++i) {
++                const auto at = key - i * 1000;
++                const auto it = window.find(at);
++                if (it != window.end() && labeler.label(at) == day) sum += it->second;
++            }
++            auto& peak = peaks[*day];
++            if (sum / 3.0 > peak) peak = sum / 3.0;
++        }
++        while (!window.empty() && window.begin()->first < key - 2000) window.erase(window.begin());
++    }
++    return peaks;
++}
++
+ void Analyzer::clear() {
+     store_.clear();
+     entries_.clear();
+     canonical_.clear();
++    canonicalFiles_.clear();
+     sharedMode_ = false;
+     sharedZone_.reset();
+     sharedZoneId_.clear();
+diff --git a/linux/tests/sampling_test.cpp b/linux/tests/sampling_test.cpp
+index 1df660ee..3d76b0a5 100644
+--- a/linux/tests/sampling_test.cpp
++++ b/linux/tests/sampling_test.cpp
+@@ -145,6 +145,61 @@ TEST(CollectorSampler, NamedViewPeakIsProjectedAndPersisted) {
+     EXPECT_DOUBLE_EQ(peaks.at("2026-10-19"), expected);
+ }
+ 
++TEST(CollectorSampler, HistoryBackfillsMeasuredPeakOnFirstRun) {
++    char home[] = "/tmp/agentspeed-sampler-backfill-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    struct TempHome {
++        const char* path;
++        ~TempHome() { std::filesystem::remove_all(path); }
++    } tempHome{home};
++    ScopedEnv homeEnv("HOME", home);
++    ScopedEnv agentEnv("PI_CODING_AGENT_DIR", nullptr);
++    ScopedEnv sessionEnv("PI_CODING_AGENT_SESSION_DIR", nullptr);
++    ScopedEnv configEnv("PI_CONFIG_DIR", ".omp");
++    ScopedEnv codexEnv("CODEX_HOME", nullptr);
++    ScopedEnv claudeEnv("CLAUDE_CONFIG_DIR", nullptr);
++    ScopedEnv deepseekEnv("DSH_HOME", nullptr);
++    ScopedEnv xdgEnv("XDG_DATA_HOME", nullptr);
++    ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
++
++    const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-project";
++    std::filesystem::create_directories(dir);
++    const auto file = dir / "2026-10-19T23-30-00-000Z_01a158ec-db00-75e2-83a6-00013c6ef362.jsonl";
++    std::ofstream(file)
++        << R"({"type":"session","version":3,"id":"session-id","timestamp":"2026-10-19T23:30:00.000Z","cwd":"/project"})" << '\n'
++        << R"({"type":"message","id":"response-id","parentId":null,"timestamp":"2026-10-19T23:30:00.000Z","message":{"role":"assistant","content":[],"api":"openai-responses","provider":"openai","model":"gpt-5.5","usage":{"input":300,"output":410,"cacheRead":40,"cacheWrite":20,"reasoningTokens":70,"totalTokens":770},"stopReason":"stop","timestamp":1792452600000,"duration":3000}})" << '\n';
++
++    const std::string digest(64, 'a');
++    const auto losAngeles = agentspeed::TimeZone::load("America/Los_Angeles");
++    ASSERT_TRUE(losAngeles);
++    const collector::View west{std::string("America/Los_Angeles"), losAngeles};
++    constexpr std::int64_t now = 1792476000000LL; // 2026-10-20 06:00 UTC
++    {
++        collector::Sampler sampler(home, digest);
++        sampler.poll(now);
++        std::string history;
++        agentspeed::json::Document doc;
++        for (int i = 0; i < 500; ++i) {
++            std::this_thread::sleep_for(std::chrono::milliseconds(20));
++            history = sampler.history(west);
++            if (history.empty() || !doc.parse(history)) continue;
++            if (doc.root()["days"].at(0)["peak"].number()) break;
++        }
++        ASSERT_FALSE(history.empty());
++        ASSERT_TRUE(doc.parse(history));
++        EXPECT_EQ(doc.root()["days"].at(0)["day"].string(), "2026-10-19");
++        const auto peak = doc.root()["days"].at(0)["peak"].number();
++        ASSERT_TRUE(peak.has_value());
++        EXPECT_NEAR(*peak, 410.0 / 3.0, 1e-9);
++    }
++    const auto database = std::filesystem::path(home) / ".cache/agentspeed-collector" / digest / "history.sqlite3";
++    auto store = agentspeed::history::Store::open(database.string());
++    ASSERT_TRUE(store);
++    const auto peaks = store->peakDays("America/Los_Angeles");
++    ASSERT_EQ(peaks.size(), 1u);
++    EXPECT_NEAR(peaks.at("2026-10-19"), 410.0 / 3.0, 1e-9);
++}
++
+ TEST(CollectorSampler, SamplingNeverDrainsCompletions) {
+     char home[] = "/tmp/agentspeed-sampler-XXXXXX";
+     ASSERT_NE(mkdtemp(home), nullptr);
+diff --git a/linux/tests/shared_history_test.cpp b/linux/tests/shared_history_test.cpp
+index f7b7ad43..3a577c55 100644
+--- a/linux/tests/shared_history_test.cpp
++++ b/linux/tests/shared_history_test.cpp
+@@ -460,4 +460,35 @@ TEST(SharedHistory, NamedViewProjectionUsesItsOwnPeaks) {
+     EXPECT_DOUBLE_EQ(*laView.days[0].peak, 77.0);
+ }
+ 
++TEST(SharedHistory, MeasuredPeaksBackfillCanonicalHistory) {
++    TempDirectory temp;
++    const auto root = temp.path / "sessions";
++    fs::create_directories(root);
++    const auto file = root / "rollout-test.jsonl";
++    auto data = fixtures::readText(fixtures::fixtureDir() /
++        "codex/sessions/2026/10/20/rollout-2026-10-20T10-00-00-modern.jsonl");
++    ASSERT_FALSE(data.empty());
++    replaceAll(data, "2026-10-20T10:", "2026-10-20T00:");
++    writeFile(file, data);
++
++    SourceLocations locations;
++    locations.codexRoot = root.string();
++    const std::set<SourceKind> enabled{SourceKind::Codex};
++    const auto utc = TimeZone::utc();
++    const auto la = TimeZone::load("America/Los_Angeles");
++    ASSERT_TRUE(la);
++    auto store = Store::open((temp.path / "backfill.sqlite").string());
++    ASSERT_TRUE(store);
++    Analyzer analyzer(*store, std::make_shared<pricing::PriceBook>());
++    const auto report = analyzer.runShared(locations, enabled, utc, "UTC");
++    ASSERT_EQ(report.filesAnalyzed, 1);
++    const auto utcPeaks = analyzer.measuredPeaks(utc);
++    ASSERT_EQ(utcPeaks.size(), 1u);
++    EXPECT_GT(utcPeaks.at("2026-10-20"), 0);
++    const auto laPeaks = analyzer.measuredPeaks(la);
++    ASSERT_EQ(laPeaks.size(), 1u);
++    EXPECT_GT(laPeaks.at("2026-10-19"), 0);
++    EXPECT_DOUBLE_EQ(utcPeaks.at("2026-10-20"), laPeaks.at("2026-10-19"));
++}
++
+ }  // namespace
+diff --git a/spec/METRICS.md b/spec/METRICS.md
+index 2274432d..ebd0eafe 100644
+--- a/spec/METRICS.md
++++ b/spec/METRICS.md
+@@ -2493,7 +2493,9 @@ with at least one response), and per model `requests`, `output`, `measuredOutput
+ `measuredOutput / (measuredMs / 1000)`. `peak` is stored only for days observed live: it is the day's overall
+ `peakToday` (all sources together), repeated on every source row of that day; a UI shows it only for all sources and
+ combines rows with max, never sum. A shared collector stores the observed peak per viewer time zone and day and
+-projects only the requesting zone's value; unobserved days remain unknown and are not reconstructed from logs.
++projects only the requesting zone's value. On first use of a zone it backfills the measured-bucket peak for days in
++its canonical history; the live component is unavailable for days it did not observe. Days with no canonical
++responses remain unknown.
+ 
+ A response whose `endMs` is before `0001-01-03T00:00:00Z` or after `9999-12-29T23:59:59.999Z` (only broken timestamps
+ get there, 3.1, 3.6) has no date, since in some time zone it would fall outside the years 0001–9999: it is left out of
+diff --git a/spec/NETWORK.md b/spec/NETWORK.md
+index e7465f31..f883f4ef 100644
+--- a/spec/NETWORK.md
++++ b/spec/NETWORK.md
+@@ -246,8 +246,9 @@ After the client requests its time zone, `today_day`, `today_start_ms` and snaps
+ `today_day` is in `YYYY-MM-DD` form or null if conversion fails. Untagged or null-zone snapshots retain collector-local
+ compatibility behavior. Snapshot and history frames identify their aggregation time zone; history from an older
+ collector without a matching time-zone tag must not be presented as viewer-local. A shared collector records
+-history `peak` only for days it observed live, per viewer time zone; unobserved days stay null and are never
+-reconstructed from logs. `peak_today` is null when no peak can be measured or live data is incomplete. If global live
++history `peak` per viewer time zone. On first use of a zone it backfills the measured-bucket peak for days in its
++canonical history; the live component remains unavailable for days it did not observe, and days with no canonical
++responses stay null. `peak_today` is null when no peak can be measured or live data is incomplete. If global live
+ data is incomplete, each source's live rates and estimated share are also null.
+ 
+ On Windows, a host becomes online only after a valid snapshot for a recognized protocol version and source set. Invalid
