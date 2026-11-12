@@ -1,5 +1,29 @@
 # 远程 Agent 监控与 downstream patch 交接
 
+## ActivityKit 空闲不推送（未发布）
+
+问题：collector 对已确认的 activity lease 每 10 秒发布一次（采样 1 Hz、`minPublishIntervalMs: 10000`）。
+机器长时间空闲时每次样本都是 `generating=0`、`tools=0`、`speed=0` 且 `todayOutput` 不变，relay 仍然逐次
+投递 APNs；空闲 20 小时约 7,200 次/lease，这是纯浪费。
+
+修复折入原功能补丁 0001（publisher、契约）与 0014（测试），队列仍 16 项：
+
+- `Publisher` 为每个 lease 记录 quiet 运行（`liveRateComplete && generating==0 && tools==0 && liveOutput<=0`）
+  以及该运行的 `todayOutput`；只有**成功的 relay 响应**才把该状态标记为已投递。
+- 已投递的 quiet 状态不再发起任何请求；`generating/tools` 恢复、`todayOutput` 变化、新订阅或 daemon
+  重启后的首个样本结束 quiet 并立即发布，idle/active 边沿逻辑不变。
+- 未知速率（`liveRateComplete=false`）不算 quiet；确认流程、10 秒最小间隔、失败退避、`Retry-After`、
+  lease 过期全部不变；wire 字段不变，新增能力 `live_activity_quiet_v1`。
+
+读数：空闲机器从每 10 秒 1 次请求+APNs 降为每次「忙→闲」1 次，长期空闲为 0。代价是 Live Activity
+停在最后一帧空闲状态、没有心跳更新；iOS 的 staleDate 由客户端设定，本轮未在真机验证。
+
+验证：`CollectorPublisher.*` 23 项通过（含新增 `QuietMachinePublishesOnceThenStaysSilent`、
+`ChangedDailyOutputEndsTheQuietRunOnce`、`QuietStateIsRecordedOnlyAfterARelayAcceptsIt`），
+`DaemonProcessTest.*`、`CollectorSampler.*`、`WidgetPublisher.*`、`WidgetStatistics.*` 全通过；队列从
+固定 pin 重放到 `/tmp/verify-quiet` 后 tree 与开发树一致（`42fc978779d0f05a546f4a21d51494d44a468cfc`）。
+未运行 Release 门禁，未 push、未打 tag、未发布。
+
 ## 订阅历史帧按投影版本比较（未发布）
 
 只读审查确认的问题：`linux/collector/daemon.cpp` 每秒 tick 对每个订阅调用 `sampler.history()`

@@ -1,4 +1,4 @@
-From afea6d3e9cea5114071e19e7b2ea605e6fe77b41 Mon Sep 17 00:00:00 2001
+From 7be7fe53e0112c0bdbc97c039b5d6349bbd65a9c Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 14/16] Connect remote performance and history metrics
@@ -6,7 +6,7 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
 ---
  README.md                                     |  40 +-
  linux/collector/CMakeLists.txt                |  30 +-
- linux/collector/main.cpp                      | 234 +--------
+ linux/collector/main.cpp                      | 234 +-------
  linux/collector/protocol.cpp                  |  66 ++-
  linux/collector/protocol.hpp                  |   4 +-
  linux/core/CMakeLists.txt                     |   1 +
@@ -16,18 +16,18 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  .../core/include/agentspeed/history_store.hpp |   2 +
  linux/core/include/agentspeed/snapshot.hpp    |   3 +
  linux/core/src/engine.cpp                     |   7 +-
- linux/core/src/history_analyzer.cpp           | 201 +++++++-
- linux/core/src/history_canonical.cpp          | 172 +++++++
+ linux/core/src/history_analyzer.cpp           | 201 ++++++-
+ linux/core/src/history_canonical.cpp          | 172 ++++++
  linux/core/src/history_store.cpp              |  18 +-
  linux/core/src/monitor_snapshot.cpp           |   9 +
  linux/tests/CMakeLists.txt                    |  10 +-
- linux/tests/collector_daemon_test.cpp         | 363 ++++++++++++++
- linux/tests/collector_integration_test.cpp    | 123 +++++
- linux/tests/collector_publisher_test.cpp      | 449 ++++++++++++++++++
- linux/tests/collector_test.cpp                |  60 +++
+ linux/tests/collector_daemon_test.cpp         | 363 ++++++++++++
+ linux/tests/collector_integration_test.cpp    | 123 ++++
+ linux/tests/collector_publisher_test.cpp      | 548 ++++++++++++++++++
+ linux/tests/collector_test.cpp                |  60 ++
  linux/tests/engine_fixture_test.cpp           |  21 +
- linux/tests/sampling_test.cpp                 | 196 ++++++++
- linux/tests/shared_history_test.cpp           | 406 ++++++++++++++++
+ linux/tests/sampling_test.cpp                 | 196 +++++++
+ linux/tests/shared_history_test.cpp           | 406 +++++++++++++
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 +++
  .../AgentSpeed/App/RemoteSnapshot.swift       |  77 ++-
  .../AgentSpeed/History/HistoryViewModel.swift |  20 +-
@@ -47,7 +47,7 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 +++++
  .../EngineBehaviorTests.swift                 |   4 +
  spec/METRICS.md                               |  23 +-
- spec/NETWORK.md                               |  56 ++-
+ spec/NETWORK.md                               |  56 +-
  spec/strings.json                             |   6 +
  .../src/AgentSpeed.Core/Engine/EngineFrame.cs |   1 +
  .../src/AgentSpeed.Core/Engine/SpeedEngine.cs |   3 +
@@ -58,7 +58,7 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  .../src/AgentSpeed.Core/Perf/PerfHistory.cs   |  19 +-
  .../src/AgentSpeed.Core/Perf/PerfRecord.cs    |   2 +
  .../src/AgentSpeed.Core/RemoteAggregation.cs  |  13 +-
- .../src/AgentSpeed.Core/RemotePerformance.cs  |  63 +++
+ .../src/AgentSpeed.Core/RemotePerformance.cs  |  63 ++
  windows/src/AgentSpeed.Core/SpeedHub.cs       |  35 +-
  .../History/Perf/PerfHistoryChart.cs          |   4 +-
  .../History/Perf/PerfHistoryRow.cs            |   5 +-
@@ -71,9 +71,9 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  .../RemoteConsumerTests.cs                    |  79 ++-
  .../RemotePerformanceTests.cs                 |  78 +++
  .../RemoteProtocolLifecycleTests.cs           |   2 +-
- .../Perf/PerfHistoryTests.cs                  |  55 +++
- .../PerfPerformanceSectionTests.cs            |  28 ++
- 69 files changed, 3155 insertions(+), 307 deletions(-)
+ .../Perf/PerfHistoryTests.cs                  |  55 ++
+ .../PerfPerformanceSectionTests.cs            |  28 +
+ 69 files changed, 3254 insertions(+), 307 deletions(-)
  create mode 100644 linux/core/include/agentspeed/history_canonical.hpp
  create mode 100644 linux/core/src/history_canonical.cpp
  create mode 100644 linux/tests/collector_daemon_test.cpp
@@ -1907,10 +1907,10 @@ index 6eca14f2..f70a18a2 100644
 +}
 diff --git a/linux/tests/collector_publisher_test.cpp b/linux/tests/collector_publisher_test.cpp
 new file mode 100644
-index 00000000..43ce16db
+index 00000000..b9f9350b
 --- /dev/null
 +++ b/linux/tests/collector_publisher_test.cpp
-@@ -0,0 +1,449 @@
+@@ -0,0 +1,548 @@
 +#include <gtest/gtest.h>
 +#include "publisher.hpp"
 +#include "agentspeed/json.hpp"
@@ -1936,6 +1936,7 @@ index 00000000..43ce16db
 +    auto response = p.control("{\"version\":1,\"type\":\"capabilities\",\"requestId\":\"caps\"}", 1, 1000000);
 +    ASSERT_EQ(response.size(), 1u);
 +    EXPECT_NE(response[0].find("\"live_activity_edges_v1\""), std::string::npos);
++    EXPECT_NE(response[0].find("\"live_activity_quiet_v1\""), std::string::npos);
 +    EXPECT_NE(response[0].find("\"minPublishIntervalMs\":10000"), std::string::npos);
 +}
 +TEST(CollectorPublisher, ConfirmsOnlyRealSampleAndProjectsAllowedFields) {
@@ -2116,6 +2117,8 @@ index 00000000..43ce16db
 +    auto views = publisher.views();
 +    ASSERT_EQ(views.size(), 1u);
 +    collector::Sample sample;
++    sample.snapshot.liveRateComplete = true;
++    sample.snapshot.liveOutput = 5;  // Work present: this test is about backoff, not quiet suppression.
 +    for (int i = 0; i < 11; ++i) {
 +        if (i) now += 61000;
 +        sample.snapshot.nowMs = now;
@@ -2249,6 +2252,7 @@ index 00000000..43ce16db
 +    auto view = publisher.views().at(0);
 +    auto sample = [&](int generating) {
 +        collector::Sample s; s.snapshot.nowMs = now; s.snapshot.generating = generating;
++        s.snapshot.liveRateComplete = true; s.snapshot.liveOutput = 5;  // Not a quiet machine.
 +        publisher.sample(view, s);
 +    };
 +    sample(0);
@@ -2280,6 +2284,7 @@ index 00000000..43ce16db
 +    auto view = publisher.views().at(0);
 +    auto sample = [&](int generating) {
 +        collector::Sample s; s.snapshot.nowMs = now; s.snapshot.generating = generating;
++        s.snapshot.liveRateComplete = true; s.snapshot.liveOutput = 5;  // Not a quiet machine.
 +        publisher.sample(view, s);
 +    };
 +    auto unchanged = [&](int expected) {
@@ -2312,6 +2317,7 @@ index 00000000..43ce16db
 +    auto view = publisher.views().at(0);
 +    auto sample = [&](int generating) {
 +        collector::Sample s; s.snapshot.nowMs = now; s.snapshot.generating = generating;
++        s.snapshot.liveRateComplete = true; s.snapshot.liveOutput = 5;  // Not a quiet machine.
 +        publisher.sample(view, s);
 +    };
 +    sample(0); ASSERT_TRUE(eventually([&] { return calls == 1; }));
@@ -2347,6 +2353,7 @@ index 00000000..43ce16db
 +    auto view = publisher.views().at(0);
 +    auto sample = [&](int generating) {
 +        collector::Sample s; s.snapshot.nowMs = now; s.snapshot.generating = generating;
++        s.snapshot.liveRateComplete = true; s.snapshot.liveOutput = 5;  // Not a quiet machine.
 +        publisher.sample(view, s);
 +    };
 +    sample(0);
@@ -2359,6 +2366,98 @@ index 00000000..43ce16db
 +    std::lock_guard<std::mutex> lock(mutex);
 +    ASSERT_EQ(timestamps.size(), 2u);
 +    EXPECT_EQ(timestamps[1], now.load());
++}
++
++// An idle machine must not keep spending relay requests and APNs. One frame carries the quiet
++// state; after the relay accepts it the collector stops until work appears.
++TEST(CollectorPublisher, QuietMachinePublishesOnceThenStaysSilent) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto&) { ++calls; return collector::Publisher::Result{200}; };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto view = publisher.views().at(0);
++    auto sample = [&](double speed, int generating, std::int64_t today) {
++        collector::Sample s;
++        s.snapshot.nowMs = now;
++        s.snapshot.liveRateComplete = true;
++        s.snapshot.liveOutput = speed;
++        s.snapshot.generating = generating;
++        s.snapshot.tools = 0;
++        s.snapshot.todayOutput = today;
++        publisher.sample(view, s);
++    };
++    sample(0, 0, 100);
++    ASSERT_TRUE(eventually([&] { return calls == 1; }));
++    // Ten minutes of idle samples cost nothing more.
++    for (int i = 0; i < 60; ++i) { now += 10000; sample(0, 0, 100); }
++    std::this_thread::sleep_for(std::chrono::milliseconds(150));
++    EXPECT_EQ(calls.load(), 1);
++    // Work starts again: the transition is sent immediately.
++    now += 1000;
++    sample(120, 1, 100);
++    ASSERT_TRUE(eventually([&] { return calls == 2; }));
++}
++
++TEST(CollectorPublisher, ChangedDailyOutputEndsTheQuietRunOnce) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto&) { ++calls; return collector::Publisher::Result{200}; };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto view = publisher.views().at(0);
++    auto quiet = [&](std::int64_t today) {
++        collector::Sample s;
++        s.snapshot.nowMs = now;
++        s.snapshot.liveRateComplete = true;
++        s.snapshot.todayOutput = today;
++        publisher.sample(view, s);
++    };
++    quiet(100);
++    ASSERT_TRUE(eventually([&] { return calls == 1; }));
++    now += 10000; quiet(100);
++    std::this_thread::sleep_for(std::chrono::milliseconds(150));
++    EXPECT_EQ(calls.load(), 1);
++    now += 10000; quiet(200);
++    ASSERT_TRUE(eventually([&] { return calls == 2; }));
++    now += 10000; quiet(200);
++    std::this_thread::sleep_for(std::chrono::milliseconds(150));
++    EXPECT_EQ(calls.load(), 2);
++    now += 10000; quiet(250);
++    ASSERT_TRUE(eventually([&] { return calls == 3; }));
++}
++
++TEST(CollectorPublisher, QuietStateIsRecordedOnlyAfterARelayAcceptsIt) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<int> calls{0};
++    collector::Publisher::Options options;
++    options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto&) {
++        return collector::Publisher::Result{++calls <= 2 ? 502L : 200L};
++    };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(subscribe(), 1, now).empty());
++    auto view = publisher.views().at(0);
++    auto quiet = [&] {
++        collector::Sample s;
++        s.snapshot.nowMs = now;
++        s.snapshot.liveRateComplete = true;
++        s.snapshot.todayOutput = 100;
++        publisher.sample(view, s);
++    };
++    quiet();
++    ASSERT_TRUE(eventually([&] { return calls == 1; }));
++    now += 11000; quiet();
++    ASSERT_TRUE(eventually([&] { return calls == 2; }));
++    now += 21000; quiet();
++    ASSERT_TRUE(eventually([&] { return calls == 3; }));
++    now += 10000; quiet();
++    std::this_thread::sleep_for(std::chrono::milliseconds(150));
++    EXPECT_EQ(calls.load(), 3);
 +}
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
 index b8f1673d..db077a21 100644

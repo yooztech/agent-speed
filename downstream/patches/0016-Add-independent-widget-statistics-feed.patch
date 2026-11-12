@@ -1,4 +1,4 @@
-From 9cdc8752fb5cceb50fd3be84febd1f019feaf456 Mon Sep 17 00:00:00 2001
+From fe3576be0a149e1abf354c6647381d12415ceb0c Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Mon, 9 Nov 2026 09:50:00 +0800
 Subject: [PATCH 16/16] Add independent widget statistics feed
@@ -94,7 +94,7 @@ index 51ccd86c..b7eae6b1 100644
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
  stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
-index 62b11cb3..24a2ecf3 100644
+index 9044b287..c07563ff 100644
 --- a/docs/shared-collector.md
 +++ b/docs/shared-collector.md
 @@ -84,3 +84,88 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
@@ -292,7 +292,7 @@ index 8b946cce..69e17fe6 100644
                << ",\"measured_output\":" << value.measuredOutput << ",\"measured_ms\":" << value.measuredMs
                << ",\"cost_micro_usd\":"; optionalNumber(o, value.costMicroUsd);
 diff --git a/linux/collector/publisher.cpp b/linux/collector/publisher.cpp
-index 5e6633cd..12f4d8fa 100644
+index 0bc34801..77059a74 100644
 --- a/linux/collector/publisher.cpp
 +++ b/linux/collector/publisher.cpp
 @@ -1,3 +1,4 @@
@@ -310,12 +310,12 @@ index 5e6633cd..12f4d8fa 100644
      CURL* c=curl_easy_init(); if (!c) return r;
   #ifdef AGENTSPEED_COLLECTOR_TEST_RELAY
      curl_easy_setopt(c,CURLOPT_URL,"https://localhost:19443/v1/publish");
-@@ -253,9 +253,10 @@ std::vector<std::string> Publisher::control(const std::string& line, std::uint64
+@@ -266,9 +266,10 @@ std::vector<std::string> Publisher::control(const std::string& line, std::uint64
      if (type == "capabilities") {
          if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 || !text(request, 128)) return {};
          return {J::object({{"version", J::of(1)}, {"type", J::of("capabilities")},
--            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("shared_collector_v1")})},
-+            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("shared_collector_v1"), J::of("widget_statistics_v2")})},
+-            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("shared_collector_v1")})},
++            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("shared_collector_v1"), J::of("widget_statistics_v2")})},
              {"controlVersion", J::of(2)}, {"subscribeTimeoutMs", J::of(75000)},
 -            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)}}).compact() + "\n"};
 +            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)},
@@ -1169,12 +1169,12 @@ index c65c934e..5e18f84d 100644
      shared_history_test.cpp
      current_values_test.cpp
 diff --git a/linux/tests/collector_publisher_test.cpp b/linux/tests/collector_publisher_test.cpp
-index 43ce16db..8ecda8c8 100644
+index b9f9350b..35a375a3 100644
 --- a/linux/tests/collector_publisher_test.cpp
 +++ b/linux/tests/collector_publisher_test.cpp
-@@ -24,6 +24,13 @@ TEST(CollectorPublisher, AdvertisesActivityEdgeCapability) {
-     ASSERT_EQ(response.size(), 1u);
+@@ -25,6 +25,13 @@ TEST(CollectorPublisher, AdvertisesActivityEdgeCapability) {
      EXPECT_NE(response[0].find("\"live_activity_edges_v1\""), std::string::npos);
+     EXPECT_NE(response[0].find("\"live_activity_quiet_v1\""), std::string::npos);
      EXPECT_NE(response[0].find("\"minPublishIntervalMs\":10000"), std::string::npos);
 +    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(response[0]));
 +    bool widgetV2 = false, widgetV1 = false;
