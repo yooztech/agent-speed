@@ -1,4 +1,4 @@
-From fe3576be0a149e1abf354c6647381d12415ceb0c Mon Sep 17 00:00:00 2001
+From 19ce76f2eda8f3e7967b3d59565759e2149991b3 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Mon, 9 Nov 2026 09:50:00 +0800
 Subject: [PATCH 16/16] Add independent widget statistics feed
@@ -33,7 +33,7 @@ deployed, so null past days are not an acceptable long-term output of the collec
  linux/collector/protocol.cpp              |   1 +
  linux/collector/publisher.cpp             |   9 +-
  linux/collector/relay_http.hpp            |  16 ++
- linux/collector/sampling.cpp              |  56 +++-
+ linux/collector/sampling.cpp              |  60 ++++-
  linux/collector/sampling.hpp              |  19 +-
  linux/collector/widget_publisher.cpp      | 270 +++++++++++++++++++
  linux/collector/widget_publisher.hpp      |  35 +++
@@ -46,12 +46,12 @@ deployed, so null past days are not an acceptable long-term output of the collec
  linux/tests/collector_publisher_test.cpp  |   7 +
  linux/tests/collector_test.cpp            |   5 +-
  linux/tests/history_test.cpp              |  64 +++++
- linux/tests/sampling_test.cpp             | 133 +++++++++-
+ linux/tests/sampling_test.cpp             | 130 +++++++++-
  linux/tests/widget_publisher_test.cpp     | 281 ++++++++++++++++++++
  linux/tests/widget_statistics_smoke.py    | 300 ++++++++++++++++++++++
  linux/tests/widget_statistics_test.cpp    | 282 ++++++++++++++++++++
  spec/NETWORK.md                           |  35 +++
- 25 files changed, 1858 insertions(+), 28 deletions(-)
+ 25 files changed, 1857 insertions(+), 30 deletions(-)
  create mode 100644 linux/collector/relay_http.hpp
  create mode 100644 linux/collector/widget_publisher.cpp
  create mode 100644 linux/collector/widget_publisher.hpp
@@ -98,10 +98,10 @@ index 51ccd86c..11f3d372 100644
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
  stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
-index 9044b287..d767384b 100644
+index 68370e9b..2f949024 100644
 --- a/docs/shared-collector.md
 +++ b/docs/shared-collector.md
-@@ -84,3 +84,90 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
+@@ -86,3 +86,90 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
  CMake's normal test executable uses a separately compiled test-only HOME namespace and one-second idle period so process tests cannot attach to the maintainer's canonical daemon. Neither override exists in the distribution executable. `AGENTSPEED_BUILD_SSH_SMOKE=ON` additionally builds the explicitly non-distributable `agentspeed-collector-ssh-smoke`: it uses the same libcurl path but a compile-time fixed localhost TLS endpoint and test CA, with canonical passwd-home and production 30-second idle behavior. Never package that executable.
  
  `linux/tests/shared_collector_ssh_smoke.py` runs a local sshd, a disposable Unix account and an isolated TLS relay, then cleans them up. It requires local root only for that isolated account/sshd; it never accesses a production host or modifies a system SSH service. Its JSON results identify actual scenarios and limits. It does not prove Cloudflare deployment, APNs acceptance or iPhone delivery. Real signed-iPhone testing, deployed Worker/App Attest configuration, Apple credentials, ARM64 runtime, and native Mac/Windows UI remain separate acceptance prerequisites.
@@ -352,10 +352,10 @@ index 00000000..16d21855
 +}
 +}
 diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
-index 6cece63a..f31997f7 100644
+index 970bfaf9..d147553e 100644
 --- a/linux/collector/sampling.cpp
 +++ b/linux/collector/sampling.cpp
-@@ -59,6 +59,11 @@ std::string cacheIdentity(const agentspeed::SourceLocations& locations, const st
+@@ -60,6 +60,11 @@ std::string cacheIdentity(const agentspeed::SourceLocations& locations, const st
      return out.str();
  }
  
@@ -367,7 +367,7 @@ index 6cece63a..f31997f7 100644
  std::string localIdentity() {
      const char* tz = std::getenv("TZ");
      std::string id = tz ? tz : "";
-@@ -77,12 +82,14 @@ struct Sampler::Impl {
+@@ -78,6 +83,7 @@ struct Sampler::Impl {
          View view;
          std::string history;
          std::vector<agentspeed::perf::DayRecord> perf;
@@ -375,6 +375,7 @@ index 6cece63a..f31997f7 100644
          // Advances whenever this view's projection is replaced, so a subscriber decides
          // "changed" by comparing integers instead of copying and comparing the projection.
          std::uint64_t historyGeneration = 0;
+@@ -87,6 +93,7 @@ struct Sampler::Impl {
      };
  
      std::string home, digest;
@@ -382,7 +383,7 @@ index 6cece63a..f31997f7 100644
      agentspeed::MonitorConfig config = agentspeed::MonitorConfig::fromEnvironment();
      agentspeed::Monitor monitor{config};
      std::shared_ptr<const agentspeed::TimeZone> local = agentspeed::localZone(agentspeed::processEnvironment());
-@@ -94,10 +101,13 @@ struct Sampler::Impl {
+@@ -98,11 +105,14 @@ struct Sampler::Impl {
      std::optional<std::string> baselineDay;
      bool stopping = false;
      bool requested = true;
@@ -392,30 +393,41 @@ index 6cece63a..f31997f7 100644
      std::thread worker;
  
 -    Impl(const std::string& accountHome, const std::string& binaryDigest) : home(accountHome), digest(binaryDigest) {
+-        views.emplace(std::nullopt, Cached{View{std::nullopt, local}, {}, {}, 0, {}});
 +    Impl(const std::string& accountHome, const std::string& binaryDigest, Clock given)
 +        : home(accountHome), digest(binaryDigest), clock(given ? std::move(given) : Clock(&wallMs)) {
-         views.emplace(std::nullopt, Cached{View{std::nullopt, local}, {}, {}});
++        views.emplace(std::nullopt, Cached{View{std::nullopt, local}, {}, {}, {}, 0, {}});
          worker = std::thread([this] { historyLoop(); });
      }
-@@ -165,6 +175,9 @@ struct Sampler::Impl {
-                         if (stopping) return;
-                         requested = false;
-                         for (const auto& [key, value] : views) todo.emplace(key, value.view);
+     ~Impl() {
+@@ -117,7 +127,7 @@ struct Sampler::Impl {
+     }
+     void addView(const View& view, bool hasPeak, std::int64_t dayStartMs, double peak) {
+         std::lock_guard lock(mutex);
+-        auto [it, inserted] = views.try_emplace(view.name, Cached{View{view.name, view.name ? view.zone : local}, {}, {}, 0, {}});
++        auto [it, inserted] = views.try_emplace(view.name, Cached{View{view.name, view.name ? view.zone : local}, {}, {}, {}, 0, {}});
+         // Record the sample's peak before a new view becomes visible to the history worker,
+         // so its first projection already contains the peak the snapshot reported.
+         if (hasPeak && std::isfinite(peak) && peak > 0) {
+@@ -183,6 +193,9 @@ struct Sampler::Impl {
+                             todo.emplace(key, value.view);
+                             todoPeaks.emplace(key, value.peaks);
+                         }
 +                        // A consumer refused a projection it could not verify; re-run the scan now
 +                        // instead of waiting for the periodic pass so its next projection is current.
 +                        if (rescan) { rescan = false; nextScan = std::chrono::steady_clock::now(); }
                      }
                      if (std::chrono::steady_clock::now() >= nextScan) {
                          auto identity = localIdentity();
-@@ -178,6 +191,7 @@ struct Sampler::Impl {
-                                 value.history.clear();
+@@ -198,6 +211,7 @@ struct Sampler::Impl {
                                  ++value.historyGeneration;
                                  value.perf.clear();
+                                 value.peaks.clear();
 +                                value.statistics.reset();
                                  ++baselineGeneration;
                                  todo.at(std::nullopt).zone = zone;
-                             }
-@@ -199,6 +213,11 @@ struct Sampler::Impl {
+                                 todoPeaks.at(std::nullopt).clear();
+@@ -244,6 +258,11 @@ struct Sampler::Impl {
                          if (!projection.complete && !viewReport.filesUnreadable) viewReport.filesUnreadable = 1;
                          auto line = Protocol::history(projection.days, viewReport, view.name, projection.perfRecords);
                          auto perf = projection.perfRecords;
@@ -427,7 +439,7 @@ index 6cece63a..f31997f7 100644
                          saved.insert_or_assign(key, Saved{view, std::move(projection), viewReport});
                          std::lock_guard lock(mutex);
                          if (stopping) return;
-@@ -208,6 +227,7 @@ struct Sampler::Impl {
+@@ -253,6 +272,7 @@ struct Sampler::Impl {
                          if (value.history != line) { value.history = std::move(line); ++value.historyGeneration; }
                          value.perf = std::move(perf);
                          if (!key) ++baselineGeneration;
@@ -435,7 +447,7 @@ index 6cece63a..f31997f7 100644
                      }
                  }
              } catch (const std::exception&) {
-@@ -218,6 +238,11 @@ struct Sampler::Impl {
+@@ -263,6 +283,11 @@ struct Sampler::Impl {
                                                    value.projection.perfRecords);
                      std::lock_guard lock(mutex);
                      if (stopping) return;
@@ -447,7 +459,7 @@ index 6cece63a..f31997f7 100644
                      auto& cached = views.at(key);
                      if (cached.history != line) { cached.history = std::move(line); ++cached.historyGeneration; }
                  }
-@@ -229,7 +254,8 @@ struct Sampler::Impl {
+@@ -274,7 +299,8 @@ struct Sampler::Impl {
      }
  };
  
@@ -457,7 +469,7 @@ index 6cece63a..f31997f7 100644
  Sampler::~Sampler() = default;
  
  void Sampler::poll(std::int64_t now) {
-@@ -262,6 +288,32 @@ std::uint64_t Sampler::historyGeneration(const View& view) {
+@@ -309,6 +335,32 @@ std::uint64_t Sampler::historyGeneration(const View& view) {
      return impl_->views.at(view.name).historyGeneration;
  }
  
@@ -1139,7 +1151,7 @@ index 9aacf6d4..f8d34b1e 100644
          known.requests += usage.requests;
          known.output += usage.output;
 diff --git a/linux/core/src/history_store.cpp b/linux/core/src/history_store.cpp
-index faec15a8..84463d91 100644
+index 9e0994c2..5edde0a5 100644
 --- a/linux/core/src/history_store.cpp
 +++ b/linux/core/src/history_store.cpp
 @@ -121,6 +121,8 @@ std::string encode(const DayAggregate& d) {
@@ -1293,27 +1305,22 @@ index 178a2af3..461be9b3 100644
 +    EXPECT_FALSE(restored->models.at("null").input);
 +}
 diff --git a/linux/tests/sampling_test.cpp b/linux/tests/sampling_test.cpp
-index c2990e28..5d9675f4 100644
+index 8089b407..1df660ee 100644
 --- a/linux/tests/sampling_test.cpp
 +++ b/linux/tests/sampling_test.cpp
-@@ -1,11 +1,16 @@
+@@ -1,9 +1,11 @@
  #include <gtest/gtest.h>
  
  #include "sampling.hpp"
 +#include "widget_statistics.hpp"
-+#include "agentspeed/json.hpp"
+ #include "agentspeed/history_store.hpp"
+ #include "agentspeed/json.hpp"
  #include "agentspeed/tz.hpp"
 +#include <atomic>
-+#include <chrono>
+ #include <chrono>
  #include <cstdlib>
  #include <ctime>
- #include <filesystem>
- #include <fstream>
-+#include <thread>
- 
- namespace {
- class ScopedEnv {
-@@ -116,6 +121,122 @@ TEST(CollectorSampler, SamplingNeverDrainsCompletions) {
+@@ -179,6 +181,122 @@ TEST(CollectorSampler, SamplingNeverDrainsCompletions) {
      std::filesystem::remove_all(home);
  }
  
@@ -1436,7 +1443,7 @@ index c2990e28..5d9675f4 100644
  // A subscriber decides whether to resend the whole projection by comparing one integer, so the
  // sampler must advance that generation exactly when the projection text changes: re-deriving the
  // same days must not look like a new projection, and each view has its own generation.
-@@ -137,14 +258,6 @@ TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
+@@ -200,14 +318,6 @@ TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
      ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
      ScopedEnv tzEnv("TZ", "UTC");
  
@@ -1451,7 +1458,7 @@ index c2990e28..5d9675f4 100644
      using namespace std::chrono;
      const auto today = floor<days>(system_clock::now());
      const auto noon = today + hours{12};
-@@ -154,9 +267,9 @@ TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
+@@ -217,9 +327,9 @@ TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
      const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-generation-project";
      std::filesystem::create_directories(dir);
      std::ofstream(dir / "session.jsonl")
@@ -2345,10 +2352,10 @@ index 00000000..e7612b9e
 +    EXPECT_EQ(day["unpricedRequests"].raw(), "0");
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 304cd25f..b599a365 100644
+index e02d042a..e7465f31 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
-@@ -337,3 +337,38 @@ or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup poli
+@@ -338,3 +338,38 @@ or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup poli
  service or linger policy is installed. Only existing activities are updated: no alert, sound, banner, ordinary
  completion notification or push-to-start is sent. Local relay verification does not prove Cloudflare/APNs/iPhone delivery.
  

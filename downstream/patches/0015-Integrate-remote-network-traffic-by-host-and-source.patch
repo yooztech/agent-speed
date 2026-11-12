@@ -1,4 +1,4 @@
-From 883b20cdb1119bdfd04429e43a0d84a41e1c4f48 Mon Sep 17 00:00:00 2001
+From 28697d968b5043999ac8055ddb03e652f6a229bd Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 15/16] Integrate remote network traffic by host and source
@@ -164,15 +164,15 @@ index 9ea0c9d4..14e5ef65 100644
                                 const std::optional<std::string>& timezone = std::nullopt,
                                 const std::vector<agentspeed::perf::DayRecord>& perfRecords = {});
 diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
-index 003b0a14..6cece63a 100644
+index fc86f86c..970bfaf9 100644
 --- a/linux/collector/sampling.cpp
 +++ b/linux/collector/sampling.cpp
-@@ -247,7 +247,7 @@ void Sampler::poll(std::int64_t now) {
- Sample Sampler::sample(std::int64_t now, const View& view) {
-     impl_->registerView(view);
-     const auto zone = view.name ? view.zone : impl_->localZone();
--    return {impl_->monitor.snapshot(now, dayStart(now, zone))};
-+    return {impl_->monitor.snapshot(now, dayStart(now, zone)), impl_->monitor.trafficHistory()};
+@@ -294,7 +294,7 @@ Sample Sampler::sample(std::int64_t now, const View& view) {
+     const auto start = dayStart(now, zone);
+     auto snapshot = impl_->monitor.snapshot(now, start);
+     impl_->registerSample(view, start, snapshot.peakToday);
+-    return {std::move(snapshot)};
++    return {std::move(snapshot), impl_->monitor.trafficHistory()};
  }
  
  std::string Sampler::history(const View& view) {
@@ -894,7 +894,7 @@ index 00000000..fdaa60b8
 +    }
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index ba75a901..304cd25f 100644
+index 1ea8f918..e02d042a 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -240,8 +240,8 @@ and outputs, and absolute working paths do not. SSH credentials are not embedded
@@ -908,9 +908,9 @@ index ba75a901..304cd25f 100644
  After the client requests its time zone, `today_day`, `today_start_ms` and snapshot today totals use that zone;
  `today_day` is in `YYYY-MM-DD` form or null if conversion fails. Untagged or null-zone snapshots retain collector-local
  compatibility behavior. Snapshot and history frames identify their aggregation time zone; history from an older
-@@ -249,6 +249,28 @@ collector without a matching time-zone tag must not be presented as viewer-local
- can be measured or live data is incomplete. If global live data is incomplete, each source's live rates and estimated
- share are also null.
+@@ -250,6 +250,28 @@ history `peak` only for days it observed live, per viewer time zone; unobserved
+ reconstructed from logs. `peak_today` is null when no peak can be measured or live data is incomplete. If global live
+ data is incomplete, each source's live rates and estimated share are also null.
  
 +On Windows, a host becomes online only after a valid snapshot for a recognized protocol version and source set. Invalid
 +frames do not refresh its heartbeat or clear its error; reconnecting does not reuse a previous snapshot as live data.
