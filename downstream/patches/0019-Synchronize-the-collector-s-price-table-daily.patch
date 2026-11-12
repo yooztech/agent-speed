@@ -1,0 +1,882 @@
+From cbece64a195477d42d49772cb4e36cea3632fe0a Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Thu, 12 Nov 2026 22:20:04 +0800
+Subject: [PATCH 19/19] Synchronize the collector's price table daily
+
+The headless collector priced every response from the bundled table and never
+downloaded a newer one, so a host without a desktop client could stay on old
+rates indefinitely.
+
+PriceSync fetches the service relay's current table with libcurl using the
+publisher's hardening (HTTPS only, no redirects, no proxy or netrc, verified
+peer and host, short timeouts, no signals, 1 MiB cap), sends the stored ETag
+and validates through the existing native PriceTable load. It rejects a
+wrong schema as "newer schema", invalid tables, a table dated more than two
+days after the local date and any version not strictly greater than the
+current one; 304 and 200-with-same-version count as up to date. The table and
+the {version, updated, url, etag, lastSuccessMs, lastAttemptMs, lastError,
+failures} state are written to a temporary file and renamed under
+~/.cache/agentspeed-collector/<digest>/, with the collector's existing
+ownership and mode checks.
+
+The sampler now owns one PriceBook for the daemon: the stored table is
+restored at startup and a validated newer table is added to the running book,
+so unbound days take the new rates and the shared analyzer reprises from the
+parsed responses on its next scan without changing the persisted bindings.
+The background round runs 60 s after start, daily after the last success,
+retries once after an hour and re-checks hourly. Behavioural tests cover the
+refusals, accepting a table without its own `tests`, atomic state round-trip
+across a restart, ETag use and a newly priced model becoming known.
+---
+ linux/collector/CMakeLists.txt  |   4 +-
+ linux/collector/price_sync.cpp  | 438 ++++++++++++++++++++++++++++++++
+ linux/collector/price_sync.hpp  |  72 ++++++
+ linux/collector/sampling.cpp    |  10 +-
+ linux/tests/CMakeLists.txt      |   1 +
+ linux/tests/price_sync_test.cpp | 221 ++++++++++++++++
+ spec/NETWORK.md                 |   3 +
+ 7 files changed, 746 insertions(+), 3 deletions(-)
+ create mode 100644 linux/collector/price_sync.cpp
+ create mode 100644 linux/collector/price_sync.hpp
+ create mode 100644 linux/tests/price_sync_test.cpp
+
+diff --git a/linux/collector/CMakeLists.txt b/linux/collector/CMakeLists.txt
+index 12d6cb04..f09caaa3 100644
+--- a/linux/collector/CMakeLists.txt
++++ b/linux/collector/CMakeLists.txt
+@@ -5,8 +5,8 @@ add_library(agentspeed_collector_protocol STATIC protocol.cpp history_cache.cpp)
+ target_include_directories(agentspeed_collector_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+ target_link_libraries(agentspeed_collector_protocol PUBLIC agentspeed_core)
+ 
+-add_library(agentspeed_collector_sampling STATIC sampling.cpp widget_statistics.cpp)
+-target_link_libraries(agentspeed_collector_sampling PUBLIC agentspeed_collector_protocol Threads::Threads)
++add_library(agentspeed_collector_sampling STATIC sampling.cpp widget_statistics.cpp price_sync.cpp)
++target_link_libraries(agentspeed_collector_sampling PUBLIC agentspeed_collector_protocol PkgConfig::CURL Threads::Threads)
+ 
+ function(collector_runtime name)
+     add_library(${name} STATIC daemon.cpp publisher.cpp widget_publisher.cpp)
+diff --git a/linux/collector/price_sync.cpp b/linux/collector/price_sync.cpp
+new file mode 100644
+index 00000000..31f7f63a
+--- /dev/null
++++ b/linux/collector/price_sync.cpp
+@@ -0,0 +1,438 @@
++#include "price_sync.hpp"
++#include "relay_http.hpp"
++
++#include "agentspeed/history.hpp"
++#include "agentspeed/locations.hpp"
++#include "agentspeed/json.hpp"
++#include "agentspeed/pricing.hpp"
++
++#include <curl/curl.h>
++
++#include <algorithm>
++#include <cerrno>
++#include <chrono>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <ctime>
++#include <fcntl.h>
++#include <iostream>
++#include <sys/stat.h>
++#include <unistd.h>
++
++namespace collector {
++namespace {
++using agentspeed::json::Document;
++using agentspeed::json::Value;
++
++constexpr std::size_t kMaxBytes = agentspeed::pricing::PriceTable::kMaxBytes;
++constexpr const char* host = "agent-speed.yooztech.com";
++constexpr std::int64_t launchDelayMs = 60'000;
++constexpr std::int64_t intervalMs = 24 * 3600'000;
++constexpr std::int64_t retryDelayMs = 3600'000;
++constexpr std::int64_t checkIntervalMs = 3600'000;
++
++std::int64_t wallMs() {
++    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
++}
++
++bool safeDirectory(int fd, bool privateDirectory) {
++    struct stat st{};
++    return fd >= 0 && fstat(fd, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == geteuid() &&
++           !(st.st_mode & (privateDirectory ? 0077 : 0022));
++}
++bool safeFile(int fd) {
++    struct stat st{};
++    return fd >= 0 && fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == geteuid() &&
++           st.st_nlink == 1 && !(st.st_mode & 0077);
++}
++
++// <home>/.cache/agentspeed-collector/<digest>/, the directory history_cache.cpp already uses.
++int openCacheDir(const std::string& home, const std::string& digest) {
++    if (home.empty() || home.front() != '/' || digest.size() != 64 ||
++        digest.find_first_not_of("0123456789abcdef") != std::string::npos) return -1;
++    const int root = ::open(home.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
++    if (!safeDirectory(root, false)) { if (root >= 0) close(root); return -1; }
++    if (mkdirat(root, ".cache", 0700) < 0 && errno != EEXIST) { close(root); return -1; }
++    const int cache = openat(root, ".cache", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
++    close(root);
++    if (!safeDirectory(cache, false)) { if (cache >= 0) close(cache); return -1; }
++    if (mkdirat(cache, "agentspeed-collector", 0700) < 0 && errno != EEXIST) { close(cache); return -1; }
++    const int base = openat(cache, "agentspeed-collector", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
++    close(cache);
++    if (!safeDirectory(base, true)) { if (base >= 0) close(base); return -1; }
++    if (mkdirat(base, digest.c_str(), 0700) < 0 && errno != EEXIST) { close(base); return -1; }
++    const int dir = openat(base, digest.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
++    close(base);
++    if (!safeDirectory(dir, true)) { if (dir >= 0) close(dir); return -1; }
++    return dir;
++}
++
++std::string readFile(int dir, const char* name, std::size_t cap) {
++    const int fd = openat(dir, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
++    if (!safeFile(fd)) { if (fd >= 0) close(fd); return {}; }
++    std::string out;
++    char buffer[16 * 1024];
++    for (;;) {
++        const ssize_t n = read(fd, buffer, sizeof(buffer));
++        if (n < 0) { if (errno == EINTR) continue; break; }
++        if (n == 0) break;
++        if (out.size() + static_cast<std::size_t>(n) > cap) { out.clear(); break; }
++        out.append(buffer, static_cast<std::size_t>(n));
++    }
++    close(fd);
++    return out;
++}
++
++// Temporary file, fsync, rename over the target: a reader sees the old or the new file, never a partial one.
++bool writeFile(int dir, const char* name, const std::string& data) {
++    const std::string tmp = std::string(name) + ".tmp";
++    const int fd = openat(dir, tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
++    if (!safeFile(fd)) { if (fd >= 0) { close(fd); unlinkat(dir, tmp.c_str(), 0); } return false; }
++    bool ok = true;
++    for (std::size_t done = 0; done < data.size();) {
++        const ssize_t n = write(fd, data.data() + done, data.size() - done);
++        if (n < 0) { if (errno == EINTR) continue; ok = false; break; }
++        done += static_cast<std::size_t>(n);
++    }
++    if (ok && fsync(fd) < 0) ok = false;
++    close(fd);
++    if (ok && renameat(dir, tmp.c_str(), dir, name) < 0) ok = false;
++    if (!ok) unlinkat(dir, tmp.c_str(), 0);
++    if (ok) fsync(dir);
++    return ok;
++}
++
++std::string esc(const std::string& s) {
++    std::string out;
++    out.reserve(s.size() + 2);
++    for (unsigned char c : s) {
++        switch (c) {
++            case '"': out += "\\\""; break;
++            case '\\': out += "\\\\"; break;
++            case '\n': out += "\\n"; break;
++            case '\r': out += "\\r"; break;
++            case '\t': out += "\\t"; break;
++            default:
++                if (c < 0x20) {
++                    char buf[8];
++                    std::snprintf(buf, sizeof(buf), "\\u%04x", c);
++                    out += buf;
++                } else {
++                    out += static_cast<char>(c);
++                }
++        }
++    }
++    return out;
++}
++
++std::string stateJson(const PriceSync::State& s) {
++    std::string out = "{";
++    auto number = [&](const char* key, std::optional<std::int64_t> value) {
++        if (!value) return;
++        out += std::string("\"") + key + "\":" + std::to_string(*value) + ",";
++    };
++    number("version", s.version ? std::optional<std::int64_t>(*s.version) : std::nullopt);
++    if (s.updated) out += "\"updated\":\"" + esc(*s.updated) + "\",";
++    if (s.url) out += "\"url\":\"" + esc(*s.url) + "\",";
++    if (s.etag) out += "\"etag\":\"" + esc(*s.etag) + "\",";
++    number("lastSuccessMs", s.lastSuccessMs);
++    number("lastAttemptMs", s.lastAttemptMs);
++    if (s.lastError) out += "\"lastError\":\"" + esc(*s.lastError) + "\",";
++    out += "\"failures\":" + std::to_string(s.failures);
++    out += "}";
++    return out;
++}
++
++PriceSync::State parseState(const std::string& text) {
++    PriceSync::State s;
++    Document document;
++    if (!document.parse(text) || !document.root().isObject()) return s;
++    const auto root = document.root();
++    if (const auto v = root["version"]; v.valid() && !v.isNull()) {
++        if (const auto n = v.truncated(); n && *n > 0 && *n <= 2147483647) s.version = static_cast<int>(*n);
++    }
++    const auto stringOf = [](const Value& v) -> std::optional<std::string> {
++        if (!v.valid() || !v.isString()) return std::nullopt;
++        return v.string();
++    };
++    s.updated = stringOf(root["updated"]);
++    s.url = stringOf(root["url"]);
++    s.etag = stringOf(root["etag"]);
++    s.lastError = stringOf(root["lastError"]);
++    if (const auto n = root["lastSuccessMs"].truncated()) s.lastSuccessMs = *n;
++    if (const auto n = root["lastAttemptMs"].truncated()) s.lastAttemptMs = *n;
++    if (const auto n = root["failures"].truncated(); n && *n >= 0) s.failures = static_cast<int>(std::min<std::int64_t>(*n, 1000));
++    return s;
++}
++
++std::size_t bodyWrite(char* p, std::size_t size, std::size_t count, void* opaque) {
++    auto& out = *static_cast<std::string*>(opaque);
++    const std::size_t n = size * count;
++    if (n > kMaxBytes - out.size()) return 0;
++    out.append(p, n);
++    return n;
++}
++
++// The same hardening as publisher.cpp's curlTransport: HTTPS only, no redirects, no proxy or netrc, verified peer and
++// host, short timeouts and no signals. A body over the cap aborts the transfer and is rejected by the caller.
++PriceSync::Fetch curlFetch(const std::string& etag) {
++    PriceSync::Fetch result;
++    if (!initializeRelayHttp()) { result.error = "curl init"; return result; }
++    CURL* c = curl_easy_init();
++    if (!c) { result.error = "curl init"; return result; }
++    curl_easy_setopt(c, CURLOPT_URL, PriceSync::url);
++    curl_slist* headers = curl_slist_append(nullptr, "Accept: application/json");
++    const std::string noneMatch = etag.empty() ? std::string() : "If-None-Match: " + etag;
++    if (!noneMatch.empty()) headers = curl_slist_append(headers, noneMatch.c_str());
++    curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers);
++#if LIBCURL_VERSION_NUM >= 0x075500
++    curl_easy_setopt(c, CURLOPT_PROTOCOLS_STR, "https");
++#else
++    curl_easy_setopt(c, CURLOPT_PROTOCOLS, CURLPROTO_HTTPS);
++#endif
++    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 0L);
++    curl_easy_setopt(c, CURLOPT_PROXY, "");
++    curl_easy_setopt(c, CURLOPT_NETRC, CURL_NETRC_IGNORED);
++    curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
++    curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
++    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, 3000L);
++    curl_easy_setopt(c, CURLOPT_TIMEOUT_MS, 10'000L);
++    curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
++    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, bodyWrite);
++    curl_easy_setopt(c, CURLOPT_WRITEDATA, &result.body);
++    const CURLcode code = curl_easy_perform(c);
++    if (code == CURLE_OK) curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &result.status);
++    else result.error = code == CURLE_WRITE_ERROR ? "too large" : curl_easy_strerror(code);
++    curl_slist_free_all(headers);
++    curl_easy_cleanup(c);
++    return result;
++}
++
++bool pastLocalDate(const std::string& updated, std::int64_t nowMs) {
++    const auto tableDay = agentspeed::pricing::UtcDay::instantMs(updated);
++    if (!tableDay) return true;
++    const auto zone = agentspeed::localZone(agentspeed::processEnvironment());
++    const auto label = agentspeed::history::DayLabeler(zone).label(nowMs);
++    if (!label) return true;
++    const auto localDay = agentspeed::pricing::UtcDay::instantMs(*label);
++    if (!localDay) return true;
++    return *tableDay > *localDay + static_cast<std::int64_t>(PriceSync::maxUpdatedAheadDays) * 86'400'000;
++}
++}
++
++struct PriceSync::Impl {
++    std::string home, digest;
++    std::shared_ptr<agentspeed::pricing::PriceBook> book;
++    Transport transport;
++    Clock clock;
++    int dir = -1;
++    std::int64_t launchedAt = 0;
++
++    mutable std::mutex mutex;
++    std::condition_variable wake;
++    State state_;
++    bool stopping = false;
++    bool started = false;
++    std::thread worker;
++
++    Impl(std::string accountHome, std::string binaryDigest, std::shared_ptr<agentspeed::pricing::PriceBook> prices,
++         Transport given, Clock given_)
++        : home(std::move(accountHome)), digest(std::move(binaryDigest)), book(std::move(prices)),
++          transport(std::move(given)), clock(given_ ? std::move(given_) : Clock(&wallMs)) {
++        launchedAt = clock();
++        dir = openCacheDir(home, digest);
++        state_ = parseState(loadStateText());
++    }
++
++    std::string loadStateText() const { return dir >= 0 ? readFile(dir, "price-sync.json", 64 * 1024) : std::string(); }
++    std::string loadTableText() const { return dir >= 0 ? readFile(dir, "prices.json", kMaxBytes) : std::string(); }
++
++    void saveState() {
++        std::lock_guard lock(mutex);
++        if (dir < 0) return;
++        if (!writeFile(dir, "price-sync.json", stateJson(state_))) std::cerr << "collector: price table state could not be saved\n";
++    }
++
++    Response fail(const std::string& reason, bool newerSchema = false) {
++        {
++            std::lock_guard lock(mutex);
++            ++state_.failures;
++            state_.lastError = reason;
++        }
++        saveState();
++        Response r;
++        r.outcome = newerSchema ? Outcome::newerSchema : Outcome::failed;
++        r.reason = reason;
++        return r;
++    }
++
++    Response success(Outcome outcome, int version, const std::string& reason = {}) {
++        {
++            std::lock_guard lock(mutex);
++            state_.lastSuccessMs = state_.lastAttemptMs;
++            state_.failures = 0;
++            state_.lastError.reset();
++        }
++        saveState();
++        Response r;
++        r.outcome = outcome;
++        r.version = version;
++        r.reason = reason;
++        return r;
++    }
++
++    Response attempt();
++    void run();
++    std::int64_t nextAttempt(std::int64_t launchedAtMs) const;
++    std::int64_t nextAttemptLocked(std::int64_t launchedAtMs) const;
++};
++
++PriceSync::Response PriceSync::Impl::attempt() {
++    State snapshot;
++    {
++        std::lock_guard lock(mutex);
++        state_.lastAttemptMs = clock();
++        snapshot = state_;
++    }
++    const std::int64_t attemptedAt = *snapshot.lastAttemptMs;
++    const std::string etag = snapshot.url == url ? snapshot.etag.value_or(std::string()) : std::string();
++    const int currentVersion = book->currentVersion();
++    const Fetch fetched = transport ? transport(etag) : curlFetch(etag);
++    if (!fetched.error.empty()) {
++        std::cerr << "collector: price table " << host << ": " << fetched.error << "\n";
++        return fail(fetched.error);
++    }
++    if (fetched.status == 304) {
++        {
++            std::lock_guard lock(mutex);
++            state_.url = url;
++        }
++        std::cerr << "collector: price table " << host << ": 304, unchanged\n";
++        return success(Outcome::upToDate, currentVersion);
++    }
++    if (fetched.status < 200 || fetched.status > 299) {
++        const std::string reason = "HTTP " + std::to_string(fetched.status);
++        std::cerr << "collector: price table " << host << ": " << reason << "\n";
++        return fail(reason);
++    }
++    if (fetched.body.size() > kMaxBytes) return fail("too large");
++    agentspeed::pricing::TableError error;
++    auto table = agentspeed::pricing::PriceTable::load(fetched.body, &error);
++    if (!table) {
++        if (error.kind == agentspeed::pricing::TableErrorKind::UnsupportedSchema) {
++            std::cerr << "collector: price table " << host << ": " << fetched.body.size() << " bytes, newer schema "
++                      << error.schema.value_or(0) << "\n";
++            return fail("newer schema", true);
++        }
++        const std::string reason = error.kind == agentspeed::pricing::TableErrorKind::Invalid ? "invalid table" : "not a table";
++        std::cerr << "collector: price table " << host << ": " << fetched.body.size() << " bytes rejected: " << reason << "\n";
++        return fail(reason);
++    }
++    if (pastLocalDate(table->updated(), attemptedAt)) {
++        std::cerr << "collector: price table " << host << ": updated " << table->updated() << " is in the future\n";
++        return fail("table dated in the future");
++    }
++    {
++        std::lock_guard lock(mutex);
++        state_.version = table->version();
++        state_.updated = table->updated();
++        state_.url = url;
++        state_.etag = fetched.etag;
++    }
++    if (table->version() <= currentVersion) {
++        std::cerr << "collector: price table " << host << ": v" << table->version() << " (" << fetched.body.size()
++                  << " bytes), current is v" << currentVersion << "\n";
++        return success(Outcome::upToDate, currentVersion);
++    }
++    if (dir < 0 || !writeFile(dir, "prices.json", fetched.body)) {
++        std::cerr << "collector: price table v" << table->version() << " could not be saved\n";
++        std::lock_guard lock(mutex);
++        state_.version.reset();
++        state_.etag.reset();
++        return fail("could not save");
++    }
++    book->add(table);
++    std::cerr << "collector: price table " << host << ": updated to v" << table->version() << " (" << fetched.body.size()
++              << " bytes)\n";
++    return success(Outcome::updated, table->version());
++}
++
++void PriceSync::Impl::run() {
++    std::unique_lock lock(mutex);
++    for (;;) {
++        const std::int64_t now = clock();
++        const std::int64_t wait = std::min(std::max<std::int64_t>(nextAttemptLocked(launchedAt) - now, 0), checkIntervalMs);
++        wake.wait_for(lock, std::chrono::milliseconds(wait), [this] { return stopping; });
++        if (stopping) return;
++        if (clock() < nextAttemptLocked(launchedAt)) continue;
++        lock.unlock();
++        attempt();
++        lock.lock();
++    }
++}
++
++std::int64_t PriceSync::Impl::nextAttempt(std::int64_t launchedAtMs) const {
++    std::lock_guard lock(mutex);
++    return nextAttemptLocked(launchedAtMs);
++}
++
++std::int64_t PriceSync::Impl::nextAttemptLocked(std::int64_t launchedAtMs) const {
++    const auto earliest = launchedAtMs + launchDelayMs;
++    const auto clamp = [](std::optional<std::int64_t> ms, std::int64_t now) { return std::min(ms.value_or(now), now); };
++    const std::int64_t nowMs = clock();
++    if (state_.failures > 0) {
++        const std::int64_t delay = state_.failures == 1 ? retryDelayMs : intervalMs;
++        const std::int64_t from = clamp(state_.lastAttemptMs, nowMs);
++        return std::max(earliest, from + delay);
++    }
++    if (state_.lastSuccessMs) return std::max(earliest, clamp(state_.lastSuccessMs, nowMs) + intervalMs);
++    return earliest;
++}
++
++PriceSync::PriceSync(const std::string& home, const std::string& digest,
++                     std::shared_ptr<agentspeed::pricing::PriceBook> book, Transport transport, Clock clock)
++    : impl_(std::make_unique<Impl>(home, digest, std::move(book), std::move(transport), std::move(clock))) {}
++PriceSync::~PriceSync() { stop(); }
++
++std::optional<int> PriceSync::restore() {
++    const std::string text = impl_->loadTableText();
++    if (text.empty()) return std::nullopt;
++    agentspeed::pricing::TableError error;
++    auto table = agentspeed::pricing::PriceTable::load(text, &error);
++    if (!table) {
++        std::cerr << "collector: stored price table is invalid; ignored\n";
++        if (impl_->dir >= 0) unlinkat(impl_->dir, "prices.json", 0);
++        return std::nullopt;
++    }
++    impl_->book->add(table);
++    return table->version();
++}
++
++PriceSync::Response PriceSync::attempt() { return impl_->attempt(); }
++
++std::int64_t PriceSync::nextAttempt(std::int64_t launchedAt) const { return impl_->nextAttempt(launchedAt); }
++
++PriceSync::State PriceSync::state() const {
++    std::lock_guard lock(impl_->mutex);
++    return impl_->state_;
++}
++
++void PriceSync::start() {
++    {
++        std::lock_guard lock(impl_->mutex);
++        if (impl_->started) return;
++        impl_->started = true;
++    }
++    impl_->worker = std::thread([this] { impl_->run(); });
++}
++
++void PriceSync::stop() {
++    {
++        std::lock_guard lock(impl_->mutex);
++        impl_->stopping = true;
++    }
++    impl_->wake.notify_all();
++    if (impl_->worker.joinable()) impl_->worker.join();
++}
++}
+diff --git a/linux/collector/price_sync.hpp b/linux/collector/price_sync.hpp
+new file mode 100644
+index 00000000..66298a8c
+--- /dev/null
++++ b/linux/collector/price_sync.hpp
+@@ -0,0 +1,72 @@
++#pragma once
++
++#include <cstdint>
++#include <condition_variable>
++#include <functional>
++#include <memory>
++#include <mutex>
++#include <optional>
++#include <string>
++#include <thread>
++
++#include "agentspeed/price_book.hpp"
++
++namespace collector {
++// The headless collector's daily price-table sync of spec/NETWORK.md 3. The service relay is asked first and the
++// existing native validator decides whether a download becomes current; nothing here parses a table itself.
++// Storage follows the collector's cache convention: <home>/.cache/agentspeed-collector/<digest>/ with 0700/0600,
++// a temporary file renamed over the target.
++class PriceSync {
++public:
++    struct Fetch {
++        long status = 0;
++        std::string body, etag, error;
++    };
++    // The one request of a round; `ifNoneMatch` is the stored ETag for this URL, or empty.
++    using Transport = std::function<Fetch(const std::string& ifNoneMatch)>;
++    // Wall-clock milliseconds; tests supply a deterministic clock.
++    using Clock = std::function<std::int64_t()>;
++
++    enum class Outcome { upToDate, updated, newerSchema, failed };
++
++    struct Response {
++        Outcome outcome = Outcome::failed;
++        int version = 0;
++        std::string reason;
++    };
++
++    struct State {
++        std::optional<int> version;
++        std::optional<std::string> updated, url, etag;
++        std::optional<std::int64_t> lastSuccessMs, lastAttemptMs;
++        std::optional<std::string> lastError;
++        int failures = 0;
++    };
++
++    static constexpr const char* url = "https://agent-speed.yooztech.com/v1/prices/current";
++    // A table's `updated` may be at most this many days after the local date.
++    static constexpr int maxUpdatedAheadDays = 2;
++
++    // `transport` defaults to the hardened libcurl request; tests inject a scripted one.
++    PriceSync(const std::string& home, const std::string& digest, std::shared_ptr<agentspeed::pricing::PriceBook> book,
++              Transport transport = {}, Clock clock = {});
++    ~PriceSync();
++    PriceSync(const PriceSync&) = delete;
++    PriceSync& operator=(const PriceSync&) = delete;
++
++    // The stored table, validated again; when it is acceptable it becomes known to the book. Returns its version.
++    std::optional<int> restore();
++    // One round: fetch, validate, store and apply. Public so a test can drive it without the thread.
++    Response attempt();
++    // The next automatic round, in wall-clock milliseconds.
++    std::int64_t nextAttempt(std::int64_t launchedAt) const;
++    State state() const;
++
++    void start();
++    void stop();
++
++private:
++    struct Impl;
++    std::unique_ptr<Impl> impl_;
++};
++}
+diff --git a/linux/collector/sampling.cpp b/linux/collector/sampling.cpp
+index f4172749..f9e05fef 100644
+--- a/linux/collector/sampling.cpp
++++ b/linux/collector/sampling.cpp
+@@ -1,6 +1,7 @@
+ #include "sampling.hpp"
+ 
+ #include "history_cache.hpp"
++#include "price_sync.hpp"
+ #include "protocol.hpp"
+ #include "agentspeed/history_analyzer.hpp"
+ #include "agentspeed/history_store.hpp"
+@@ -94,6 +95,9 @@ struct Sampler::Impl {
+ 
+     std::string home, digest;
+     Clock clock;
++    // One book for the daemon: the daily relay sync adds tables while the history analyzer prices responses with it.
++    std::shared_ptr<agentspeed::pricing::PriceBook> prices = std::make_shared<agentspeed::pricing::PriceBook>();
++    std::unique_ptr<PriceSync> priceSync;
+     agentspeed::MonitorConfig config = agentspeed::MonitorConfig::fromEnvironment();
+     agentspeed::Monitor monitor{config};
+     std::shared_ptr<const agentspeed::TimeZone> local = agentspeed::localZone(agentspeed::processEnvironment());
+@@ -113,11 +117,15 @@ struct Sampler::Impl {
+     Impl(const std::string& accountHome, const std::string& binaryDigest, Clock given)
+         : home(accountHome), digest(binaryDigest), clock(given ? std::move(given) : Clock(&wallMs)) {
+         views.emplace(std::nullopt, Cached{View{std::nullopt, local}, {}, {}, {}, 0, {}});
++        priceSync = std::make_unique<PriceSync>(home, digest, prices);
++        priceSync->restore();
++        priceSync->start();
+         worker = std::thread([this] { historyLoop(); });
+     }
+     ~Impl() {
+         { std::lock_guard lock(mutex); stopping = true; }
+         changed.notify_one();
++        priceSync->stop();
+         worker.join();
+     }
+ 
+@@ -178,7 +186,7 @@ struct Sampler::Impl {
+             try {
+                 HistoryCache cache(home, digest);
+                 auto store = cache.open(cacheIdentity(config.locations, config.enabled));
+-                agentspeed::history::Analyzer analyzer(*store, std::make_shared<agentspeed::pricing::PriceBook>());
++                agentspeed::history::Analyzer analyzer(*store, prices);
+                 auto nextScan = std::chrono::steady_clock::time_point::min();
+                 agentspeed::history::Report report;
+                 for (;;) {
+diff --git a/linux/tests/CMakeLists.txt b/linux/tests/CMakeLists.txt
+index 5e18f84d..c06bb1e9 100644
+--- a/linux/tests/CMakeLists.txt
++++ b/linux/tests/CMakeLists.txt
+@@ -10,6 +10,7 @@ add_executable(agentspeed_tests
+     collector_integration_test.cpp
+     collector_daemon_test.cpp
+     collector_publisher_test.cpp
++    price_sync_test.cpp
+     widget_publisher_test.cpp
+     widget_statistics_test.cpp
+     sampling_test.cpp
+diff --git a/linux/tests/price_sync_test.cpp b/linux/tests/price_sync_test.cpp
+new file mode 100644
+index 00000000..5ac9cea5
+--- /dev/null
++++ b/linux/tests/price_sync_test.cpp
+@@ -0,0 +1,221 @@
++#include <gtest/gtest.h>
++
++#include "price_sync.hpp"
++
++#include "agentspeed/pricing.hpp"
++
++#include <filesystem>
++#include <fstream>
++#include <string>
++#include <sys/stat.h>
++#include <unistd.h>
++
++#include "fixture_support.hpp"
++
++namespace {
++using agentspeed::pricing::PriceBook;
++using agentspeed::pricing::PriceTable;
++using agentspeed::TokenCounts;
++
++// 2026-10-15T12:00Z, the fixture tables' own dates.
++constexpr std::int64_t kNow = 1'792'065'600'000;
++const std::string kDigest(64, 'a');
++
++std::string fixture(const char* name) { return fixtures::readText(fixtures::fixtureDir() / "prices" / name); }
++
++std::shared_ptr<const PriceTable> table(const std::string& text) {
++    agentspeed::pricing::TableError error;
++    auto loaded = PriceTable::load(text, &error);
++    EXPECT_TRUE(loaded) << error.describe();
++    return loaded;
++}
++
++// Drops the table's own `tests` member the way the relay table omits it.
++std::string withoutTests(std::string text) {
++    const auto key = text.find("\"tests\"");
++    if (key == std::string::npos) return text;
++    auto open = text.find('[', key);
++    if (open == std::string::npos) return text;
++    int depth = 0;
++    bool inString = false, escaped = false;
++    std::size_t close = std::string::npos;
++    for (std::size_t i = open; i < text.size(); ++i) {
++        const char c = text[i];
++        if (inString) {
++            if (escaped) escaped = false;
++            else if (c == '\\') escaped = true;
++            else if (c == '"') inString = false;
++            continue;
++        }
++        if (c == '"') inString = true;
++        else if (c == '[') ++depth;
++        else if (c == ']' && --depth == 0) { close = i; break; }
++    }
++    if (close == std::string::npos) return text;
++    std::size_t end = close + 1;
++    while (end < text.size() && (text[end] == ' ' || text[end] == '\n' || text[end] == '\r' || text[end] == '\t')) ++end;
++    if (end < text.size() && text[end] == ',') ++end;
++    // The member may be the last one, in which case its own comma is not followed by another and the
++    // preceding member's comma has to go instead.
++    std::size_t start = key;
++    while (start > 0 && (text[start - 1] == ' ' || text[start - 1] == '\n' || text[start - 1] == '\r' || text[start - 1] == '\t')) --start;
++    if (start > 0 && text[start - 1] == ',') --start;
++    return text.erase(start, end - start);
++}
++
++struct Home {
++    std::filesystem::path path;
++    Home() {
++        static int counter = 0;
++        path = std::filesystem::temp_directory_path() / ("agentspeed-price-sync-" + std::to_string(getpid()) + "-" +
++                                                         std::to_string(counter++));
++        std::filesystem::create_directories(path);
++        chmod(path.c_str(), 0700);
++    }
++    ~Home() { std::error_code ignored; std::filesystem::remove_all(path, ignored); }
++    std::string str() const { return path.string(); }
++    std::filesystem::path cache() const { return path / ".cache/agentspeed-collector" / kDigest; }
++};
++
++collector::PriceSync make(const Home& home, std::shared_ptr<PriceBook> book, collector::PriceSync::Transport transport) {
++    return collector::PriceSync(home.str(), kDigest, std::move(book), std::move(transport), [] { return kNow; });
++}
++
++collector::PriceSync::Fetch ok(std::string body, std::string etag = "\"v2\"") {
++    collector::PriceSync::Fetch f;
++    f.status = 200;
++    f.body = std::move(body);
++    f.etag = std::move(etag);
++    return f;
++}
++}
++
++TEST(PriceSync, NewerTableIsStoredThenAppliedToPricing) {
++    Home home;
++    auto book = std::make_shared<PriceBook>(std::vector<std::shared_ptr<const PriceTable>>{table(fixture("v1.json"))});
++    constexpr const char* model = "gpt-6.1-sol-mini";
++    TokenCounts tokens;
++    tokens.input = 1'000'000;
++    // This day is bound before the update and keeps the table it was priced with.
++    EXPECT_FALSE(book->cost(model, std::nullopt, tokens, std::nullopt, false, "2026-10-01"));
++    auto sync = make(home, book, [&](const std::string&) { return ok(fixture("v2.json")); });
++    const auto response = sync.attempt();
++    EXPECT_EQ(response.outcome, collector::PriceSync::Outcome::updated);
++    EXPECT_EQ(response.version, 2);
++    EXPECT_EQ(book->currentVersion(), 2);
++    // A day not yet bound takes the new table, so a newly priced model becomes known.
++    const auto cost = book->cost(model, std::nullopt, tokens, std::nullopt, false, "2026-10-15");
++    ASSERT_TRUE(cost);
++    EXPECT_GT(*cost, 0);
++}
++
++TEST(PriceSync, EqualOrLowerVersionIsUpToDateAndNeverReplacesTheTable) {
++    for (const auto& body : {fixture("v2.json"), fixture("v1.json")}) {
++        Home home;
++        auto book = std::make_shared<PriceBook>(std::vector<std::shared_ptr<const PriceTable>>{table(fixture("v2.json"))});
++        auto sync = make(home, book, [&](const std::string&) { return ok(body); });
++        const auto response = sync.attempt();
++        EXPECT_EQ(response.outcome, collector::PriceSync::Outcome::upToDate);
++        EXPECT_EQ(book->currentVersion(), 2);
++        EXPECT_FALSE(std::filesystem::exists(home.cache() / "prices.json"));
++        const auto state = sync.state();
++        EXPECT_EQ(state.failures, 0);
++        EXPECT_EQ(state.lastSuccessMs, kNow);
++    }
++}
++
++TEST(PriceSync, WrongSchemaIsNewerSchemaAndInvalidTablesAreRejected) {
++    Home home;
++    auto book = std::make_shared<PriceBook>();
++    {
++        auto sync = make(home, book, [](const std::string&) { return ok("{\"schema\":2}"); });
++        const auto response = sync.attempt();
++        EXPECT_EQ(response.outcome, collector::PriceSync::Outcome::newerSchema);
++        EXPECT_EQ(response.reason, "newer schema");
++        EXPECT_EQ(sync.state().failures, 1);
++    }
++    {
++        auto sync = make(home, book, [](const std::string&) { return ok("not json"); });
++        const auto response = sync.attempt();
++        EXPECT_EQ(response.outcome, collector::PriceSync::Outcome::failed);
++        EXPECT_EQ(response.reason, "not a table");
++    }
++}
++
++TEST(PriceSync, OversizedRedirectedAndStaleTablesFailTheRound) {
++    Home home;
++    {
++        auto sync = make(home, std::make_shared<PriceBook>(), [](const std::string&) { return ok(std::string(PriceTable::kMaxBytes + 1, ' ')); });
++        EXPECT_EQ(sync.attempt().reason, "too large");
++    }
++    {
++        collector::PriceSync::Fetch redirect;
++        redirect.status = 302;
++        auto sync = make(home, std::make_shared<PriceBook>(), [&](const std::string&) { return redirect; });
++        EXPECT_EQ(sync.attempt().reason, "HTTP 302");
++    }
++    {
++        auto stale = fixture("v2.json");
++        const auto at = stale.find("2026-10-15");
++        ASSERT_NE(at, std::string::npos);
++        stale.replace(at, 10, "2030-01-01");
++        auto sync = make(home, std::make_shared<PriceBook>(), [&](const std::string&) { return ok(stale); });
++        const auto response = sync.attempt();
++        EXPECT_EQ(response.outcome, collector::PriceSync::Outcome::failed);
++        EXPECT_EQ(response.reason, "table dated in the future");
++    }
++    EXPECT_FALSE(std::filesystem::exists(home.cache() / "prices.json"));
++}
++
++TEST(PriceSync, TableWithoutItsOwnTestsIsAccepted) {
++    Home home;
++    auto book = std::make_shared<PriceBook>(std::vector<std::shared_ptr<const PriceTable>>{table(fixture("v1.json"))});
++    auto sync = make(home, book, [&](const std::string&) { return ok(withoutTests(fixture("v2.json"))); });
++    EXPECT_EQ(sync.attempt().outcome, collector::PriceSync::Outcome::updated);
++    EXPECT_EQ(book->currentVersion(), 2);
++}
++
++TEST(PriceSync, StateAndTableSurviveRestartAndLeaveNoTemporaryFiles) {
++    Home home;
++    {
++        auto book = std::make_shared<PriceBook>(std::vector<std::shared_ptr<const PriceTable>>{table(fixture("v1.json"))});
++        auto sync = make(home, book, [&](const std::string&) { return ok(fixture("v2.json"), "\"v2\""); });
++        EXPECT_EQ(sync.attempt().outcome, collector::PriceSync::Outcome::updated);
++        const auto state = sync.state();
++        EXPECT_EQ(state.version, 2);
++        EXPECT_EQ(state.updated, std::optional<std::string>("2026-10-15"));
++        EXPECT_EQ(state.url, std::optional<std::string>(collector::PriceSync::url));
++        EXPECT_EQ(state.etag, std::optional<std::string>("\"v2\""));
++        EXPECT_EQ(state.lastSuccessMs, kNow);
++        EXPECT_EQ(state.lastAttemptMs, kNow);
++        EXPECT_EQ(state.failures, 0);
++        EXPECT_FALSE(state.lastError);
++    }
++    for (const auto& entry : std::filesystem::directory_iterator(home.cache())) {
++        EXPECT_EQ(entry.path().extension(), ".json") << entry.path();
++    }
++    {
++        auto book = std::make_shared<PriceBook>(std::vector<std::shared_ptr<const PriceTable>>{table(fixture("v1.json"))});
++        auto sync = make(home, book, [](const std::string&) { return ok(""); });
++        EXPECT_EQ(sync.restore(), std::optional<int>(2));
++        EXPECT_EQ(book->currentVersion(), 2);
++        EXPECT_EQ(sync.state().version, 2);
++    }
++}
++
++TEST(PriceSync, ConditionalRequestUsesTheStoredETagOnlyForItsOwnURL) {
++    Home home;
++    auto book = std::make_shared<PriceBook>(std::vector<std::shared_ptr<const PriceTable>>{table(fixture("v1.json"))});
++    std::string seen;
++    auto sync = make(home, book, [&](const std::string& etag) { seen = etag; return ok(fixture("v2.json"), "\"v2\""); });
++    sync.attempt();
++    EXPECT_TRUE(seen.empty());
++    auto next = make(home, book, [&](const std::string& etag) {
++        seen = etag;
++        collector::PriceSync::Fetch notModified;
++        notModified.status = 304;
++        return notModified;
++    });
++    EXPECT_EQ(next.attempt().outcome, collector::PriceSync::Outcome::upToDate);
++    EXPECT_EQ(seen, "\"v2\"");
++}
+diff --git a/spec/NETWORK.md b/spec/NETWORK.md
+index bb5662a7..5dff5fce 100644
+--- a/spec/NETWORK.md
++++ b/spec/NETWORK.md
+@@ -86,6 +86,9 @@ repository and by the service relay: a revised table reaches every running app w
+   On launch the stored copy is validated again; an invalid copy is deleted (logged) and the bundled table is used.
+ - **Current table** = the higher `version` of the bundled table and the stored copy, so a newer app build with a
+   newer bundled table wins over an older download.
++- **Collector**: the headless Linux collector uses the same first URL, request hardening and validation rules. It
++  stores the table and the same state object under `~/.cache/agentspeed-collector/<executable SHA-256>/`, restores
++  them at start, and adds a validated newer table to its running price book; unbound days then take the new rates.
+ - **Effect**: known costs keep the table bound to their day (METRICS 9.7); new rates therefore apply to days not yet
+   bound. A response the bound table could not price may use the newer table instead. Files with unpriced history
+   are re-analysed when their local logs are still available, and retained live responses may acquire a known cost.
+-- 
+2.41.0
+

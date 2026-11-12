@@ -1,0 +1,657 @@
+From 1c202decf2096af195f162ec4a1236fc3fa53440 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Thu, 12 Nov 2026 22:19:58 +0800
+Subject: [PATCH 18/19] Prefer the service relay for the price table
+
+The relay publishes the repository table merged with models.dev fills, so
+clients pick up newer rates without waiting for a release.
+
+macOS, Windows and the Linux GUI try
+https://agent-speed.yooztech.com/v1/prices/current first and keep the GitHub
+raw file and jsDelivr as ordered fallbacks. The relay host joins each feature's
+allowlist, and Settings' view-source link still points at GitHub. Every
+download still goes through the existing native validator and version, date
+and downgrade rules, so a relay table must prove itself like any other.
+
+The relay table intentionally omits the table's own `tests`, so validation
+rule 4 is vacuous for it; the validators already treat a missing `tests` key
+as an empty list and new tests pin that. Other new tests pin the URL order and
+host set, host rejection outside the allowlist, and the existing no-downgrade
+and stale-date refusals along the new first source.
+
+spec/NETWORK.md records the new order, the relay's caching and conditional-
+request behaviour, and the weaker guarantee of a table without self-tests;
+the privacy summaries name the relay as the first source.
+---
+ README.md                                     |  2 +-
+ linux/app/src/network_service.cpp             |  6 +-
+ linux/tests/pricing_test.cpp                  | 46 +++++++++++
+ .../Network/PriceTableSync.swift              |  7 +-
+ .../PriceTableSyncTests.swift                 | 57 ++++++++++----
+ spec/NETWORK.md                               | 35 +++++----
+ .../AgentSpeed.Core/Network/PriceTableSync.cs |  7 +-
+ .../PriceTableSyncTests.cs                    | 78 +++++++++++++------
+ 8 files changed, 178 insertions(+), 60 deletions(-)
+
+diff --git a/README.md b/README.md
+index 11f3d372..54f5b83b 100644
+--- a/README.md
++++ b/README.md
+@@ -236,7 +236,7 @@ the collector without packaging, configure `cmake -S linux -B linux/build -DAGEN
+ 
+ Agent Speed reads transcripts without modifying them. Remote monitoring and live reporting are separately opt-in; there is no telemetry or account requirement. With remote monitoring enabled, the Linux collector sends only whitelisted metrics and presentation labels over SSH, never raw transcripts, prompts, conversation content, tool arguments or outputs, or absolute working paths. SSH uses the system configuration and host-key verification; do not put passwords or private keys in logs or the repository. Remote history is isolated from local history and reconstructed from server logs when the collector restarts.
+ 
+-The three automatic network requests send no activity data: the update check against GitHub Releases, the daily public model price table (GitHub, with jsDelivr as a mirror), and, for non-USD costs, public exchange rates (open.er-api.com, with the fawazahmed0 currency API and Frankfurter as fallbacks). Servers can see the connection's IP address and time. Local usage history keeps daily totals and each model's daily performance figures in a database on your computer (`~/Library/Application Support/AgentSpeed`, `%LOCALAPPDATA%\AgentSpeed`) and can be cleared in Settings. Updates are checked against release SHA-256 checksums, which detect corrupted or tampered downloads but not a compromised repository. The price table is validated plain data, not signed.
++The three automatic network requests send no activity data: the update check against GitHub Releases, the daily public model price table (the service relay, with GitHub and jsDelivr as fallbacks), and, for non-USD costs, public exchange rates (open.er-api.com, with the fawazahmed0 currency API and Frankfurter as fallbacks). Servers can see the connection's IP address and time. Local usage history keeps daily totals and each model's daily performance figures in a database on your computer (`~/Library/Application Support/AgentSpeed`, `%LOCALAPPDATA%\AgentSpeed`) and can be cleared in Settings. Updates are checked against release SHA-256 checksums, which detect corrupted or tampered downloads but not a compromised repository. The price table is validated plain data, not signed.
+ 
+ Network traffic: Agent Speed counts how many bytes programs send and receive, on this computer only. It never reads content, addresses or destinations; only live reporting (below), if you turn it on, sends your agents' byte counts to the service you chose. On Windows, per-agent traffic needs an optional helper service that runs as the restricted Local Service account and only counts bytes per process; it is installed and removed with one administrator prompt each ([details](spec/WINDOWS-SERVICE.md)).
+ 
+diff --git a/linux/app/src/network_service.cpp b/linux/app/src/network_service.cpp
+index 666001ad..ce731cf8 100644
+--- a/linux/app/src/network_service.cpp
++++ b/linux/app/src/network_service.cpp
+@@ -39,8 +39,10 @@ constexpr qint64 kRateCap = 256 * 1024;
+ constexpr qint64 kReleaseCap = 1 << 20;
+ constexpr qint64 kAssetCap = 300LL * 1024 * 1024;
+ 
+-const QStringList kPriceHosts = {QStringLiteral("raw.githubusercontent.com"), QStringLiteral("cdn.jsdelivr.net")};
+-const QStringList kPriceUrls = {QStringLiteral("https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json"),
++const QStringList kPriceHosts = {QStringLiteral("agent-speed.yooztech.com"), QStringLiteral("raw.githubusercontent.com"),
++                                 QStringLiteral("cdn.jsdelivr.net")};
++const QStringList kPriceUrls = {QStringLiteral("https://agent-speed.yooztech.com/v1/prices/current"),
++                                QStringLiteral("https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json"),
+                                 QStringLiteral("https://cdn.jsdelivr.net/gh/zoefix/agent-speed@main/spec/assets/prices.json")};
+ const QStringList kUpdateHosts = {QStringLiteral("api.github.com"), QStringLiteral("github.com"), QStringLiteral("objects.githubusercontent.com"),
+                                   QStringLiteral("release-assets.githubusercontent.com")};
+diff --git a/linux/tests/pricing_test.cpp b/linux/tests/pricing_test.cpp
+index 87c3d242..a51d34f4 100644
+--- a/linux/tests/pricing_test.cpp
++++ b/linux/tests/pricing_test.cpp
+@@ -105,6 +105,52 @@ TEST(Pricing, ResolveCostAndDayCases) {
+     }
+ }
+ 
++namespace {
++// The service relay publishes the repository table without its own `tests` member.
++std::string withoutTests(std::string text) {
++    const auto key = text.find("\"tests\"");
++    if (key == std::string::npos) return text;
++    const auto open = text.find('[', key);
++    if (open == std::string::npos) return text;
++    int depth = 0;
++    bool inString = false, escaped = false;
++    std::size_t close = std::string::npos;
++    for (std::size_t i = open; i < text.size(); ++i) {
++        const char c = text[i];
++        if (inString) {
++            if (escaped) escaped = false;
++            else if (c == '\\') escaped = true;
++            else if (c == '"') inString = false;
++            continue;
++        }
++        if (c == '"') inString = true;
++        else if (c == '[') ++depth;
++        else if (c == ']' && --depth == 0) { close = i; break; }
++    }
++    if (close == std::string::npos) return text;
++    std::size_t end = close + 1;
++    while (end < text.size() && (text[end] == ' ' || text[end] == '\n' || text[end] == '\r' || text[end] == '\t')) ++end;
++    if (end < text.size() && text[end] == ',') ++end;
++    std::size_t start = key;
++    while (start > 0 && (text[start - 1] == ' ' || text[start - 1] == '\n' || text[start - 1] == '\r' || text[start - 1] == '\t')) --start;
++    if (start > 0 && text[start - 1] == ',') --start;
++    return text.erase(start, end - start);
++}
++}
++
++// Validation rule 4 is vacuous for a table without its own `tests`, like the relay's: it must load.
++TEST(Pricing, AcceptsATableWithoutItsOwnTests) {
++    const auto bundled = PriceBook::bundled();
++    ASSERT_TRUE(bundled);
++    const auto text = withoutTests(bundled->data());
++    ASSERT_LT(text.size(), bundled->data().size());
++    TableError error;
++    const auto table = PriceTable::load(text, &error);
++    ASSERT_TRUE(table) << error.describe();
++    EXPECT_EQ(table->version(), bundled->version());
++    EXPECT_EQ(table->models().size(), bundled->models().size());
++}
++
+ TEST(Pricing, RejectsTablesThatBreakTheRules) {
+     TableError error;
+     EXPECT_FALSE(PriceTable::load("[1]", &error));
+diff --git a/macos/Sources/AgentSpeedCore/Network/PriceTableSync.swift b/macos/Sources/AgentSpeedCore/Network/PriceTableSync.swift
+index 89d5047f..6214fc40 100644
+--- a/macos/Sources/AgentSpeedCore/Network/PriceTableSync.swift
++++ b/macos/Sources/AgentSpeedCore/Network/PriceTableSync.swift
+@@ -111,14 +111,15 @@ public struct PriceTableStore: Sendable {
+     }
+ }
+ 
+-/// The daily price-table sync of NETWORK 3: GitHub raw first, the jsDelivr mirror second, every download validated
+-/// like `spec/tools/prices.py`, never a downgrade.
++/// The daily price-table sync of NETWORK 3: the service relay first, GitHub raw second, the jsDelivr mirror third,
++/// every download validated like `spec/tools/prices.py`, never a downgrade.
+ public struct PriceTableSync: Sendable {
+     public static let urls = [
++        URL(string: "https://agent-speed.yooztech.com/v1/prices/current")!,
+         URL(string: "https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json")!,
+         URL(string: "https://cdn.jsdelivr.net/gh/zoefix/agent-speed@main/spec/assets/prices.json")!,
+     ]
+-    public static let allowedHosts: Set<String> = ["raw.githubusercontent.com", "cdn.jsdelivr.net"]
++    public static let allowedHosts: Set<String> = ["agent-speed.yooztech.com", "raw.githubusercontent.com", "cdn.jsdelivr.net"]
+     /// Where Settings' `prices.viewSource` link points.
+     public static let sourcePage = URL(string: "https://github.com/zoefix/agent-speed/blob/main/spec/assets/prices.json")!
+ 
+diff --git a/macos/Tests/AgentSpeedCoreTests/PriceTableSyncTests.swift b/macos/Tests/AgentSpeedCoreTests/PriceTableSyncTests.swift
+index 993d501d..cb44648a 100644
+--- a/macos/Tests/AgentSpeedCoreTests/PriceTableSyncTests.swift
++++ b/macos/Tests/AgentSpeedCoreTests/PriceTableSyncTests.swift
+@@ -4,8 +4,9 @@ import Testing
+ 
+ @Suite("Price table sync")
+ struct PriceTableSyncTests {
+-    static let raw = PriceTableSync.urls[0]
+-    static let mirror = PriceTableSync.urls[1]
++    static let relay = PriceTableSync.urls[0]
++    static let raw = PriceTableSync.urls[1]
++    static let mirror = PriceTableSync.urls[2]
+     static let utc = TimeZone(identifier: "UTC")!
+     /// 2026-10-22T12:00Z, a fixed clock for future-date validation.
+     static let noon = Date(timeIntervalSince1970: 1_792_670_400)
+@@ -43,36 +44,39 @@ struct PriceTableSyncTests {
+ 
+     @Test func aNewerTableIsStoredAndDelivered() async throws {
+         let harness = try Harness()
+-        harness.transport.reply(Self.raw, body: try Self.table(version: 2), etag: "\"v2\"")
++        harness.transport.reply(Self.relay, body: try Self.table(version: 2), etag: "\"v2\"")
+         let result = await harness.sync.run(currentVersion: 1)
+         #expect(result.outcome == .updated(version: 2))
+         #expect(result.table?.version == 2)
+-        #expect(harness.transport.requestedURLs == [Self.raw.absoluteString])
++        #expect(harness.transport.requestedURLs == [Self.relay.absoluteString])
+         let request = try #require(harness.transport.requests.first)
+         #expect(request.accept == "application/json")
+         #expect(request.userAgent == "AgentSpeed/9.9.9 (macOS)")
+         #expect(request.ifNoneMatch == nil)
+         #expect(request.maxBytes == PriceTable.maxBytes)
+-        #expect(request.allowedHosts == ["raw.githubusercontent.com", "cdn.jsdelivr.net"])
++        #expect(request.allowedHosts == ["agent-speed.yooztech.com", "raw.githubusercontent.com", "cdn.jsdelivr.net"])
+         #expect(harness.store.loadTable()?.version == 2)
+         let state = harness.store.loadState()
+         #expect(state.version == 2)
+         #expect(state.etag == "\"v2\"")
+-        #expect(state.url == Self.raw.absoluteString)
++        #expect(state.url == Self.relay.absoluteString)
+         #expect(state.lastSuccessMs == 1_792_670_400_000)
+         #expect(state.failures == 0)
+     }
+ 
+-    @Test func theMirrorIsTriedWhenGitHubFails() async throws {
++    @Test func theRelayGitHubThenMirrorChainIsTriedInOrder() async throws {
+         for answer in [ScriptedTransport.Answer.failure(.transport("URLError -1009")),
+                        .response(HTTPFetchResponse(status: 404)),
+                        .response(HTTPFetchResponse(status: 200, body: Data("not json".utf8)))] {
+             let harness = try Harness()
++            harness.transport.script(Self.relay, answer)
+             harness.transport.script(Self.raw, answer)
+             harness.transport.reply(Self.mirror, body: try Self.table(version: 3))
+             let result = await harness.sync.run(currentVersion: 1)
+             #expect(result.outcome == .updated(version: 3))
+-            #expect(harness.transport.requestedURLs == [Self.raw.absoluteString, Self.mirror.absoluteString])
++            #expect(harness.transport.requestedURLs == [
++                Self.relay.absoluteString, Self.raw.absoluteString, Self.mirror.absoluteString,
++            ])
+             #expect(harness.store.loadState().url == Self.mirror.absoluteString)
+         }
+     }
+@@ -92,8 +96,8 @@ struct PriceTableSyncTests {
+ 
+     @Test func anETagIsNotSentWhenItsTableIsNewerThanOurs() async throws {
+         let harness = try Harness()
+-        try harness.store.save(state: PriceSyncState(version: 5, url: Self.raw.absoluteString, etag: "\"v5\""))
+-        harness.transport.reply(Self.raw, body: try Self.table(version: 5))
++        try harness.store.save(state: PriceSyncState(version: 5, url: Self.relay.absoluteString, etag: "\"v5\""))
++        harness.transport.reply(Self.relay, body: try Self.table(version: 5))
+         let result = await harness.sync.run(currentVersion: 1)
+         #expect(harness.transport.requests.first?.ifNoneMatch == nil)
+         #expect(result.outcome == .updated(version: 5))
+@@ -102,17 +106,18 @@ struct PriceTableSyncTests {
+     @Test func equalOrLowerVersionsChangeNothing() async throws {
+         for version in [1, 2] {
+             let harness = try Harness()
+-            harness.transport.reply(Self.raw, body: try Self.table(version: version))
++            harness.transport.reply(Self.relay, body: try Self.table(version: version))
+             let result = await harness.sync.run(currentVersion: 2)
+             #expect(result.outcome == .upToDate)
+             #expect(result.table == nil)
+             #expect(harness.store.loadTable() == nil, "nothing is stored, never a downgrade")
+-            #expect(harness.transport.requestedURLs == [Self.raw.absoluteString])
++            #expect(harness.transport.requestedURLs == [Self.relay.absoluteString])
+         }
+     }
+ 
+     @Test func aNewerSchemaIsNotAnError() async throws {
+         let harness = try Harness()
++        harness.transport.reply(Self.relay, body: try Self.table(version: 9, schema: 2))
+         harness.transport.reply(Self.raw, body: try Self.table(version: 9, schema: 2))
+         harness.transport.reply(Self.mirror, body: try Self.table(version: 9, schema: 2))
+         let result = await harness.sync.run(currentVersion: 1)
+@@ -123,6 +128,7 @@ struct PriceTableSyncTests {
+ 
+     @Test func aLaggingMirrorStillServesTheCurrentSchema() async throws {
+         let harness = try Harness()
++        harness.transport.reply(Self.relay, body: try Self.table(version: 9, schema: 2))
+         harness.transport.reply(Self.raw, body: try Self.table(version: 9, schema: 2))
+         harness.transport.reply(Self.mirror, body: try Self.table(version: 4))
+         #expect(await harness.sync.run(currentVersion: 1).outcome == .updated(version: 4))
+@@ -130,13 +136,15 @@ struct PriceTableSyncTests {
+ 
+     @Test func tablesDatedMoreThanTwoDaysAheadAreRejected() async throws {
+         let harness = try Harness()
++        harness.transport.reply(Self.relay, body: try Self.table(version: 2, updated: "2026-10-25"))
+         harness.transport.reply(Self.raw, body: try Self.table(version: 2, updated: "2026-10-25"))
+         harness.transport.reply(Self.mirror, body: try Self.table(version: 2, updated: "2026-10-24"))
+         let result = await harness.sync.run(currentVersion: 1)
+         #expect(result.outcome == .updated(version: 2), "two days ahead is still fine")
+-        #expect(harness.transport.requestedURLs.count == 2)
++        #expect(harness.transport.requestedURLs.count == 3)
+ 
+         let late = try Harness()
++        late.transport.reply(Self.relay, body: try Self.table(version: 2, updated: "2026-10-25"))
+         late.transport.reply(Self.raw, body: try Self.table(version: 2, updated: "2026-10-25"))
+         late.transport.reply(Self.mirror, body: try Self.table(version: 2, updated: "2026-10-25"))
+         guard case .failed = await late.sync.run(currentVersion: 1).outcome else {
+@@ -147,7 +155,7 @@ struct PriceTableSyncTests {
+ 
+     @Test func oversizedAndInvalidDownloadsFailTheRound() async throws {
+         let harness = try Harness()
+-        harness.transport.reply(Self.raw, body: Data(count: PriceTable.maxBytes + 1))
++        harness.transport.reply(Self.relay, body: Data(count: PriceTable.maxBytes + 1))
+         var broken = try #require(try JSONSerialization.jsonObject(with: Self.table(version: 2)) as? [String: Any])
+         var models = try #require(broken["models"] as? [[String: Any]])
+         let index = try #require(models.firstIndex { $0["prices"] != nil })
+@@ -182,6 +190,25 @@ struct PriceTableSyncTests {
+         #expect(store.stateURL.path.hasSuffix("/prices/sync.json"))
+     }
+ 
++    @Test func onlyTheRelayGitHubAndMirrorHostsArePermitted() {
++        let request = HTTPFetchRequest(
++            url: Self.relay, ifNoneMatch: nil, userAgent: "AgentSpeed/9.9.9 (macOS)",
++            maxBytes: PriceTable.maxBytes, allowedHosts: PriceTableSync.allowedHosts)
++        for allowed in PriceTableSync.urls { #expect(request.permits(allowed)) }
++        #expect(!request.permits(URL(string: "https://example.com/prices.json")))
++        #expect(!request.permits(URL(string: "http://agent-speed.yooztech.com/v1/prices/current")))
++    }
++
++    @Test func aTableWithoutItsOwnTestsIsAccepted() throws {
++        // The service relay omits the upstream table's `tests`, so validation rule 4 is vacuous there.
++        var table = try PriceTableTests.bundledJSON()
++        table.removeValue(forKey: "tests")
++        table["version"] = 2
++        let loaded = try #require(try? PriceTable.load(try JSONSerialization.data(withJSONObject: table)).get())
++        #expect(loaded.version == 2)
++        #expect(loaded.tests.isEmpty)
++    }
++
+     @Test func scheduleFollowsLaunchDailyAndRetryRules() {
+         let launch = Self.noon
+         let now = launch.addingTimeInterval(10)
+@@ -206,7 +233,7 @@ struct PriceTableSyncTests {
+         #expect(harness.store.loadState().failures == 1)
+         _ = await harness.sync.run(currentVersion: 1)
+         #expect(harness.store.loadState().failures == 2)
+-        harness.transport.reply(Self.raw, body: try Self.table(version: 1))
++        harness.transport.reply(Self.relay, body: try Self.table(version: 1))
+         #expect(await harness.sync.run(currentVersion: 1).outcome == .upToDate)
+         #expect(harness.store.loadState().failures == 0)
+         #expect(harness.store.loadState().lastError == nil)
+diff --git a/spec/NETWORK.md b/spec/NETWORK.md
+index f883f4ef..bb5662a7 100644
+--- a/spec/NETWORK.md
++++ b/spec/NETWORK.md
+@@ -35,7 +35,7 @@ not desktop reporting or controlled by a disconnected desktop's network switch.
+ | Feature | Hosts (in fallback order) | When | Cap |
+ | --- | --- | --- | --- |
+ | Update check (UPDATES) | `api.github.com`; downloads `github.com`, `objects.githubusercontent.com`, `release-assets.githubusercontent.com` | 30 s after launch, every 6 h, manual | 300 MiB (assets) |
+-| Price table (3) | `raw.githubusercontent.com`, `cdn.jsdelivr.net` | 60 s after launch, then daily, manual | 1 MiB |
++| Price table (3) | `agent-speed.yooztech.com`, `raw.githubusercontent.com`, `cdn.jsdelivr.net` | 60 s after launch, then daily, manual | 1 MiB |
+ | Exchange rates (4) | `open.er-api.com`, `cdn.jsdelivr.net`, `latest.currency-api.pages.dev`, `api.frankfurter.dev` | only while a non-USD currency is selected: 30 s after launch or on selection, then daily, manual | 256 KiB |
+ | Live reporting (6) | the service URL and the API host the user confirmed | only while the user has it on: every 5 s while agents work, a heartbeat while idle, nothing when quiet | 64 KiB discovery, 16 KiB API |
+ 
+@@ -47,12 +47,17 @@ manual check is disabled.
+ ## 3. Price table sync
+ 
+ The price table (`spec/assets/prices.json`, METRICS 9.1) is bundled with every build and also published by this
+-repository: whatever is committed on `main` reaches every running app within about a day, without a release.
+-
+-- **URLs** (in order; the second is a mirror for networks where `raw.githubusercontent.com` is blocked):
+-  1. `https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json`
++repository and by the service relay: a revised table reaches every running app within about a day, without a release.
++
++- **URLs** (in order; the later ones are fallbacks when the relay is unreachable or its table is unusable):
++  1. `https://agent-speed.yooztech.com/v1/prices/current`
++     (the service relay's current table: `application/json`, strong `ETag`, `Cache-Control: no-cache`,
++     `X-Price-Table-Version`; republished daily from the repository table merged with models.dev fills and the
++     relay's own aliases; verified 2026-11-12 at version 1000. It intentionally omits the table's own `tests`.
++     Its nginx does not forward `If-None-Match`, so a conditional request answers `200` with the full body.)
++  2. `https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json`
+      (served as `text/plain`, `Cache-Control: max-age=300`, strong `ETag`; verified 2026-10-22)
+-  2. `https://cdn.jsdelivr.net/gh/zoefix/agent-speed@main/spec/assets/prices.json`
++  3. `https://cdn.jsdelivr.net/gh/zoefix/agent-speed@main/spec/assets/prices.json`
+      (jsDelivr's GitHub mirror; its edge cache can lag `main` by up to 12 h, `s-maxage=43200`)
+ - **Setting** `syncPrices` (Settings → Cost, `prices.autoSync`), default on, under the master switch.
+ - **Schedule**: 60 s after launch, then whenever 24 h have passed since the last successful sync (checked hourly and
+@@ -70,7 +75,9 @@ repository: whatever is committed on `main` reaches every running app within abo
+      the base prices, unique ids and aliases, unknown entries that shadow nothing, every id and alias resolving to its
+      own entry, at most 2000 models, https source URLs.
+   4. Every entry of the table's own `tests` resolves as expected with this build's matching (METRICS 9.2). A table
+-     whose tests fail is rejected, so a table that this build would match differently never becomes current.
++     whose tests fail is rejected, so a table that this build would match differently never becomes current. A table
++     without a `tests` key, like the relay's, passes this rule vacuously: it asserts nothing about this build's
++     matching.
+   5. `version` is greater than the current version (equal: nothing to do; lower: ignored, never a downgrade), and
+      `updated` is at most 2 days after the local date.
+ - **Storage**: `<app data>/prices/prices.json` (written to a temporary file and renamed), plus
+@@ -88,8 +95,10 @@ repository: whatever is committed on `main` reaches every running app within abo
+   changed entry's `checked`, add a `tests` row for any new id form, run `python3 spec/tools/prices.py`, commit to
+   `main`. Never decrease or reuse a version.
+ - **Trust**: the table is data only — no code, no URLs the app follows. The worst a mistaken or tampered table can do
+-  is show wrong costs, bounded by the validation limits. Integrity relies on HTTPS to GitHub and jsDelivr; the table is
+-  not signed (README says so).
++  is show wrong costs, bounded by the validation limits. Integrity relies on HTTPS to the service relay, GitHub and
++  jsDelivr; the table is not signed (README says so). The relay table is produced by the service, so its provenance is
++  that deployment rather than this repository's `main`, and because it carries no self-`tests` it cannot demonstrate
++  that this build would match it the way the repository table does.
+ 
+ ## 4. Exchange rates
+ 
+@@ -143,7 +152,7 @@ the cost feature ships (until then the README describes the released app).
+ - English (`README.md`):
+   > Read-only. Local-only. No telemetry, no accounts. Agent Speed makes only three kinds of network requests, and each
+   > one sends nothing about you: the update check against GitHub Releases, a daily download of the public model price
+-  > table from this repository (GitHub, with jsDelivr as a mirror), and — only when you show costs in a currency other
++  > table from the service relay (GitHub, with jsDelivr as fallbacks), and — only when you show costs in a currency other
+   > than US dollars — a daily download of public exchange rates (open.er-api.com, with the fawazahmed0 currency API
+   > and Frankfurter as fallbacks). Every user requests the same files, so no server learns your currency, models or
+   > usage. One switch in Settings turns all network access off; costs then use the price table and rates shipped with
+@@ -155,7 +164,7 @@ the cost feature ships (until then the README describes the released app).
+   > repository. The price table is plain data checked against strict rules; it is not signed.
+ - 繁體中文（`README.zh-TW.md`）：
+   > 唯讀、只在本機運作，沒有遙測、不需帳號。Agent Speed 只會發出三種網路請求，而且都不會傳送任何關於你的資料：向
+-  > GitHub Releases 檢查更新、每天從本專案下載公開的模型價格表（GitHub，以 jsDelivr 為備援），以及只有在你選擇以美元
++  > GitHub Releases 檢查更新、每天從服務中繼站下載公開的模型價格表（GitHub，以 jsDelivr 為備援），以及只有在你選擇以美元
+   > 以外的貨幣顯示費用時，每天下載公開匯率（open.er-api.com，以 fawazahmed0 currency API 和 Frankfurter 為備援）。
+   > 每位使用者下載的都是同一份檔案，所以伺服器無從得知你的貨幣、模型或用量。設定裡的一個開關就能關閉所有網路連線，
+   > 此時費用改用 App 內建的價格表與匯率。Agent Speed 從不儲存或顯示對話內容，只使用 token 數量、模型名稱和專案資料夾
+@@ -165,7 +174,7 @@ the cost feature ships (until then the README describes the released app).
+   > 遭入侵。價格表是依嚴格規則檢查的純資料，沒有數位簽章。
+ - 简体中文（`README.zh-CN.md`）：
+   > 只读、只在本机运行，没有遥测、无需账号。Agent Speed 只会发出三种网络请求，而且都不会发送任何关于你的数据：向
+-  > GitHub Releases 检查更新、每天从本项目下载公开的模型价格表（GitHub，以 jsDelivr 为备用），以及仅在你选择以美元
++  > GitHub Releases 检查更新、每天从服务中继站下载公开的模型价格表（GitHub，以 jsDelivr 为备用），以及仅在你选择以美元
+   > 以外的货币显示费用时，每天下载公开汇率（open.er-api.com，以 fawazahmed0 currency API 和 Frankfurter 为备用）。
+   > 每位用户下载的都是同一份文件，因此服务器无从得知你的货币、模型或用量。设置里的一个开关即可关闭所有网络连接，
+   > 此时费用改用应用内置的价格表和汇率。Agent Speed 从不保存或显示对话内容，只使用 token 数量、模型名称和项目文件夹
+@@ -176,7 +185,7 @@ the cost feature ships (until then the README describes the released app).
+ - 日本語（`README.ja.md`）：
+   > 読み取り専用・ローカルのみで動作し、テレメトリもアカウントもありません。Agent Speed が行うネットワーク通信は
+   > 次の 3 種類だけで、どれもあなたに関する情報を送りません：GitHub Releases でのアップデート確認、このリポジトリで
+-  > 公開しているモデル価格表の 1 日 1 回のダウンロード（GitHub、予備に jsDelivr）、そして米ドル以外の通貨で費用を
++  > 公開しているモデル価格表の 1 日 1 回のダウンロード（サービスのリレー、予備に GitHub と jsDelivr）、そして米ドル以外の通貨で費用を
+   > 表示するときだけ行う公開為替レートの 1 日 1 回のダウンロード（open.er-api.com、予備に fawazahmed0 currency API と
+   > Frankfurter）。全員が同じファイルを取得するため、サーバーがあなたの通貨・モデル・使用量を知ることはありません。
+   > 設定のスイッチ 1 つですべての通信をオフにでき、その場合はアプリ内蔵の価格表とレートで費用を計算します。Agent
+diff --git a/windows/src/AgentSpeed.Core/Network/PriceTableSync.cs b/windows/src/AgentSpeed.Core/Network/PriceTableSync.cs
+index 57ca5680..b438f9a4 100644
+--- a/windows/src/AgentSpeed.Core/Network/PriceTableSync.cs
++++ b/windows/src/AgentSpeed.Core/Network/PriceTableSync.cs
+@@ -191,19 +191,20 @@ public sealed class PriceTableStore
+ }
+ 
+ /// <summary>
+-/// The daily price-table sync of NETWORK 3: GitHub raw first, the jsDelivr mirror second, every download validated like
+-/// <c>spec/tools/prices.py</c>, never a downgrade.
++/// The daily price-table sync of NETWORK 3: the service relay first, GitHub raw second, the jsDelivr mirror third,
++/// every download validated like <c>spec/tools/prices.py</c>, never a downgrade.
+ /// </summary>
+ public sealed class PriceTableSync
+ {
+     public static readonly IReadOnlyList<Uri> Urls =
+     [
++        new("https://agent-speed.yooztech.com/v1/prices/current"),
+         new("https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json"),
+         new("https://cdn.jsdelivr.net/gh/zoefix/agent-speed@main/spec/assets/prices.json"),
+     ];
+ 
+     public static readonly IReadOnlySet<string> AllowedHosts =
+-        new HashSet<string>(["raw.githubusercontent.com", "cdn.jsdelivr.net"], StringComparer.Ordinal);
++        new HashSet<string>(["agent-speed.yooztech.com", "raw.githubusercontent.com", "cdn.jsdelivr.net"], StringComparer.Ordinal);
+ 
+     /// <summary>Where Settings' <c>prices.viewSource</c> link points.</summary>
+     public static readonly Uri SourcePage = new("https://github.com/zoefix/agent-speed/blob/main/spec/assets/prices.json");
+diff --git a/windows/tests/AgentSpeed.Core.Tests/PriceTableSyncTests.cs b/windows/tests/AgentSpeed.Core.Tests/PriceTableSyncTests.cs
+index 44e4bc61..6020522e 100644
+--- a/windows/tests/AgentSpeed.Core.Tests/PriceTableSyncTests.cs
++++ b/windows/tests/AgentSpeed.Core.Tests/PriceTableSyncTests.cs
+@@ -9,8 +9,9 @@ namespace AgentSpeed.Core.Tests;
+ 
+ public sealed class PriceTableSyncTests
+ {
+-    private static readonly Uri Raw = PriceTableSync.Urls[0];
+-    private static readonly Uri Mirror = PriceTableSync.Urls[1];
++    private static readonly Uri Relay = PriceTableSync.Urls[0];
++    private static readonly Uri Raw = PriceTableSync.Urls[1];
++    private static readonly Uri Mirror = PriceTableSync.Urls[2];
+ 
+     /// <summary>2026-10-22T12:00Z, the reference clock for synchronization and future-date checks.</summary>
+     private static readonly DateTimeOffset Noon = DateTimeOffset.FromUnixTimeSeconds(1_792_670_400);
+@@ -22,11 +23,12 @@ public sealed class PriceTableSyncTests
+     {
+         Assert.Equal(
+             [
++                "https://agent-speed.yooztech.com/v1/prices/current",
+                 "https://raw.githubusercontent.com/zoefix/agent-speed/main/spec/assets/prices.json",
+                 "https://cdn.jsdelivr.net/gh/zoefix/agent-speed@main/spec/assets/prices.json",
+             ],
+             PriceTableSync.Urls.Select(u => u.AbsoluteUri));
+-        Assert.True(PriceTableSync.AllowedHosts.SetEquals(["raw.githubusercontent.com", "cdn.jsdelivr.net"]));
++        Assert.True(PriceTableSync.AllowedHosts.SetEquals(["agent-speed.yooztech.com", "raw.githubusercontent.com", "cdn.jsdelivr.net"]));
+         Assert.Equal("https://github.com/zoefix/agent-speed/blob/main/spec/assets/prices.json", PriceTableSync.SourcePage.AbsoluteUri);
+     }
+ 
+@@ -38,22 +40,22 @@ public sealed class PriceTableSyncTests
+     public async Task ANewerTableIsStoredAndDelivered()
+     {
+         using var harness = new Harness();
+-        harness.Transport.Reply(Raw, body: Table(version: 2), etag: "\"v2\"");
++        harness.Transport.Reply(Relay, body: Table(version: 2), etag: "\"v2\"");
+         var result = await harness.Sync.RunAsync(currentVersion: 1);
+         Assert.Equal(new PriceSyncOutcome.Updated(2), result.Outcome);
+         Assert.Equal(2, result.Table?.Version);
+-        Assert.Equal([Raw.AbsoluteUri], harness.Transport.RequestedUrls);
++        Assert.Equal([Relay.AbsoluteUri], harness.Transport.RequestedUrls);
+         var request = harness.Transport.Requests[0];
+         Assert.Equal("application/json", request.Accept);
+         Assert.Equal("AgentSpeed/9.9.9 (Windows)", request.UserAgent);
+         Assert.Null(request.IfNoneMatch);
+         Assert.Equal(PriceTable.MaxBytes, request.MaxBytes);
+-        Assert.True(request.AllowedHosts.SetEquals(["raw.githubusercontent.com", "cdn.jsdelivr.net"]));
++        Assert.True(request.AllowedHosts.SetEquals(["agent-speed.yooztech.com", "raw.githubusercontent.com", "cdn.jsdelivr.net"]));
+         Assert.Equal(2, harness.Store.LoadTable()?.Version);
+         var state = harness.Store.LoadState();
+         Assert.Equal(2, state.Version);
+         Assert.Equal("\"v2\"", state.ETag);
+-        Assert.Equal(Raw.AbsoluteUri, state.Url);
++        Assert.Equal(Relay.AbsoluteUri, state.Url);
+         Assert.Equal(1_792_670_400_000, state.LastSuccessMs);
+         Assert.Equal(0, state.Failures);
+         Assert.Equal(state, result.State);
+@@ -64,10 +66,10 @@ public sealed class PriceTableSyncTests
+     public async Task TheFixtureTablesSyncInOrder()
+     {
+         using var harness = new Harness(Noon.AddDays(-7));
+-        harness.Transport.Reply(Raw, body: File.ReadAllBytes(FixtureLocator.PathOf("prices/v2.json")));
++        harness.Transport.Reply(Relay, body: File.ReadAllBytes(FixtureLocator.PathOf("prices/v2.json")));
+         Assert.Equal(new PriceSyncOutcome.Updated(2), (await harness.Sync.RunAsync(currentVersion: 1)).Outcome);
+         Assert.Equal("2026-10-15", harness.Store.LoadTable()?.Updated);
+-        harness.Transport.Reply(Raw, body: File.ReadAllBytes(FixtureLocator.PathOf("prices/v1.json")));
++        harness.Transport.Reply(Relay, body: File.ReadAllBytes(FixtureLocator.PathOf("prices/v1.json")));
+         var older = await harness.Sync.RunAsync(currentVersion: 2);
+         Assert.Equal(new PriceSyncOutcome.UpToDate(), older.Outcome);
+         Assert.Null(older.Table);
+@@ -75,22 +77,23 @@ public sealed class PriceTableSyncTests
+     }
+ 
+     [Fact]
+-    public async Task TheMirrorIsTriedWhenGitHubFails()
++    public async Task TheRelayGitHubThenMirrorChainIsTriedInOrder()
+     {
+         var failures = new Action<ScriptedTransport>[]
+         {
+-            t => t.Fail(Raw, new HttpFetchException(HttpFetchFailure.Transport, "ConnectionError")),
+-            t => t.Reply(Raw, status: 404),
+-            t => t.Reply(Raw, body: "not json"u8.ToArray()),
++            t => t.Fail(Relay, new HttpFetchException(HttpFetchFailure.Transport, "ConnectionError")),
++            t => t.Reply(Relay, status: 404),
++            t => t.Reply(Relay, body: "not json"u8.ToArray()),
+         };
+         foreach (var fail in failures)
+         {
+             using var harness = new Harness();
+             fail(harness.Transport);
++            harness.Transport.Reply(Raw, status: 404);
+             harness.Transport.Reply(Mirror, body: Table(version: 3));
+             var result = await harness.Sync.RunAsync(currentVersion: 1);
+             Assert.Equal(new PriceSyncOutcome.Updated(3), result.Outcome);
+-            Assert.Equal([Raw.AbsoluteUri, Mirror.AbsoluteUri], harness.Transport.RequestedUrls);
++            Assert.Equal([Relay.AbsoluteUri, Raw.AbsoluteUri, Mirror.AbsoluteUri], harness.Transport.RequestedUrls);
+             Assert.Equal(Mirror.AbsoluteUri, harness.Store.LoadState().Url);
+         }
+     }
+@@ -99,10 +102,10 @@ public sealed class PriceTableSyncTests
+     public async Task AStoredETagTurnsTheNextDayIntoA304()
+     {
+         using var harness = new Harness();
+-        harness.Transport.Reply(Raw, body: Table(version: 2), etag: "\"v2\"");
++        harness.Transport.Reply(Relay, body: Table(version: 2), etag: "\"v2\"");
+         await harness.Sync.RunAsync(currentVersion: 1);
+         harness.Clock.Advance(PriceTableSync.Interval);
+-        harness.Transport.Reply(Raw, status: 304);
++        harness.Transport.Reply(Relay, status: 304);
+         var result = await harness.Sync.RunAsync(currentVersion: 2);
+         Assert.Equal(new PriceSyncOutcome.UpToDate(), result.Outcome);
+         Assert.Equal("\"v2\"", harness.Transport.Requests[^1].IfNoneMatch);
+@@ -114,8 +117,8 @@ public sealed class PriceTableSyncTests
+     public async Task AnETagIsNotSentWhenItsTableIsNewerThanOurs()
+     {
+         using var harness = new Harness();
+-        harness.Store.SaveState(new PriceSyncState { Version = 5, Url = Raw.AbsoluteUri, ETag = "\"v5\"" });
+-        harness.Transport.Reply(Raw, body: Table(version: 5));
++        harness.Store.SaveState(new PriceSyncState { Version = 5, Url = Relay.AbsoluteUri, ETag = "\"v5\"" });
++        harness.Transport.Reply(Relay, body: Table(version: 5));
+         var result = await harness.Sync.RunAsync(currentVersion: 1);
+         Assert.Null(harness.Transport.Requests[0].IfNoneMatch);
+         Assert.Equal(new PriceSyncOutcome.Updated(5), result.Outcome);
+@@ -127,12 +130,12 @@ public sealed class PriceTableSyncTests
+         foreach (var version in new[] { 1, 2 })
+         {
+             using var harness = new Harness();
+-            harness.Transport.Reply(Raw, body: Table(version: version));
++            harness.Transport.Reply(Relay, body: Table(version: version));
+             var result = await harness.Sync.RunAsync(currentVersion: 2);
+             Assert.Equal(new PriceSyncOutcome.UpToDate(), result.Outcome);
+             Assert.Null(result.Table);
+             Assert.Null(harness.Store.LoadTable());
+-            Assert.Equal([Raw.AbsoluteUri], harness.Transport.RequestedUrls);
++            Assert.Equal([Relay.AbsoluteUri], harness.Transport.RequestedUrls);
+             Assert.Equal(version, harness.Store.LoadState().Version);
+         }
+     }
+@@ -141,6 +144,7 @@ public sealed class PriceTableSyncTests
+     public async Task ANewerSchemaIsNotAnError()
+     {
+         using var harness = new Harness();
++        harness.Transport.Reply(Relay, body: Table(version: 9, schema: 2));
+         harness.Transport.Reply(Raw, body: Table(version: 9, schema: 2));
+         harness.Transport.Reply(Mirror, body: Table(version: 9, schema: 2));
+         var result = await harness.Sync.RunAsync(currentVersion: 1);
+@@ -153,6 +157,7 @@ public sealed class PriceTableSyncTests
+     public async Task ALaggingMirrorStillServesTheCurrentSchema()
+     {
+         using var harness = new Harness();
++        harness.Transport.Reply(Relay, body: Table(version: 9, schema: 2));
+         harness.Transport.Reply(Raw, body: Table(version: 9, schema: 2));
+         harness.Transport.Reply(Mirror, body: Table(version: 4));
+         Assert.Equal(new PriceSyncOutcome.Updated(4), (await harness.Sync.RunAsync(currentVersion: 1)).Outcome);
+@@ -163,14 +168,16 @@ public sealed class PriceTableSyncTests
+     {
+         using (var harness = new Harness())
+         {
++            harness.Transport.Reply(Relay, body: Table(version: 2, updated: "2026-10-25"));
+             harness.Transport.Reply(Raw, body: Table(version: 2, updated: "2026-10-25"));
+             harness.Transport.Reply(Mirror, body: Table(version: 2, updated: "2026-10-24"));
+             var result = await harness.Sync.RunAsync(currentVersion: 1);
+             Assert.Equal(new PriceSyncOutcome.Updated(2), result.Outcome);
+-            Assert.Equal(2, harness.Transport.Requests.Count);
++            Assert.Equal(3, harness.Transport.Requests.Count);
+         }
+ 
+         using var late = new Harness();
++        late.Transport.Reply(Relay, body: Table(version: 2, updated: "2026-10-25"));
+         late.Transport.Reply(Raw, body: Table(version: 2, updated: "2026-10-25"));
+         late.Transport.Reply(Mirror, body: Table(version: 2, updated: "2026-10-25"));
+         var failed = Assert.IsType<PriceSyncOutcome.Failed>((await late.Sync.RunAsync(currentVersion: 1)).Outcome);
+@@ -195,7 +202,7 @@ public sealed class PriceTableSyncTests
+     public async Task OversizedAndInvalidDownloadsFailTheRound()
+     {
+         using var harness = new Harness();
+-        harness.Transport.Reply(Raw, body: new byte[PriceTable.MaxBytes + 1]);
++        harness.Transport.Reply(Relay, body: new byte[PriceTable.MaxBytes + 1]);
+         var broken = JsonNode.Parse(Table(version: 2))!.AsObject();
+         var model = broken["models"]!.AsArray().First(m => m!["prices"] is JsonObject)!;
+         model["prices"]!["input"] = 4.0000001;
+@@ -228,6 +235,31 @@ public sealed class PriceTableSyncTests
+         Assert.Equal(Path.Combine(directory.Path, "prices", "sync.json"), store.StatePath);
+     }
+ 
++    [Fact]
++    public void OnlyTheRelayGitHubAndMirrorHostsArePermitted()
++    {
++        var request = new HttpFetchRequest(Relay, "AgentSpeed/9.9.9 (Windows)", PriceTable.MaxBytes, PriceTableSync.AllowedHosts);
++        foreach (var allowed in PriceTableSync.Urls)
++        {
++            Assert.True(request.Permits(allowed));
++        }
++
++        Assert.False(request.Permits(new Uri("https://example.com/prices.json")));
++        Assert.False(request.Permits(new Uri("http://agent-speed.yooztech.com/v1/prices/current")));
++    }
++
++    [Fact]
++    public void ATableWithoutItsOwnTestsIsAccepted()
++    {
++        // The service relay omits the upstream table's `tests`, so validation rule 4 is vacuous there.
++        var table = JsonNode.Parse(Bundled.Value)!.AsObject();
++        table.Remove("tests");
++        table["version"] = 2;
++        var loaded = PriceTable.Load(Encoding.UTF8.GetBytes(table.ToJsonString())).Table;
++        Assert.Equal(2, loaded?.Version);
++        Assert.Empty(loaded!.Tests);
++    }
++
+     [Fact]
+     public void ScheduleFollowsLaunchDailyAndRetryRules()
+     {
+@@ -258,7 +290,7 @@ public sealed class PriceTableSyncTests
+         Assert.Equal(1, harness.Store.LoadState().Failures);
+         await harness.Sync.RunAsync(currentVersion: 1);
+         Assert.Equal(2, harness.Store.LoadState().Failures);
+-        harness.Transport.Reply(Raw, body: Table(version: 1));
++        harness.Transport.Reply(Relay, body: Table(version: 1));
+         Assert.Equal(new PriceSyncOutcome.UpToDate(), (await harness.Sync.RunAsync(currentVersion: 1)).Outcome);
+         Assert.Equal(0, harness.Store.LoadState().Failures);
+         Assert.Null(harness.Store.LoadState().LastError);
+-- 
+2.41.0
+
