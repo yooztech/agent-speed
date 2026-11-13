@@ -1,4 +1,4 @@
-From 5c32156c7dea2c0e86906724a1b4dcba21220d87 Mon Sep 17 00:00:00 2001
+From 4237d90ac91d92ced2058233e32064b799151dc4 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 20:09:33 +0800
 Subject: [PATCH 21/21] Add Windows Codex quota monitoring
@@ -17,7 +17,9 @@ Subject: [PATCH 21/21] Add Windows Codex quota monitoring
  .../Settings/SettingsWindow.xaml.cs           |  10 +-
  windows/src/AgentSpeed/Theme/Styles.xaml      |   4 +-
  .../CodexQuotaProviderTests.cs                | 184 ++++++++++++++
- 13 files changed, 710 insertions(+), 3 deletions(-)
+ .../OrbMenuModelTests.cs                      |   6 +-
+ .../Reporting/ReportMenuTests.cs              |  11 +-
+ 15 files changed, 720 insertions(+), 10 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed/Settings/QuotaSurface.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
@@ -921,3 +923,68 @@ index 00000000..023d27d9
 +        }
 +    }
 +}
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbMenuModelTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbMenuModelTests.cs
+index a287b483..46664d56 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/OrbMenuModelTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbMenuModelTests.cs
+@@ -325,7 +325,7 @@ public class OrbMenuModelTests
+ 
+         Assert.Equal(
+             [
+-                En["menu.dashboard"], En["history.open"], Separator,
++                En["menu.dashboard"], En["history.open"], En["win.quota.title"], Separator,
+                 En["menu.size"], En["menu.effects"], En["menu.alwaysOnTop"], En["menu.clickThrough"], En["menu.hideOrb"],
+                 En["boards.add"], En["settings.bar.show"], Separator,
+                 En["menu.settings"], En["menu.about"], En["update.check"] + "…", Separator, En["menu.quit"],
+@@ -333,6 +333,7 @@ public class OrbMenuModelTests
+             Outline(menu));
+         Assert.True(Row(menu, "menu.dashboard").IsDefault);
+         Assert.Equal(new MenuAction.OpenHistory(), Row(menu, "history.open").Action);
++        Assert.Equal(new MenuAction.OpenSettings("quota"), Row(menu, "win.quota.title").Action);
+         Assert.Equal([En["menu.size.large"]], Sub(menu, "menu.size").Rows.Where(r => r.IsChecked).Select(r => r.Label));
+         Assert.Equal(new MenuAction.SetOrbSize("solo", 112), Sub(menu, "menu.size").Rows.First().Action);
+         Assert.Equal(new MenuAction.SetOrbAlwaysOnTop("solo", false), Row(menu, "menu.alwaysOnTop").Action);
+@@ -362,12 +363,13 @@ public class OrbMenuModelTests
+ 
+         Assert.Equal(
+             [
+-                En["menu.dashboard"], En["history.open"], Separator,
++                En["menu.dashboard"], En["history.open"], En["win.quota.title"], Separator,
+                 En["settings.orb"], En["menu.effects"], En["menu.hideOrbs"], En["boards.add"], En["settings.bar.show"], Separator,
+                 En["menu.settings"], En["menu.about"], En["update.check"] + "…", Separator, En["menu.quit"],
+             ],
+             Outline(menu));
+         Assert.Equal(new MenuAction.SetShowOrbs(false), Row(menu, "menu.hideOrbs").Action);
++        Assert.Equal(new MenuAction.OpenSettings("quota"), Row(menu, "win.quota.title").Action);
+ 
+         var orbs = Sub(menu, "settings.orb");
+         Assert.True(orbs.ReservesIconColumn);
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportMenuTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportMenuTests.cs
+index aaa5ffb2..630baf40 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportMenuTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportMenuTests.cs
+@@ -29,18 +29,19 @@ public class ReportMenuTests
+ 
+     [Theory]
+     [MemberData(nameof(Languages))]
+-    public void TheReportItemFollowsHistoryBetweenSeparators(string language)
++    public void TheReportItemFollowsQuotaBetweenSeparators(string language)
+     {
+         var loc = Loc(language);
+         var without = Outline(Quick(loc, null));
+         var with = Outline(Quick(loc, new ReportMenuState("Codex Radar", Paused: false, HasLeaderboard: true, MenuStatusTone.Green)));
+         var history = Array.IndexOf(with, loc["history.open"]);
+         Assert.True(history >= 0);
+-        Assert.Equal(Separator, with[history + 1]);
+-        Assert.Equal(loc.Format("report.menu.on", "Codex Radar"), with[history + 2]);
+-        Assert.Equal(Separator, with[history + 3]);
++        Assert.Equal(loc["win.quota.title"], with[history + 1]);
++        Assert.Equal(Separator, with[history + 2]);
++        Assert.Equal(loc.Format("report.menu.on", "Codex Radar"), with[history + 3]);
++        Assert.Equal(Separator, with[history + 4]);
+         Assert.Equal(without.Length + 2, with.Length);
+-        Assert.Equal(without, with.Where((_, i) => i != history + 1 && i != history + 2).ToArray());
++        Assert.Equal(without, with.Where((_, i) => i != history + 2 && i != history + 3).ToArray());
+     }
+ 
+     [Theory]

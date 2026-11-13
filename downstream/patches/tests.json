@@ -348,7 +348,12 @@
         "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release --filter FullyQualifiedName~CodexQuota --framework net10.0"
       }
     ],
-    "related": [],
+    "related": [
+      {
+        "platform": "linux",
+        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OrbMenuModelTests|FullyQualifiedName~ReportMenuTests'"
+      }
+    ],
     "reason": ""
   }
 }
