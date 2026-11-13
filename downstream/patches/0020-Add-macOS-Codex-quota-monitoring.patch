@@ -1,7 +1,7 @@
-From add1c7d92ac93cad5fd0ce6fe574ac3d143b4e60 Mon Sep 17 00:00:00 2001
+From f7dfa6a7186ac22b7d2c2a30aef8b9564b8bdfa2 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 19:15:28 +0800
-Subject: [PATCH 20/20] Add macOS Codex quota monitoring
+Subject: [PATCH 20/21] Add macOS Codex quota monitoring
 
 ---
  macos/Resources/strings.macos.json            |  34 +++
@@ -14,11 +14,11 @@ Subject: [PATCH 20/20] Add macOS Codex quota monitoring
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
  .../AgentSpeed/Support/MenuFactory.swift      |   1 +
  .../AgentSpeedCore/CodexQuotaProvider.swift   | 278 ++++++++++++++++++
- .../CodexQuotaProviderTests.swift             | 227 ++++++++++++++
+ .../CodexQuotaProviderTests.swift             | 228 ++++++++++++++
  spec/QUOTA.md                                 |  51 ++++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 ++
- 14 files changed, 904 insertions(+), 2 deletions(-)
+ 14 files changed, 905 insertions(+), 2 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaPanelController.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
@@ -762,10 +762,10 @@ index 00000000..d1995bac
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
 new file mode 100644
-index 00000000..b448f652
+index 00000000..ab8cba6b
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,228 @@
 +import Foundation
 +import Testing
 +@testable import AgentSpeedCore
@@ -955,13 +955,14 @@ index 00000000..b448f652
 +        let suite = UUID().uuidString
 +        let defaults = UserDefaults(suiteName: suite)!
 +        defer { defaults.removePersistentDomain(forName: suite) }
-+        let first = CodexQuotaProvider(credentialURL: url, defaults: defaults, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
++        // Each provider owns its defaults instance; the suite shares only persisted values.
++        let first = CodexQuotaProvider(credentialURL: url, defaults: UserDefaults(suiteName: suite)!, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
 +        _ = await first.refresh()
 +        let persisted = defaults.dictionaryRepresentation().description
 +        #expect(!persisted.contains("secret-token"))
 +        #expect(!persisted.contains("private-account"))
 +        #expect(!persisted.contains("used_percent"))
-+        let second = CodexQuotaProvider(credentialURL: url, defaults: defaults, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
++        let second = CodexQuotaProvider(credentialURL: url, defaults: UserDefaults(suiteName: suite)!, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
 +        let waiting = await second.refresh()
 +        #expect(waiting.status == .error)
 +        #expect(waiting.waitingForRefresh)
@@ -973,7 +974,7 @@ index 00000000..b448f652
 +        let failed = await second.refresh()
 +        #expect(failed.status == .error)
 +        #expect(!failed.waitingForRefresh)
-+        let third = CodexQuotaProvider(credentialURL: url, defaults: defaults, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
++        let third = CodexQuotaProvider(credentialURL: url, defaults: UserDefaults(suiteName: suite)!, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
 +        let backoff = await third.refresh()
 +        #expect(backoff.status == .error)
 +        #expect(!backoff.waitingForRefresh)
@@ -982,7 +983,7 @@ index 00000000..b448f652
 +        fixture.setStatus(200)
 +        fixture.setBody("invalid JSON")
 +        #expect(!(await third.refresh()).waitingForRefresh)
-+        let fourth = CodexQuotaProvider(credentialURL: url, defaults: defaults, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
++        let fourth = CodexQuotaProvider(credentialURL: url, defaults: UserDefaults(suiteName: suite)!, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
 +        #expect(!(await fourth.refresh()).waitingForRefresh)
 +        #expect(fixture.count() == 3)
 +        fixture.advance(300)

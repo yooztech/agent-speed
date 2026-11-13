@@ -116,11 +116,15 @@ poll the account usage endpoint independently of the speed monitor. The quota
 contract, polling rules and synthetic response fixtures are in the prepared
 tree's `spec/QUOTA.md`. Unknown values remain unknown, not zero.
 
-The macOS patch has not been compiled or exercised on macOS in this Linux checkout;
-native Swift tests and panel behavior require target-platform verification. The
-Windows application cross-compiles on Linux and focused quota core tests pass;
-native Windows panel and real-login behavior remain unverified. Claude quota and
-Linux quota interfaces are future phases.
+The quota persistence regression gives each provider actor its own `UserDefaults`
+instance for the same suite, avoiding non-Sendable instance sharing under Swift 6.
+The provider and all ten quota tests compile and pass under Swift 6.2 on Linux in
+a disposable package using swift-crypto and FoundationNetworking. This does not
+validate the full macOS package, native panel or real-login behavior; those still
+require target-platform verification. The Windows application cross-compiles on
+Linux and focused quota core tests pass; native Windows panel and real-login
+behavior remain unverified. Claude quota and Linux quota interfaces are future
+phases.
 
 ### Standalone collector release assets (unreleased)
 
