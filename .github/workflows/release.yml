@@ -117,7 +117,14 @@ jobs:
           echo "::notice::$(xcodebuild -version | tr '\n' ' ')"
       - name: Test core
         working-directory: ${{ runner.temp }}/agent-speed-prepared/macos
-        run: swift test
+        run: |
+          # A loaded macOS runner can stall the URL loading system past the stub tests' 15 s request timeout
+          # (URLError -1001 in HTTPFetcherTests/ReportInviteTests). One full-suite retry separates that runner
+          # flake from a real failure; a second failure still blocks the release.
+          swift test || {
+            echo "::warning::swift test failed; retrying once"
+            swift test
+          }
       - name: Test update relaunch
         timeout-minutes: 5
         working-directory: ${{ runner.temp }}/agent-speed-prepared
