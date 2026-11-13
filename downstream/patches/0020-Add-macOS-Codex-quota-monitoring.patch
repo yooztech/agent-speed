@@ -1,0 +1,1098 @@
+From add1c7d92ac93cad5fd0ce6fe574ac3d143b4e60 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 13 Nov 2026 19:15:28 +0800
+Subject: [PATCH 20/20] Add macOS Codex quota monitoring
+
+---
+ macos/Resources/strings.macos.json            |  34 +++
+ .../Sources/AgentSpeed/App/AppDelegate.swift  |   2 +
+ macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
+ .../AgentSpeed/App/QuotaController.swift      |  64 ++++
+ .../AgentSpeed/App/QuotaPanelController.swift |  95 ++++++
+ .../AgentSpeed/Localization/StringTable.swift |  34 +++
+ .../SettingsWindow/Panes/QuotaPane.swift      |  77 +++++
+ .../SettingsWindow/SettingsPaneView.swift     |   2 +-
+ .../AgentSpeed/Support/MenuFactory.swift      |   1 +
+ .../AgentSpeedCore/CodexQuotaProvider.swift   | 278 ++++++++++++++++++
+ .../CodexQuotaProviderTests.swift             | 227 ++++++++++++++
+ spec/QUOTA.md                                 |  51 ++++
+ spec/fixtures/codex-credit-quota.json         |   8 +
+ spec/fixtures/codex-quota.json                |  26 ++
+ 14 files changed, 904 insertions(+), 2 deletions(-)
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaPanelController.swift
+ create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
+ create mode 100644 macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
+ create mode 100644 spec/QUOTA.md
+ create mode 100644 spec/fixtures/codex-credit-quota.json
+ create mode 100644 spec/fixtures/codex-quota.json
+
+diff --git a/macos/Resources/strings.macos.json b/macos/Resources/strings.macos.json
+index 0d19457d..244ffdc8 100644
+--- a/macos/Resources/strings.macos.json
++++ b/macos/Resources/strings.macos.json
+@@ -1,5 +1,39 @@
+ {
+   "_comment": "macOS-only UI strings. Every key needs zh-Hant, zh-Hans, en and ja. Run macos/scripts/sync-strings.py after editing.",
++  "mac.quota.title": {"zh-Hant":"用量額度","zh-Hans":"用量额度","en":"Quota","ja":"使用枠"},
++  "mac.quota.show": {"zh-Hant":"顯示額度浮窗","zh-Hans":"显示额度浮窗","en":"Show quota panel","ja":"使用枠パネルを表示"},
++  "mac.quota.hint": {"zh-Hant":"浮窗只顯示每個帳戶的主要額度；按一下可查看全部詳情。關閉浮窗會記住此選擇。","zh-Hans":"浮窗只显示每个账户的主要额度；点击可查看全部详情。关闭浮窗会记住此选择。","en":"The panel shows each account’s headline window. Click it for all details. Closing the panel is remembered.","ja":"パネルには各アカウントの主要な使用枠を表示します。クリックすると詳細を確認できます。閉じた状態は保存されます。"},
++  "mac.quota.refresh": {"zh-Hant":"重新整理","zh-Hans":"刷新","en":"Refresh","ja":"更新"},
++  "mac.quota.empty": {"zh-Hant":"尚無額度資料。","zh-Hans":"尚无额度数据。","en":"No quota data yet.","ja":"使用枠データはまだありません。"},
++  "mac.quota.offline": {"zh-Hant":"網路功能已關閉。","zh-Hans":"网络功能已关闭。","en":"Network access is off.","ja":"ネットワークアクセスはオフです。"},
++  "mac.quota.unknown": {"zh-Hant":"未知","zh-Hans":"未知","en":"Unknown","ja":"不明"},
++  "mac.quota.used": {"zh-Hant":"已使用 %@","zh-Hans":"已使用 %@","en":"%@ used","ja":"%@ 使用済み"},
++  "mac.quota.remaining": {"zh-Hant":"剩餘 %@","zh-Hans":"剩余 %@","en":"%@ remaining","ja":"残り %@"},
++  "mac.quota.reset": {"zh-Hant":"重設：%@","zh-Hans":"重置：%@","en":"Resets: %@","ja":"リセット：%@"},
++  "mac.quota.observed": {"zh-Hant":"更新時間","zh-Hans":"更新时间","en":"Observed","ja":"取得日時"},
++  "mac.quota.account": {"zh-Hant":"帳戶","zh-Hans":"账户","en":"Account","ja":"アカウント"},
++  "mac.quota.plan": {"zh-Hant":"方案","zh-Hans":"方案","en":"Plan","ja":"プラン"},
++  "mac.quota.source": {"zh-Hant":"來源","zh-Hans":"来源","en":"Source","ja":"ソース"},
++  "mac.quota.fidelity": {"zh-Hant":"資料精度","zh-Hans":"数据精度","en":"Data fidelity","ja":"データ精度"},
++  "mac.quota.fidelity.official": {"zh-Hant":"官方","zh-Hans":"官方","en":"Official","ja":"公式"},
++  "mac.quota.fidelity.derived": {"zh-Hant":"推算","zh-Hans":"推算","en":"Derived","ja":"推定"},
++  "mac.quota.fidelity.manual": {"zh-Hant":"手動輸入","zh-Hans":"手动输入","en":"Manual","ja":"手動入力"},
++  "mac.quota.block": {"zh-Hant":"限制","zh-Hans":"限制","en":"Limit","ja":"制限"},
++  "mac.quota.credits": {"zh-Hant":"點數","zh-Hans":"点数","en":"Credits","ja":"クレジット"},
++  "mac.quota.creditsLimit": {"zh-Hant":"點數上限","zh-Hans":"点数上限","en":"Credit limit","ja":"クレジット上限"},
++  "mac.quota.unlimited": {"zh-Hant":"無限","zh-Hans":"无限","en":"Unlimited","ja":"無制限"},
++  "mac.quota.yes": {"zh-Hant":"是","zh-Hans":"是","en":"Yes","ja":"はい"},
++  "mac.quota.no": {"zh-Hant":"否","zh-Hans":"否","en":"No","ja":"いいえ"},
++  "mac.quota.next": {"zh-Hant":"下次可用","zh-Hans":"下次可用","en":"Next available","ja":"次回利用可能"},
++  "mac.quota.duration": {"zh-Hant":"時段長度","zh-Hans":"时段长度","en":"Window length","ja":"期間の長さ"},
++  "mac.quota.status.ok": {"zh-Hant":"正常","zh-Hans":"正常","en":"Current","ja":"最新"},
++  "mac.quota.status.stale": {"zh-Hant":"資料過期","zh-Hans":"数据过期","en":"Stale","ja":"古いデータ"},
++  "mac.quota.status.needsAuth": {"zh-Hant":"需要登入 Codex","zh-Hans":"需要登录 Codex","en":"Sign in to Codex","ja":"Codex にサインインしてください"},
++  "mac.quota.status.accessDenied": {"zh-Hant":"存取遭拒","zh-Hans":"访问被拒绝","en":"Access denied","ja":"アクセスが拒否されました"},
++  "mac.quota.status.unsupported": {"zh-Hant":"不支援","zh-Hans":"不支持","en":"Unsupported","ja":"非対応"},
++  "mac.quota.status.error": {"zh-Hant":"無法取得額度","zh-Hans":"无法获取额度","en":"Could not load quota","ja":"使用枠を取得できません"},
++  "mac.quota.status.waiting": {"zh-Hant":"等待下次更新","zh-Hans":"等待下次更新","en":"Waiting for next refresh","ja":"次の更新を待機中"},
++  "mac.quota.close": {"zh-Hant":"關閉額度浮窗","zh-Hans":"关闭额度浮窗","en":"Close quota panel","ja":"使用枠パネルを閉じる"},
+   "mac.launchAtLogin.requiresApproval": {
+     "zh-Hant": "請在「系統設定」›「一般」›「登入項目」中允許 Agent Speed。",
+     "zh-Hans": "请在“系统设置”›“通用”›“登录项”中允许 Agent Speed。",
+diff --git a/macos/Sources/AgentSpeed/App/AppDelegate.swift b/macos/Sources/AgentSpeed/App/AppDelegate.swift
+index fa300736..550e8139 100644
+--- a/macos/Sources/AgentSpeed/App/AppDelegate.swift
++++ b/macos/Sources/AgentSpeed/App/AppDelegate.swift
+@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
+     private var settingsWindow: SettingsWindowController?
+     private var historyWindow: HistoryWindowController?
+     private var updateWindow: UpdateWindowController?
++    private var quotaPanel: QuotaPanelController?
+     private var updateScheduler: UpdateScheduler?
+     private let updateNotifier = UpdateNotifier()
+ 
+@@ -97,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
+         }
+         orbs = OrbWindowManager(model: model)
+         boardWindows = BoardWindowManager(model: model) { [weak self] in self?.orbShapes() ?? [] }
++        quotaPanel = QuotaPanelController(model: model)
+         orbs?.boardShapes = { [weak self] in self?.boardWindows?.shapes() ?? [] }
+ 
+         MainMenu.install(model: model)
+diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
+index 9cc19883..cd5fe523 100644
+--- a/macos/Sources/AgentSpeed/App/AppModel.swift
++++ b/macos/Sources/AgentSpeed/App/AppModel.swift
+@@ -63,6 +63,7 @@ final class AppModel {
+     let traffic: TrafficStore
+     /// Live reporting (DESIGN 11): off until the user confirms a service.
+     let report: ReportController
++    let quota: QuotaController
+     let remoteHosts: RemoteHosts
+     /// The menu bar intelligence block's thinking line, hidden after its rate has read 0 for 3 s (DESIGN 10).
+     let barThinking = StatusItemThinkingHold()
+@@ -103,6 +104,7 @@ final class AppModel {
+         mainFeed = OrbFeed(gauge: gauge)
+         orbs = OrbsController(defaults: settings.storage)
+         boards = BoardsController(defaults: settings.storage)
++        quota = QuotaController(defaults: settings.storage)
+         titles = TitleThemesController(defaults: settings.storage)
+         accessibility = AccessibilityState()
+         launchAtLogin = LaunchAtLogin()
+@@ -268,6 +270,7 @@ final class AppModel {
+             let network = self.settings.networkEnabled
+             self.prices.update(networkEnabled: network, autoSync: self.settings.syncPrices)
+             self.rates.update(networkEnabled: network, currency: self.settings.currency)
++            self.quota.setNetworkEnabled(network)
+             self.updates.networkEnabled = network
+         })
+         prices.start()
+@@ -377,7 +380,7 @@ enum DemoDriverRatio {
+ 
+ /// Settings window panes (DESIGN section 5).
+ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
+-    case general, menuBar, orb, effects, cost, traffic, report, sources, about
++    case general, menuBar, orb, effects, cost, traffic, quota, report, sources, about
+ 
+     var id: String { rawValue }
+ 
+@@ -389,6 +392,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
+         case .effects: "settings.effects"
+         case .cost: "settings.cost"
+         case .traffic: "settings.traffic"
++        case .quota: "mac.quota.title"
+         case .report: "settings.report"
+         case .sources: "settings.sources"
+         case .about: "settings.about"
+@@ -413,6 +417,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
+         case .effects: "sparkles"
+         case .cost: "banknote"
+         case .traffic: "arrow.up.arrow.down"
++        case .quota: "gauge.with.dots.needle.67percent"
+         case .report: "dot.radiowaves.left.and.right"
+         case .sources: "folder"
+         case .about: "info.circle"
+diff --git a/macos/Sources/AgentSpeed/App/QuotaController.swift b/macos/Sources/AgentSpeed/App/QuotaController.swift
+new file mode 100644
+index 00000000..ac424756
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/App/QuotaController.swift
+@@ -0,0 +1,64 @@
++import AgentSpeedCore
++import Foundation
++import Observation
++
++/// UI lifetime and visibility are separate from the provider; no credentials are persisted here.
++@MainActor @Observable
++final class QuotaController {
++    private let defaults: UserDefaults
++    private let provider = CodexQuotaProvider()
++    private var task: Task<Void, Never>?
++    private var timer: Timer?
++    private(set) var snapshots: [CodexQuotaSnapshot] = []
++    private(set) var isRefreshing = false
++    private(set) var networkEnabled = false
++    var visible: Bool {
++        didSet {
++            defaults.set(visible, forKey: "quota.panelVisible")
++            if visible && !oldValue { refresh() }
++        }
++    }
++
++    init(defaults: UserDefaults) {
++        self.defaults = defaults
++        visible = defaults.bool(forKey: "quota.panelVisible")
++    }
++
++    func setNetworkEnabled(_ enabled: Bool) {
++        guard networkEnabled != enabled else { return }
++        networkEnabled = enabled
++        if !enabled {
++            task?.cancel()
++            Task { [provider] in await provider.cancel() }
++            task = nil
++            isRefreshing = false
++            timer?.invalidate()
++            timer = nil
++        } else {
++            refresh()
++        }
++    }
++
++    func refresh() {
++        guard networkEnabled, !isRefreshing else { return }
++        isRefreshing = true
++        task = Task { [weak self, provider] in
++            let snapshot = await provider.refresh()
++            guard !Task.isCancelled, let self else { return }
++            self.snapshots = [snapshot]
++            self.isRefreshing = false
++            self.task = nil
++            self.scheduleRefresh()
++        }
++    }
++
++    private func scheduleRefresh() {
++        timer?.invalidate()
++        let timer = Timer(timeInterval: 300, repeats: false) { [weak self] _ in
++            MainActor.assumeIsolated { self?.refresh() }
++        }
++        timer.tolerance = 15
++        RunLoop.main.add(timer, forMode: .common)
++        self.timer = timer
++    }
++}
+diff --git a/macos/Sources/AgentSpeed/App/QuotaPanelController.swift b/macos/Sources/AgentSpeed/App/QuotaPanelController.swift
+new file mode 100644
+index 00000000..226a7009
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/App/QuotaPanelController.swift
+@@ -0,0 +1,95 @@
++import AgentSpeedCore
++import AppKit
++import SwiftUI
++
++/// A utility panel, independent of the dashboard and the orb windows. Closing it persists the choice.
++@MainActor
++final class QuotaPanelController: NSObject, NSWindowDelegate {
++    private let model: AppModel
++    private let panel: NSPanel
++    private var visibilityLoop: ObservationLoop?
++
++    init(model: AppModel) {
++        self.model = model
++        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 240),
++                        styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel],
++                        backing: .buffered, defer: false)
++        super.init()
++        panel.title = model.l10n("mac.quota.title")
++        panel.isReleasedWhenClosed = false
++        panel.hidesOnDeactivate = false
++        panel.level = .floating
++        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
++        panel.isMovableByWindowBackground = true
++        panel.contentView = NSHostingView(rootView: QuotaPanelView(model: model))
++        panel.delegate = self
++        panel.setFrameAutosaveName("QuotaPanel")
++        visibilityLoop = ObservationLoop { [weak self] in
++            guard let self else { return }
++            if self.model.quota.visible {
++                if !self.panel.isVisible { self.panel.orderFrontRegardless() }
++            } else if self.panel.isVisible {
++                self.panel.orderOut(nil)
++            }
++        }
++    }
++
++    func windowShouldClose(_ sender: NSWindow) -> Bool {
++        model.quota.visible = false
++        return true
++    }
++}
++
++private struct QuotaPanelView: View {
++    let model: AppModel
++
++    var body: some View {
++        ScrollView {
++            VStack(alignment: .leading, spacing: 12) {
++                if !model.quota.networkEnabled || model.quota.snapshots.isEmpty {
++                    Button(model.l10n(model.quota.networkEnabled ? "mac.quota.empty" : "mac.quota.offline")) {
++                        model.commands?.showSettings(.quota)
++                    }
++                    .buttonStyle(.plain)
++                    .foregroundStyle(.secondary)
++                }
++                ForEach(model.quota.snapshots, id: \.id) { account in
++                    Button {
++                        model.commands?.showSettings(.quota)
++                    } label: {
++                        let window = account.windows.first { $0.id == account.headlineId }
++                        HStack(spacing: 12) {
++                            ZStack {
++                                Circle().stroke(.quaternary, lineWidth: 5)
++                                if let fraction = window?.usedFraction {
++                                    Circle().trim(from: 0, to: max(0, min(1, fraction)))
++                                        .stroke(.tint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
++                                        .rotationEffect(.degrees(-90))
++                                }
++                            }
++                            .frame(width: 34, height: 34)
++                            VStack(alignment: .leading, spacing: 2) {
++                                Text(account.displayName).fontWeight(.semibold)
++                                if let window {
++                                    Text(window.label + " · " + (window.usedFraction.map { quotaPercent($0, locale: model.l10n.locale) } ?? model.l10n("mac.quota.unknown")))
++                                    if let reset = window.resetAt { Text(model.l10n("mac.quota.reset", quotaDate(reset, locale: model.l10n.locale))) }
++                                }
++                                Text(quotaStatus(account, model.l10n))
++                                if account.waitingForRefresh, let next = account.nextAllowedAt {
++                                    Text(model.l10n("mac.quota.next") + ": " + quotaDate(next, locale: model.l10n.locale))
++                                }
++                            }
++                            .font(.caption)
++                            .frame(maxWidth: .infinity, alignment: .leading)
++                        }
++                        .contentShape(Rectangle())
++                    }
++                    .buttonStyle(.plain)
++                    .help(model.l10n("mac.quota.title"))
++                }
++            }
++            .frame(maxWidth: .infinity, alignment: .leading)
++            .padding(14)
++        }
++    }
++}
+diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+index f9eb994d..dfa1f1c6 100644
+--- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
++++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+@@ -343,6 +343,40 @@ enum StringTable {
+         "mac.launchAtLogin.openSettings": Entry("打開系統設定", "打开系统设置", "Open System Settings", "システム設定を開く"),
+         "mac.launchAtLogin.requiresApproval": Entry("請在「系統設定」›「一般」›「登入項目」中允許 Agent Speed。", "请在“系统设置”›“通用”›“登录项”中允许 Agent Speed。", "Allow Agent Speed in System Settings › General › Login Items.", "「システム設定」›「一般」›「ログイン項目」で Agent Speed を許可してください。"),
+         "mac.launchAtLogin.unavailable": Entry("將 Agent Speed 移到「應用程式」資料夾後即可使用。", "将 Agent Speed 移到“应用程序”文件夹后即可使用。", "Available once Agent Speed is in the Applications folder.", "Agent Speed を「アプリケーション」フォルダに移動すると使用できます。"),
++        "mac.quota.account": Entry("帳戶", "账户", "Account", "アカウント"),
++        "mac.quota.block": Entry("限制", "限制", "Limit", "制限"),
++        "mac.quota.close": Entry("關閉額度浮窗", "关闭额度浮窗", "Close quota panel", "使用枠パネルを閉じる"),
++        "mac.quota.credits": Entry("點數", "点数", "Credits", "クレジット"),
++        "mac.quota.creditsLimit": Entry("點數上限", "点数上限", "Credit limit", "クレジット上限"),
++        "mac.quota.duration": Entry("時段長度", "时段长度", "Window length", "期間の長さ"),
++        "mac.quota.empty": Entry("尚無額度資料。", "尚无额度数据。", "No quota data yet.", "使用枠データはまだありません。"),
++        "mac.quota.fidelity": Entry("資料精度", "数据精度", "Data fidelity", "データ精度"),
++        "mac.quota.fidelity.derived": Entry("推算", "推算", "Derived", "推定"),
++        "mac.quota.fidelity.manual": Entry("手動輸入", "手动输入", "Manual", "手動入力"),
++        "mac.quota.fidelity.official": Entry("官方", "官方", "Official", "公式"),
++        "mac.quota.hint": Entry("浮窗只顯示每個帳戶的主要額度；按一下可查看全部詳情。關閉浮窗會記住此選擇。", "浮窗只显示每个账户的主要额度；点击可查看全部详情。关闭浮窗会记住此选择。", "The panel shows each account’s headline window. Click it for all details. Closing the panel is remembered.", "パネルには各アカウントの主要な使用枠を表示します。クリックすると詳細を確認できます。閉じた状態は保存されます。"),
++        "mac.quota.next": Entry("下次可用", "下次可用", "Next available", "次回利用可能"),
++        "mac.quota.no": Entry("否", "否", "No", "いいえ"),
++        "mac.quota.observed": Entry("更新時間", "更新时间", "Observed", "取得日時"),
++        "mac.quota.offline": Entry("網路功能已關閉。", "网络功能已关闭。", "Network access is off.", "ネットワークアクセスはオフです。"),
++        "mac.quota.plan": Entry("方案", "方案", "Plan", "プラン"),
++        "mac.quota.refresh": Entry("重新整理", "刷新", "Refresh", "更新"),
++        "mac.quota.remaining": Entry("剩餘 %@", "剩余 %@", "%@ remaining", "残り %@"),
++        "mac.quota.reset": Entry("重設：%@", "重置：%@", "Resets: %@", "リセット：%@"),
++        "mac.quota.show": Entry("顯示額度浮窗", "显示额度浮窗", "Show quota panel", "使用枠パネルを表示"),
++        "mac.quota.source": Entry("來源", "来源", "Source", "ソース"),
++        "mac.quota.status.accessDenied": Entry("存取遭拒", "访问被拒绝", "Access denied", "アクセスが拒否されました"),
++        "mac.quota.status.error": Entry("無法取得額度", "无法获取额度", "Could not load quota", "使用枠を取得できません"),
++        "mac.quota.status.needsAuth": Entry("需要登入 Codex", "需要登录 Codex", "Sign in to Codex", "Codex にサインインしてください"),
++        "mac.quota.status.ok": Entry("正常", "正常", "Current", "最新"),
++        "mac.quota.status.stale": Entry("資料過期", "数据过期", "Stale", "古いデータ"),
++        "mac.quota.status.unsupported": Entry("不支援", "不支持", "Unsupported", "非対応"),
++        "mac.quota.status.waiting": Entry("等待下次更新", "等待下次更新", "Waiting for next refresh", "次の更新を待機中"),
++        "mac.quota.title": Entry("用量額度", "用量额度", "Quota", "使用枠"),
++        "mac.quota.unknown": Entry("未知", "未知", "Unknown", "不明"),
++        "mac.quota.unlimited": Entry("無限", "无限", "Unlimited", "無制限"),
++        "mac.quota.used": Entry("已使用 %@", "已使用 %@", "%@ used", "%@ 使用済み"),
++        "mac.quota.yes": Entry("是", "是", "Yes", "はい"),
+         "mac.report.ws.milliseconds": Entry("%@ ms", "%@ ms", "%@ ms", "%@ ms"),
+         "mac.settings.about.copyright": Entry("© 2026 zoefix", "© 2026 zoefix", "© 2026 zoefix", "© 2026 zoefix"),
+         "mac.settings.about.license": Entry("以 MIT 授權開放原始碼", "以 MIT 许可证开源", "Open source under the MIT License", "MIT ライセンスのオープンソース"),
+diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
+new file mode 100644
+index 00000000..fe7e7ef7
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
+@@ -0,0 +1,77 @@
++import AgentSpeedCore
++import SwiftUI
++
++struct QuotaPane: View {
++    let model: AppModel
++
++    var body: some View {
++        @Bindable var quota = model.quota
++        let l10n = model.l10n
++        Form {
++            Section {
++                SettingToggle(title: l10n("mac.quota.show"), subtitle: l10n("mac.quota.hint"), isOn: $quota.visible)
++                HStack {
++                    if !quota.networkEnabled { Footnote(l10n("mac.quota.offline")) }
++                    Spacer()
++                    if quota.isRefreshing { ProgressView().controlSize(.small) }
++                    Button(l10n("mac.quota.refresh")) { quota.refresh() }
++                        .disabled(!quota.networkEnabled || quota.isRefreshing)
++                }
++            }
++            if quota.snapshots.isEmpty {
++                Section { Footnote(l10n("mac.quota.empty")) }
++            }
++            ForEach(quota.snapshots, id: \.id) { account in
++                Section(account.displayName) {
++                    LabeledContent(l10n("mac.quota.title"), value: quotaStatus(account, l10n))
++                    if let value = account.account { LabeledContent(l10n("mac.quota.account"), value: value) }
++                    if let value = account.plan { LabeledContent(l10n("mac.quota.plan"), value: value) }
++                    LabeledContent(l10n("mac.quota.source"), value: account.source)
++                    LabeledContent(l10n("mac.quota.fidelity"), value: l10n("mac.quota.fidelity.\(account.fidelity)"))
++                    if let value = account.block { LabeledContent(l10n("mac.quota.block"), value: value) }
++                    if let value = account.observedAt { LabeledContent(l10n("mac.quota.observed"), value: quotaDate(value, locale: l10n.locale)) }
++                    if let value = account.nextAllowedAt { LabeledContent(l10n("mac.quota.next"), value: quotaDate(value, locale: l10n.locale)) }
++                    if let credits = account.credits {
++                        if let value = credits.limit { LabeledContent(l10n("mac.quota.creditsLimit"), value: value.formatted(.number.locale(l10n.locale))) }
++                        if let value = credits.used { Text(l10n("mac.quota.used", value.formatted(.number.locale(l10n.locale)))) }
++                        if let value = credits.usedFraction { Text(l10n("mac.quota.used", quotaPercent(value, locale: l10n.locale))) }
++                        if let value = credits.resetAt { Text(l10n("mac.quota.reset", quotaDate(value, locale: l10n.locale))) }
++                        LabeledContent(l10n("mac.quota.credits"), value: credits.unlimited == true ? l10n("mac.quota.unlimited") : (credits.balance ?? (credits.hasCredits.map { l10n($0 ? "mac.quota.yes" : "mac.quota.no") } ?? l10n("mac.quota.unknown"))))
++                    }
++                    ForEach(account.windows, id: \.id) { window in
++                        VStack(alignment: .leading, spacing: 4) {
++                            Text(window.label).fontWeight(.semibold)
++                            if let used = window.usedFraction ?? window.used { Text(l10n("mac.quota.used", quotaPercent(used, locale: l10n.locale))) }
++                            if let remaining = window.remaining { Text(l10n("mac.quota.remaining", quotaPercent(remaining, locale: l10n.locale))) }
++                            if let reset = window.resetAt { Text(l10n("mac.quota.reset", quotaDate(reset, locale: l10n.locale))) }
++                            if let duration = window.duration { LabeledContent(l10n("mac.quota.duration"), value: Duration.seconds(duration).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated).locale(l10n.locale))) }
++                        }
++                    }
++                }
++            }
++        }
++        .settingsForm()
++        .onChange(of: quota.networkEnabled) { _, enabled in if enabled { quota.refresh() } }
++        .onAppear { quota.refresh() }
++    }
++}
++
++func quotaDate(_ date: Date, locale: Locale) -> String {
++    date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale))
++}
++
++func quotaPercent(_ fraction: Double, locale: Locale) -> String {
++    fraction.formatted(.percent.precision(.fractionLength(0)).locale(locale))
++}
++
++@MainActor func quotaStatus(_ account: CodexQuotaSnapshot, _ l10n: Localizer) -> String {
++    if account.waitingForRefresh { return l10n("mac.quota.status.waiting") }
++    return switch account.status {
++    case .ok: l10n("mac.quota.status.ok")
++    case .stale: l10n("mac.quota.status.stale")
++    case .needsAuth: l10n("mac.quota.status.needsAuth")
++    case .accessDenied: l10n("mac.quota.status.accessDenied")
++    case .unsupported: l10n("mac.quota.status.unsupported")
++    case .error: l10n("mac.quota.status.error")
++    }
++}
+diff --git a/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift b/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift
+index c494783c..5aac36f0 100644
+--- a/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift
++++ b/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift
+@@ -5,7 +5,6 @@ struct SettingsPaneView: View {
+     let pane: SettingsPane
+     let model: AppModel
+ 
+-    /// Wide enough for all nine toolbar tabs in every language (the Japanese labels need 580 pt).
+     static let width: CGFloat = 600
+     /// The floating orb pane lists live orbs and five style cards in a row; General holds three columns of title
+     /// theme cards and the custom set editor beside its previews (DESIGN 5: content up to 680 pt).
+@@ -30,6 +29,7 @@ struct SettingsPaneView: View {
+         case .effects: EffectsPane(model: model)
+         case .cost: CostPane(model: model)
+         case .traffic: TrafficPane(model: model)
++        case .quota: QuotaPane(model: model)
+         case .report: ReportPane(model: model)
+         case .sources: SourcesPane(model: model)
+         case .about: AboutPane(model: model)
+diff --git a/macos/Sources/AgentSpeed/Support/MenuFactory.swift b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
+index ec970b2c..30da978e 100644
+--- a/macos/Sources/AgentSpeed/Support/MenuFactory.swift
++++ b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
+@@ -45,6 +45,7 @@ enum MenuFactory {
+         }
+         menu.addItem(ActionMenuItem(l10n("menu.dashboard")) { [weak model] in model?.commands?.showDashboard() })
+         menu.addItem(historyItem(model: model))
++        menu.addItem(ActionMenuItem(l10n("mac.quota.title")) { [weak model] in model?.commands?.showSettings(.quota) })
+         if let report = ReportMenu.item(model: model) {
+             menu.addItem(.separator())
+             menu.addItem(report)
+diff --git a/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
+new file mode 100644
+index 00000000..d1995bac
+--- /dev/null
++++ b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
+@@ -0,0 +1,278 @@
++import Foundation
++import CryptoKit
++
++#if canImport(FoundationNetworking)
++import FoundationNetworking
++#endif
++
++// Protocol and parsing informed by Codenotch, Copyright (c) 2026 Vinz,
++// https://github.com/vinzdg/codenotch (MIT License). No credentials are modified.
++public enum CodexQuotaStatus: String, Sendable, Codable {
++    case ok, stale, needsAuth, accessDenied, unsupported, error
++}
++
++public struct CodexQuotaWindow: Sendable, Equatable {
++    public let id: String
++    public let label: String
++    public let usedFraction: Double?
++    public let remaining: Double?
++    public let used: Double?
++    public let resetAt: Date?
++    public let duration: TimeInterval?
++}
++
++public struct CodexQuotaCredits: Sendable, Equatable {
++    public let hasCredits: Bool?
++    public let unlimited: Bool?
++    public let limit: Double?
++    public let used: Double?
++    public let usedFraction: Double?
++    public let resetAt: Date?
++    public let balance: String?
++}
++
++public struct CodexQuotaSnapshot: Sendable, Equatable {
++    public let id: String
++    public let displayName: String
++    public let fidelity: String
++    public let status: CodexQuotaStatus
++    public let windows: [CodexQuotaWindow]
++    public let headlineId: String?
++    public let block: String?
++    public let account: String?
++    public let plan: String?
++    public let observedAt: Date?
++    public let source: String
++    public let credits: CodexQuotaCredits?
++    public let nextAllowedAt: Date?
++    /// No observation is available because a previously successful poll is still throttled.
++    public let waitingForRefresh: Bool
++}
++
++private struct QuotaCredentials: Decodable, Sendable {
++    struct Tokens: Decodable, Sendable { let access_token: String; let account_id: String }
++    let tokens: Tokens
++}
++
++private struct QuotaSchedule: Codable {
++    var nextAllowedAt: Date?
++    var failures: Int = 0
++    var rejectedToken: String?
++    var successfulObservation: Bool? = nil
++}
++
++private final class QuotaRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
++    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
++                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
++        // Do not send bearer credentials to a redirect target, even on the same host.
++        completionHandler(nil)
++    }
++}
++
++public actor CodexQuotaProvider {
++    typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
++    private let credentialURL: URL
++    private let defaults: UserDefaults
++    private let now: @Sendable () -> Date
++    private let transport: Transport
++    private var inFlight: Task<CodexQuotaSnapshot, Never>?
++    private var cached: [String: CodexQuotaSnapshot] = [:]
++
++    public init() {
++        let env = ProcessInfo.processInfo.environment
++        let home = env["CODEX_HOME"].flatMap { $0.isEmpty ? nil : $0 }
++            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
++        credentialURL = URL(fileURLWithPath: home, isDirectory: true).appendingPathComponent("auth.json")
++        defaults = .standard
++        now = { Date() }
++        transport = Self.request
++    }
++
++    init(credentialURL: URL, defaults: UserDefaults, now: @escaping @Sendable () -> Date,
++         transport: @escaping Transport) {
++        self.credentialURL = credentialURL
++        self.defaults = defaults
++        self.now = now
++        self.transport = transport
++    }
++
++    public func refresh() async -> CodexQuotaSnapshot {
++        if let inFlight { return await inFlight.value }
++        let task = Task { await self.performRefresh() }
++        inFlight = task
++        let result = await task.value
++        inFlight = nil
++        return result
++    }
++
++    /// Cancels an active request when quota networking is disabled.
++    public func cancel() {
++        inFlight?.cancel()
++    }
++
++    private func performRefresh() async -> CodexQuotaSnapshot {
++        guard !Task.isCancelled else { return snapshot(status: .error) }
++        let time = now()
++        guard let data = try? Data(contentsOf: credentialURL),
++              let credentials = try? JSONDecoder().decode(QuotaCredentials.self, from: data),
++              !credentials.tokens.access_token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
++              !credentials.tokens.account_id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
++            return snapshot(status: .needsAuth)
++        }
++        let account = credentials.tokens.account_id
++        let accountKey = Self.digest(account)
++        let tokenKey = Self.digest(credentials.tokens.access_token)
++        let key = "codex.quota.schedule." + accountKey
++        var schedule = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(QuotaSchedule.self, from: $0) } ?? QuotaSchedule()
++        if schedule.rejectedToken == tokenKey { return snapshot(status: .needsAuth) }
++        if schedule.rejectedToken != nil { schedule.rejectedToken = nil; schedule.nextAllowedAt = nil; schedule.failures = 0 }
++        if let next = schedule.nextAllowedAt, time < next {
++            return cached[accountKey] ?? snapshot(status: .error, next: next, waiting: schedule.successfulObservation == true)
++        }
++        var request = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!)
++        request.setValue("Bearer \(credentials.tokens.access_token)", forHTTPHeaderField: "Authorization")
++        request.setValue(account, forHTTPHeaderField: "ChatGPT-Account-Id")
++        request.setValue("application/json", forHTTPHeaderField: "Accept")
++        guard !Task.isCancelled else {
++            return staleOrError(accountKey, next: nil)
++        }
++        do {
++            let (body, response) = try await transport(request)
++            let completed = now()
++            switch response.statusCode {
++            case 200...299:
++                schedule = QuotaSchedule(nextAllowedAt: completed.addingTimeInterval(300), failures: 0, rejectedToken: nil)
++                guard let parsed = try? Self.parse(body, at: completed) else {
++                    save(schedule, key: key)
++                    let result = staleOrError(accountKey, next: schedule.nextAllowedAt)
++                    cached[accountKey] = result
++                    return result
++                }
++                schedule.successfulObservation = true
++                save(schedule, key: key)
++                let result = withStatus(parsed, status: .ok, next: schedule.nextAllowedAt)
++                cached[accountKey] = result
++                return result
++            case 401, 403:
++                schedule.rejectedToken = tokenKey
++                schedule.nextAllowedAt = nil
++                save(schedule, key: key)
++                cached.removeValue(forKey: accountKey)
++                return snapshot(status: .needsAuth)
++            case 429:
++                schedule.failures = min(schedule.failures + 1, 6)
++                let exponential = min(1800.0, 60.0 * pow(2.0, Double(schedule.failures - 1)))
++                let retry = Self.retryAfter(response.value(forHTTPHeaderField: "Retry-After"), now: completed)
++                schedule.successfulObservation = false
++                schedule.nextAllowedAt = completed.addingTimeInterval(max(exponential, retry))
++                save(schedule, key: key)
++                let result = staleOrError(accountKey, next: schedule.nextAllowedAt)
++                cached[accountKey] = result
++                return result
++            default:
++                return staleOrError(accountKey, next: nil)
++            }
++        } catch {
++            return staleOrError(accountKey, next: nil)
++        }
++    }
++
++    private func save(_ schedule: QuotaSchedule, key: String) {
++        if let data = try? JSONEncoder().encode(schedule) { defaults.set(data, forKey: key) }
++    }
++
++    private static func digest(_ value: String) -> String {
++        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
++    }
++
++    private static func request(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
++        let session = URLSession(configuration: .ephemeral, delegate: QuotaRedirectDelegate(), delegateQueue: nil)
++        defer { session.invalidateAndCancel() }
++        let (data, response) = try await session.data(for: request)
++        guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
++        return (data, response)
++    }
++
++    static func retryAfter(_ value: String?, now: Date) -> TimeInterval {
++        guard let value else { return 60 }
++        if let seconds = Double(value.trimmingCharacters(in: .whitespaces)), seconds.isFinite { return max(60, seconds) }
++        let formatter = DateFormatter()
++        formatter.locale = Locale(identifier: "en_US_POSIX")
++        formatter.timeZone = TimeZone(secondsFromGMT: 0)
++        formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
++        return max(60, formatter.date(from: value)?.timeIntervalSince(now) ?? 60)
++    }
++
++    static func parse(_ data: Data, at time: Date) throws -> CodexQuotaSnapshot {
++        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw URLError(.cannotParseResponse) }
++        var windows: [CodexQuotaWindow] = []
++        func add(_ limits: [String: Any]?, prefix: String, label: String) {
++            guard let limits else { return }
++            for slot in ["primary", "secondary"] {
++                guard let window = limits[slot + "_window"] as? [String: Any] else { continue }
++                let duration = (window["limit_window_seconds"] as? NSNumber)?.doubleValue
++                let validDuration = duration.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
++                let percent = (window["used_percent"] as? NSNumber)?.doubleValue
++                let fraction = percent.flatMap { $0.isFinite ? $0 / 100 : nil }
++                let absolute = (window["reset_at"] as? NSNumber)?.doubleValue
++                let relative = (window["reset_after_seconds"] as? NSNumber)?.doubleValue
++                let reset = absolute.flatMap { $0.isFinite && $0 >= 0 ? Date(timeIntervalSince1970: $0) : nil }
++                    ?? relative.flatMap { $0.isFinite && $0 >= 0 ? time.addingTimeInterval($0) : nil }
++                let identity = validDuration.map { String($0) } ?? "unknown:\(slot)"
++                let baseID = "\(prefix):\(identity)"
++                let id = windows.contains(where: { $0.id == baseID }) ? "\(baseID):\(slot)" : baseID
++                windows.append(CodexQuotaWindow(id: id, label: label, usedFraction: fraction,
++                                               remaining: fraction.map { 1 - $0 }, used: fraction, resetAt: reset, duration: validDuration))
++            }
++        }
++        add(root["rate_limit"] as? [String: Any], prefix: "main", label: "Codex")
++        if let extras = root["additional_rate_limits"] as? [Any] {
++            for (index, value) in extras.enumerated() {
++                guard let extra = value as? [String: Any] else { continue }
++                let name = (extra["limit_name"] as? String) ?? (extra["metered_feature"] as? String) ?? "Extra \(index + 1)"
++                let identity = (extra["metered_feature"] as? String) ?? name
++                add(extra["rate_limit"] as? [String: Any], prefix: "extra:\(identity)", label: name)
++            }
++        }
++        add(root["code_review_rate_limit"] as? [String: Any], prefix: "code_review", label: "Code review")
++        let rawCredits = root["credits"] as? [String: Any]
++        let balance: String? = (rawCredits?["balance"] as? String) ?? (rawCredits?["balance"] as? NSNumber)?.stringValue
++        func number(_ value: Any?) -> Double? {
++            if let number = value as? NSNumber { return number.doubleValue }
++            if let text = value as? String { return Double(text) }
++            return nil
++        }
++        let spend = (root["spend_control"] as? [String: Any])?["individual_limit"] as? [String: Any]
++        let creditPercent = number(spend?["used_percent"])
++        let creditReset = number(spend?["reset_at"])
++        let credits = (rawCredits != nil || spend != nil) ? CodexQuotaCredits(
++            hasCredits: rawCredits?["has_credits"] as? Bool, unlimited: rawCredits?["unlimited"] as? Bool,
++            limit: number(spend?["limit"]), used: number(spend?["used"]),
++            usedFraction: creditPercent.map { $0 / 100 },
++            resetAt: creditReset.map { Date(timeIntervalSince1970: $0) }, balance: balance) : nil
++        return CodexQuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: .ok,
++                                  windows: windows, headlineId: windows.first(where: { $0.id.hasPrefix("main:") })?.id, block: nil, account: nil,
++                                  plan: root["plan_type"] as? String, observedAt: time, source: "wham/usage",
++                                  credits: credits, nextAllowedAt: nil, waitingForRefresh: false)
++    }
++
++    private func staleOrError(_ accountKey: String, next: Date?) -> CodexQuotaSnapshot {
++        guard let value = cached[accountKey], value.observedAt != nil else {
++            return snapshot(status: .error, next: next)
++        }
++        return withStatus(value, status: .stale, next: next)
++    }
++
++    private func snapshot(status: CodexQuotaStatus, next: Date? = nil, waiting: Bool = false) -> CodexQuotaSnapshot {
++        CodexQuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: status,
++                           windows: [], headlineId: nil, block: nil, account: nil, plan: nil, observedAt: nil,
++                           source: "wham/usage", credits: nil, nextAllowedAt: next, waitingForRefresh: waiting)
++    }
++
++    private func withStatus(_ value: CodexQuotaSnapshot, status: CodexQuotaStatus, next: Date?) -> CodexQuotaSnapshot {
++        CodexQuotaSnapshot(id: value.id, displayName: value.displayName, fidelity: value.fidelity, status: status,
++                           windows: value.windows, headlineId: value.headlineId, block: value.block, account: value.account,
++                           plan: value.plan, observedAt: value.observedAt, source: value.source, credits: value.credits, nextAllowedAt: next,
++                           waitingForRefresh: false)
++    }
++}
+diff --git a/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
+new file mode 100644
+index 00000000..b448f652
+--- /dev/null
++++ b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
+@@ -0,0 +1,227 @@
++import Foundation
++import Testing
++@testable import AgentSpeedCore
++
++private final class QuotaFixture: @unchecked Sendable {
++    private let lock = NSLock()
++    var time = Date(timeIntervalSince1970: 1_700_000_000)
++    var status = 200
++    var body = Data(#"{"rate_limit":{"primary_window":{"limit_window_seconds":18000,"used_percent":0}}}"#.utf8)
++    var retry: String?
++    var requests: [URLRequest] = []
++
++    func currentTime() -> Date { lock.lock(); defer { lock.unlock() }; return time }
++    func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; time.addTimeInterval(seconds) }
++    func setStatus(_ value: Int, retry: String? = nil) { lock.lock(); defer { lock.unlock() }; status = value; self.retry = retry }
++    func setBody(_ value: String) { lock.lock(); defer { lock.unlock() }; body = Data(value.utf8) }
++    func count() -> Int { lock.lock(); defer { lock.unlock() }; return requests.count }
++    func fetch(_ request: URLRequest) -> (Data, HTTPURLResponse) {
++        lock.lock(); defer { lock.unlock() }
++        requests.append(request)
++        let headers = retry.map { ["Retry-After": $0] }
++        return (body, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!)
++    }
++}
++
++@Suite("Codex quota")
++struct CodexQuotaProviderTests {
++    private func makeProvider(_ fixture: QuotaFixture, auth: String? = #"{"tokens":{"access_token":"secret-token","account_id":"account"}}"#) throws -> (CodexQuotaProvider, URL) {
++        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        if let auth { try Data(auth.utf8).write(to: url) }
++        let defaults = UserDefaults(suiteName: UUID().uuidString)!
++        return (CodexQuotaProvider(credentialURL: url, defaults: defaults, now: { fixture.currentTime() }, transport: { request in fixture.fetch(request) }), url)
++    }
++
++    @Test func parsesWindowsCreditsAndUnknowns() throws {
++        let data = Data(#"{"plan_type":"plus","rate_limit":{"primary_window":{"limit_window_seconds":604800,"used_percent":0,"reset_after_seconds":30},"secondary_window":{"limit_window_seconds":18000,"used_percent":null,"reset_at":1700000100}},"additional_rate_limits":[{"metered_feature":"spark","rate_limit":{"primary_window":{"limit_window_seconds":18000,"used_percent":25}}}],"code_review_rate_limit":{"primary_window":{"used_percent":120}},"credits":{"has_credits":false,"unlimited":false,"balance":"0"},"spend_control":{"individual_limit":{"limit":"100.5","used":"3","used_percent":3,"reset_at":1700000200}}}"#.utf8)
++        let now = Date(timeIntervalSince1970: 1_700_000_000)
++        let result = try CodexQuotaProvider.parse(data, at: now)
++        #expect(result.fidelity == "official")
++        #expect(!result.waitingForRefresh)
++        #expect(result.plan == "plus")
++        #expect(result.windows.count == 4)
++        #expect(result.windows[0].duration == 604800)
++        #expect(result.windows[0].usedFraction == 0)
++        #expect(result.windows[0].remaining == 1)
++        #expect(result.windows[0].resetAt == now.addingTimeInterval(30))
++        #expect(result.windows[1].usedFraction == nil)
++        #expect(result.windows[1].resetAt == now.addingTimeInterval(100))
++        #expect(result.windows[2].usedFraction == 0.25)
++        #expect(result.windows[3].usedFraction == 1.2)
++        #expect(result.credits?.hasCredits == false)
++        #expect(result.credits?.balance == "0")
++        #expect(result.credits?.limit == 100.5)
++        #expect(result.credits?.usedFraction == 0.03)
++    }
++
++    @Test func identityTracksDurationAndRetainsDuplicates() throws {
++        let a = Data(#"{"rate_limit":{"primary_window":{"limit_window_seconds":18000},"secondary_window":{"limit_window_seconds":604800}}}"#.utf8)
++        let b = Data(#"{"rate_limit":{"secondary_window":{"limit_window_seconds":18000},"primary_window":{"limit_window_seconds":604800}}}"#.utf8)
++        let first = try CodexQuotaProvider.parse(a, at: Date())
++        let second = try CodexQuotaProvider.parse(b, at: Date())
++        #expect(Set(first.windows.map(\.id)) == Set(second.windows.map(\.id)))
++        let duplicate = Data(#"{"rate_limit":{"primary_window":{"limit_window_seconds":18000},"secondary_window":{"limit_window_seconds":18000}}}"#.utf8)
++        let windows = try CodexQuotaProvider.parse(duplicate, at: Date()).windows
++        #expect(windows.count == 2)
++        #expect(Set(windows.map(\.id)).count == 2)
++    }
++
++    @Test func missingCredentialsNeverRequests() async throws {
++        let fixture = QuotaFixture()
++        let (provider, _) = try makeProvider(fixture, auth: nil)
++        #expect(await provider.refresh().status == .needsAuth)
++        #expect(fixture.count() == 0)
++    }
++
++    @Test func successThrottlesAndFailureIsStale() async throws {
++        let fixture = QuotaFixture()
++        let (provider, url) = try makeProvider(fixture)
++        defer { try? FileManager.default.removeItem(at: url) }
++        let first = await provider.refresh()
++        #expect(first.status == .ok)
++        #expect(first.fidelity == "official")
++        #expect(!first.waitingForRefresh)
++        #expect(first.nextAllowedAt == fixture.currentTime().addingTimeInterval(300))
++        #expect(await provider.refresh().status == .ok)
++        #expect(fixture.count() == 1)
++        fixture.advance(300)
++        fixture.setStatus(500)
++        let stale = await provider.refresh()
++        #expect(stale.status == .stale)
++        #expect(!stale.waitingForRefresh)
++        #expect(stale.windows == first.windows)
++    }
++
++    @Test func rateLimitBackoffAndAuthentication() async throws {
++        let fixture = QuotaFixture()
++        fixture.setStatus(429, retry: "120")
++        let (provider, url) = try makeProvider(fixture)
++        defer { try? FileManager.default.removeItem(at: url) }
++        let first = await provider.refresh()
++        #expect(first.status == .error)
++        #expect(first.observedAt == nil)
++        #expect(!first.waitingForRefresh)
++        #expect(first.windows.isEmpty)
++        #expect(first.nextAllowedAt == fixture.currentTime().addingTimeInterval(120))
++        let blocked = await provider.refresh()
++        #expect(blocked.status == .error)
++        #expect(!blocked.waitingForRefresh)
++        #expect(fixture.count() == 1)
++        fixture.advance(120)
++        fixture.setStatus(429)
++        let second = await provider.refresh()
++        #expect(second.status == .error)
++        #expect(second.nextAllowedAt == fixture.currentTime().addingTimeInterval(120))
++        fixture.advance(120)
++        fixture.setStatus(401)
++        #expect(await provider.refresh().status == .needsAuth)
++        _ = await provider.refresh()
++        #expect(fixture.count() == 3)
++        try Data(#"{"tokens":{"access_token":"new-secret","account_id":"account"}}"#.utf8).write(to: url)
++        fixture.setStatus(403)
++        #expect(await provider.refresh().status == .needsAuth)
++        #expect(fixture.count() == 4)
++    }
++
++    @Test func errorsWithoutObservationNeverBecomeStale() async throws {
++        let fixture = QuotaFixture()
++        fixture.setStatus(429)
++        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        defer { try? FileManager.default.removeItem(at: url) }
++        try Data(#"{"tokens":{"access_token":"secret-token","account_id":"account"}}"#.utf8).write(to: url)
++        let provider = CodexQuotaProvider(credentialURL: url, defaults: UserDefaults(suiteName: UUID().uuidString)!, now: { fixture.currentTime() }, transport: { request in
++            let response = fixture.fetch(request)
++            if response.1.statusCode == 599 { throw URLError(.notConnectedToInternet) }
++            return response
++        })
++        #expect(await provider.refresh().status == .error)
++        fixture.advance(60)
++        fixture.setStatus(500)
++        #expect(await provider.refresh().status == .error)
++        fixture.setStatus(599)
++        #expect(await provider.refresh().status == .error)
++        fixture.setStatus(200)
++        fixture.setBody("invalid JSON")
++        #expect(await provider.refresh().status == .error)
++        fixture.advance(300)
++        #expect(await provider.refresh().status == .error)
++        fixture.advance(300)
++        fixture.setStatus(500)
++        let result = await provider.refresh()
++        #expect(result.status == .error)
++        #expect(result.observedAt == nil)
++    }
++
++    @Test func retryAfterSupportsHTTPDate() {
++        let now = Date(timeIntervalSince1970: 0)
++        #expect(CodexQuotaProvider.retryAfter("Thu, 01 Jan 1970 00:03:00 GMT", now: now) == 180)
++        #expect(CodexQuotaProvider.retryAfter("0", now: now) == 60)
++    }
++
++    @Test func concurrentRefreshesSharePolling() async throws {
++        let fixture = QuotaFixture()
++        let (provider, url) = try makeProvider(fixture)
++        defer { try? FileManager.default.removeItem(at: url) }
++        await withTaskGroup(of: CodexQuotaStatus.self) { group in
++            for _ in 0..<12 { group.addTask { await provider.refresh().status } }
++            for await status in group { #expect(status == .ok) }
++        }
++        #expect(fixture.count() == 1)
++    }
++
++    @Test func zeroAndExtraOnlyAreNotConfusedWithUnknown() throws {
++        let data = Data(#"{"additional_rate_limits":[null,{"metered_feature":"spark","rate_limit":{"primary_window":{"limit_window_seconds":0,"used_percent":0,"reset_at":0}}}]}"#.utf8)
++        let result = try CodexQuotaProvider.parse(data, at: Date())
++        #expect(result.headlineId == nil)
++        #expect(result.windows.count == 1)
++        #expect(result.windows[0].duration == 0)
++        #expect(result.windows[0].usedFraction == 0)
++        #expect(result.windows[0].resetAt == Date(timeIntervalSince1970: 0))
++    }
++
++    @Test func schedulePersistsWithoutCredentialsOrResponse() async throws {
++        let fixture = QuotaFixture()
++        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        defer { try? FileManager.default.removeItem(at: url) }
++        try Data(#"{"tokens":{"access_token":"secret-token","account_id":"private-account"}}"#.utf8).write(to: url)
++        let suite = UUID().uuidString
++        let defaults = UserDefaults(suiteName: suite)!
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let first = CodexQuotaProvider(credentialURL: url, defaults: defaults, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
++        _ = await first.refresh()
++        let persisted = defaults.dictionaryRepresentation().description
++        #expect(!persisted.contains("secret-token"))
++        #expect(!persisted.contains("private-account"))
++        #expect(!persisted.contains("used_percent"))
++        let second = CodexQuotaProvider(credentialURL: url, defaults: defaults, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
++        let waiting = await second.refresh()
++        #expect(waiting.status == .error)
++        #expect(waiting.waitingForRefresh)
++        #expect(waiting.observedAt == nil)
++        #expect(waiting.nextAllowedAt == fixture.currentTime().addingTimeInterval(300))
++        #expect(fixture.count() == 1)
++        fixture.advance(300)
++        fixture.setStatus(429)
++        let failed = await second.refresh()
++        #expect(failed.status == .error)
++        #expect(!failed.waitingForRefresh)
++        let third = CodexQuotaProvider(credentialURL: url, defaults: defaults, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
++        let backoff = await third.refresh()
++        #expect(backoff.status == .error)
++        #expect(!backoff.waitingForRefresh)
++        #expect(fixture.count() == 2)
++        fixture.advance(60)
++        fixture.setStatus(200)
++        fixture.setBody("invalid JSON")
++        #expect(!(await third.refresh()).waitingForRefresh)
++        let fourth = CodexQuotaProvider(credentialURL: url, defaults: defaults, now: { fixture.currentTime() }, transport: { fixture.fetch($0) })
++        #expect(!(await fourth.refresh()).waitingForRefresh)
++        #expect(fixture.count() == 3)
++        fixture.advance(300)
++        fixture.setBody(#"{"rate_limit":{"primary_window":{"used_percent":10}}}"#)
++        let recovered = await fourth.refresh()
++        #expect(recovered.status == .ok)
++        #expect(!recovered.waitingForRefresh)
++    }
++
++}
+diff --git a/spec/QUOTA.md b/spec/QUOTA.md
+new file mode 100644
+index 00000000..1d080638
+--- /dev/null
++++ b/spec/QUOTA.md
+@@ -0,0 +1,51 @@
++# Codex quota contract (macOS phase one)
++
++This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
++
++## Snapshot
++
++A snapshot has the following logical fields. Optional values are nullable; a missing reading is **unknown**, not zero. Dates are instants (when serialized, ISO 8601 UTC); durations are seconds. IDs are stable machine identifiers, not localized presentation strings.
++
++| Field | Meaning |
++| --- | --- |
++| `id` | Provider identifier, `codex` for this provider. |
++| `displayName` | Human-readable provider name. |
++| `fidelity` | One of `official`, `derived`, or `manual`: respectively a provider's own endpoint, an inferred reading, or a user-entered reading. Codex uses `official`, which does not imply an externally guaranteed API. |
++| `status` | One of `ok`, `stale`, `needsAuth`, `accessDenied`, `unsupported`, `error`, defined below. |
++| `windows` | Zero or more individually identified quota windows. |
++| `headlineId` | Nullable ID of the designated headline window; consumers resolve by ID, not array position. It must not select an unrelated extra just because the primary is absent. |
++| `block` | Nullable explanatory reason that usage is blocked, when known. Do not invent one from missing data. |
++| `account`, `plan` | Nullable account and subscription plan labels, respectively; they are not credentials. |
++| `observedAt` | Nullable time of the last successful observation, not the time an old observation was displayed. |
++| `source` | Description/identifier of the source of the observation. |
++| `nextAllowedAt` | Nullable earliest next permitted refresh time, if the provider is backing off. |
++| `waitingForRefresh` | True only when a persisted successful polling interval prevents a refresh and no observation is available in this process. Status remains `error` for compatibility; display this condition as waiting, not a failed request. |
++| `credits` | Nullable credit information: `hasCredits` and `unlimited` are nullable booleans, `balance` is a nullable decimal string. `limit` and `used` are nullable numeric absolute amounts in provider-reported spend units, with no inferred currency; `usedFraction` and `resetAt` describe the individual spend-control allowance. A balance of `"0"` is known zero, not unknown. The allowance's `usedFraction` is not clamped and may exceed 1. |
++
++A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`, and `duration`. `id` is stable and unique within a snapshot; `label` is display text. For Codex windows, `usedFraction` and `used` are the reported percentage divided by 100, and `remaining` is 1 minus that fraction. These nullable fractions are not absolute counts and are not clamped: usage may exceed 1 and remaining may be negative. Zero is known zero, not unknown. `resetAt` is a nullable absolute instant and `duration` is a nullable window length in seconds. Unknown fields remain null, including an unknown fraction on an otherwise valid window.
++
++`primary_window` and `secondary_window` are source slots, not synonyms for five-hour and weekly windows: they can be swapped, have equal or unknown durations, or one can be missing. Identify a known-duration window by its source family and duration, adding a slot suffix for same-family duration collisions; use an `unknown:slot` fallback when duration is unknown. Namespace feature-scoped extras and code review separately from the main windows and one another. Never assume a particular duration from a primary or secondary slot.
++
++## Status and freshness
++
++* `ok`: a usable fresh observation was obtained.
++* `stale`: a previous successful observation is being displayed after a later refresh failed or became unavailable; preserve its original `observedAt` and do not present it as fresh.
++* `needsAuth`: no usable local session, or authentication is rejected.
++* `accessDenied`: the account is authenticated but access is explicitly denied; do not conflate absence of quota with a confirmed denial.
++* `unsupported`: the provider/account or response is known not to support this quota surface, rather than merely returning missing fields.
++* `error`: a network, decoding, service, or other failure that does not establish a more specific state.
++
++An authentication failure must not be represented as zero usage. If old data is retained, it must be visibly stale; a previous timestamp must never be advanced on an unsuccessful refresh. Rate limiting is a transient failure, not an empty successful observation. Respect server retry guidance and avoid repeatedly querying the endpoint while it is rate-limited.
++After restart, a successful poll's persisted interval can block a request even though the observation itself was not persisted. In that case `waitingForRefresh` is true until polling is allowed. Actual 429, decoding, network and service failures have `waitingForRefresh` false, including during a persisted failure backoff; they must remain visibly errors (or stale when an observation exists). Unknown legacy schedule provenance is not reported as a successful wait.
++
++## Codex usage endpoint
++
++`GET https://chatgpt.com/backend-api/wham/usage` uses the local Codex session's bearer access token and `ChatGPT-Account-Id`; `Accept: application/json` requests JSON. Never place either credential in fixtures or logs. `plan_type` is the plan when supplied. The main `rate_limit.primary_window` and `rate_limit.secondary_window` are independent; parse each without discarding a valid sibling because another is null or malformed. A window's numeric `used_percent` converts to `usedFraction` by dividing by 100 without clamping. `limit_window_seconds` gives duration. `reset_at` is Unix epoch seconds; when absent, `reset_after_seconds` is relative to the observation time. Null or omitted data stays unknown. A non-null 0 percentage is a valid measurement.
++`additional_rate_limits` is an array of feature-scoped rate-limit objects (`limit_name`, `metered_feature`, `rate_limit`), not a replacement for the main account windows. `code_review_rate_limit` may contain another pair. Preserve source scope when representing these windows. A malformed extra must not destroy usable main data. `spend_control.individual_limit` is a separate credit-backed allowance: its `limit` and `used` can be decimal strings, `used_percent` is a percentage, and `reset_at` is epoch seconds. The response's `credits` balance is distinct from that allowance and from unused reset credits at the separate `/wham/rate-limit-reset-credits` endpoint; none is interchangeable with another.
++
++Synthetic, credential-free examples: [`fixtures/codex-quota.json`](fixtures/codex-quota.json) shows main windows, an extra, a code-review window with unknown usage, and spend control; [`fixtures/codex-credit-quota.json`](fixtures/codex-credit-quota.json) shows missing rolling windows and a known zero balance. Their timestamps are examples, not current reset predictions. These are illustrative endpoint payloads, not captures of a real account.
++Both endpoint fixtures are raw provider responses, not snapshots; parsing either produces snapshot fidelity `official`.
++
++## Reference and attribution
++
++Endpoint and response research consulted [Codenotch](https://github.com/vinzdg/codenotch), particularly `Sources/Providers/CodexLocalProvider.swift` and `Sources/Providers/CodexUsage.swift`. Codenotch is MIT licensed, copyright (c) 2026 Vinz. This specification and its synthetic examples describe observed facts and do not reproduce Codenotch source code. If source code or a substantial portion is copied into the implementation, retain its full MIT copyright and permission notice with that code.
+diff --git a/spec/fixtures/codex-credit-quota.json b/spec/fixtures/codex-credit-quota.json
+new file mode 100644
+index 00000000..ab972428
+--- /dev/null
++++ b/spec/fixtures/codex-credit-quota.json
+@@ -0,0 +1,8 @@
++{
++  "plan_type": "team",
++  "rate_limit": { "primary_window": null, "secondary_window": null },
++  "credits": { "has_credits": true, "unlimited": false, "balance": "0" },
++  "spend_control": {
++    "individual_limit": { "limit": "100.00", "used": "25.50", "used_percent": 25.5, "reset_at": 1800400000 }
++  }
++}
+diff --git a/spec/fixtures/codex-quota.json b/spec/fixtures/codex-quota.json
+new file mode 100644
+index 00000000..ba85a8b2
+--- /dev/null
++++ b/spec/fixtures/codex-quota.json
+@@ -0,0 +1,26 @@
++{
++  "plan_type": "plus",
++  "rate_limit": {
++    "allowed": true,
++    "limit_reached": false,
++    "primary_window": { "used_percent": 0, "limit_window_seconds": 18000, "reset_at": 1800000000, "reset_after_seconds": 7200 },
++    "secondary_window": { "used_percent": 65.5, "limit_window_seconds": 604800, "reset_at": 1800400000 }
++  },
++  "additional_rate_limits": [
++    {
++      "limit_name": "Spark",
++      "metered_feature": "spark",
++      "rate_limit": {
++        "primary_window": { "used_percent": 20, "limit_window_seconds": 18000, "reset_at": 1800000000 },
++        "secondary_window": null
++      }
++    }
++  ],
++  "code_review_rate_limit": {
++    "primary_window": { "used_percent": null, "limit_window_seconds": 604800, "reset_at": null },
++    "secondary_window": null
++  },
++  "spend_control": {
++    "individual_limit": { "limit": "100.00", "used": "0", "used_percent": 0, "reset_at": 1800400000 }
++  }
++}

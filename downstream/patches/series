@@ -17,3 +17,5 @@
 0017-Backfill-measured-history-peaks-from-canonical-data.patch
 0018-Prefer-the-service-relay-for-the-price-table.patch
 0019-Synchronize-the-collector-s-price-table-daily.patch
+0020-Add-macOS-Codex-quota-monitoring.patch
+0021-Add-Windows-Codex-quota-monitoring.patch

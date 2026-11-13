@@ -108,6 +108,20 @@ speed uses measured output and time, with each machine/source counted once; miss
 Duplicate connections prefer current online history over stale history. An unavailable traffic sample has an unknown
 rate, distinct from the zero live rate of a disconnected host; last known totals remain visible when available.
 
+### Codex quota on macOS and Windows (unreleased)
+
+The quota patches add separate, optional floating panels and Quota settings
+panes. They read the existing local Codex login without modifying credentials and
+poll the account usage endpoint independently of the speed monitor. The quota
+contract, polling rules and synthetic response fixtures are in the prepared
+tree's `spec/QUOTA.md`. Unknown values remain unknown, not zero.
+
+The macOS patch has not been compiled or exercised on macOS in this Linux checkout;
+native Swift tests and panel behavior require target-platform verification. The
+Windows application cross-compiles on Linux and focused quota core tests pass;
+native Windows panel and real-login behavior remain unverified. Claude quota and
+Linux quota interfaces are future phases.
+
 ### Standalone collector release assets (unreleased)
 
 When formally released, the pipeline is intended to publish

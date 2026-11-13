@@ -326,5 +326,29 @@
       }
     ],
     "reason": ""
+  },
+  "0020-Add-macOS-Codex-quota-monitoring.patch": {
+    "regression": [
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test --filter CodexQuotaProviderTests"
+      }
+    ],
+    "related": [],
+    "reason": ""
+  },
+  "0021-Add-Windows-Codex-quota-monitoring.patch": {
+    "regression": [
+      {
+        "platform": "linux",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release --filter FullyQualifiedName~CodexQuota --framework net10.0"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release --filter FullyQualifiedName~CodexQuota --framework net10.0"
+      }
+    ],
+    "related": [],
+    "reason": ""
   }
 }

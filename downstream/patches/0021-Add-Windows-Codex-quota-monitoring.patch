@@ -1,0 +1,923 @@
+From 5c32156c7dea2c0e86906724a1b4dcba21220d87 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Fri, 13 Nov 2026 20:09:33 +0800
+Subject: [PATCH 21/21] Add Windows Codex quota monitoring
+
+---
+ spec/QUOTA.md                                 |   4 +-
+ .../src/AgentSpeed.Core/CodexQuotaProvider.cs | 227 +++++++++++++++++
+ .../Localization/Strings.Windows.json         |  32 +++
+ .../Menus/QuickMenuModel.cs                   |   1 +
+ .../Settings/AppSettings.cs                   |   3 +
+ .../Settings/SettingsSerializer.cs            |   2 +
+ windows/src/AgentSpeed/App/AppController.cs   |   9 +
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   | 235 ++++++++++++++++++
+ .../AgentSpeed/Settings/SettingsViewModel.cs  |   1 +
+ .../AgentSpeed/Settings/SettingsWindow.xaml   |   1 +
+ .../Settings/SettingsWindow.xaml.cs           |  10 +-
+ windows/src/AgentSpeed/Theme/Styles.xaml      |   4 +-
+ .../CodexQuotaProviderTests.cs                | 184 ++++++++++++++
+ 13 files changed, 710 insertions(+), 3 deletions(-)
+ create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaSurface.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
+
+diff --git a/spec/QUOTA.md b/spec/QUOTA.md
+index 1d080638..10210da3 100644
+--- a/spec/QUOTA.md
++++ b/spec/QUOTA.md
+@@ -1,7 +1,9 @@
+-# Codex quota contract (macOS phase one)
++# Codex quota contract (macOS and Windows)
+ 
+ This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
+ 
++On macOS and Windows, the provider reads `auth.json` from a non-empty `CODEX_HOME` directory when set. Otherwise, it reads `~/.codex/auth.json` on macOS or `%USERPROFILE%\.codex\auth.json` on Windows. The file is read-only; credentials are used only for the local account request. Both platforms follow the same snapshot, endpoint, status, freshness, and backoff semantics described below.
++
+ ## Snapshot
+ 
+ A snapshot has the following logical fields. Optional values are nullable; a missing reading is **unknown**, not zero. Dates are instants (when serialized, ISO 8601 UTC); durations are seconds. IDs are stable machine identifiers, not localized presentation strings.
+diff --git a/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
+new file mode 100644
+index 00000000..bbc7b11f
+--- /dev/null
++++ b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
+@@ -0,0 +1,227 @@
++using System.Globalization;
++using System.Net;
++using System.Net.Http.Headers;
++using System.Security.Cryptography;
++using System.Text;
++using System.Text.Json;
++
++namespace AgentSpeed.Core;
++
++public enum CodexQuotaStatus { Ok, Stale, NeedsAuth, AccessDenied, Unsupported, Error }
++
++public sealed record CodexQuotaWindow(string Id, string Label, double? UsedFraction, double? Remaining, double? Used, DateTimeOffset? ResetAt, TimeSpan? Duration);
++public sealed record CodexQuotaCredits(bool? HasCredits, bool? Unlimited, double? Limit, double? Used, double? UsedFraction, DateTimeOffset? ResetAt, string? Balance);
++public sealed record CodexQuotaSnapshot(string Id, string DisplayName, string Fidelity, CodexQuotaStatus Status,
++    IReadOnlyList<CodexQuotaWindow> Windows, string? HeadlineId, string? Block, string? Account, string? Plan,
++    DateTimeOffset? ObservedAt, string Source, CodexQuotaCredits? Credits, DateTimeOffset? NextAllowedAt, bool WaitingForRefresh);
++
++// Endpoint behavior informed by Codenotch (MIT), https://github.com/vinzdg/codenotch.
++public sealed class CodexQuotaProvider : IDisposable
++{
++    private static readonly Uri Endpoint = new("https://chatgpt.com/backend-api/wham/usage");
++    private readonly string credentialPath, scheduleDirectory;
++    private readonly HttpClient client;
++    private readonly Func<DateTimeOffset> now;
++    private readonly object gate = new();
++    private readonly Dictionary<string, CodexQuotaSnapshot> cached = new();
++    private readonly Dictionary<string, Schedule> schedules = new();
++    private Task<CodexQuotaSnapshot>? inFlight;
++    private CancellationTokenSource? activeCancellation;
++
++    public CodexQuotaProvider() : this(
++        Path.Combine(Environment.GetEnvironmentVariable("CODEX_HOME") is { Length: > 0 } home ? home : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex"), "auth.json"),
++        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentSpeed", "quota"),
++        new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }), () => DateTimeOffset.UtcNow) { }
++
++    internal CodexQuotaProvider(string credentialPath, string scheduleDirectory, HttpClient client, Func<DateTimeOffset> now)
++    {
++        this.credentialPath = credentialPath; this.scheduleDirectory = scheduleDirectory; this.client = client; this.now = now;
++    }
++
++    public Task<CodexQuotaSnapshot> RefreshAsync()
++    {
++        lock (gate)
++        {
++            if (inFlight is { IsCompleted: false }) return inFlight;
++            activeCancellation?.Dispose();
++            activeCancellation = new CancellationTokenSource();
++            return inFlight = RefreshCoreAsync(activeCancellation.Token);
++        }
++    }
++
++    public void Cancel() { lock (gate) activeCancellation?.Cancel(); }
++    public void Dispose() { Cancel(); client.Dispose(); }
++
++    private async Task<CodexQuotaSnapshot> RefreshCoreAsync(CancellationToken cancellationToken)
++    {
++        string token, account;
++        try
++        {
++            using var auth = JsonDocument.Parse(await File.ReadAllTextAsync(credentialPath, cancellationToken).ConfigureAwait(false));
++            var tokens = Property(auth.RootElement, "tokens");
++            token = Text(tokens, "access_token") ?? "";
++            account = Text(tokens, "account_id") ?? "";
++            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(account)) return Empty(CodexQuotaStatus.NeedsAuth);
++        }
++        catch (OperationCanceledException) { return Empty(CodexQuotaStatus.Error); }
++        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
++        { return Empty(CodexQuotaStatus.NeedsAuth); }
++
++        var accountKey = Digest(account);
++        var tokenKey = Digest(token);
++        var path = Path.Combine(scheduleDirectory, accountKey + ".json");
++        if (!schedules.TryGetValue(accountKey, out var schedule))
++            schedules[accountKey] = schedule = Load(path);
++        if (schedule.RejectedToken == tokenKey) return Empty(CodexQuotaStatus.NeedsAuth);
++        if (schedule.RejectedToken != null) schedules[accountKey] = schedule = new Schedule();
++        var time = now();
++        if (schedule.NextAllowedAt is { } next && time < next)
++            return cached.TryGetValue(accountKey, out var previous) ? previous : Empty(CodexQuotaStatus.Error, next, schedule.SuccessfulObservation == true);
++        try
++        {
++            using var request = new HttpRequestMessage(HttpMethod.Get, Endpoint);
++            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
++            request.Headers.TryAddWithoutValidation("ChatGPT-Account-Id", account);
++            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
++            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
++            var completed = now();
++            if (response.IsSuccessStatusCode)
++            {
++                schedules[accountKey] = schedule = new Schedule { NextAllowedAt = completed.AddMinutes(5), SuccessfulObservation = false };
++                CodexQuotaSnapshot result;
++                try { result = Parse(await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false), completed) with { NextAllowedAt = schedule.NextAllowedAt }; schedule.SuccessfulObservation = true; }
++                catch (JsonException) { result = StaleOrError(accountKey, schedule.NextAllowedAt); }
++                Save(path, schedule); cached[accountKey] = result; return result;
++            }
++            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
++            {
++                schedule.RejectedToken = tokenKey; schedule.NextAllowedAt = null; schedule.SuccessfulObservation = false;
++                Save(path, schedule); cached.Remove(accountKey); return Empty(CodexQuotaStatus.NeedsAuth);
++            }
++            if ((int)response.StatusCode == 429)
++            {
++                schedule.Failures = Math.Min(schedule.Failures + 1, 6);
++                var seconds = Math.Max(60 * Math.Pow(2, schedule.Failures - 1), RetryAfter(response.Headers.RetryAfter, completed));
++                schedule.NextAllowedAt = completed.AddSeconds(seconds); schedule.SuccessfulObservation = false;
++                Save(path, schedule);
++                var result = StaleOrError(accountKey, schedule.NextAllowedAt); cached[accountKey] = result; return result;
++            }
++            return StaleOrError(accountKey, null);
++        }
++        catch (Exception e) when (e is HttpRequestException or IOException or TaskCanceledException or InvalidOperationException or FormatException)
++        { return StaleOrError(accountKey, null); }
++    }
++
++    private static double RetryAfter(RetryConditionHeaderValue? retry, DateTimeOffset time) =>
++        Math.Max(60, retry?.Delta?.TotalSeconds ?? (retry?.Date - time)?.TotalSeconds ?? 60);
++    private static string Digest(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
++    private sealed class Schedule
++    {
++        public DateTimeOffset? NextAllowedAt { get; set; }
++        public int Failures { get; set; }
++        public string? RejectedToken { get; set; }
++        public bool? SuccessfulObservation { get; set; }
++    }
++    private static Schedule Load(string path)
++    {
++        try
++        {
++            using var doc = JsonDocument.Parse(File.ReadAllText(path));
++            var root = doc.RootElement;
++            return new Schedule { NextAllowedAt = DateTimeOffset.TryParse(Text(root, "nextAllowedAt"), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var date) ? date : null,
++                Failures = (int)(Number(root, "failures") ?? 0), RejectedToken = Text(root, "rejectedToken"), SuccessfulObservation = Boolean(root, "successfulObservation") };
++        }
++        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or ArgumentException or OverflowException) { return new Schedule(); }
++    }
++    private static void Save(string path, Schedule schedule)
++    {
++        try
++        {
++            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
++            using var stream = File.Create(path);
++            using var writer = new Utf8JsonWriter(stream);
++            writer.WriteStartObject();
++            if (schedule.NextAllowedAt is { } next) writer.WriteString("nextAllowedAt", next);
++            writer.WriteNumber("failures", schedule.Failures);
++            if (schedule.RejectedToken != null) writer.WriteString("rejectedToken", schedule.RejectedToken);
++            if (schedule.SuccessfulObservation is { } success) writer.WriteBoolean("successfulObservation", success);
++            writer.WriteEndObject();
++        }
++        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
++    }
++    private CodexQuotaSnapshot StaleOrError(string key, DateTimeOffset? next) =>
++        cached.TryGetValue(key, out var value) && value.ObservedAt != null ? value with { Status = CodexQuotaStatus.Stale, NextAllowedAt = next, WaitingForRefresh = false } : Empty(CodexQuotaStatus.Error, next);
++    private static CodexQuotaSnapshot Empty(CodexQuotaStatus status, DateTimeOffset? next = null, bool waiting = false) =>
++        new("codex", "Codex", "official", status, [], null, null, null, null, null, "wham/usage", null, next, waiting);
++
++    internal static CodexQuotaSnapshot Parse(string json, DateTimeOffset time)
++    {
++        using var doc = JsonDocument.Parse(json);
++        var root = doc.RootElement;
++        if (root.ValueKind != JsonValueKind.Object) throw new JsonException();
++        var windows = new List<CodexQuotaWindow>();
++        void Add(JsonElement limits, string prefix, string label)
++        {
++            foreach (var slot in new[] { "primary", "secondary" })
++            {
++                var window = Property(limits, slot + "_window");
++                if (window.ValueKind != JsonValueKind.Object) continue;
++                var seconds = Number(window, "limit_window_seconds");
++                if (seconds < 0 || seconds > TimeSpan.MaxValue.TotalSeconds) seconds = null;
++                var fraction = Number(window, "used_percent") / 100;
++                var id = prefix + ":" + (seconds?.ToString("0.0###############", CultureInfo.InvariantCulture) ?? "unknown:" + slot);
++                if (windows.Exists(w => w.Id == id)) id += ":" + slot;
++                // Repeated feature scopes must also remain unique.
++                var baseId = id; var suffix = 2;
++                while (windows.Exists(w => w.Id == id)) id = baseId + ":" + suffix++;
++                windows.Add(new(id, label, fraction, 1 - fraction, fraction, Reset(window, time), seconds is { } s ? TimeSpan.FromSeconds(s) : null));
++            }
++        }
++        Add(Property(root, "rate_limit"), "main", "Codex");
++        var extras = Property(root, "additional_rate_limits");
++        if (extras.ValueKind == JsonValueKind.Array)
++        {
++            var index = 0;
++            foreach (var extra in extras.EnumerateArray())
++            {
++                index++;
++                if (extra.ValueKind != JsonValueKind.Object) continue;
++                var name = Text(extra, "limit_name") ?? Text(extra, "metered_feature") ?? $"Extra {index}";
++                Add(Property(extra, "rate_limit"), "extra:" + (Text(extra, "metered_feature") ?? name), name);
++            }
++        }
++        Add(Property(root, "code_review_rate_limit"), "code_review", "Code review");
++        var raw = Property(root, "credits");
++        var spend = Property(Property(root, "spend_control"), "individual_limit");
++        CodexQuotaCredits? credits = null;
++        if (raw.ValueKind == JsonValueKind.Object || spend.ValueKind == JsonValueKind.Object)
++        {
++            var balance = Property(raw, "balance");
++            credits = new(Boolean(raw, "has_credits"), Boolean(raw, "unlimited"), Number(spend, "limit", true), Number(spend, "used", true), Number(spend, "used_percent", true) / 100,
++                Epoch(Number(spend, "reset_at", true)), balance.ValueKind == JsonValueKind.String ? balance.GetString() : balance.ValueKind == JsonValueKind.Number ? balance.GetRawText() : null);
++        }
++        return new("codex", "Codex", "official", CodexQuotaStatus.Ok, windows, windows.Find(w => w.Id.StartsWith("main:", StringComparison.Ordinal))?.Id,
++            null, null, Text(root, "plan_type"), time, "wham/usage", credits, null, false);
++    }
++    private static JsonElement Property(JsonElement obj, string name) => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(name, out var value) ? value : default;
++    private static string? Text(JsonElement obj, string name) { var v = Property(obj, name); return v.ValueKind == JsonValueKind.String ? v.GetString() : null; }
++    private static bool? Boolean(JsonElement obj, string name) { var v = Property(obj, name); return v.ValueKind == JsonValueKind.True ? true : v.ValueKind == JsonValueKind.False ? false : null; }
++    private static double? Number(JsonElement obj, string name, bool strings = false)
++    {
++        var v = Property(obj, name); double n;
++        if ((v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out n) || strings && v.ValueKind == JsonValueKind.String && double.TryParse(v.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out n)) && double.IsFinite(n)) return n;
++        return null;
++    }
++    private static DateTimeOffset? Epoch(double? seconds)
++    {
++        if (seconds is not { } s || s < 0 || s > 253402300799) return null;
++        return DateTimeOffset.UnixEpoch.AddSeconds(s);
++    }
++    private static DateTimeOffset? Reset(JsonElement window, DateTimeOffset time)
++    {
++        var absolute = Epoch(Number(window, "reset_at"));
++        if (absolute != null) return absolute;
++        var relative = Number(window, "reset_after_seconds");
++        return relative is { } s && s >= 0 && s <= (DateTimeOffset.MaxValue - time).TotalSeconds ? time.AddSeconds(s) : null;
++    }
++}
+diff --git a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
+index 9e3d20ca..5f752f5e 100644
+--- a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
++++ b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
+@@ -1,5 +1,37 @@
+ {
+   "_comment": "Windows-only UI strings. Same format as spec/strings.json; every key needs zh-Hant, zh-Hans, en and ja.",
++  "win.quota.title": {"zh-Hant":"用量額度","zh-Hans":"用量额度","en":"Quota","ja":"使用枠"},
++  "win.quota.show": {"zh-Hant":"顯示額度浮窗","zh-Hans":"显示额度浮窗","en":"Show quota panel","ja":"使用枠パネルを表示"},
++  "win.quota.hint": {"zh-Hant":"浮窗顯示主要額度；按一下查看詳情。關閉浮窗會記住此選擇。","zh-Hans":"浮窗显示主要额度；点击查看详情。关闭浮窗会记住此选择。","en":"The panel shows the headline quota. Select it for details. Closing it is remembered.","ja":"パネルには主要な使用枠を表示します。選択すると詳細を確認できます。閉じた状態は保存されます。"},
++  "win.quota.refresh": {"zh-Hant":"重新整理","zh-Hans":"刷新","en":"Refresh","ja":"更新"},
++  "win.quota.empty": {"zh-Hant":"尚無額度資料。","zh-Hans":"尚无额度数据。","en":"No quota data yet.","ja":"使用枠データはまだありません。"},
++  "win.quota.offline": {"zh-Hant":"網路功能已關閉。","zh-Hans":"网络功能已关闭。","en":"Network access is off.","ja":"ネットワークアクセスはオフです。"},
++  "win.quota.unknown": {"zh-Hant":"未知","zh-Hans":"未知","en":"Unknown","ja":"不明"},
++  "win.quota.used": {"zh-Hant":"已使用 %@","zh-Hans":"已使用 %@","en":"%@ used","ja":"%@ 使用済み"},
++  "win.quota.remaining": {"zh-Hant":"剩餘 %@","zh-Hans":"剩余 %@","en":"%@ remaining","ja":"残り %@"},
++  "win.quota.reset": {"zh-Hant":"重設：%@","zh-Hans":"重置：%@","en":"Resets: %@","ja":"リセット：%@"},
++  "win.quota.account": {"zh-Hant":"帳戶","zh-Hans":"账户","en":"Account","ja":"アカウント"},
++  "win.quota.plan": {"zh-Hant":"方案","zh-Hans":"方案","en":"Plan","ja":"プラン"},
++  "win.quota.source": {"zh-Hant":"來源","zh-Hans":"来源","en":"Source","ja":"ソース"},
++  "win.quota.fidelity": {"zh-Hant":"資料精度","zh-Hans":"数据精度","en":"Data fidelity","ja":"データ精度"},
++  "win.quota.official": {"zh-Hant":"官方","zh-Hans":"官方","en":"Official","ja":"公式"},
++  "win.quota.block": {"zh-Hant":"限制","zh-Hans":"限制","en":"Limit","ja":"制限"},
++  "win.quota.observed": {"zh-Hant":"更新時間","zh-Hans":"更新时间","en":"Observed","ja":"取得日時"},
++  "win.quota.next": {"zh-Hant":"下次可用","zh-Hans":"下次可用","en":"Next available","ja":"次回利用可能"},
++  "win.quota.credits": {"zh-Hant":"點數","zh-Hans":"点数","en":"Credits","ja":"クレジット"},
++  "win.quota.limit": {"zh-Hant":"點數上限","zh-Hans":"点数上限","en":"Credit limit","ja":"クレジット上限"},
++  "win.quota.duration": {"zh-Hant":"時段長度","zh-Hans":"时段长度","en":"Window length","ja":"期間の長さ"},
++  "win.quota.unlimited": {"zh-Hant":"無限制","zh-Hans":"无限制","en":"Unlimited","ja":"無制限"},
++  "win.quota.yes": {"zh-Hant":"是","zh-Hans":"是","en":"Yes","ja":"はい"},
++  "win.quota.no": {"zh-Hant":"否","zh-Hans":"否","en":"No","ja":"いいえ"},
++  "win.quota.close": {"zh-Hant":"關閉額度浮窗","zh-Hans":"关闭额度浮窗","en":"Close quota panel","ja":"使用枠パネルを閉じる"},
++  "win.quota.ok": {"zh-Hant":"最新","zh-Hans":"最新","en":"Up to date","ja":"最新"},
++  "win.quota.stale": {"zh-Hant":"資料已過期","zh-Hans":"数据已过期","en":"Stale","ja":"古いデータ"},
++  "win.quota.needsauth": {"zh-Hant":"請登入 Codex","zh-Hans":"请登录 Codex","en":"Sign in to Codex","ja":"Codex にサインイン"},
++  "win.quota.accessdenied": {"zh-Hant":"存取遭拒","zh-Hans":"访问被拒绝","en":"Access denied","ja":"アクセス拒否"},
++  "win.quota.unsupported": {"zh-Hant":"不支援","zh-Hans":"不支持","en":"Unsupported","ja":"非対応"},
++  "win.quota.error": {"zh-Hant":"無法取得額度","zh-Hans":"无法获取额度","en":"Could not load quota","ja":"使用枠を取得できません"},
++  "win.quota.waiting": {"zh-Hant":"等待下次更新","zh-Hans":"等待下次更新","en":"Waiting for refresh","ja":"更新待ち"},
+   "win.history.allHosts": {
+     "zh-Hant": "所有主機",
+     "zh-Hans": "所有主机",
+diff --git a/windows/src/AgentSpeed.Presentation/Menus/QuickMenuModel.cs b/windows/src/AgentSpeed.Presentation/Menus/QuickMenuModel.cs
+index a7ad8b4d..1c475e23 100644
+--- a/windows/src/AgentSpeed.Presentation/Menus/QuickMenuModel.cs
++++ b/windows/src/AgentSpeed.Presentation/Menus/QuickMenuModel.cs
+@@ -34,6 +34,7 @@ public static class QuickMenuModel
+ 
+         entries.Add(Command(localizer["menu.dashboard"], new MenuAction.OpenDashboard(), MenuGlyph.Dashboard) with { IsDefault = true });
+         entries.Add(Command(localizer["history.open"], new MenuAction.OpenHistory(), MenuGlyph.History));
++        entries.Add(Command(localizer["win.quota.title"], new MenuAction.OpenSettings("quota")));
+         if (report is not null)
+         {
+             entries.Add(MenuSeparator.Instance);
+diff --git a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
+index 491527f3..1cb68231 100644
+--- a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
++++ b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
+@@ -131,6 +131,9 @@ public sealed record AppSettings
+     /// <summary>Master switch of all floating orbs (DESIGN 2b); files without it take <see cref="ShowOrb"/>.</summary>
+     public bool ShowOrbs { get; init; } = true;
+ 
++    /// <summary>Whether the optional quota panel is visible.</summary>
++    public bool ShowQuotaPanel { get; init; }
++
+     /// <summary>Every floating orb and its positions per display arrangement (settings value <c>orbs</c>).</summary>
+     public OrbsDocument Orbs { get; init; } = OrbsDocument.ProcessDefault;
+ 
+diff --git a/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs b/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
+index 760f5860..d930432e 100644
+--- a/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
++++ b/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
+@@ -83,6 +83,7 @@ public static class SettingsSerializer
+             w.WriteEndObject();
+ 
+             w.WriteBoolean("showOrbs", s.ShowOrbs);
++            w.WriteBoolean("showQuotaPanel", s.ShowQuotaPanel);
+             w.WriteString("orbNames", OrbNamesModes.Key(s.OrbNames));
+             w.WritePropertyName("orbs");
+             OrbsJson.Write(w, s.Orbs);
+@@ -263,6 +264,7 @@ public static class SettingsSerializer
+             TaskbarOffset = ReadDouble(taskbar, "offset", d.TaskbarOffset),
+             ShowOrb = ReadBool(orb, "show", d.ShowOrb),
+             ShowOrbs = ReadBool(root, "showOrbs", ReadBool(orb, "show", d.ShowOrb)),
++            ShowQuotaPanel = ReadBool(root, "showQuotaPanel", d.ShowQuotaPanel),
+             OrbNames = OrbNamesModes.Parse(ReadString(root, "orbNames")),
+             OrbSize = ReadDouble(orb, "size", d.OrbSize),
+             OrbOpacity = ReadDouble(orb, "opacity", d.OrbOpacity),
+diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
+index a7a218f4..39e89087 100644
+--- a/windows/src/AgentSpeed/App/AppController.cs
++++ b/windows/src/AgentSpeed/App/AppController.cs
+@@ -78,6 +78,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+     private string? _dashboardOrbId;
+     private SettingsWindow? _settingsWindow;
+     private SettingsViewModel? _settingsModel;
++    private QuotaSurface? _quota;
+     private UpdateService _updates = null!;
+     private UpdateWindow? _updateWindow;
+     private UpdateWindowViewModel? _updateWindowModel;
+@@ -190,6 +191,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         _settings.Changed += (_, e) => OnSettingsChanged(e.Previous, e.Current);
+         _theme.Changed += (_, _) => OnThemeChanged();
+         _loc.LanguageChanged += (_, _) => OnLanguageChanged();
++        _quota = new QuotaSurface(_settings, _loc, () => OpenSettings("quota"));
+         _preview.StateChanged += (_, _) => _dashboard?.SetPreviewing(_preview.IsRunning);
+ 
+         _dashboardTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(250), DispatcherPriority.Background, (_, _) => FlushDashboard(), _ui);
+@@ -408,9 +410,12 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             _settingsModel.DarkTheme = _theme.IsDark;
+             _settingsModel.UpdateLive(_speed.Snapshot, _taskbar?.Presence ?? TaskbarPresence.Hidden);
+             _settingsWindow = new SettingsWindow(_settingsModel) { Language = AppFonts.XmlLanguageFor(_loc.LanguageCode) };
++            _settingsWindow.QuotaPageActiveChanged += active => _quota?.SetPageActive(active);
++            _settingsWindow.SetQuotaPage(_quota!.CreatePage());
+             _settingsWindow.Closed += (_, _) =>
+             {
+                 _settingsWindow = null;
++                _quota?.ClosePage();
+                 _orbs?.Highlight(null);
+             };
+         }
+@@ -476,6 +481,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         }
+ 
+         _disposed = true;
++        Try(() => _quota?.Dispose());
+         Try(() => _historyStartFallback?.Stop());
+         Try(() => _remoteConnections?.Dispose());
+         Try(() => _history?.Dispose());
+@@ -1091,6 +1097,8 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+ 
+         _updates.OnSettingsChanged(previous, current);
+         _cost.OnSettingsChanged(previous, current);
++        _quota?.ApplySettings();
++        if (!previous.NetworkEnabled && current.NetworkEnabled) _quota?.NetworkEnabled();
+         _traffic.OnSettingsChanged(previous, current);
+         if (previous.Traffic.IncludeTools != current.Traffic.IncludeTools || previous.EnabledSourceSet() != current.EnabledSourceSet())
+         {
+@@ -1305,6 +1313,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         }
+ 
+         _settingsModel?.Relocalize(_loc);
++        _quota?.Relocalize();
+         _settingsModel?.Report?.SetLocalizer(_loc);
+         RefreshReportSurfaces();
+         _orbs?.Relocalize(_loc);
+diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
+new file mode 100644
+index 00000000..003bcea6
+--- /dev/null
++++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
+@@ -0,0 +1,235 @@
++using System.Windows;
++using System.Windows.Controls;
++using System.Windows.Input;
++using System.Windows.Media;
++using System.Windows.Shapes;
++using System.Windows.Threading;
++using AgentSpeed.Core;
++using AgentSpeed.Presentation.Localization;
++using AgentSpeed.Services;
++
++namespace AgentSpeed.Settings;
++
++/// <summary>Owns the local quota observation and its two optional UI surfaces.</summary>
++internal sealed class QuotaSurface : IDisposable
++{
++    private readonly SettingsService _settings;
++    private readonly Localizer _loc;
++    private readonly Action _openSettings;
++    private readonly DispatcherTimer _timer;
++    private CodexQuotaProvider? _provider;
++    private CodexQuotaSnapshot? _snapshot;
++    private Window? _panel;
++    private StackPanel? _page;
++    private bool _settingsOpen;
++    private bool _busy;
++    private bool _disposed;
++    private int _generation;
++
++    public QuotaSurface(SettingsService settings, Localizer loc, Action openSettings)
++    {
++        _settings = settings;
++        _loc = loc;
++        _openSettings = openSettings;
++        _timer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
++        _timer.Tick += (_, _) => Refresh();
++        ApplySettings();
++    }
++
++    public UIElement CreatePage()
++    {
++        _page = new StackPanel();
++        Render();
++        return _page;
++    }
++    public void SetPageActive(bool active)
++    {
++        _settingsOpen = active;
++        UpdateTimer();
++        if (active) Refresh();
++    }
++
++
++    public void ClosePage()
++    {
++        _settingsOpen = false;
++        _page = null;
++        UpdateTimer();
++    }
++
++    public void ApplySettings()
++    {
++        if (_disposed) return;
++        if (!_settings.Current.NetworkEnabled && _provider is not null)
++        {
++            _generation++;
++            _provider.Cancel();
++            _provider.Dispose();
++            _provider = null;
++            _busy = false;
++        }
++        if (_settings.Current.ShowQuotaPanel && _panel is null)
++        {
++            _panel = new Window
++            {
++                Title = _loc["win.quota.title"], Width = 310, SizeToContent = SizeToContent.Height,
++                MinHeight = 100, Topmost = true, ShowInTaskbar = false, ShowActivated = false,
++                WindowStartupLocation = WindowStartupLocation.CenterScreen,
++                Background = SystemColors.WindowBrush, Foreground = SystemColors.WindowTextBrush
++            };
++            _panel.Closed += (_, _) =>
++            {
++                _panel = null;
++                if (!_disposed && _settings.Current.ShowQuotaPanel)
++                    _settings.Update(s => s with { ShowQuotaPanel = false });
++                UpdateTimer();
++            };
++            _panel.Show();
++            Refresh();
++        }
++        else if (!_settings.Current.ShowQuotaPanel && _panel is not null)
++        {
++            _panel.Close();
++        }
++        Render();
++        UpdateTimer();
++    }
++
++    public void Relocalize() => Render();
++    public void NetworkEnabled() { if (_panel is not null || _settingsOpen) Refresh(); }
++
++    private void UpdateTimer()
++    {
++        if (!_disposed && _settings.Current.NetworkEnabled && (_panel is not null || _settingsOpen)) _timer.Start();
++        else _timer.Stop();
++    }
++
++    private async void Refresh()
++    {
++        if (_disposed || _busy || !_settings.Current.NetworkEnabled) return;
++        _provider ??= new CodexQuotaProvider();
++        var provider = _provider;
++        var generation = _generation;
++        _busy = true;
++        Render();
++        try
++        {
++            var result = await provider.RefreshAsync();
++            if (!_disposed && generation == _generation && _settings.Current.NetworkEnabled) _snapshot = result;
++        }
++        catch (OperationCanceledException) { }
++        catch (ObjectDisposedException) { }
++        finally
++        {
++            if (!_disposed && generation == _generation)
++            {
++                _busy = false;
++                Render();
++            }
++        }
++    }
++
++    private string Text(string key) => _loc["win.quota." + key];
++    private string Percent(double? value) => value is { } v ? v.ToString("P0", _loc.Culture) : Text("unknown");
++    private string Date(DateTimeOffset value) => value.ToLocalTime().ToString("g", _loc.Culture);
++    private string Status() => !_settings.Current.NetworkEnabled ? Text("offline") : _snapshot is null ? Text("empty")
++        : Text(_snapshot.WaitingForRefresh ? "waiting" : _snapshot.Status.ToString().ToLowerInvariant());
++
++    private static TextBlock Line(string text, double size = 13) => new()
++    {
++        Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 3)
++    };
++
++    private void Render()
++    {
++        if (_disposed) return;
++        if (_panel is not null)
++        {
++            _panel.Title = Text("title");
++            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(14) };
++            var headline = _snapshot?.Windows.FirstOrDefault(w => w.Id == _snapshot.HeadlineId);
++            var ring = new Grid { Width = 48, Height = 48, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
++            ring.Children.Add(new Ellipse { Stroke = SystemColors.GrayTextBrush, Opacity = .25, StrokeThickness = 4 });
++            if (headline?.UsedFraction is double fraction)
++            {
++                var arc = new Ellipse { Stroke = SystemColors.HighlightBrush, StrokeThickness = 4,
++                    StrokeDashArray = new DoubleCollection { Math.Clamp(fraction, 0, 1) * 34.56, 34.56 },
++                    RenderTransform = new RotateTransform(-90, 24, 24) };
++                ring.Children.Add(arc);
++            }
++            ring.Children.Add(new TextBlock { Text = Percent(headline?.UsedFraction), FontSize = 10,
++                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center });
++            row.Children.Add(ring);
++            var labels = new StackPanel { Width = 205 };
++            labels.Children.Add(Line(_snapshot?.Account ?? _snapshot?.DisplayName ?? "Codex", 14));
++            if (headline is not null)
++            {
++                labels.Children.Add(Line(WindowLabel(headline) + " · " + Percent(headline.UsedFraction), 12));
++                if (headline.ResetAt is { } reset) labels.Children.Add(Line(_loc.Format("win.quota.reset", Date(reset)), 12));
++            }
++            labels.Children.Add(Line(Status(), 12));
++            if (_snapshot?.WaitingForRefresh == true && _snapshot.NextAllowedAt is { } next)
++                labels.Children.Add(Line(Text("next") + ": " + Date(next), 12));
++            row.Children.Add(labels);
++            var button = new Button { Content = row, HorizontalContentAlignment = HorizontalAlignment.Left,
++                ToolTip = Text("title"), Cursor = Cursors.Hand };
++            button.Click += (_, _) => _openSettings();
++            _panel.Content = button;
++        }
++        if (_page is null) return;
++        _page.Children.Clear();
++        var toggle = new CheckBox { Content = Text("show"), IsChecked = _settings.Current.ShowQuotaPanel, Margin = new Thickness(0, 8, 0, 8) };
++        toggle.Click += (_, _) => _settings.Update(s => s with { ShowQuotaPanel = toggle.IsChecked == true });
++        _page.Children.Add(toggle);
++        _page.Children.Add(Line(Text("hint")));
++        var refresh = new Button { Content = Text("refresh"), IsEnabled = _settings.Current.NetworkEnabled && !_busy,
++            HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 12, 0, 12), Padding = new Thickness(14, 5, 14, 5) };
++        refresh.Click += (_, _) => Refresh();
++        _page.Children.Add(refresh);
++        _page.Children.Add(Line(Status()));
++        if (_snapshot is not { } snapshot) return;
++        _page.Children.Add(Line(snapshot.DisplayName, 18));
++        Add("account", snapshot.Account);
++        Add("plan", snapshot.Plan);
++        Add("source", snapshot.Source);
++        Add("fidelity", Text("official"));
++        Add("block", snapshot.Block);
++        if (snapshot.ObservedAt is { } observed) Add("observed", Date(observed));
++        if (snapshot.NextAllowedAt is { } nextAt) Add("next", Date(nextAt));
++        if (snapshot.Credits is { } credits)
++        {
++            Add("credits", credits.Unlimited == true ? Text("unlimited") : credits.Balance ?? (credits.HasCredits is { } hasCredits ? Text(hasCredits ? "yes" : "no") : Text("unknown")));
++            if (credits.Limit is { } limit) Add("limit", limit.ToString(_loc.Culture));
++            if (credits.Used is { } used) _page.Children.Add(Line(_loc.Format("win.quota.used", used.ToString(_loc.Culture))));
++            if (credits.UsedFraction is { } usedFraction) _page.Children.Add(Line(_loc.Format("win.quota.used", Percent(usedFraction))));
++            if (credits.ResetAt is { } reset) _page.Children.Add(Line(_loc.Format("win.quota.reset", Date(reset))));
++        }
++        foreach (var window in snapshot.Windows)
++        {
++            _page.Children.Add(Line(WindowLabel(window), 16));
++            _page.Children.Add(Line(_loc.Format("win.quota.used", Percent(window.UsedFraction))));
++            _page.Children.Add(Line(_loc.Format("win.quota.remaining", Percent(window.Remaining))));
++            if (window.ResetAt is { } reset) _page.Children.Add(Line(_loc.Format("win.quota.reset", Date(reset))));
++            if (window.Duration is { } duration) Add("duration", duration.ToString());
++        }
++    }
++
++    private static string WindowLabel(CodexQuotaWindow window) => window.Duration is { } duration
++        ? window.Label + " · " + duration.ToString() : window.Label;
++
++    private void Add(string key, string? value)
++    {
++        if (value is not null) _page?.Children.Add(Line(Text(key) + ": " + value));
++    }
++
++    public void Dispose()
++    {
++        if (_disposed) return;
++        _disposed = true;
++        _generation++;
++        _timer.Stop();
++        _provider?.Dispose();
++        _panel?.Close();
++        _page = null;
++    }
++}
+diff --git a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
+index d12e66f9..3dfe1893 100644
+--- a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
++++ b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
+@@ -157,6 +157,7 @@ internal sealed class SettingsViewModel : ObservableObject
+         Pages.Add(new NavItem("orb", "", "settings.orb"));
+         Pages.Add(new NavItem("effects", "", "settings.effects"));
+         Pages.Add(new NavItem("cost", "", "settings.cost"));
++        Pages.Add(new NavItem("quota", "", "win.quota.title"));
+         Pages.Add(new NavItem("traffic", "", "settings.traffic"));
+         Pages.Add(new NavItem("report", "\uEC05", "settings.report"));
+         Pages.Add(new NavItem("sources", "", "settings.sources"));
+diff --git a/windows/src/AgentSpeed/Settings/SettingsWindow.xaml b/windows/src/AgentSpeed/Settings/SettingsWindow.xaml
+index 7ccaf855..e5979696 100644
+--- a/windows/src/AgentSpeed/Settings/SettingsWindow.xaml
++++ b/windows/src/AgentSpeed/Settings/SettingsWindow.xaml
+@@ -46,6 +46,7 @@
+                     <pages:OrbPage x:Name="OrbPage" />
+                     <pages:EffectsPage x:Name="EffectsPage" />
+                     <pages:CostPage x:Name="CostPage" DataContext="{Binding Cost}" />
++                    <ContentControl x:Name="QuotaPage" />
+                     <pages:TrafficPage x:Name="TrafficPage" DataContext="{Binding Traffic}" />
+                     <pages:ReportPage x:Name="ReportPage" DataContext="{Binding Report}" />
+                     <pages:SourcesPage x:Name="SourcesPage" />
+diff --git a/windows/src/AgentSpeed/Settings/SettingsWindow.xaml.cs b/windows/src/AgentSpeed/Settings/SettingsWindow.xaml.cs
+index b719fdc3..087b3d54 100644
+--- a/windows/src/AgentSpeed/Settings/SettingsWindow.xaml.cs
++++ b/windows/src/AgentSpeed/Settings/SettingsWindow.xaml.cs
+@@ -9,6 +9,7 @@ namespace AgentSpeed.Settings;
+ internal sealed partial class SettingsWindow : Window
+ {
+     private readonly SettingsViewModel _viewModel;
++    public event Action<bool>? QuotaPageActiveChanged;
+ 
+     public SettingsWindow(SettingsViewModel viewModel)
+     {
+@@ -26,6 +27,12 @@ internal sealed partial class SettingsWindow : Window
+         ShowPage();
+     }
+ 
++    public void SetQuotaPage(UIElement page)
++    {
++        QuotaPage.Content = page;
++        QuotaPageActiveChanged?.Invoke(_viewModel.PageKey == "quota");
++    }
++
+     protected override void OnClosed(EventArgs e)
+     {
+         _viewModel.PropertyChanged -= OnViewModelChanged;
+@@ -51,7 +58,8 @@ internal sealed partial class SettingsWindow : Window
+         }
+ 
+         _shownPage = key;
+-        foreach (UIElement page in new UIElement[] { GeneralPage, TaskbarPage, OrbPage, EffectsPage, CostPage, TrafficPage, ReportPage, SourcesPage, AboutPage })
++        QuotaPageActiveChanged?.Invoke(key == "quota");
++        foreach (UIElement page in new UIElement[] { GeneralPage, TaskbarPage, OrbPage, EffectsPage, CostPage, QuotaPage, TrafficPage, ReportPage, SourcesPage, AboutPage })
+         {
+             var name = ((FrameworkElement)page).Name;
+             page.Visibility = string.Equals(name, key + "Page", StringComparison.OrdinalIgnoreCase)
+diff --git a/windows/src/AgentSpeed/Theme/Styles.xaml b/windows/src/AgentSpeed/Theme/Styles.xaml
+index 59a8461b..74b7b7f3 100644
+--- a/windows/src/AgentSpeed/Theme/Styles.xaml
++++ b/windows/src/AgentSpeed/Theme/Styles.xaml
+@@ -221,7 +221,9 @@
+         <Setter Property="Template">
+             <Setter.Value>
+                 <ControlTemplate TargetType="ListBox">
+-                    <ItemsPresenter />
++                    <ScrollViewer Focusable="False" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
++                        <ItemsPresenter />
++                    </ScrollViewer>
+                 </ControlTemplate>
+             </Setter.Value>
+         </Setter>
+diff --git a/windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs b/windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
+new file mode 100644
+index 00000000..023d27d9
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
+@@ -0,0 +1,184 @@
++using System.Net;
++using System.Net.Http.Headers;
++
++namespace AgentSpeed.Core.Tests;
++
++public sealed class CodexQuotaProviderTests
++{
++    private static readonly DateTimeOffset Time = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
++
++    [Fact]
++    public void ParsesIndependentWindowsAndCreditsWithoutClamping()
++    {
++        var snapshot = CodexQuotaProvider.Parse("""
++            {"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":125,"limit_window_seconds":604800},"secondary_window":{"used_percent":0,"limit_window_seconds":18000,"reset_after_seconds":60}},
++             "additional_rate_limits":[null,{"metered_feature":"image","rate_limit":{"primary_window":{"used_percent":null}}}],
++             "code_review_rate_limit":{"primary_window":{"limit_window_seconds":18000}},
++             "credits":{"balance":"0","has_credits":false},"spend_control":{"individual_limit":{"limit":"10.5","used":"12","used_percent":120}}}
++            """, Time);
++        Assert.Equal("plus", snapshot.Plan);
++        Assert.Equal(4, snapshot.Windows.Count);
++        Assert.StartsWith("main:604800", snapshot.HeadlineId);
++        Assert.Equal(1.25, snapshot.Windows[0].UsedFraction);
++        Assert.Equal(-0.25, snapshot.Windows[0].Remaining);
++        Assert.Equal(0, snapshot.Windows[1].UsedFraction);
++        Assert.Equal(Time.AddSeconds(60), snapshot.Windows[1].ResetAt);
++        Assert.Null(snapshot.Windows[2].UsedFraction);
++        Assert.StartsWith("code_review:", snapshot.Windows[3].Id);
++        Assert.Equal("0", snapshot.Credits!.Balance);
++        Assert.Equal(1.2, snapshot.Credits.UsedFraction);
++    }
++
++    [Fact]
++    public void MissingMainDoesNotPromoteExtraAndSameDurationIdsAreUnique()
++    {
++        var snapshot = CodexQuotaProvider.Parse("""
++            {"rate_limit":{"primary_window":null,"secondary_window":null},"additional_rate_limits":[{"limit_name":"x","rate_limit":{"primary_window":{"limit_window_seconds":5},"secondary_window":{"limit_window_seconds":5}}}]}
++            """, Time);
++        Assert.Null(snapshot.HeadlineId);
++        Assert.Equal(2, snapshot.Windows.Select(w => w.Id).Distinct().Count());
++    }
++
++    [Fact]
++    public async Task SuccessfulSchedulePersistsWithoutPersistingObservationOrCredentials()
++    {
++        using var context = new Context();
++        using (var provider = context.Provider())
++        {
++            var result = await provider.RefreshAsync();
++            Assert.Equal(CodexQuotaStatus.Ok, result.Status);
++            Assert.Equal(Time.AddMinutes(5), result.NextAllowedAt);
++            Assert.Equal(CodexQuotaStatus.Ok, (await provider.RefreshAsync()).Status);
++            Assert.Equal(1, context.Handler.Calls);
++        }
++        using var restarted = context.Provider();
++        var waiting = await restarted.RefreshAsync();
++        Assert.Equal(CodexQuotaStatus.Error, waiting.Status);
++        Assert.True(waiting.WaitingForRefresh);
++        var saved = File.ReadAllText(Directory.GetFiles(context.Schedule).Single());
++        Assert.DoesNotContain("secret-token", saved);
++        Assert.DoesNotContain("account-id", saved);
++    }
++
++    [Theory]
++    [InlineData(HttpStatusCode.OK)]
++    [InlineData(HttpStatusCode.TooManyRequests)]
++    [InlineData(HttpStatusCode.Unauthorized)]
++    public async Task FailedSchedulePersistenceStillPreventsRepeatRequests(HttpStatusCode status)
++    {
++        using var context = new Context();
++        File.WriteAllText(context.Schedule, "not a directory");
++        context.Handler.Status = status;
++        using var provider = context.Provider();
++        await provider.RefreshAsync();
++        await provider.RefreshAsync();
++        Assert.Equal(1, context.Handler.Calls);
++    }
++
++    [Fact]
++    public async Task MissingCredentialsNeverRequestsEndpoint()
++    {
++        using var context = new Context();
++        context.RemoveCredentials();
++        using var provider = context.Provider();
++        Assert.Equal(CodexQuotaStatus.NeedsAuth, (await provider.RefreshAsync()).Status);
++        Assert.Equal(0, context.Handler.Calls);
++    }
++
++    [Fact]
++    public async Task RetryAfterHttpDateIsRespected()
++    {
++        using var context = new Context();
++        context.Handler.Status = HttpStatusCode.TooManyRequests;
++        context.Handler.RetryDate = Time.AddMinutes(12);
++        using var provider = context.Provider();
++        var result = await provider.RefreshAsync();
++        Assert.Equal(Time.AddMinutes(12), result.NextAllowedAt);
++    }
++
++    [Fact]
++    public async Task RateLimitIsStaleAndRestartIsErrorNotWaiting()
++    {
++        using var context = new Context();
++        using var provider = context.Provider();
++        var first = await provider.RefreshAsync();
++        context.Clock = Time.AddMinutes(6);
++        context.Handler.Status = HttpStatusCode.TooManyRequests;
++        context.Handler.Retry = TimeSpan.FromMinutes(10);
++        var stale = await provider.RefreshAsync();
++        Assert.Equal(CodexQuotaStatus.Stale, stale.Status);
++        Assert.Equal(first.ObservedAt, stale.ObservedAt);
++        Assert.Equal(context.Clock.AddMinutes(10), stale.NextAllowedAt);
++        using var restarted = context.Provider();
++        var error = await restarted.RefreshAsync();
++        Assert.Equal(CodexQuotaStatus.Error, error.Status);
++        Assert.False(error.WaitingForRefresh);
++        Assert.Equal(2, context.Handler.Calls);
++    }
++
++    [Fact]
++    public async Task RejectedCredentialDoesNotRetryUntilChanged()
++    {
++        using var context = new Context();
++        context.Handler.Status = HttpStatusCode.Unauthorized;
++        using var provider = context.Provider();
++        Assert.Equal(CodexQuotaStatus.NeedsAuth, (await provider.RefreshAsync()).Status);
++        Assert.Equal(CodexQuotaStatus.NeedsAuth, (await provider.RefreshAsync()).Status);
++        Assert.Equal(1, context.Handler.Calls);
++        var saved = File.ReadAllText(Directory.GetFiles(context.Schedule).Single());
++        Assert.DoesNotContain("secret-token", saved);
++        Assert.DoesNotContain("account-id", saved);
++        context.Credentials("new-token");
++        context.Handler.Status = HttpStatusCode.OK;
++        Assert.Equal(CodexQuotaStatus.Ok, (await provider.RefreshAsync()).Status);
++        Assert.Equal(2, context.Handler.Calls);
++    }
++
++    [Fact]
++    public async Task ConcurrentRefreshesShareRequest()
++    {
++        using var context = new Context();
++        context.Handler.Block = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
++        using var provider = context.Provider();
++        var first = provider.RefreshAsync();
++        var second = provider.RefreshAsync();
++        context.Handler.Block.SetResult();
++        await Task.WhenAll(first, second);
++        Assert.Equal(1, context.Handler.Calls);
++    }
++
++    private sealed class Context : IDisposable
++    {
++        private readonly string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
++        public string Schedule => Path.Combine(root, "schedule");
++        public DateTimeOffset Clock = Time;
++        public Handler Handler = new();
++        public Context() { Directory.CreateDirectory(root); Credentials("secret-token"); }
++        public void Credentials(string token) => File.WriteAllText(Path.Combine(root, "auth.json"), "{\"tokens\":{\"access_token\":\"" + token + "\",\"account_id\":\"account-id\"}}");
++        public void RemoveCredentials() => File.Delete(Path.Combine(root, "auth.json"));
++        public CodexQuotaProvider Provider() => new(Path.Combine(root, "auth.json"), Schedule, new HttpClient(Handler, false), () => Clock);
++        public void Dispose() => Directory.Delete(root, true);
++    }
++    private sealed class Handler : HttpMessageHandler
++    {
++        public int Calls;
++        public HttpStatusCode Status = HttpStatusCode.OK;
++        public TimeSpan? Retry;
++        public DateTimeOffset? RetryDate;
++        public TaskCompletionSource? Block;
++        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
++        {
++            Interlocked.Increment(ref Calls);
++            Assert.Equal("chatgpt.com", request.RequestUri!.Host);
++            Assert.Equal("application/json", request.Headers.Accept.Single().MediaType);
++            Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
++            Assert.False(string.IsNullOrEmpty(request.Headers.Authorization?.Parameter));
++            Assert.Equal("account-id", request.Headers.GetValues("ChatGPT-Account-Id").Single());
++            if (Block != null) await Block.Task.WaitAsync(cancellationToken);
++            var response = new HttpResponseMessage(Status) { Content = new StringContent("{\"rate_limit\":{\"primary_window\":{\"used_percent\":0}}}") };
++            if (Retry != null) response.Headers.RetryAfter = new RetryConditionHeaderValue(Retry.Value);
++            if (RetryDate != null) response.Headers.RetryAfter = new RetryConditionHeaderValue(RetryDate.Value);
++            return response;
++        }
++    }
++}
