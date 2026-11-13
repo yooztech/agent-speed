@@ -1,7 +1,7 @@
-From b3519d5c3a94e5aa14d1127ff5bb5f8d186b3f62 Mon Sep 17 00:00:00 2001
+From 41a5b1c99a738d115ca374568bece5a94d8b5cdc Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:50:08 +0800
-Subject: [PATCH 11/15] Select orb sources independently by host
+Subject: [PATCH 11/19] Select orb sources independently by host
 
 ---
  README.md                                     |   7 +-
@@ -61,7 +61,7 @@ Subject: [PATCH 11/15] Select orb sources independently by host
  create mode 100644 macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift
 
 diff --git a/README.md b/README.md
-index 15817ee1..87352402 100644
+index ebfb6035..35193b81 100644
 --- a/README.md
 +++ b/README.md
 @@ -54,7 +54,7 @@ Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uni
@@ -2774,3 +2774,6 @@ index 916b7d47..6eeba75e 100644
      [Fact]
      public void HistoryCsvAddsHostIdentityWithoutChangingLegacyExport()
      {
+-- 
+2.41.0
+

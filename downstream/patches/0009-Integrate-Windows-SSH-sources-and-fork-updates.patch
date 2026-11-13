@@ -1,7 +1,7 @@
-From 114e25e3722b21822286fc2ef72d51e08097d2f0 Mon Sep 17 00:00:00 2001
+From c422920b40e4cbe0a180b28d009b1fa387f487f6 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:28 +0800
-Subject: [PATCH 09/16] Integrate Windows SSH sources and fork updates
+Subject: [PATCH 09/19] Integrate Windows SSH sources and fork updates
 
 ---
  README.md                                     |  10 +-
@@ -3924,3 +3924,6 @@ index 00000000..52fae7e4
 +
 +Console.Error.Write("Unexpected fake SSH command");
 +return 41;
+-- 
+2.41.0
+

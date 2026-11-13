@@ -1,7 +1,7 @@
-From e50dde0b1502df651af74ad2cd6cd29ad95888aa Mon Sep 17 00:00:00 2001
+From 736bf6e0f5b0788c913082cb091149bf2244c4fc Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:10 +0800
-Subject: [PATCH 01/16] Add SSH remote agent monitoring
+Subject: [PATCH 01/19] Add SSH remote agent monitoring
 
 ---
  .github/workflows/linux.yml                   |   4 +-
@@ -9,7 +9,7 @@ Subject: [PATCH 01/16] Add SSH remote agent monitoring
  docs/shared-collector.md                      |  86 +++
  linux/CMakeLists.txt                          |   1 +
  linux/collector/CMakeLists.txt                |   6 +
- linux/collector/daemon.cpp                    | 353 +++++++++
+ linux/collector/daemon.cpp                    | 379 ++++++++++
  linux/collector/daemon.hpp                    |   6 +
  linux/collector/history_cache.cpp             |  82 ++
  linux/collector/history_cache.hpp             |  22 +
@@ -45,7 +45,7 @@ Subject: [PATCH 01/16] Add SSH remote agent monitoring
  spec/DESIGN.md                                |   7 +
  spec/METRICS.md                               |   9 +
  spec/NETWORK.md                               |  49 +-
- 41 files changed, 3483 insertions(+), 42 deletions(-)
+ 41 files changed, 3509 insertions(+), 42 deletions(-)
  create mode 100644 docs/shared-collector.md
  create mode 100644 linux/collector/CMakeLists.txt
  create mode 100644 linux/collector/daemon.cpp
@@ -286,10 +286,10 @@ index 00000000..b64cb4d1
 +target_link_libraries(agentspeed-collector PRIVATE agentspeed_collector_protocol Threads::Threads)
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
 new file mode 100644
-index 00000000..8351316c
+index 00000000..0a7ab8c1
 --- /dev/null
 +++ b/linux/collector/daemon.cpp
-@@ -0,0 +1,353 @@
+@@ -0,0 +1,379 @@
 +#include "daemon.hpp"
 +#include "protocol.hpp"
 +#include "publisher.hpp"
@@ -512,9 +512,34 @@ index 00000000..8351316c
 +    close(ready);
 +    std::map<int, Client> clients; std::uint64_t nextId = 1;
 +    auto tick = Clock::now(); auto idle = Clock::now();
++    // A cold first scan can take seconds. The handshake and capabilities exchange of an arriving client has a
++    // five-second budget (PROTOCOL.md), so the first scan waits until that exchange is on the wire: a client has
++    // connected and its first command has been answered, or the bounded grace below has passed. Later scans follow
++    // the normal one-second tick.
++    const auto started = Clock::now();
++    bool clientSeen = false, firstCommandServed = false;
++    constexpr auto kFirstScanClientWait = std::chrono::seconds(3);
++    constexpr auto kFirstScanHandshakeWait = std::chrono::seconds(4);
 +    while (!stopping) {
 +        auto now = nowMs(); auto steady = Clock::now();
-+        if (steady >= tick) {
++        bool pendingHandshakeOutput = false;
++        for (auto& [fd, c] : clients) if (c.handshaken && !c.dead && !c.output.empty()) pendingHandshakeOutput = true;
++        const bool firstScanAllowed = (firstCommandServed && !pendingHandshakeOutput) ||
++            steady - started >= (clientSeen ? kFirstScanHandshakeWait : kFirstScanClientWait);
++        if (steady >= tick && firstScanAllowed) {
++#ifdef AGENTSPEED_COLLECTOR_TESTING
++            // Test-only slow cold scan: proves the handshake path never waits for it.
++            static bool slowFirstPollApplied = false;
++            if (!slowFirstPollApplied) {
++                slowFirstPollApplied = true;
++#if defined(__GLIBC__)
++                if (const char* ms = std::getenv("AGENTSPEED_COLLECTOR_TEST_SLOW_FIRST_POLL_MS")) {
++                    if (const long value = std::strtol(ms, nullptr, 10); value > 0)
++                        usleep(static_cast<useconds_t>(std::min<long>(value, 30000)) * 1000);
++                }
++#endif
++            }
++#endif
 +            sampler.poll(now);
 +            for (auto& [fd, c] : clients) if (c.handshaken && !c.dead) {
 +                auto sample = sampler.sample(now, c.view);
@@ -553,6 +578,7 @@ index 00000000..8351316c
 +                int fd = accept4(listener.value, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
 +                if (fd < 0) { if (errno == EINTR) continue; break; }
 +                if (clients.size() >= kClients || !peer(fd)) { close(fd); continue; }
++                clientSeen = true;
 +                clients.emplace(fd, Client{Fd(fd), nextId++});
 +            }
 +        }
@@ -571,7 +597,7 @@ index 00000000..8351316c
 +                        if (!c.handshaken) {
 +                            if (line != "shared-collector-v2 " + hash) { enqueue(c, "version-conflict"); c.handshaken = true; c.dead = true; break; }
 +                            c.handshaken = true; enqueue(c, "shared-collector-v2 " + hash);
-+                        } else command(c, line, publisher, now);
++                        } else { command(c, line, publisher, now); firstCommandServed = true; }
 +                    }
 +                }
 +            }
@@ -4082,3 +4108,6 @@ index c9233933..90dc57b6 100644
 +stale/offline, not evidence of an idle agent or zero usage. Unavailable measurements remain unknown and in-progress
 +rates derived from prior completions are estimates; see `spec/METRICS.md`.
 +
+-- 
+2.41.0
+

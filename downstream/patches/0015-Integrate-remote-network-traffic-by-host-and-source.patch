@@ -1,7 +1,7 @@
-From 28697d968b5043999ac8055ddb03e652f6a229bd Mon Sep 17 00:00:00 2001
+From 0a8975ae68b32c486e0a7e43f42bd6d0a871b510 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
-Subject: [PATCH 15/16] Integrate remote network traffic by host and source
+Subject: [PATCH 15/19] Integrate remote network traffic by host and source
 
 ---
  README.md                                     |   2 +
@@ -66,10 +66,10 @@ index 9f9eee7e..51ccd86c 100644
  the client from the collector. Partial log reads are marked as potentially incomplete. Supported collectors provide
  remote performance scores and host-specific baselines, plus real daily performance history from analyzed logs. A
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
-index 8351316c..86c8f99a 100644
+index 0a7ab8c1..d03075fa 100644
 --- a/linux/collector/daemon.cpp
 +++ b/linux/collector/daemon.cpp
-@@ -226,7 +226,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -251,7 +251,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
              sampler.poll(now);
              for (auto& [fd, c] : clients) if (c.handshaken && !c.dead) {
                  auto sample = sampler.sample(now, c.view);
@@ -1970,3 +1970,6 @@ index 5286eee1..fa753050 100644
      [Fact]
      public void TheTaskbarBlockFollowsTheSetting()
      {
+-- 
+2.41.0
+

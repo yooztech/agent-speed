@@ -1,4 +1,4 @@
-From 1c202decf2096af195f162ec4a1236fc3fa53440 Mon Sep 17 00:00:00 2001
+From 3952d9ab11ea00c355c60781f1cd2f63549c6bc3 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Thu, 12 Nov 2026 22:19:58 +0800
 Subject: [PATCH 18/19] Prefer the service relay for the price table

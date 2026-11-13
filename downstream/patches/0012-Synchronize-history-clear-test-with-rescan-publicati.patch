@@ -1,7 +1,7 @@
-From 3ad0904dbbee2b69e4e63d9871a0f813a345d553 Mon Sep 17 00:00:00 2001
+From 26059ff8032aa9fd857f795bbbbe6079171ccf5a Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 09:10:19 +0800
-Subject: [PATCH 12/15] Synchronize history clear test with rescan publication
+Subject: [PATCH 12/19] Synchronize history clear test with rescan publication
 
 ---
  .../AgentSpeedCoreTests/HistoryTests.swift    | 36 ++++++++++++++-----
@@ -78,3 +78,6 @@ index 13c3f23f..769cd0c4 100644
      }
  
      @Test func recordsTheLivePeakOfTheDay() async throws {
+-- 
+2.41.0
+

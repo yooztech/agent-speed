@@ -1,7 +1,7 @@
-From 0f4677ce586e3e0ecf2693ca5ff38cef849eea1d Mon Sep 17 00:00:00 2001
+From 748b1370419e0b1847520b6a28c8704e7f0876fd Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 09:15:56 +0800
-Subject: [PATCH 13/15] Synchronize HTTP fallback test with accepted delivery
+Subject: [PATCH 13/19] Synchronize HTTP fallback test with accepted delivery
 
 ---
  .../ReportTransportTests.swift                | 56 +++++++++++++++++--
@@ -132,3 +132,6 @@ index 20781b35..47c3dc23 100644
  /// Connections that never open: the session asks for one and nothing leaves the process.
  private final class SilentStreamTransport: ReportStreamTransport, @unchecked Sendable {
      private let lock = NSLock()
+-- 
+2.41.0
+

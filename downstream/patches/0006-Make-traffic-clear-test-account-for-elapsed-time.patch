@@ -1,7 +1,7 @@
-From ee50730f1e2321eed8e0597ecfa8c47369000638 Mon Sep 17 00:00:00 2001
+From c69aede66420760af9b3ee18baf6cac02ed7dd95 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Thu, 5 Nov 2026 18:24:08 +0800
-Subject: [PATCH 06/15] Make traffic clear test account for elapsed time
+Subject: [PATCH 06/19] Make traffic clear test account for elapsed time
 
 ---
  .../AgentSpeedCoreTests/TrafficMonitorTests.swift      | 10 +++++++++-
@@ -51,3 +51,6 @@ index 22fc81f6..fbc31c21 100644
          if let running { #expect(kill(running, 0) == -1 && errno == ESRCH, "stop kills and reaps nettop") }
      }
  }
+-- 
+2.41.0
+

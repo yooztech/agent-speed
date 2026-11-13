@@ -1,7 +1,7 @@
-From 19ce76f2eda8f3e7967b3d59565759e2149991b3 Mon Sep 17 00:00:00 2001
+From 7d068d262fad64ceef5231c5e1df3f0a9e212742 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Mon, 9 Nov 2026 09:50:00 +0800
-Subject: [PATCH 16/16] Add independent widget statistics feed
+Subject: [PATCH 16/19] Add independent widget statistics feed
 
 An unscanned projection could replace a lease's stored statistics with six null past days
 beside a real today. The projection's calendar day came from the collector's own clock, the
@@ -211,7 +211,7 @@ index 1eb5023e..12d6cb04 100644
  endfunction()
  
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
-index 86c8f99a..7cc6d6df 100644
+index d03075fa..d9f3465e 100644
 --- a/linux/collector/daemon.cpp
 +++ b/linux/collector/daemon.cpp
 @@ -2,6 +2,7 @@
@@ -249,7 +249,7 @@ index 86c8f99a..7cc6d6df 100644
      if (!writeAll(ready, "R")) fail("readiness");
      close(ready);
      std::map<int, Client> clients; std::uint64_t nextId = 1;
-@@ -237,6 +240,13 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -262,6 +265,13 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
                  }
              }
              for (const auto& view : publisher.views()) { auto sample = sampler.sample(now, view); publisher.sample(view, sample); }
@@ -263,7 +263,7 @@ index 86c8f99a..7cc6d6df 100644
              auto completions = sampler.takeCompletions();
              for (const auto& completion : completions) {
                  auto line = Protocol::completion(completion);
-@@ -245,9 +255,10 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -270,9 +280,10 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
              tick = steady + std::chrono::seconds(1);
          }
          for (auto& reply : publisher.replies()) for (auto& [fd, c] : clients) if (c.id == reply.first && c.handshaken) { enqueue(c, std::move(reply.second)); break; }
@@ -276,12 +276,12 @@ index 86c8f99a..7cc6d6df 100644
  #ifdef AGENTSPEED_COLLECTOR_TESTING
          else if (steady - idle >= std::chrono::seconds(1)) break;
  #else
-@@ -279,7 +290,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+@@ -305,7 +316,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
                          if (!c.handshaken) {
                              if (line != "shared-collector-v2 " + hash) { enqueue(c, "version-conflict"); c.handshaken = true; c.dead = true; break; }
                              c.handshaken = true; enqueue(c, "shared-collector-v2 " + hash);
--                        } else command(c, line, publisher, now);
-+                        } else command(c, line, publisher, widgets, now);
+-                        } else { command(c, line, publisher, now); firstCommandServed = true; }
++                        } else { command(c, line, publisher, widgets, now); firstCommandServed = true; }
                      }
                  }
              }
@@ -2394,3 +2394,6 @@ index e02d042a..e7465f31 100644
 +pushes while a separately consented publisher lease continues storing bounded statistics until expiry.
 +Local development checks and an unpublished ELF are not proof of production deployment or Apple delivery.
 +
+-- 
+2.41.0
+

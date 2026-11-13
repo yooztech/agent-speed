@@ -1,7 +1,7 @@
-From 1e4b8507e3f1664a200f35afc6f5563ef523b868 Mon Sep 17 00:00:00 2001
+From 7148d640f15c3370f631d6bcf0b439100a557e4e Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
-Subject: [PATCH 14/16] Connect remote performance and history metrics
+Subject: [PATCH 14/19] Connect remote performance and history metrics
 
 ---
  README.md                                     |  40 +-
@@ -23,7 +23,7 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  linux/core/src/history_store.cpp              |  49 +-
  linux/core/src/monitor_snapshot.cpp           |   9 +
  linux/tests/CMakeLists.txt                    |  10 +-
- linux/tests/collector_daemon_test.cpp         | 363 ++++++++++++
+ linux/tests/collector_daemon_test.cpp         | 375 ++++++++++++
  linux/tests/collector_integration_test.cpp    | 123 ++++
  linux/tests/collector_publisher_test.cpp      | 548 ++++++++++++++++++
  linux/tests/collector_test.cpp                |  60 ++
@@ -75,7 +75,7 @@ Subject: [PATCH 14/16] Connect remote performance and history metrics
  .../RemoteProtocolLifecycleTests.cs           |   2 +-
  .../Perf/PerfHistoryTests.cs                  |  55 ++
  .../PerfPerformanceSectionTests.cs            |  28 +
- 71 files changed, 3470 insertions(+), 319 deletions(-)
+ 71 files changed, 3482 insertions(+), 319 deletions(-)
  create mode 100644 linux/core/include/agentspeed/history_canonical.hpp
  create mode 100644 linux/core/src/history_canonical.cpp
  create mode 100644 linux/tests/collector_daemon_test.cpp
@@ -1619,10 +1619,10 @@ index 735e3a74..c65c934e 100644
  
 diff --git a/linux/tests/collector_daemon_test.cpp b/linux/tests/collector_daemon_test.cpp
 new file mode 100644
-index 00000000..ceae5a4a
+index 00000000..d594f955
 --- /dev/null
 +++ b/linux/tests/collector_daemon_test.cpp
-@@ -0,0 +1,363 @@
+@@ -0,0 +1,375 @@
 +#include <gtest/gtest.h>
 +
 +#include "agentspeed/json.hpp"
@@ -1838,6 +1838,18 @@ index 00000000..ceae5a4a
 +    EXPECT_TRUE(WIFEXITED(first.status)); EXPECT_EQ(WEXITSTATUS(first.status), 0);
 +    EXPECT_TRUE(second.capabilities("after-eof"));
 +    EXPECT_TRUE(second.lineType("snapshot"));
++}
++
++TEST_F(DaemonProcessTest, ColdStartScanDoesNotBlockTheHandshake) {
++    // The first scan is forced to take eight seconds. A client must still complete the daemon handshake and its
++    // capabilities exchange within the five-second budget the bridge and the app rely on.
++    setenv("AGENTSPEED_COLLECTOR_TEST_SLOW_FIRST_POLL_MS", "8000", 1);
++    const auto started = Clock::now();
++    Bridge bridge(home.path);
++    unsetenv("AGENTSPEED_COLLECTOR_TEST_SLOW_FIRST_POLL_MS");
++    ASSERT_GT(bridge.pid, 0);
++    ASSERT_TRUE(bridge.capabilities("slow-cold-start"));
++    EXPECT_LT(Clock::now() - started, std::chrono::seconds(5));
 +}
 +
 +TEST_F(DaemonProcessTest, TimezoneChangesStayLocalToSubscriber) {
@@ -5502,3 +5514,6 @@ index d2b5b774..122f20e3 100644
      [Fact]
      public void TheWidthPicksTheLayout()
      {
+-- 
+2.41.0
+

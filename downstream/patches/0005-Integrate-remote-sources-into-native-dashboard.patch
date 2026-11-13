@@ -1,7 +1,7 @@
-From e8f6ce4e3a4ac007463e621c814331034136f12b Mon Sep 17 00:00:00 2001
+From 44f3c06dd7c7a9c35aa66bec27caba3dc33a1269 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:20 +0800
-Subject: [PATCH 05/16] Integrate remote sources into native dashboard
+Subject: [PATCH 05/19] Integrate remote sources into native dashboard
 
 ---
  .github/release-notes.md                      |   2 +-
@@ -4091,3 +4091,6 @@ index b73a559c..c49834db 100644
  persists its history cache in the canonical account home's `~/.cache/agentspeed-collector/<collector-sha256>/history.sqlite3`,
  in owned mode-0700 directories with a mode-0600 database. A nonblocking exclusive `flock` on that digest's `history.lock`
  is held for the collector's lifetime; unsafe or unavailable optional caches fall back to memory. Different executable
+-- 
+2.41.0
+

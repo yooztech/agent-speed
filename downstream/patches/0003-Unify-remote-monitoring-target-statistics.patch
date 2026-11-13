@@ -1,7 +1,7 @@
-From 00f7de2da152c08462f003d5e4d5cb491356f21b Mon Sep 17 00:00:00 2001
+From 455f765d8ce71203a32f6990a446355f0916cbe4 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:17 +0800
-Subject: [PATCH 03/16] Unify remote monitoring target statistics
+Subject: [PATCH 03/19] Unify remote monitoring target statistics
 
 ---
  README.md                                     |  17 +-
@@ -2020,3 +2020,6 @@ index 90dc57b6..b73a559c 100644
  Changes to the source configuration reset the cache; analyzer version, time zone and pricing changes also invalidate
  relevant cached analysis. Reconnection refreshes history from the cache and logs. An unreadable file retains its prior
  cached contribution when available. History frames carry `partial: true` for known discovered-file or database errors;
+-- 
+2.41.0
+

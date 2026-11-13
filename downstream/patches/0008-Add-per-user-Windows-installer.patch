@@ -1,7 +1,7 @@
-From a39ecbb3da2b5b68b5c7e845a8b7b062c093b92a Mon Sep 17 00:00:00 2001
+From f341a55522cfc44164958ed3312706b99f3fe569 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:48:23 +0800
-Subject: [PATCH 08/15] Add per-user Windows installer
+Subject: [PATCH 08/19] Add per-user Windows installer
 
 ---
  README.ja.md                                  |  14 +-
@@ -66,7 +66,7 @@ index 5f0f311b..b5d2a762 100644
  
  ## 特長
 diff --git a/README.md b/README.md
-index 021305e2..cf9664f4 100644
+index 80542350..54efbd3c 100644
 --- a/README.md
 +++ b/README.md
 @@ -8,7 +8,7 @@
@@ -963,3 +963,6 @@ index 00000000..7b5a88d9
 +        public void Dispose() => Registry.CurrentUser.DeleteSubKeyTree(Path, throwOnMissingSubKey: false);
 +    }
 +}
+-- 
+2.41.0
+

@@ -1,7 +1,7 @@
-From e75c71fde74afbc7824c1c7ef3521ea871890b0c Mon Sep 17 00:00:00 2001
+From e1a0857bad8c2171d2bc659781d5170fa78640d6 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Thu, 12 Nov 2026 16:57:42 +0800
-Subject: [PATCH 17/17] Backfill measured history peaks from canonical data
+Subject: [PATCH 17/19] Backfill measured history peaks from canonical data
 
 ---
  docs/shared-collector.md                      |  2 +-
@@ -355,3 +355,6 @@ index e7465f31..f883f4ef 100644
  data is incomplete, each source's live rates and estimated share are also null.
  
  On Windows, a host becomes online only after a valid snapshot for a recognized protocol version and source set. Invalid
+-- 
+2.41.0
+
