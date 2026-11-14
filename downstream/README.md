@@ -143,10 +143,14 @@ accessibility environment properties are read-only, not writable overrides.
 Snapshot rendering now supplies explicit internal accessibility preferences to
 the actual notch and its settings orb; normal application rendering still reads
 the real system environment. The native bitmap tests retain all 32 edge/state
-captures and use explicit AppKit image/color/file types. This repair has not
-yet been compiled or executed against the macOS SDK.
-The macOS build and tests have not passed for this redesigned surface. Linux
-syntax checks and language probes must not be reported as macOS validation.
+captures and use explicit AppKit image/color/file types. Release run
+`43555523521` compiled the application and tests, then failed four quota tests
+with 15 assertion issues. The subsequent repair shares the real settings-arc
+target between window interception and the button, tests reset-date semantics
+instead of punctuation, and compares pixels against matched native controls
+in a common color space. All 32 captures remain. The repaired tests have not
+yet passed on macOS. Linux syntax checks and language probes must not be
+reported as macOS validation.
 The redesigned native surfaces and real-login behavior remain unverified on
 Windows and macOS. A same-browser fixture comparison can establish equality of
 the shipped Windows renderer and its pinned reference for the compared states;

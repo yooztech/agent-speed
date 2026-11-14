@@ -1,31 +1,31 @@
-From d07bd98e4a31c400c63484765e5c92b8a1d77af6 Mon Sep 17 00:00:00 2001
+From 9410f9d22433d50370baf414944c92f175684009 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 19:15:28 +0800
 Subject: [PATCH 20/21] Add macOS Codex quota monitoring
 
 ---
- macos/Resources/Codenotch-LICENSE.txt         |  21 +
- macos/Resources/strings.macos.json            |  31 +
- .../Sources/AgentSpeed/App/AppDelegate.swift  |   3 +
- macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
- .../AgentSpeed/App/QuotaController.swift      |  61 ++
- .../AgentSpeed/App/QuotaGlyphOutline.swift    |  84 ++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 981 ++++++++++++++++++
- .../AgentSpeed/App/QuotaNotchShape.swift      |  94 ++
- .../AgentSpeed/Dashboard/DashboardView.swift  |  66 ++
- .../AgentSpeed/Localization/StringTable.swift |  42 +
- .../SettingsWindow/Panes/QuotaPane.swift      | 159 +++
- .../SettingsWindow/SettingsPaneView.swift     |   2 +-
- .../AgentSpeed/Support/MenuFactory.swift      |   1 +
- .../AgentSpeedCore/CodexQuotaProvider.swift   | 278 +++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 429 ++++++++
- .../QuotaPresentationTests.swift              |  91 ++
- .../CodexQuotaProviderTests.swift             | 228 ++++
- macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 |  67 ++
- spec/fixtures/codex-credit-quota.json         |   8 +
- spec/fixtures/codex-quota.json                |  26 +
- 21 files changed, 2678 insertions(+), 2 deletions(-)
+ macos/Resources/Codenotch-LICENSE.txt         |   21 +
+ macos/Resources/strings.macos.json            |   31 +
+ .../Sources/AgentSpeed/App/AppDelegate.swift  |    3 +
+ macos/Sources/AgentSpeed/App/AppModel.swift   |    7 +-
+ .../AgentSpeed/App/QuotaController.swift      |   61 +
+ .../AgentSpeed/App/QuotaGlyphOutline.swift    |   84 ++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 1001 +++++++++++++++++
+ .../AgentSpeed/App/QuotaNotchShape.swift      |   94 ++
+ .../AgentSpeed/Dashboard/DashboardView.swift  |   66 ++
+ .../AgentSpeed/Localization/StringTable.swift |   42 +
+ .../SettingsWindow/Panes/QuotaPane.swift      |  159 +++
+ .../SettingsWindow/SettingsPaneView.swift     |    2 +-
+ .../AgentSpeed/Support/MenuFactory.swift      |    1 +
+ .../AgentSpeedCore/CodexQuotaProvider.swift   |  278 +++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  |  530 +++++++++
+ .../QuotaPresentationTests.swift              |   91 ++
+ .../CodexQuotaProviderTests.swift             |  228 ++++
+ macos/scripts/build-app.sh                    |    1 +
+ spec/QUOTA.md                                 |   73 ++
+ spec/fixtures/codex-credit-quota.json         |    8 +
+ spec/fixtures/codex-quota.json                |   26 +
+ 21 files changed, 2805 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -348,10 +348,10 @@ index 00000000..0a8403c6
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 00000000..59764b6f
+index 00000000..b3986a0f
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,981 @@
+@@ -0,0 +1,1001 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -494,6 +494,7 @@ index 00000000..59764b6f
 +        let formatter = DateFormatter()
 +        formatter.locale = l10n.locale
 +        formatter.calendar = calendar
++        formatter.timeZone = calendar.timeZone
 +        formatter.setLocalizedDateFormatFromTemplate(days >= 7 ? "MMM d" : "E j:mm")
 +        return l10n("mac.quota.reset", formatter.string(from: date))
 +    }
@@ -529,6 +530,7 @@ index 00000000..59764b6f
 +    let bodyPath: Path
 +    let tooltipPath: Path
 +    let orbPath: Path
++    let settingsWakePath: Path
 +
 +    init(edge: NotchEdge, expanded: Bool, tooltip: Bool, settingsHovered: Bool,
 +         cardHeight: CGFloat, available: CGSize = CGSize(width: 1_000, height: 1_000),
@@ -596,16 +598,13 @@ index 00000000..59764b6f
 +        bodyPath = SideNotchShape(edge: edge).path(in: bodyRect)
 +        tooltipPath = RoundedRectangle(cornerRadius: NotchLayout.cardCorner, style: .circular).path(in: cardRect)
 +            .union(QuotaTooltipTail(edge: edge).path(in: tailRect))
-+        if handlesTuckedAway {
-+            orbPath = Path()
-+        } else if settingsHovered {
-+            orbPath = Path(ellipseIn: CGRect(x: orbCenter.x - NotchLayout.orbDiameter / 2,
-+                                            y: orbCenter.y - NotchLayout.orbDiameter / 2,
-+                                            width: NotchLayout.orbDiameter, height: NotchLayout.orbDiameter))
-+        } else {
-+            orbPath = QuotaSettingsArc.path(center: orbCenter, edge: edge)
-+                .strokedPath(StrokeStyle(lineWidth: NotchLayout.orbStroke, lineCap: .round))
-+        }
++        let orbBounds = CGRect(x: orbCenter.x - NotchLayout.orbHotZone / 2,
++                               y: orbCenter.y - NotchLayout.orbHotZone / 2,
++                               width: NotchLayout.orbHotZone, height: NotchLayout.orbHotZone)
++        let restingTarget = QuotaSettingsTarget(edge: edge, hovered: false).path(in: orbBounds)
++        settingsWakePath = restingTarget.union(Path(ellipseIn: orbBounds))
++        orbPath = handlesTuckedAway ? Path()
++            : QuotaSettingsTarget(edge: edge, hovered: settingsHovered).path(in: orbBounds)
 +    }
 +
 +    func hits(_ point: CGPoint) -> Bool {
@@ -614,9 +613,10 @@ index 00000000..59764b6f
 +    func region(at point: CGPoint) -> QuotaNotchHover.Region {
 +        if tooltip && tooltipPath.contains(point) { return .tooltip }
 +        if expanded {
-+            // Observe the reference's generous wake disc without intercepting
-+            // its transparent area. This also prevents arc/disc hover flicker.
-+            if hypot(point.x - orbCenter.x, point.y - orbCenter.y) <= NotchLayout.orbHotZone / 2 { return .settings }
++            // The fluid arc bows beyond the old circular wake zone. Retain
++            // its footprint as it becomes a disc, so a stationary pointer can
++            // both wake and click it without hover oscillation.
++            if settingsWakePath.contains(point) { return .settings }
 +            let cell = CGRect(x: ringCenter.x - NotchLayout.ringDiameter / 2,
 +                              y: ringCenter.y - NotchLayout.ringDiameter / 2,
 +                              width: NotchLayout.ringDiameter, height: NotchLayout.cellExtent)
@@ -718,6 +718,25 @@ index 00000000..59764b6f
 +            if index == 0 { path.move(to: at) } else { path.addLine(to: at) }
 +        }
 +        return path
++    }
++}
++
++/// Shared by the panel gate and the actual SwiftUI button. The resting fluid
++/// arc is not contained by the old circular target; keep it clickable through
++/// the disc transition without intercepting its transparent central hole.
++struct QuotaSettingsTarget: Shape {
++    let edge: NotchEdge
++    let hovered: Bool
++
++    func path(in rect: CGRect) -> Path {
++        let center = CGPoint(x: rect.midX, y: rect.midY)
++        let arc = QuotaSettingsArc.path(center: center, edge: edge)
++            .strokedPath(StrokeStyle(lineWidth: NotchLayout.orbStroke, lineCap: .round))
++        guard hovered else { return arc }
++        let disc = CGRect(x: center.x - NotchLayout.orbDiameter / 2,
++                          y: center.y - NotchLayout.orbDiameter / 2,
++                          width: NotchLayout.orbDiameter, height: NotchLayout.orbDiameter)
++        return arc.union(Path(ellipseIn: disc))
 +    }
 +}
 +
@@ -1165,6 +1184,8 @@ index 00000000..59764b6f
 +    @State private var releasing = false
 +    @State private var spins = 0
 +
++    var hitShape: QuotaSettingsTarget { QuotaSettingsTarget(edge: edge, hovered: isHovered) }
++
 +    var body: some View {
 +        Button {
 +            spins += 1
@@ -1185,11 +1206,10 @@ index 00000000..59764b6f
 +            }
 +            .frame(width: 2 * NotchLayout.orbArcRadius + NotchLayout.orbStroke,
 +                   height: 2 * NotchLayout.orbArcRadius + NotchLayout.orbStroke)
-+            .contentShape(Circle().size(width: NotchLayout.orbDiameter, height: NotchLayout.orbDiameter)
-+                .offset(x: NotchLayout.orbArcRadius + NotchLayout.orbStroke / 2 - NotchLayout.orbDiameter / 2,
-+                        y: NotchLayout.orbArcRadius + NotchLayout.orbStroke / 2 - NotchLayout.orbDiameter / 2))
++            .contentShape(hitShape)
 +        }
 +        .buttonStyle(.plain).accessibilityLabel(label)
++        .allowsHitTesting(!isTuckedAway)
 +        .onChange(of: isHovered) { _, hovered in
 +            guard !renderingPreferences.reduceMotion else { return }
 +            if hovered { releasing = false; return }
@@ -2048,10 +2068,10 @@ index 00000000..d1995bac
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 00000000..d1d49288
+index 00000000..0500d5d3
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,429 @@
+@@ -0,0 +1,530 @@
 +import AppKit
 +import SwiftUI
 +import Testing
@@ -2154,16 +2174,30 @@ index 00000000..d1d49288
 +        #expect(reading(snapshot(nil)).fraction == nil)
 +    }
 +
-+    @Test func resetCopyUsesTheMacReferenceRoundingAndWeekBoundary() {
++    @Test func resetCopyUsesTheMacReferenceRoundingAndWeekBoundary() throws {
 +        let value = reading(snapshot())
-+        #expect(value.resetText(now.addingTimeInterval(-1), now: now) == "Resetting…")
-+        #expect(value.resetText(now.addingTimeInterval(42), now: now) == "Resets in 42 sec")
-+        #expect(value.resetText(now.addingTimeInterval(3_040), now: now) == "Resets in 51 min")
-+        #expect(!value.resetText(now.addingTimeInterval(3_599), now: now).contains("60 min"))
-+        #expect(!value.resetText(now.addingTimeInterval(26 * 86_400), now: now).contains(":"))
++        #expect(value.resetText(now.addingTimeInterval(-1), now: now) == value.l10n("mac.quota.resetting"))
++        #expect(value.resetText(now.addingTimeInterval(42), now: now) == value.l10n("mac.quota.resetSeconds", "42"))
++        #expect(value.resetText(now.addingTimeInterval(3_040), now: now) == value.l10n("mac.quota.resetMinutes", "51"))
++        var calendar = Calendar(identifier: .gregorian)
++        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
++        // Exercise the calendar-day boundary at a non-midnight time, not a
++        // punctuation ban on the localized wrapper (which may contain ':').
++        let start = try #require(calendar.date(from: DateComponents(year: 2027, month: 1, day: 15, hour: 13, minute: 17)))
++        let formatter = DateFormatter()
++        formatter.locale = value.l10n.locale
++        formatter.calendar = calendar
++        formatter.timeZone = calendar.timeZone
++        for seconds in [3_599, 6 * 86_400, 7 * 86_400, 26 * 86_400] {
++            let date = start.addingTimeInterval(TimeInterval(seconds))
++            formatter.setLocalizedDateFormatFromTemplate(seconds < 7 * 86_400 ? "E j:mm" : "MMM d")
++            let expected = value.l10n("mac.quota.reset", formatter.string(from: date))
++            #expect(value.resetText(date, now: start, calendar: calendar) == expected)
++        }
 +    }
 +
 +    @Test func everyEdgeKeepsItsRingLabelTailAndSeparateOrbInsideItsMonitor() {
++        _ = NSApplication.shared
 +        let value = reading(snapshot())
 +        let screen = CGRect(x: -1_440, y: -900, width: 1_440, height: 900)
 +        for edge in NotchEdge.allCases {
@@ -2183,6 +2217,38 @@ index 00000000..d1d49288
 +            let arcMiddle = QuotaSettingsArc.point(0.5, center: geometry.orbCenter, edge: edge)
 +            #expect(geometry.hits(arcMiddle))
 +            #expect(geometry.region(at: arcMiddle) == .settings)
++            let tucked = QuotaNotchGeometry(edge: edge, expanded: true, tooltip: false, settingsHovered: false,
++                                           cardHeight: value.cardHeight, available: screen.size, handlesTuckedAway: true)
++            #expect(!tucked.hits(arcMiddle))
++            // The visible fluid arc extends outside the legacy circular wake
++            // zone. Test every part of it, through the hover-to-disc change,
++            // against both the panel gate and the real button's content shape.
++            #expect(hypot(arcMiddle.x - geometry.orbCenter.x, arcMiddle.y - geometry.orbCenter.y)
++                    > NotchLayout.orbHotZone / 2)
++            let hovered = QuotaNotchGeometry(edge: edge, expanded: true, tooltip: false, settingsHovered: true,
++                                            cardHeight: value.cardHeight, available: screen.size)
++            for target in [geometry, hovered] {
++                let view = QuotaNotchView(reading: value, geometry: target,
++                                         onSettings: {}, onEdge: { _ in }, onHide: {})
++                let side = 2 * NotchLayout.orbArcRadius + NotchLayout.orbStroke
++                let bounds = CGRect(x: target.orbCenter.x - side / 2, y: target.orbCenter.y - side / 2,
++                                    width: side, height: side)
++                let buttonTarget = view.settingsOrb.hitShape.path(in: bounds)
++                let container = NSView(frame: CGRect(origin: .zero, size: target.size))
++                let host = QuotaNotchHostingView(rootView: view)
++                host.geometry = target
++                host.sizingOptions = []
++                host.frame = container.bounds
++                container.addSubview(host)
++                for share in [CGFloat(0), 0.25, 0.5, 0.75, 1] {
++                    let point = QuotaSettingsArc.point(share, center: target.orbCenter, edge: edge)
++                    #expect(target.hits(point))
++                    #expect(target.region(at: point) == .settings)
++                    #expect(buttonTarget.contains(point))
++                    #expect(host.hitTest(host.convert(point, to: container)) != nil)
++                }
++                #expect(buttonTarget.contains(target.orbCenter) == target.settingsHovered)
++            }
 +            #expect(geometry.tooltipPath.contains(CGPoint(x: geometry.cardRect.midX, y: geometry.cardRect.midY)))
 +            #expect(!geometry.tooltipPath.contains(CGPoint(x: geometry.cardRect.minX + 1, y: geometry.cardRect.minY + 1)))
 +            if edge.isVertical {
@@ -2355,14 +2421,81 @@ index 00000000..d1d49288
 +        return bitmap
 +    }
 +
++    /// A canonical native paint control: the reference's white 18.8% track,
++    /// #00ff88 progress and outer stale opacity, over opaque black. Keep the
++    /// overlapping strokes and pixel alignment: opacity is not the resulting
++    /// sRGB green component, nor may the track underneath be ignored.
++    private func referenceRing(_ geometry: QuotaNotchGeometry, opacity: Double, known: Bool) throws -> NSBitmapImageRep {
++        let control = ZStack(alignment: .topLeading) {
++            Color.black
++            ZStack {
++                Circle().strokeBorder(Color.white.opacity(0.188), lineWidth: NotchLayout.trackStroke)
++                if known {
++                    Circle().inset(by: NotchLayout.trackStroke / 2).trim(from: 0, to: 0.21)
++                        .stroke(Color(red: 0, green: 1, blue: 136.0 / 255),
++                                style: StrokeStyle(lineWidth: NotchLayout.progressStroke, lineCap: .round))
++                        .rotationEffect(.degrees(-90))
++                }
++            }
++            .frame(width: NotchLayout.ringDiameter, height: NotchLayout.ringDiameter)
++            .opacity(opacity)
++            .position(geometry.ringCenter)
++        }
++        .frame(width: geometry.size.width, height: geometry.size.height)
++        .environment(\.colorScheme, .dark)
++        return try render(ImageRenderer(content: control))
++    }
++
++    private func ringInk(_ bitmap: NSBitmapImageRep, geometry: QuotaNotchGeometry, angle: Double) throws -> NSColor {
++        let radius = (NotchLayout.ringDiameter - NotchLayout.trackStroke) / 2
++        let x = Int((geometry.ringCenter.x + sin(angle) * radius) * 2)
++        let y = Int((geometry.ringCenter.y - cos(angle) * radius) * 2)
++        return try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(NSColorSpace.sRGB))
++    }
++
++    private func expectRingCompositing(_ bitmap: NSBitmapImageRep, geometry: QuotaNotchGeometry,
++                                       opacity: Double, known: Bool = true) throws {
++        let expected = try referenceRing(geometry, opacity: opacity, known: known)
++        let fullStrength = try referenceRing(geometry, opacity: 1, known: known)
++        // IEC 61966-2-1 decoding is only for comparing matched samples; the
++        // native control, not a guessed transfer curve applied to opacity,
++        // defines how SwiftUI composites the overlapping paints.
++        func linear(_ component: CGFloat) -> Double {
++            let value = Double(component)
++            return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
++        }
++        for angle in [0.3, 2.6] { // progress over track, and uncovered track
++            let actual = try ringInk(bitmap, geometry: geometry, angle: angle)
++            let control = try ringInk(expected, geometry: geometry, angle: angle)
++            let full = try ringInk(fullStrength, geometry: geometry, angle: angle)
++            #expect(actual.alphaComponent > 0.99)
++            for (observed, reference) in zip(
++                [actual.redComponent, actual.greenComponent, actual.blueComponent],
++                [control.redComponent, control.greenComponent, control.blueComponent]) {
++                #expect(abs(linear(observed) - linear(reference)) < 0.01)
++            }
++            if known && angle == 0.3 {
++                #expect(full.greenComponent > 0.99)
++                #expect(full.redComponent < 0.01)
++                #expect(abs(full.blueComponent - 136.0 / 255) < 0.01)
++                let attenuation = linear(actual.greenComponent) / linear(full.greenComponent)
++                let expectedAttenuation = linear(control.greenComponent) / linear(full.greenComponent)
++                #expect(abs(attenuation - expectedAttenuation) < 0.01)
++                if opacity < 1 { #expect(attenuation > 0 && attenuation < 1) }
++            }
++        }
++    }
++
 +    @Test func explicitRenderingPreferencesReachTheNotchAndItsSettingsOrb() throws {
 +        _ = NSApplication.shared
 +        let value = reading(snapshot(0.21, status: .stale))
 +        let geometry = QuotaNotchGeometry(edge: .right, expanded: true, tooltip: false, settingsHovered: false,
 +                                         cardHeight: value.cardHeight)
-+        let radius = (NotchLayout.ringDiameter - NotchLayout.trackStroke) / 2
-+        let x = Int((geometry.ringCenter.x + sin(0.3) * radius) * 2)
-+        let y = Int((geometry.ringCenter.y - cos(0.3) * radius) * 2)
++        let fresh = QuotaNotchView(reading: reading(snapshot()), geometry: geometry,
++                                   onSettings: {}, onEdge: { _ in }, onHide: {},
++                                   renderingPreferences: QuotaNotchRenderingPreferences(reduceMotion: true,
++                                                                                         reduceTransparency: false))
++        try expectRingCompositing(render(ImageRenderer(content: fresh)), geometry: geometry, opacity: 1)
 +        for reduceMotion in [false, true] {
 +            for reduceTransparency in [false, true] {
 +                let preferences = QuotaNotchRenderingPreferences(reduceMotion: reduceMotion,
@@ -2373,8 +2506,7 @@ index 00000000..d1d49288
 +                #expect(content.effectiveRenderingPreferences == preferences)
 +                #expect(content.settingsOrb.renderingPreferences == preferences)
 +                let bitmap: NSBitmapImageRep = try render(ImageRenderer<QuotaNotchView>(content: content))
-+                let ink: NSColor = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(NSColorSpace.sRGB))
-+                #expect(abs(ink.greenComponent - (reduceTransparency ? 0.75 : 0.45)) < 0.1)
++                try expectRingCompositing(bitmap, geometry: geometry, opacity: reduceTransparency ? 0.75 : 0.45)
 +            }
 +        }
 +    }
@@ -2457,19 +2589,8 @@ index 00000000..d1d49288
 +                    }
 +                }
 +                if state != "folded" {
-+                    let radius = (NotchLayout.ringDiameter - NotchLayout.trackStroke) / 2
-+                    let x = Int((geometry.ringCenter.x + sin(0.3) * radius) * 2)
-+                    let y = Int((geometry.ringCenter.y - cos(0.3) * radius) * 2)
-+                    let ink: NSColor = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(NSColorSpace.sRGB))
-+                    #expect(ink.alphaComponent > 0.99)
-+                    if state == "unknown" {
-+                        #expect(abs(ink.redComponent - ink.greenComponent) < 0.03)
-+                    } else if state == "stale" || state == "offline" {
-+                        #expect(ink.greenComponent > 0.35 && ink.greenComponent < 0.55)
-+                    } else {
-+                        #expect(ink.greenComponent > 0.9)
-+                        #expect(ink.redComponent < 0.1)
-+                    }
++                    try expectRingCompositing(bitmap, geometry: geometry,
++                                              opacity: value.stale ? 0.45 : 1, known: state != "unknown")
 +                }
 +                if let destination {
 +                    let png: Data = try #require(bitmap.representation(using: NSBitmapImageRep.FileType.png, properties: [:]))
@@ -2826,10 +2947,10 @@ index 300ed6d2..5ee4c047 100755
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 00000000..10c21b10
+index 00000000..a5d2f82a
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,73 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -2883,6 +3004,12 @@ index 00000000..10c21b10
 +The macOS notch caches its AppKit body font and measures tooltip text on the main actor. Orb return/merge views contain only sendable scalar/edge values, and expose nonisolated `Animatable` data following the existing chart/height animation pattern; their geometry, curves, and timing remain unchanged. `QuotaNotchTests` includes a detached-task interpolation regression that exercises the generic `Animatable & Sendable` witnesses, including unclamped values and every edge. Run it with the native macOS SDK under Swift 6 strict concurrency; a Linux compiler model can check the isolation pattern but cannot validate AppKit/SwiftUI SDK declarations or native rendering.
 +
 +Native notch snapshots use the actual `QuotaNotchView` and its nested `QuotaSettingsOrb`, with an internal `QuotaNotchRenderingPreferences` input that pins reduced motion on and reduced transparency off for all 32 edge/state PNGs. Without an explicit input, the production view reads the real SwiftUI accessibility environment and passes the resolved preferences to the orb; tests never assign those read-only environment properties. Regression coverage exercises both explicit preference flags, checks propagation to the actual orb, verifies the stale-ring pixels, and compares the default native rendering with explicit preferences read from its real environment. The existing shape, alpha, usage-ink, and 2x image-size assertions remain required. Native image/bitmap, sRGB color-space, and PNG file-type calls use explicit SDK types rather than relying on inference after a failed view expression. These tests still require a full macOS SDK compilation and native test run; parsing or a Linux type model cannot establish that they compile or render correctly.
++
++The settings wake region must include the actual fluid flare-parallel arc, not only the old circular hot zone: the arc's midpoint lies outside that circle on every edge. The AppKit interception gate and SwiftUI button share `QuotaSettingsTarget`; at rest only the stroked arc intercepts clicks, leaving its central hole transparent. On hover the target retains that arc footprint and adds the settings disc, so a stationary pointer can wake and click the control without cycling between outside and settings as its shape changes. Tucked handles are not clickable. Native tests cover five arc positions on all four edges, both before and after hover, the actual button content shape, hosting-view hit routing, and the transparent hole.
++
++Pixel color checks use a canonical native paint control with the same pixel-aligned overlapping strokes: the white 18.8% track, #00ff88 progress, and outer 45% stale opacity (75% with reduced transparency) over opaque black, plus a full-strength control. Opacity is not an encoded sRGB channel value: comparing a final green sample directly with 0.45 or 0.75 ignores native compositing, the track, and color-space conversion. All RGB samples are converted with `NSColor.usingColorSpace(NSColorSpace.sRGB)` and decoded to linear light before comparison with matched controls; both the progress-over-track and uncovered-track samples are checked. Fresh, stale, offline, and unknown states use this same contract without changing production paint, renderer color mode, or the existing 32 2x edge/state PNGs and shape/alpha/size coverage. The controls establish compositing correctness, not pixel identity to a captured Codenotch screenshot. Apple documents [`usingColorSpace(_:)`](https://developer.apple.com/documentation/appkit/nscolor/usingcolorspace(_:)) as an appearance-preserving conversion whose component values may change.
++
++Reset formatting tests compare the localized wrapper around independently formatted calendar dates, rather than banning punctuation from the entire string. Below seven calendar days the payload includes weekday and localized time (`E j:mm`); at seven days and beyond it contains month and day (`MMM d`). The supplied calendar's time zone is respected explicitly. Tests pin a Gregorian UTC calendar and cover the minute-to-date transition and both sides of the seven-day boundary without pinning the localized wording.
 +
 +Unknown usage and reset values are shown as `—` or unknown, never as zero or an invented reset. A known zero remains zero. Show non-official fidelity with `~`; status takes precedence over numerical readings. Retained readings must be visibly stale, with their original observation time or age, and must not appear fresh. Show authentication, access, unsupported, waiting, and error states distinctly rather than implying a successful reading. Display a known block separately from window usage, including its reason when available; do not infer a block from missing data or conflate it with a percentage. Progress graphics may be bounded visually, but labels must preserve reported over-limit usage and negative remaining values.
 +
