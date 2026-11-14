@@ -7,7 +7,7 @@
       },
       {
         "platform": "linux",
-        "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote --target agentspeed_tests -j2 && build-remote/tests/agentspeed_tests --gtest_filter='DaemonProcessTest.*:CollectorPublisher.*'"
+        "run": "if [ -d /usr/src/googletest ]; then cmake -S linux -B build-remote -DFETCHCONTENT_SOURCE_DIR_GOOGLETEST=/usr/src/googletest; else cmake -S linux -B build-remote; fi && cmake --build build-remote --target agentspeed_tests -j2 && build-remote/tests/agentspeed_tests --gtest_filter='DaemonProcessTest.*:CollectorPublisher.*:ContinuityPublisher.*'"
       },
       {
         "platform": "macos",
@@ -334,7 +334,16 @@
         "run": "cd macos && swift test --filter CodexQuotaProviderTests"
       }
     ],
-    "related": [],
+    "related": [
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test --filter QuotaPresentationTests"
+      },
+      {
+        "platform": "macos",
+        "run": "cd macos && swift test --filter QuotaNotchTests"
+      }
+    ],
     "reason": ""
   },
   "0021-Add-Windows-Codex-quota-monitoring.patch": {
@@ -351,7 +360,11 @@
     "related": [
       {
         "platform": "linux",
-        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OrbMenuModelTests|FullyQualifiedName~ReportMenuTests'"
+        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~Quota|FullyQualifiedName~OrbMenuModelTests|FullyQualifiedName~ReportMenuTests|FullyQualifiedName~SettingsSerializer|FullyQualifiedName~FlyoutHeights'"
+      },
+      {
+        "platform": "windows",
+        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~Quota|FullyQualifiedName~OrbMenuModelTests|FullyQualifiedName~ReportMenuTests|FullyQualifiedName~SettingsSerializer|FullyQualifiedName~FlyoutHeights'"
       }
     ],
     "reason": ""

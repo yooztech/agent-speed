@@ -1,45 +1,83 @@
-From f7dfa6a7186ac22b7d2c2a30aef8b9564b8bdfa2 Mon Sep 17 00:00:00 2001
+From f9e0eb9f734659f6683d2a1fd84ff06da9917972 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 19:15:28 +0800
 Subject: [PATCH 20/21] Add macOS Codex quota monitoring
 
 ---
- macos/Resources/strings.macos.json            |  34 +++
- .../Sources/AgentSpeed/App/AppDelegate.swift  |   2 +
+ macos/Resources/Codenotch-LICENSE.txt         |  21 +
+ macos/Resources/strings.macos.json            |  31 +
+ .../Sources/AgentSpeed/App/AppDelegate.swift  |   3 +
  macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
- .../AgentSpeed/App/QuotaController.swift      |  64 ++++
- .../AgentSpeed/App/QuotaPanelController.swift |  95 ++++++
- .../AgentSpeed/Localization/StringTable.swift |  34 +++
- .../SettingsWindow/Panes/QuotaPane.swift      |  77 +++++
+ .../AgentSpeed/App/QuotaController.swift      |  61 ++
+ .../AgentSpeed/App/QuotaGlyphOutline.swift    |  84 ++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 957 ++++++++++++++++++
+ .../AgentSpeed/App/QuotaNotchShape.swift      |  94 ++
+ .../AgentSpeed/Dashboard/DashboardView.swift  |  66 ++
+ .../AgentSpeed/Localization/StringTable.swift |  42 +
+ .../SettingsWindow/Panes/QuotaPane.swift      | 159 +++
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
  .../AgentSpeed/Support/MenuFactory.swift      |   1 +
- .../AgentSpeedCore/CodexQuotaProvider.swift   | 278 ++++++++++++++++++
- .../CodexQuotaProviderTests.swift             | 228 ++++++++++++++
- spec/QUOTA.md                                 |  51 ++++
+ .../AgentSpeedCore/CodexQuotaProvider.swift   | 278 +++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 343 +++++++
+ .../QuotaPresentationTests.swift              |  91 ++
+ .../CodexQuotaProviderTests.swift             | 228 +++++
+ macos/scripts/build-app.sh                    |   1 +
+ spec/QUOTA.md                                 |  63 ++
  spec/fixtures/codex-credit-quota.json         |   8 +
- spec/fixtures/codex-quota.json                |  26 ++
- 14 files changed, 905 insertions(+), 2 deletions(-)
+ spec/fixtures/codex-quota.json                |  26 +
+ 21 files changed, 2564 insertions(+), 2 deletions(-)
+ create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaPanelController.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotch.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
  create mode 100644 macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
+ create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
+ create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
  create mode 100644 spec/QUOTA.md
  create mode 100644 spec/fixtures/codex-credit-quota.json
  create mode 100644 spec/fixtures/codex-quota.json
 
+diff --git a/macos/Resources/Codenotch-LICENSE.txt b/macos/Resources/Codenotch-LICENSE.txt
+new file mode 100644
+index 00000000..b61a8d37
+--- /dev/null
++++ b/macos/Resources/Codenotch-LICENSE.txt
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 Vinz
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
 diff --git a/macos/Resources/strings.macos.json b/macos/Resources/strings.macos.json
-index 0d19457d..244ffdc8 100644
+index 0d19457d..96d64973 100644
 --- a/macos/Resources/strings.macos.json
 +++ b/macos/Resources/strings.macos.json
-@@ -1,5 +1,39 @@
+@@ -1,5 +1,36 @@
  {
    "_comment": "macOS-only UI strings. Every key needs zh-Hant, zh-Hans, en and ja. Run macos/scripts/sync-strings.py after editing.",
 +  "mac.quota.title": {"zh-Hant":"用量額度","zh-Hans":"用量额度","en":"Quota","ja":"使用枠"},
-+  "mac.quota.show": {"zh-Hant":"顯示額度浮窗","zh-Hans":"显示额度浮窗","en":"Show quota panel","ja":"使用枠パネルを表示"},
-+  "mac.quota.hint": {"zh-Hant":"浮窗只顯示每個帳戶的主要額度；按一下可查看全部詳情。關閉浮窗會記住此選擇。","zh-Hans":"浮窗只显示每个账户的主要额度；点击可查看全部详情。关闭浮窗会记住此选择。","en":"The panel shows each account’s headline window. Click it for all details. Closing the panel is remembered.","ja":"パネルには各アカウントの主要な使用枠を表示します。クリックすると詳細を確認できます。閉じた状態は保存されます。"},
 +  "mac.quota.refresh": {"zh-Hant":"重新整理","zh-Hans":"刷新","en":"Refresh","ja":"更新"},
 +  "mac.quota.empty": {"zh-Hant":"尚無額度資料。","zh-Hans":"尚无额度数据。","en":"No quota data yet.","ja":"使用枠データはまだありません。"},
++  "mac.quota.diagnostics": {"zh-Hant":"詳細資料","zh-Hans":"详细信息","en":"Details","ja":"詳細"},
 +  "mac.quota.offline": {"zh-Hant":"網路功能已關閉。","zh-Hans":"网络功能已关闭。","en":"Network access is off.","ja":"ネットワークアクセスはオフです。"},
 +  "mac.quota.unknown": {"zh-Hant":"未知","zh-Hans":"未知","en":"Unknown","ja":"不明"},
 +  "mac.quota.used": {"zh-Hant":"已使用 %@","zh-Hans":"已使用 %@","en":"%@ used","ja":"%@ 使用済み"},
@@ -60,7 +98,6 @@ index 0d19457d..244ffdc8 100644
 +  "mac.quota.yes": {"zh-Hant":"是","zh-Hans":"是","en":"Yes","ja":"はい"},
 +  "mac.quota.no": {"zh-Hant":"否","zh-Hans":"否","en":"No","ja":"いいえ"},
 +  "mac.quota.next": {"zh-Hant":"下次可用","zh-Hans":"下次可用","en":"Next available","ja":"次回利用可能"},
-+  "mac.quota.duration": {"zh-Hant":"時段長度","zh-Hans":"时段长度","en":"Window length","ja":"期間の長さ"},
 +  "mac.quota.status.ok": {"zh-Hant":"正常","zh-Hans":"正常","en":"Current","ja":"最新"},
 +  "mac.quota.status.stale": {"zh-Hant":"資料過期","zh-Hans":"数据过期","en":"Stale","ja":"古いデータ"},
 +  "mac.quota.status.needsAuth": {"zh-Hant":"需要登入 Codex","zh-Hans":"需要登录 Codex","en":"Sign in to Codex","ja":"Codex にサインインしてください"},
@@ -68,30 +105,37 @@ index 0d19457d..244ffdc8 100644
 +  "mac.quota.status.unsupported": {"zh-Hant":"不支援","zh-Hans":"不支持","en":"Unsupported","ja":"非対応"},
 +  "mac.quota.status.error": {"zh-Hant":"無法取得額度","zh-Hans":"无法获取额度","en":"Could not load quota","ja":"使用枠を取得できません"},
 +  "mac.quota.status.waiting": {"zh-Hant":"等待下次更新","zh-Hans":"等待下次更新","en":"Waiting for next refresh","ja":"次の更新を待機中"},
-+  "mac.quota.close": {"zh-Hant":"關閉額度浮窗","zh-Hans":"关闭额度浮窗","en":"Close quota panel","ja":"使用枠パネルを閉じる"},
    "mac.launchAtLogin.requiresApproval": {
      "zh-Hant": "請在「系統設定」›「一般」›「登入項目」中允許 Agent Speed。",
      "zh-Hans": "请在“系统设置”›“通用”›“登录项”中允许 Agent Speed。",
 diff --git a/macos/Sources/AgentSpeed/App/AppDelegate.swift b/macos/Sources/AgentSpeed/App/AppDelegate.swift
-index fa300736..550e8139 100644
+index fa300736..7d80549b 100644
 --- a/macos/Sources/AgentSpeed/App/AppDelegate.swift
 +++ b/macos/Sources/AgentSpeed/App/AppDelegate.swift
-@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
+@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
+     private var statusItem: StatusItemController?
+     private var orbs: OrbWindowManager?
+     private var boardWindows: BoardWindowManager?
++    private var quotaNotch: QuotaNotchController?
+     private var dashboard: DashboardController?
      private var settingsWindow: SettingsWindowController?
      private var historyWindow: HistoryWindowController?
-     private var updateWindow: UpdateWindowController?
-+    private var quotaPanel: QuotaPanelController?
-     private var updateScheduler: UpdateScheduler?
-     private let updateNotifier = UpdateNotifier()
- 
 @@ -97,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
          }
          orbs = OrbWindowManager(model: model)
          boardWindows = BoardWindowManager(model: model) { [weak self] in self?.orbShapes() ?? [] }
-+        quotaPanel = QuotaPanelController(model: model)
++        quotaNotch = QuotaNotchController(model: model)
          orbs?.boardShapes = { [weak self] in self?.boardWindows?.shapes() ?? [] }
  
          MainMenu.install(model: model)
+@@ -196,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
+ 
+     func applicationWillTerminate(_ notification: Notification) {
+         updateScheduler?.stop()
++        quotaNotch?.stop()
+         boardWindows?.shutdown()
+         orbs?.shutdown()
+         model?.shutdown()
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
 index 9cc19883..cd5fe523 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
@@ -147,34 +191,31 @@ index 9cc19883..cd5fe523 100644
          case .about: "info.circle"
 diff --git a/macos/Sources/AgentSpeed/App/QuotaController.swift b/macos/Sources/AgentSpeed/App/QuotaController.swift
 new file mode 100644
-index 00000000..ac424756
+index 00000000..a235b5b8
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaController.swift
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,61 @@
 +import AgentSpeedCore
 +import Foundation
 +import Observation
 +
-+/// UI lifetime and visibility are separate from the provider; no credentials are persisted here.
++/// Owns quota refresh state; credentials remain with the provider.
 +@MainActor @Observable
 +final class QuotaController {
-+    private let defaults: UserDefaults
 +    private let provider = CodexQuotaProvider()
 +    private var task: Task<Void, Never>?
 +    private var timer: Timer?
 +    private(set) var snapshots: [CodexQuotaSnapshot] = []
 +    private(set) var isRefreshing = false
 +    private(set) var networkEnabled = false
-+    var visible: Bool {
-+        didSet {
-+            defaults.set(visible, forKey: "quota.panelVisible")
-+            if visible && !oldValue { refresh() }
-+        }
++    var floatingVisible: Bool {
++        didSet { defaults.set(floatingVisible, forKey: "quota.floatingVisible") }
 +    }
++    private let defaults: UserDefaults
 +
-+    init(defaults: UserDefaults) {
++    init(defaults: UserDefaults = .standard) {
 +        self.defaults = defaults
-+        visible = defaults.bool(forKey: "quota.panelVisible")
++        floatingVisible = defaults.object(forKey: "quota.floatingVisible") as? Bool ?? true
 +    }
 +
 +    func setNetworkEnabled(_ enabled: Bool) {
@@ -215,127 +256,1263 @@ index 00000000..ac424756
 +        self.timer = timer
 +    }
 +}
-diff --git a/macos/Sources/AgentSpeed/App/QuotaPanelController.swift b/macos/Sources/AgentSpeed/App/QuotaPanelController.swift
+diff --git a/macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift b/macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
 new file mode 100644
-index 00000000..226a7009
+index 00000000..0a8403c6
 --- /dev/null
-+++ b/macos/Sources/AgentSpeed/App/QuotaPanelController.swift
-@@ -0,0 +1,95 @@
-+import AgentSpeedCore
-+import AppKit
++++ b/macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
+@@ -0,0 +1,84 @@
 +import SwiftUI
 +
-+/// A utility panel, independent of the dashboard and the orb windows. Closing it persists the choice.
-+@MainActor
-+final class QuotaPanelController: NSObject, NSWindowDelegate {
-+    private let model: AppModel
-+    private let panel: NSPanel
-+    private var visibilityLoop: ObservationLoop?
++// Original OpenAI outline from Codenotch at 835550a342871779135b6484d6899161c5222f7c.
++// Copyright (c) 2026 Vinz, MIT; see Resources/Codenotch-LICENSE.txt.
++enum QuotaGlyphOutline {
++    static let openai: [[CGPoint]] = [
++        [CGPoint(x: 0.4234, y: -0.0272), CGPoint(x: 0.3541, y: -0.0187), CGPoint(x: 0.3013, y: 0.0040), 
++         CGPoint(x: 0.2422, y: 0.0495), CGPoint(x: 0.2012, y: 0.1069), CGPoint(x: 0.1823, y: 0.1455), 
++         CGPoint(x: 0.1435, y: 0.1661), CGPoint(x: 0.1104, y: 0.1756), CGPoint(x: 0.0468, y: 0.2232), 
++         CGPoint(x: 0.0013, y: 0.2863), CGPoint(x: -0.0216, y: 0.3430), CGPoint(x: -0.0275, y: 0.4147), 
++         CGPoint(x: -0.0212, y: 0.4800), CGPoint(x: 0.0021, y: 0.5354), CGPoint(x: 0.0380, y: 0.5897), 
++         CGPoint(x: 0.0271, y: 0.6302), CGPoint(x: 0.0242, y: 0.6634), CGPoint(x: 0.0281, y: 0.7123), 
++         CGPoint(x: 0.0453, y: 0.7686), CGPoint(x: 0.0889, y: 0.8376), CGPoint(x: 0.1131, y: 0.8638), 
++         CGPoint(x: 0.1823, y: 0.9074), CGPoint(x: 0.2413, y: 0.9266), CGPoint(x: 0.3060, y: 0.9300), 
++         CGPoint(x: 0.3346, y: 0.9264), CGPoint(x: 0.3516, y: 0.9307), CGPoint(x: 0.4021, y: 0.9710), 
++         CGPoint(x: 0.4298, y: 0.9808), CGPoint(x: 0.4562, y: 0.9973), CGPoint(x: 0.5234, y: 1.0093), 
++         CGPoint(x: 0.5785, y: 1.0094), CGPoint(x: 0.6468, y: 0.9924), CGPoint(x: 0.7148, y: 0.9513), 
++         CGPoint(x: 0.7772, y: 0.8832), CGPoint(x: 0.8042, y: 0.8303), CGPoint(x: 0.8365, y: 0.8205), 
++         CGPoint(x: 0.8821, y: 0.7975), CGPoint(x: 0.9458, y: 0.7449), CGPoint(x: 0.9740, y: 0.7075), 
++         CGPoint(x: 0.9957, y: 0.6627), CGPoint(x: 1.0095, y: 0.5968), CGPoint(x: 1.0090, y: 0.5479), 
++         CGPoint(x: 0.9945, y: 0.4764), CGPoint(x: 0.9451, y: 0.3970), CGPoint(x: 0.9551, y: 0.3353), 
++         CGPoint(x: 0.9516, y: 0.2607), CGPoint(x: 0.9295, y: 0.1997), CGPoint(x: 0.8836, y: 0.1329), 
++         CGPoint(x: 0.8279, y: 0.0900), CGPoint(x: 0.7854, y: 0.0679), CGPoint(x: 0.7109, y: 0.0532), 
++         CGPoint(x: 0.6410, y: 0.0590), CGPoint(x: 0.6009, y: 0.0243), CGPoint(x: 0.5658, y: 0.0021), 
++         CGPoint(x: 0.5325, y: -0.0075), CGPoint(x: 0.5138, y: -0.0192), CGPoint(x: 0.4237, y: -0.0273)],
++        [CGPoint(x: 0.5915, y: 0.6193), CGPoint(x: 0.6003, y: 0.6198), CGPoint(x: 0.6051, y: 0.6294), 
++         CGPoint(x: 0.6065, y: 0.6987), CGPoint(x: 0.6030, y: 0.7094), CGPoint(x: 0.5791, y: 0.7311), 
++         CGPoint(x: 0.5493, y: 0.7434), CGPoint(x: 0.4991, y: 0.7768), CGPoint(x: 0.4755, y: 0.7856), 
++         CGPoint(x: 0.3803, y: 0.8423), CGPoint(x: 0.3101, y: 0.8617), CGPoint(x: 0.2639, y: 0.8607), 
++         CGPoint(x: 0.2101, y: 0.8447), CGPoint(x: 0.1602, y: 0.8126), CGPoint(x: 0.1332, y: 0.7824), 
++         CGPoint(x: 0.1099, y: 0.7456), CGPoint(x: 0.0966, y: 0.6858), CGPoint(x: 0.0971, y: 0.6532), 
++         CGPoint(x: 0.1028, y: 0.6439), CGPoint(x: 0.1253, y: 0.6483), CGPoint(x: 0.1529, y: 0.6679), 
++         CGPoint(x: 0.1798, y: 0.6772), CGPoint(x: 0.2300, y: 0.7111), CGPoint(x: 0.2579, y: 0.7211), 
++         CGPoint(x: 0.3071, y: 0.7554), CGPoint(x: 0.3359, y: 0.7601), CGPoint(x: 0.3530, y: 0.7554), 
++         CGPoint(x: 0.5913, y: 0.6194)],
++        [CGPoint(x: 0.1549, y: 0.2337), CGPoint(x: 0.1661, y: 0.2362), CGPoint(x: 0.1713, y: 0.2520), 
++         CGPoint(x: 0.1740, y: 0.4890), CGPoint(x: 0.2443, y: 0.5383), CGPoint(x: 0.3815, y: 0.6098), 
++         CGPoint(x: 0.3978, y: 0.6261), CGPoint(x: 0.4244, y: 0.6356), CGPoint(x: 0.4284, y: 0.6478), 
++         CGPoint(x: 0.4203, y: 0.6616), CGPoint(x: 0.3691, y: 0.6910), CGPoint(x: 0.3509, y: 0.6950), 
++         CGPoint(x: 0.3314, y: 0.6910), CGPoint(x: 0.3149, y: 0.6770), CGPoint(x: 0.2011, y: 0.6118), 
++         CGPoint(x: 0.1787, y: 0.6039), CGPoint(x: 0.1148, y: 0.5618), CGPoint(x: 0.0696, y: 0.5126), 
++         CGPoint(x: 0.0463, y: 0.4673), CGPoint(x: 0.0413, y: 0.4222), CGPoint(x: 0.0428, y: 0.3713), 
++         CGPoint(x: 0.0661, y: 0.3121), CGPoint(x: 0.1072, y: 0.2634), CGPoint(x: 0.1340, y: 0.2422), 
++         CGPoint(x: 0.1549, y: 0.2337)],
++        [CGPoint(x: 0.6595, y: 0.4590), CGPoint(x: 0.6735, y: 0.4607), CGPoint(x: 0.7335, y: 0.5002), 
++         CGPoint(x: 0.7409, y: 0.5112), CGPoint(x: 0.7407, y: 0.7673), CGPoint(x: 0.7335, y: 0.8119), 
++         CGPoint(x: 0.6907, y: 0.8831), CGPoint(x: 0.6628, y: 0.9073), CGPoint(x: 0.6193, y: 0.9293), 
++         CGPoint(x: 0.5683, y: 0.9410), CGPoint(x: 0.4861, y: 0.9339), CGPoint(x: 0.4346, y: 0.9106), 
++         CGPoint(x: 0.4283, y: 0.8998), CGPoint(x: 0.4330, y: 0.8914), CGPoint(x: 0.4606, y: 0.8724), 
++         CGPoint(x: 0.5577, y: 0.8212), CGPoint(x: 0.5741, y: 0.8071), CGPoint(x: 0.5975, y: 0.7986), 
++         CGPoint(x: 0.6123, y: 0.7854), CGPoint(x: 0.6347, y: 0.7751), CGPoint(x: 0.6475, y: 0.7604), 
++         CGPoint(x: 0.6525, y: 0.7361), CGPoint(x: 0.6513, y: 0.4738), CGPoint(x: 0.6592, y: 0.4591)],
++        [CGPoint(x: 0.4201, y: 0.0407), CGPoint(x: 0.4901, y: 0.0454), CGPoint(x: 0.5415, y: 0.0677), 
++         CGPoint(x: 0.5485, y: 0.0825), CGPoint(x: 0.5360, y: 0.1008), CGPoint(x: 0.5091, y: 0.1112), 
++         CGPoint(x: 0.4589, y: 0.1456), CGPoint(x: 0.3563, y: 0.1987), CGPoint(x: 0.3290, y: 0.2258), 
++         CGPoint(x: 0.3275, y: 0.5024), CGPoint(x: 0.3233, y: 0.5161), CGPoint(x: 0.3135, y: 0.5208), 
++         CGPoint(x: 0.3039, y: 0.5183), CGPoint(x: 0.2881, y: 0.5027), CGPoint(x: 0.2618, y: 0.4935), 
++         CGPoint(x: 0.2379, y: 0.4671), CGPoint(x: 0.2377, y: 0.2259), CGPoint(x: 0.2419, y: 0.1878), 
++         CGPoint(x: 0.2623, y: 0.1376), CGPoint(x: 0.3041, y: 0.0883), CGPoint(x: 0.3313, y: 0.0668), 
++         CGPoint(x: 0.3713, y: 0.0482), CGPoint(x: 0.4197, y: 0.0407)],
++        [CGPoint(x: 0.6793, y: 0.1223), CGPoint(x: 0.7157, y: 0.1231), CGPoint(x: 0.7641, y: 0.1328), 
++         CGPoint(x: 0.8047, y: 0.1561), CGPoint(x: 0.8276, y: 0.1768), CGPoint(x: 0.8625, y: 0.2233), 
++         CGPoint(x: 0.8807, y: 0.2686), CGPoint(x: 0.8876, y: 0.3190), CGPoint(x: 0.8831, y: 0.3376), 
++         CGPoint(x: 0.8696, y: 0.3399), CGPoint(x: 0.8290, y: 0.3206), CGPoint(x: 0.7808, y: 0.2871), 
++         CGPoint(x: 0.7555, y: 0.2771), CGPoint(x: 0.7028, y: 0.2432), CGPoint(x: 0.6491, y: 0.2198), 
++         CGPoint(x: 0.6010, y: 0.2420), CGPoint(x: 0.3950, y: 0.3609), CGPoint(x: 0.3770, y: 0.3587), 
++         CGPoint(x: 0.3753, y: 0.2836), CGPoint(x: 0.3855, y: 0.2637), CGPoint(x: 0.6109, y: 0.1354), 
++         CGPoint(x: 0.6793, y: 0.1223)],
++        [CGPoint(x: 0.6168, y: 0.2853), CGPoint(x: 0.6369, y: 0.2862), CGPoint(x: 0.8593, y: 0.4128), 
++         CGPoint(x: 0.9080, y: 0.4616), CGPoint(x: 0.9290, y: 0.4972), CGPoint(x: 0.9405, y: 0.5690), 
++         CGPoint(x: 0.9306, y: 0.6410), CGPoint(x: 0.9050, y: 0.6876), CGPoint(x: 0.8550, y: 0.7354), 
++         CGPoint(x: 0.8203, y: 0.7467), CGPoint(x: 0.8106, y: 0.7381), CGPoint(x: 0.8105, y: 0.5166), 
++         CGPoint(x: 0.8003, y: 0.4834), CGPoint(x: 0.7040, y: 0.4293), CGPoint(x: 0.6883, y: 0.4155), 
++         CGPoint(x: 0.6661, y: 0.4077), CGPoint(x: 0.5469, y: 0.3401), CGPoint(x: 0.5506, y: 0.3260), 
++         CGPoint(x: 0.6001, y: 0.2999), CGPoint(x: 0.6168, y: 0.2853)],
++        [CGPoint(x: 0.4779, y: 0.3668), CGPoint(x: 0.5139, y: 0.3713), CGPoint(x: 0.5650, y: 0.4061), 
++         CGPoint(x: 0.5917, y: 0.4164), CGPoint(x: 0.6023, y: 0.4290), CGPoint(x: 0.6061, y: 0.4482), 
++         CGPoint(x: 0.6032, y: 0.5543), CGPoint(x: 0.5631, y: 0.5821), CGPoint(x: 0.4922, y: 0.6155), 
++         CGPoint(x: 0.4806, y: 0.6145), CGPoint(x: 0.4134, y: 0.5801), CGPoint(x: 0.3827, y: 0.5553), 
++         CGPoint(x: 0.3749, y: 0.5304), CGPoint(x: 0.3747, y: 0.4480), CGPoint(x: 0.3821, y: 0.4243), 
++         CGPoint(x: 0.4778, y: 0.3668)],
++    ]
 +
-+    init(model: AppModel) {
-+        self.model = model
-+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 300, height: 240),
-+                        styleMask: [.titled, .closable, .utilityWindow, .nonactivatingPanel],
-+                        backing: .buffered, defer: false)
-+        super.init()
-+        panel.title = model.l10n("mac.quota.title")
-+        panel.isReleasedWhenClosed = false
-+        panel.hidesOnDeactivate = false
-+        panel.level = .floating
-+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-+        panel.isMovableByWindowBackground = true
-+        panel.contentView = NSHostingView(rootView: QuotaPanelView(model: model))
-+        panel.delegate = self
-+        panel.setFrameAutosaveName("QuotaPanel")
-+        visibilityLoop = ObservationLoop { [weak self] in
-+            guard let self else { return }
-+            if self.model.quota.visible {
-+                if !self.panel.isVisible { self.panel.orderFrontRegardless() }
-+            } else if self.panel.isVisible {
-+                self.panel.orderOut(nil)
++}
+diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
+new file mode 100644
+index 00000000..22ab4b6a
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
+@@ -0,0 +1,957 @@
++import AgentSpeedCore
++import AppKit
++import Observation
++import SwiftUI
++
++// Ported from Codenotch at 835550a342871779135b6484d6899161c5222f7c,
++// Copyright (c) 2026 Vinz, MIT. See Resources/Codenotch-LICENSE.txt.
++// These are the macOS Design/NotchLayout/Palette/Typography measurements,
++// not the independently sized Windows implementation.
++enum NotchEdge: String, CaseIterable {
++    case right, left, top, bottom
++    var isVertical: Bool { self == .right || self == .left }
++    var outward: CGPoint {
++        switch self {
++        case .right: CGPoint(x: 1, y: 0)
++        case .left: CGPoint(x: -1, y: 0)
++        case .top: CGPoint(x: 0, y: -1)
++        case .bottom: CGPoint(x: 0, y: 1)
++        }
++    }
++}
++
++enum NotchLayout {
++    static let scale: CGFloat = 44.0 / 117.0
++    static func px(_ pixels: CGFloat) -> CGFloat { pixels * scale }
++    static func fontSize(_ capPixels: CGFloat) -> CGFloat { px(capPixels) / 0.714 }
++    static let curlRadius = px(103)
++    static let cornerRadius = px(78.8)
++    static let sideBodyDepth = px(186)
++    static let padTop = px(69.5)
++    static let padBottom = px(50.1)
++    static let pillWidth = px(26)
++    static let pillHeight = px(210)
++    static let pillHotZone = px(90)
++    static let ringDiameter = px(117)
++    static let trackStroke = px(15.5)
++    static let progressStroke = px(8)
++    static let glyphSize = px(46)
++    static let ringLabelGap = px(26.9)
++    static let orbDiameter = px(124)
++    static let orbStroke = px(18)
++    static let orbGap = px(27)
++    static let orbClearance = px(39)
++    static let orbGlyph = px(56)
++    static let orbHotZone = px(152)
++    static var orbArcRadius: CGFloat { curlRadius - orbGap }
++    static let cardWidth = px(600)
++    static let cardCorner = px(49.5)
++    static let cardPadding = px(32)
++    static let tailLength = px(75)
++    static let tailHeight = px(87)
++    static let tailGap = px(28)
++    static let barHeight = px(10.5).rounded()
++    static let headerGap = px(17)
++    static let headerToBlock = px(21)
++    static let labelToBar = px(16.8)
++    static let barToUsed = px(17.8)
++    static let blockSpacing = px(20)
++    static let secondary = Color(white: 128.0 / 255.0)
++    static let ringTrack = Color.white.opacity(0.188)
++    static let barTrack = Color.white.opacity(0.176)
++    static let percent = Font.system(size: fontSize(27), weight: .semibold)
++    static let cardTitle = Font.system(size: fontSize(26), weight: .semibold)
++    static let cardBody = Font.system(size: fontSize(18), weight: .regular)
++    static let percentLineHeight = lineHeight(NSFont.systemFont(ofSize: fontSize(27), weight: .semibold))
++    static let titleLineHeight = lineHeight(NSFont.systemFont(ofSize: fontSize(26), weight: .semibold))
++    static let bodyFont = NSFont.systemFont(ofSize: fontSize(18), weight: .regular)
++    static let bodyLineHeight = lineHeight(bodyFont)
++    static var cellExtent: CGFloat { ringDiameter + ringLabelGap + percentLineHeight }
++    static var ringMargin: CGFloat { (sideBodyDepth - ringDiameter) / 2 }
++
++    static func bodyDepth(for edge: NotchEdge) -> CGFloat {
++        edge.isVertical ? sideBodyDepth : 2 * ringMargin + cellExtent
++    }
++
++    static func shapeLength(for edge: NotchEdge) -> CGFloat {
++        padTop + padBottom + (edge.isVertical ? cellExtent : ringDiameter) + 2 * curlRadius
++    }
++
++    static func ringAlong(for edge: NotchEdge) -> CGFloat {
++        curlRadius + (edge.isVertical ? padTop : (padTop + padBottom) / 2) + ringDiameter / 2
++    }
++
++    static func accent(_ used: Double, blocked: Bool = false) -> Color {
++        if blocked || used >= 0.7 { return Color(red: 1, green: 63.0 / 255, blue: 0) }
++        if used >= 0.5 { return Color(red: 242.0 / 255, green: 1, blue: 0) }
++        return Color(red: 0, green: 1, blue: 136.0 / 255)
++    }
++
++    static func textHeight(_ text: String) -> CGFloat {
++        max(bodyLineHeight, ceil((text as NSString).boundingRect(
++            with: CGSize(width: cardWidth - 2 * cardPadding, height: .greatestFiniteMagnitude),
++            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: bodyFont]).height))
++    }
++
++    private static func lineHeight(_ font: NSFont) -> CGFloat {
++        ceil(font.ascender - font.descender + font.leading)
++    }
++}
++
++/// A real provider reading, separate from AppModel so the native renderer can
++/// be exercised offscreen without injecting fixtures into the running app.
++@MainActor
++struct QuotaNotchReading {
++    let snapshot: CodexQuotaSnapshot?
++    let networkEnabled: Bool
++    let l10n: Localizer
++
++    var headline: CodexQuotaWindow? {
++        guard let snapshot else { return nil }
++        return snapshot.windows.first(where: { $0.id == snapshot.headlineId }) ?? snapshot.windows.first
++    }
++    var fraction: Double? { headline?.usedFraction }
++    var stale: Bool { !networkEnabled || snapshot?.status == .stale || fraction == nil }
++    var observationDate: Date? { stale ? snapshot?.observedAt : nil }
++    var percentage: String { fraction.map { quotaPercent($0, locale: l10n.locale) } ?? "—" }
++    var status: String? {
++        guard networkEnabled else { return l10n("mac.quota.offline") }
++        guard let snapshot else { return l10n("mac.quota.empty") }
++        return snapshot.status == .ok && !snapshot.waitingForRefresh ? nil : quotaStatus(snapshot, l10n)
++    }
++
++    func resetText(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
++        let seconds = date.timeIntervalSince(now)
++        guard seconds > 0 else { return l10n("mac.quota.resetting") }
++        let wholeSeconds = Int(seconds.rounded())
++        if wholeSeconds < 60 {
++            return l10n("mac.quota.resetSeconds", max(1, wholeSeconds).formatted(.number.locale(l10n.locale)))
++        }
++        let minutes = Int((seconds / 60).rounded())
++        if minutes < 60 {
++            return l10n("mac.quota.resetMinutes", max(1, minutes).formatted(.number.locale(l10n.locale)))
++        }
++        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
++                                           to: calendar.startOfDay(for: date)).day ?? 0
++        let formatter = DateFormatter()
++        formatter.locale = l10n.locale
++        formatter.calendar = calendar
++        formatter.setLocalizedDateFormatFromTemplate(days >= 7 ? "MMM d" : "E j:mm")
++        return l10n("mac.quota.reset", formatter.string(from: date))
++    }
++    var cardHeight: CGFloat {
++        var height = 2 * NotchLayout.cardPadding + max(NotchLayout.glyphSize, NotchLayout.titleLineHeight)
++        if snapshot?.plan != nil { height += NotchLayout.bodyLineHeight }
++        if let block = snapshot?.block { height += NotchLayout.headerToBlock + NotchLayout.textHeight(block) }
++        if let status { height += NotchLayout.headerToBlock + NotchLayout.textHeight(status) }
++        for (index, window) in (snapshot?.windows ?? []).enumerated() {
++            height += index == 0 ? NotchLayout.headerToBlock : NotchLayout.blockSpacing
++            height += 2 * NotchLayout.bodyLineHeight + NotchLayout.barToUsed
++            if window.usedFraction != nil { height += NotchLayout.labelToBar + NotchLayout.barHeight }
++        }
++        return height
++    }
++}
++
++/// Geometry and hit testing use the same top-left coordinate system as the
++/// flipped NSHostingView. The tooltip's tail stays aimed at the ring even when
++/// its card is clamped away from a display boundary.
++struct QuotaNotchGeometry {
++    let edge: NotchEdge
++    let size: CGSize
++    let expanded: Bool
++    let tooltip: Bool
++    let settingsHovered: Bool
++    let handlesTuckedAway: Bool
++    let bodyRect: CGRect
++    let ringCenter: CGPoint
++    let orbCenter: CGPoint
++    let cardRect: CGRect
++    let tailRect: CGRect
++    let bodyPath: Path
++    let tooltipPath: Path
++    let orbPath: Path
++
++    init(edge: NotchEdge, expanded: Bool, tooltip: Bool, settingsHovered: Bool,
++         cardHeight: CGFloat, available: CGSize = CGSize(width: 1_000, height: 1_000),
++         actualSize: CGSize? = nil, handlesTuckedAway: Bool = false) {
++        self.edge = edge
++        self.expanded = expanded
++        self.tooltip = tooltip
++        self.settingsHovered = settingsHovered
++        self.handlesTuckedAway = handlesTuckedAway
++        let depth = NotchLayout.bodyDepth(for: edge)
++        let length = NotchLayout.shapeLength(for: edge)
++        let alongRoom = max(length + NotchLayout.orbDiameter, edge.isVertical ? cardHeight + 8 : NotchLayout.cardWidth + 8)
++        let acrossRoom = depth + NotchLayout.tailGap + NotchLayout.tailLength
++            + (edge.isVertical ? NotchLayout.cardWidth : cardHeight) + 4
++        // AppKit rounds window frames to whole points. Draw against that same
++        // size, then let the controller reconcile against actual content bounds.
++        let panelSize = actualSize ?? CGSize(
++            width: min(available.width.rounded(.down), (edge.isVertical ? acrossRoom : alongRoom).rounded(.up)),
++            height: min(available.height.rounded(.down), (edge.isVertical ? alongRoom : acrossRoom).rounded(.up)))
++        size = panelSize
++        let panelLength = edge.isVertical ? panelSize.height : panelSize.width
++        let start = (panelLength - length - NotchLayout.orbDiameter / 2) / 2
++        func point(_ along: CGFloat, _ across: CGFloat) -> CGPoint {
++            switch edge {
++            case .right: CGPoint(x: panelSize.width - across, y: along)
++            case .left: CGPoint(x: across, y: along)
++            case .top: CGPoint(x: along, y: across)
++            case .bottom: CGPoint(x: along, y: panelSize.height - across)
++            }
++        }
++        let bodyLength = expanded ? length : NotchLayout.pillHeight
++        let bodyDepth = expanded ? depth : NotchLayout.pillWidth
++        let bodyStart = start + (length - bodyLength) / 2
++        let origin = point(bodyStart, (edge == .right || edge == .bottom) ? bodyDepth : 0)
++        bodyRect = CGRect(origin: origin, size: edge.isVertical
++                          ? CGSize(width: bodyDepth, height: bodyLength)
++                          : CGSize(width: bodyLength, height: bodyDepth))
++        let ringInset = NotchLayout.ringMargin + NotchLayout.ringDiameter / 2
++        ringCenter = point(start + NotchLayout.ringAlong(for: edge), edge == .bottom ? depth - ringInset : ringInset)
++        orbCenter = point(start + length, NotchLayout.curlRadius)
++        let height = min(cardHeight, max(1, edge.isVertical ? size.height - 8
++                                        : size.height - depth - NotchLayout.tailGap - NotchLayout.tailLength - 4))
++        func clamp(_ value: CGFloat, _ low: CGFloat, _ high: CGFloat) -> CGFloat {
++            min(max(value, low), max(low, high))
++        }
++        if edge.isVertical {
++            let y = clamp(ringCenter.y - height / 2, 4, size.height - height - 4)
++            let x = edge == .right ? size.width - depth - NotchLayout.tailGap - NotchLayout.tailLength - NotchLayout.cardWidth
++                : depth + NotchLayout.tailGap + NotchLayout.tailLength
++            cardRect = CGRect(x: x, y: y, width: NotchLayout.cardWidth, height: height)
++            let tailY = clamp(ringCenter.y - NotchLayout.tailHeight / 2,
++                              y + NotchLayout.cardCorner, y + height - NotchLayout.cardCorner - NotchLayout.tailHeight)
++            tailRect = CGRect(x: edge == .right ? cardRect.maxX : cardRect.minX - NotchLayout.tailLength,
++                              y: tailY, width: NotchLayout.tailLength, height: NotchLayout.tailHeight)
++        } else {
++            let x = clamp(ringCenter.x - NotchLayout.cardWidth / 2, 4, size.width - NotchLayout.cardWidth - 4)
++            let y = edge == .top ? depth + NotchLayout.tailGap + NotchLayout.tailLength
++                : size.height - depth - NotchLayout.tailGap - NotchLayout.tailLength - height
++            cardRect = CGRect(x: x, y: y, width: NotchLayout.cardWidth, height: height)
++            let tailX = clamp(ringCenter.x - NotchLayout.tailHeight / 2,
++                              x + NotchLayout.cardCorner, x + NotchLayout.cardWidth - NotchLayout.cardCorner - NotchLayout.tailHeight)
++            tailRect = CGRect(x: tailX, y: edge == .top ? cardRect.minY - NotchLayout.tailLength : cardRect.maxY,
++                              width: NotchLayout.tailHeight, height: NotchLayout.tailLength)
++        }
++        bodyPath = SideNotchShape(edge: edge).path(in: bodyRect)
++        tooltipPath = RoundedRectangle(cornerRadius: NotchLayout.cardCorner, style: .circular).path(in: cardRect)
++            .union(QuotaTooltipTail(edge: edge).path(in: tailRect))
++        if handlesTuckedAway {
++            orbPath = Path()
++        } else if settingsHovered {
++            orbPath = Path(ellipseIn: CGRect(x: orbCenter.x - NotchLayout.orbDiameter / 2,
++                                            y: orbCenter.y - NotchLayout.orbDiameter / 2,
++                                            width: NotchLayout.orbDiameter, height: NotchLayout.orbDiameter))
++        } else {
++            orbPath = QuotaSettingsArc.path(center: orbCenter, edge: edge)
++                .strokedPath(StrokeStyle(lineWidth: NotchLayout.orbStroke, lineCap: .round))
++        }
++    }
++
++    func hits(_ point: CGPoint) -> Bool {
++        bodyPath.contains(point) || (expanded && orbPath.contains(point)) || (tooltip && tooltipPath.contains(point))
++    }
++    func region(at point: CGPoint) -> QuotaNotchHover.Region {
++        if tooltip && tooltipPath.contains(point) { return .tooltip }
++        if expanded {
++            // Observe the reference's generous wake disc without intercepting
++            // its transparent area. This also prevents arc/disc hover flicker.
++            if hypot(point.x - orbCenter.x, point.y - orbCenter.y) <= NotchLayout.orbHotZone / 2 { return .settings }
++            let cell = CGRect(x: ringCenter.x - NotchLayout.ringDiameter / 2,
++                              y: ringCenter.y - NotchLayout.ringDiameter / 2,
++                              width: NotchLayout.ringDiameter, height: NotchLayout.cellExtent)
++            if cell.contains(point) && bodyPath.contains(point) { return .cell }
++            return bodyPath.contains(point) ? .bar : .outside
++        }
++        // A larger wake region is observed, never made mouse-intercepting.
++        let wake = bodyRect.insetBy(dx: edge.isVertical ? -NotchLayout.pillHotZone / 2 : 0,
++                                   dy: edge.isVertical ? 0 : -NotchLayout.pillHotZone / 2)
++        return wake.contains(point) ? .bar : .outside
++    }
++
++    func panelFrame(on screen: CGRect) -> CGRect {
++        let origin: CGPoint
++        switch edge {
++        case .right: origin = CGPoint(x: screen.maxX - size.width, y: screen.midY - size.height / 2)
++        case .left: origin = CGPoint(x: screen.minX, y: screen.midY - size.height / 2)
++        case .top: origin = CGPoint(x: screen.midX - size.width / 2, y: screen.maxY - size.height)
++        case .bottom: origin = CGPoint(x: screen.midX - size.width / 2, y: screen.minY)
++        }
++        return CGRect(x: origin.x.rounded(), y: origin.y.rounded(), width: size.width, height: size.height)
++    }
++}
++
++/// Original TooltipTail control points, with the card direction derived from
++/// its screen edge. Both drawing and hit testing use this precise curve.
++struct QuotaTooltipTail: Shape {
++    let edge: NotchEdge
++    func path(in rect: CGRect) -> Path {
++        let tip, a, b, aShoulder, aTip, bTip, bShoulder: CGPoint
++        switch edge {
++        case .right:
++            tip = CGPoint(x: rect.maxX, y: rect.midY)
++            a = CGPoint(x: rect.minX, y: rect.minY); b = CGPoint(x: rect.minX, y: rect.maxY)
++            aShoulder = CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.25)
++            aTip = CGPoint(x: rect.maxX - rect.width * 0.42, y: rect.midY - rect.height * 0.12)
++            bTip = CGPoint(x: rect.maxX - rect.width * 0.42, y: rect.midY + rect.height * 0.12)
++            bShoulder = CGPoint(x: rect.minX, y: rect.maxY - rect.height * 0.25)
++        case .left:
++            tip = CGPoint(x: rect.minX, y: rect.midY)
++            a = CGPoint(x: rect.maxX, y: rect.minY); b = CGPoint(x: rect.maxX, y: rect.maxY)
++            aShoulder = CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.25)
++            aTip = CGPoint(x: rect.minX + rect.width * 0.42, y: rect.midY - rect.height * 0.12)
++            bTip = CGPoint(x: rect.minX + rect.width * 0.42, y: rect.midY + rect.height * 0.12)
++            bShoulder = CGPoint(x: rect.maxX, y: rect.maxY - rect.height * 0.25)
++        case .top:
++            tip = CGPoint(x: rect.midX, y: rect.minY)
++            a = CGPoint(x: rect.minX, y: rect.maxY); b = CGPoint(x: rect.maxX, y: rect.maxY)
++            aShoulder = CGPoint(x: rect.minX + rect.width * 0.25, y: rect.maxY)
++            aTip = CGPoint(x: rect.midX - rect.width * 0.12, y: rect.minY + rect.height * 0.42)
++            bTip = CGPoint(x: rect.midX + rect.width * 0.12, y: rect.minY + rect.height * 0.42)
++            bShoulder = CGPoint(x: rect.maxX - rect.width * 0.25, y: rect.maxY)
++        case .bottom:
++            tip = CGPoint(x: rect.midX, y: rect.maxY)
++            a = CGPoint(x: rect.minX, y: rect.minY); b = CGPoint(x: rect.maxX, y: rect.minY)
++            aShoulder = CGPoint(x: rect.minX + rect.width * 0.25, y: rect.minY)
++            aTip = CGPoint(x: rect.midX - rect.width * 0.12, y: rect.maxY - rect.height * 0.42)
++            bTip = CGPoint(x: rect.midX + rect.width * 0.12, y: rect.maxY - rect.height * 0.42)
++            bShoulder = CGPoint(x: rect.maxX - rect.width * 0.25, y: rect.minY)
++        }
++        var path = Path()
++        path.move(to: a)
++        path.addCurve(to: tip, control1: aShoulder, control2: aTip)
++        path.addCurve(to: b, control1: bTip, control2: bShoulder)
++        path.closeSubpath()
++        return path
++    }
++}
++
++enum QuotaSettingsArc {
++    static func trim(for edge: NotchEdge) -> ClosedRange<CGFloat> {
++        switch edge {
++        case .right: 0.75...1
++        case .left, .top: 0.5...0.75
++        case .bottom: 0.25...0.5
++        }
++    }
++
++    static func point(_ share: CGFloat, center: CGPoint, edge: NotchEdge,
++                      offset: CGFloat = NotchLayout.orbClearance) -> CGPoint {
++        let trim = trim(for: edge)
++        func direction(_ t: CGFloat) -> CGPoint { CGPoint(x: cos(2 * .pi * t), y: sin(2 * .pi * t)) }
++        let a = direction(trim.lowerBound), b = direction(trim.upperBound), out = edge.outward
++        let aFacesBezel = a.x * out.x + a.y * out.y >= b.x * out.x + b.y * out.y
++        let bezel = aFacesBezel ? a : b, side = aFacesBezel ? b : a
++        let walk = QuotaFlareWalk.steps
++        let step = walk[min(walk.count - 1, max(0, Int((share * CGFloat(walk.count - 1)).rounded())))]
++        let flare = NotchLayout.curlRadius, gap = offset
++        let nx = -sin(step.heading) * side.x - cos(step.heading) * bezel.x
++        let ny = -sin(step.heading) * side.y - cos(step.heading) * bezel.y
++        return CGPoint(x: center.x + flare * (1 - step.v) * bezel.x + flare * step.u * side.x + nx * gap,
++                       y: center.y + flare * (1 - step.v) * bezel.y + flare * step.u * side.y + ny * gap)
++    }
++
++    static func path(center: CGPoint, edge: NotchEdge, offset: CGFloat = NotchLayout.orbClearance) -> Path {
++        var path = Path()
++        for index in QuotaFlareWalk.steps.indices {
++            let at = point(CGFloat(index) / CGFloat(QuotaFlareWalk.steps.count - 1), center: center, edge: edge, offset: offset)
++            if index == 0 { path.move(to: at) } else { path.addLine(to: at) }
++        }
++        return path
++    }
++}
++
++@MainActor @Observable
++final class QuotaNotchHover {
++    enum Region { case outside, bar, cell, tooltip, settings }
++    private(set) var expanded = false
++    private(set) var tooltip = false
++    private(set) var settingsHovered = false
++    private(set) var handlesTuckedAway = true
++    private(set) var region = Region.outside
++    @ObservationIgnored private var folding: Task<Void, Never>?
++    @ObservationIgnored private var dismissal: Task<Void, Never>?
++    @ObservationIgnored private var settingsReturnDeadline: ContinuousClock.Instant?
++
++    func move(to next: Region) {
++        guard next != region else { return }
++        if region == .settings && next != .settings {
++            settingsReturnDeadline = ContinuousClock().now.advanced(by: .milliseconds(500))
++        } else if next == .settings {
++            settingsReturnDeadline = nil
++        }
++        region = next
++        settingsHovered = next == .settings
++        folding?.cancel()
++        if next != .outside { expanded = true; handlesTuckedAway = false }
++        if next == .cell || next == .tooltip {
++            dismissal?.cancel()
++            tooltip = true
++        } else {
++            dismissal?.cancel()
++            if tooltip {
++                dismissal = Task { @MainActor [weak self] in
++                    try? await Task.sleep(for: .milliseconds(250))
++                    guard !Task.isCancelled else { return }
++                    self?.tooltip = false
++                }
++            }
++        }
++        if next == .outside {
++            let returnDeadline = settingsReturnDeadline
++            // The 500ms DiscToArc return precedes the 450ms fold grace. Preserve
++            // its deadline even if the pointer briefly crosses the bar on exit.
++            if returnDeadline == nil { handlesTuckedAway = true }
++            folding = Task { @MainActor [weak self] in
++                if let returnDeadline {
++                    try? await ContinuousClock().sleep(until: returnDeadline)
++                    guard !Task.isCancelled else { return }
++                    self?.handlesTuckedAway = true
++                }
++                try? await Task.sleep(for: .milliseconds(450))
++                guard !Task.isCancelled else { return }
++                self?.expanded = false
 +            }
 +        }
 +    }
 +
-+    func windowShouldClose(_ sender: NSWindow) -> Bool {
-+        model.quota.visible = false
-+        return true
++    func reset() {
++        folding?.cancel(); dismissal?.cancel()
++        folding = nil; dismissal = nil
++        settingsReturnDeadline = nil
++        handlesTuckedAway = true
++        region = .outside; expanded = false; tooltip = false; settingsHovered = false
++    }
++
++    deinit { folding?.cancel(); dismissal?.cancel() }
++}
++
++@MainActor
++private final class QuotaNotchPanel: NSPanel {
++    init(frame: NSRect) {
++        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
++        isOpaque = false
++        backgroundColor = .clear
++        hasShadow = false
++        level = .statusBar
++        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
++        isReleasedWhenClosed = false
++        hidesOnDeactivate = false
++        acceptsMouseMovedEvents = true
++        ignoresMouseEvents = true
++        appearance = NSAppearance(named: .darkAqua)
++    }
++    override var canBecomeKey: Bool { false }
++    override var canBecomeMain: Bool { false }
++}
++
++/// Do not let NSHostingView's intrinsic content size resize the panel. Returning
++/// nil here also prevents this otherwise transparent container claiming clicks.
++@MainActor
++private final class QuotaNotchContainer: NSView {
++    override func hitTest(_ point: NSPoint) -> NSView? {
++        let local = convert(point, from: superview)
++        guard bounds.contains(local) else { return nil }
++        return subviews.reversed().lazy.compactMap { $0.hitTest(local) }.first
 +    }
 +}
 +
-+private struct QuotaPanelView: View {
-+    let model: AppModel
++@MainActor
++final class QuotaNotchHostingView: NSHostingView<QuotaNotchView> {
++    var geometry: QuotaNotchGeometry?
++    override func hitTest(_ point: NSPoint) -> NSView? {
++        guard geometry?.hits(convert(point, from: superview)) == true else { return nil }
++        return super.hitTest(point)
++    }
++    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
++}
++
++@MainActor
++final class QuotaNotchController {
++    private let model: AppModel
++    private let panel = QuotaNotchPanel(frame: .zero)
++    private let container = QuotaNotchContainer(frame: .zero)
++    private let hover = QuotaNotchHover()
++    private let pointer = OrbWindowPointerTracker()
++    private var hosting: QuotaNotchHostingView?
++    private var geometry: QuotaNotchGeometry?
++    private var displayID: UInt32?
++    private var edge: NotchEdge
++    private var stopped = false
++    private var revision = 0
++    nonisolated(unsafe) private var screenObserver: NSObjectProtocol?
++
++    init(model: AppModel) {
++        self.model = model
++        edge = UserDefaults.standard.string(forKey: "quota.notchEdge").flatMap(NotchEdge.init(rawValue:)) ?? .right
++        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
++        displayID = screen.flatMap(Self.id)
++        panel.contentView = container
++        pointer.onMove = { [weak self] point, _ in self?.pointerMoved(point) }
++        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
++                                                               object: nil, queue: .main) { [weak self] _ in
++            MainActor.assumeIsolated { self?.update() }
++        }
++        update()
++    }
++
++    func stop() {
++        stopped = true
++        revision += 1
++        pointer.stop()
++        hover.reset()
++        panel.orderOut(nil)
++        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
++        screenObserver = nil
++    }
++
++    deinit {
++        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
++    }
++
++    private static func id(_ screen: NSScreen) -> UInt32? {
++        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
++    }
++
++    private func update() {
++        guard !stopped else { return }
++        revision += 1
++        let current = revision
++        if !model.quota.floatingVisible { hover.reset() }
++        withObservationTracking {
++            let visible = model.quota.floatingVisible
++            let reading = QuotaNotchReading(snapshot: model.quota.snapshots.first,
++                                           networkEnabled: model.quota.networkEnabled, l10n: model.l10n)
++            let expanded = hover.expanded, tooltip = hover.tooltip, settings = hover.settingsHovered
++            let tucked = hover.handlesTuckedAway
++            // Resolve the original monitor by identity, not NSScreen.main (which
++            // follows the focused app and would move this nonactivating panel).
++            guard let screen = NSScreen.screens.first(where: { Self.id($0) == displayID }) ?? NSScreen.screens.first else {
++                pointer.stop(); panel.orderOut(nil); return
++            }
++            displayID = Self.id(screen)
++            let requested = QuotaNotchGeometry(edge: edge, expanded: expanded, tooltip: tooltip,
++                                              settingsHovered: settings, cardHeight: reading.cardHeight,
++                                              available: screen.frame.size, handlesTuckedAway: tucked)
++            panel.setFrame(requested.panelFrame(on: screen.frame), display: true)
++            let geometry = QuotaNotchGeometry(edge: edge, expanded: expanded, tooltip: tooltip,
++                                             settingsHovered: settings, cardHeight: reading.cardHeight,
++                                             actualSize: container.bounds.size, handlesTuckedAway: tucked)
++            self.geometry = geometry
++            let view = QuotaNotchView(reading: reading, geometry: geometry,
++                                     onSettings: { [weak self] in self?.model.commands?.showSettings(.quota) },
++                                     onEdge: { [weak self] edge in
++                                         guard let self else { return }
++                                         self.edge = edge
++                                         UserDefaults.standard.set(edge.rawValue, forKey: "quota.notchEdge")
++                                         self.hover.reset()
++                                         self.update()
++                                     }, onHide: { [weak self] in self?.model.quota.floatingVisible = false })
++            if let hosting {
++                hosting.rootView = view
++                hosting.geometry = geometry
++            } else {
++                let hosting = QuotaNotchHostingView(rootView: view)
++                hosting.sizingOptions = []
++                hosting.autoresizingMask = [.width, .height]
++                hosting.geometry = geometry
++                container.addSubview(hosting)
++                self.hosting = hosting
++            }
++            hosting?.frame = container.bounds
++            if visible {
++                panel.orderFrontRegardless()
++                pointer.start()
++            } else {
++                pointer.stop()
++                panel.ignoresMouseEvents = true
++                panel.orderOut(nil)
++            }
++        } onChange: { [weak self] in
++            Task { @MainActor [weak self] in
++                guard let self, self.revision == current else { return }
++                self.update()
++            }
++        }
++        // Opening changes the target under a stationary pointer. Reclassify
++        // only after observation is armed, so entering the newly exposed cell
++        // schedules its tooltip without requiring another physical mouse move.
++        pointerMoved(NSEvent.mouseLocation)
++    }
++
++    private func localPoint(_ point: CGPoint) -> CGPoint {
++        CGPoint(x: point.x - panel.frame.minX, y: panel.frame.maxY - point.y)
++    }
++
++    private func updateMouseInterception(at point: CGPoint) {
++        // A nil NSView hit test alone does NOT pass a window's click through to
++        // the desktop. The window itself must ignore the mouse in every hole.
++        panel.ignoresMouseEvents = pointer.isForeignDragActive || geometry?.hits(localPoint(point)) != true
++    }
++
++    private func pointerMoved(_ point: CGPoint) {
++        guard panel.isVisible, let geometry else { return }
++        updateMouseInterception(at: point)
++        guard !pointer.isForeignDragActive else { return }
++        hover.move(to: panel.frame.contains(point) ? geometry.region(at: localPoint(point)) : .outside)
++    }
++}
++
++struct QuotaNotchView: View {
++    let reading: QuotaNotchReading
++    let geometry: QuotaNotchGeometry
++    let onSettings: () -> Void
++    let onEdge: (NotchEdge) -> Void
++    let onHide: () -> Void
++    @Environment(\.accessibilityReduceMotion) private var reduceMotion
++    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 +
 +    var body: some View {
-+        ScrollView {
-+            VStack(alignment: .leading, spacing: 12) {
-+                if !model.quota.networkEnabled || model.quota.snapshots.isEmpty {
-+                    Button(model.l10n(model.quota.networkEnabled ? "mac.quota.empty" : "mac.quota.offline")) {
-+                        model.commands?.showSettings(.quota)
++        ZStack(alignment: .topLeading) {
++            SideNotchShape(edge: geometry.edge).fill(.black)
++                .contentShape(SideNotchShape(edge: geometry.edge))
++                .frame(width: geometry.bodyRect.width, height: geometry.bodyRect.height)
++                .position(x: geometry.bodyRect.midX, y: geometry.bodyRect.midY)
++                .contextMenu {
++                    Button(reading.l10n("mac.quota.title"), action: onSettings)
++                    ForEach(NotchEdge.allCases, id: \.rawValue) { edge in
++                        Button(reading.l10n("mac.quota.edge.\(edge.rawValue)")) { onEdge(edge) }
 +                    }
-+                    .buttonStyle(.plain)
-+                    .foregroundStyle(.secondary)
++                    Button(reading.l10n("mac.quota.hide"), action: onHide)
 +                }
-+                ForEach(model.quota.snapshots, id: \.id) { account in
-+                    Button {
-+                        model.commands?.showSettings(.quota)
-+                    } label: {
-+                        let window = account.windows.first { $0.id == account.headlineId }
-+                        HStack(spacing: 12) {
-+                            ZStack {
-+                                Circle().stroke(.quaternary, lineWidth: 5)
-+                                if let fraction = window?.usedFraction {
-+                                    Circle().trim(from: 0, to: max(0, min(1, fraction)))
-+                                        .stroke(.tint, style: StrokeStyle(lineWidth: 5, lineCap: .round))
-+                                        .rotationEffect(.degrees(-90))
-+                                }
-+                            }
-+                            .frame(width: 34, height: 34)
-+                            VStack(alignment: .leading, spacing: 2) {
-+                                Text(account.displayName).fontWeight(.semibold)
-+                                if let window {
-+                                    Text(window.label + " · " + (window.usedFraction.map { quotaPercent($0, locale: model.l10n.locale) } ?? model.l10n("mac.quota.unknown")))
-+                                    if let reset = window.resetAt { Text(model.l10n("mac.quota.reset", quotaDate(reset, locale: model.l10n.locale))) }
-+                                }
-+                                Text(quotaStatus(account, model.l10n))
-+                                if account.waitingForRefresh, let next = account.nextAllowedAt {
-+                                    Text(model.l10n("mac.quota.next") + ": " + quotaDate(next, locale: model.l10n.locale))
-+                                }
-+                            }
-+                            .font(.caption)
-+                            .frame(maxWidth: .infinity, alignment: .leading)
-+                        }
-+                        .contentShape(Rectangle())
++            cell
++                .opacity(geometry.expanded ? 1 : 0)
++                .accessibilityHidden(!geometry.expanded)
++                .animation(reduceMotion ? nil : .spring(response: 0.48, dampingFraction: 0.8), value: geometry.expanded)
++                .allowsHitTesting(false)
++            if geometry.expanded {
++                QuotaSettingsOrb(isHovered: geometry.settingsHovered, isTuckedAway: geometry.handlesTuckedAway,
++                                 edge: geometry.edge, action: onSettings, label: reading.l10n("mac.quota.title"))
++                    .position(geometry.orbCenter)
++            }
++            if geometry.tooltip {
++                geometry.tooltipPath.fill(.black).allowsHitTesting(false)
++                TimelineView(.periodic(from: .now, by: 1)) { clock in
++                    ScrollView(.vertical) {
++                        QuotaNotchTooltipContent(reading: reading, now: clock.date)
++                            .padding(NotchLayout.cardPadding)
++                            .frame(width: NotchLayout.cardWidth, alignment: .topLeading)
 +                    }
-+                    .buttonStyle(.plain)
-+                    .help(model.l10n("mac.quota.title"))
++                }
++                .scrollIndicators(.never)
++                .frame(width: geometry.cardRect.width, height: geometry.cardRect.height)
++                .clipShape(RoundedRectangle(cornerRadius: NotchLayout.cardCorner, style: .circular))
++                .overlay {
++                    if reduceTransparency {
++                        RoundedRectangle(cornerRadius: NotchLayout.cardCorner, style: .circular)
++                            .strokeBorder(NotchLayout.ringTrack, lineWidth: 1)
++                    }
++                }
++                .position(x: geometry.cardRect.midX, y: geometry.cardRect.midY)
++                .transition(.opacity)
++            }
++        }
++        .frame(width: geometry.size.width, height: geometry.size.height)
++        .foregroundStyle(.white)
++        .environment(\.colorScheme, .dark)
++        .animation(reduceMotion ? nil : .spring(response: 0.62, dampingFraction: 0.72), value: geometry.expanded)
++        .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: geometry.tooltip)
++    }
++
++    private var cell: some View {
++        VStack(spacing: NotchLayout.ringLabelGap) {
++            ZStack {
++                Circle().strokeBorder(NotchLayout.ringTrack, lineWidth: NotchLayout.trackStroke)
++                if let fraction = reading.fraction {
++                    Circle().inset(by: NotchLayout.trackStroke / 2)
++                        .trim(from: 0, to: min(max(fraction, 0), 1))
++                        .stroke(NotchLayout.accent(fraction, blocked: reading.snapshot?.block != nil),
++                                style: StrokeStyle(lineWidth: NotchLayout.progressStroke, lineCap: .round))
++                        .rotationEffect(.degrees(-90))
++                        .animation(reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.9), value: fraction)
++                }
++                QuotaGlyph().fill(.white, style: FillStyle(eoFill: true))
++                    .scaleEffect(0.94).frame(width: NotchLayout.glyphSize, height: NotchLayout.glyphSize)
++                    .opacity(reading.snapshot?.block != nil || (reading.fraction ?? 0) >= 1
++                             ? (reduceTransparency ? 0.7 : 0.35) : 1)
++            }
++            .frame(width: NotchLayout.ringDiameter, height: NotchLayout.ringDiameter)
++            .opacity(reading.stale ? (reduceTransparency ? 0.75 : 0.45) : 1)
++            Text(reading.percentage).font(NotchLayout.percent)
++                .fixedSize().frame(height: NotchLayout.percentLineHeight)
++        }
++        .frame(width: NotchLayout.ringDiameter, height: NotchLayout.cellExtent)
++        .position(x: geometry.ringCenter.x,
++                  y: geometry.ringCenter.y - NotchLayout.ringDiameter / 2 + NotchLayout.cellExtent / 2)
++        .accessibilityElement(children: .ignore)
++        .accessibilityLabel("Codex, \(reading.percentage)\(reading.status.map { ", \($0)" } ?? "")")
++    }
++}
++
++struct QuotaGlyph: Shape {
++    private static let outline: Path = {
++        var path = Path()
++        for loop in QuotaGlyphOutline.openai {
++            guard let first = loop.first else { continue }
++            path.move(to: first)
++            for point in loop.dropFirst() { path.addLine(to: point) }
++            path.closeSubpath()
++        }
++        return path
++    }()
++    func path(in rect: CGRect) -> Path {
++        Self.outline.applying(CGAffineTransform(a: rect.width, b: 0, c: 0, d: rect.height, tx: rect.minX, ty: rect.minY))
++    }
++}
++
++/// TooltipHeader and LimitWindowRow, retaining the original Mac typography,
++/// label/bar/summary order and spacing. No activity section is invented: this
++/// app's quota snapshot has no sessions or live provider-activity information.
++struct QuotaNotchTooltipContent: View {
++    let reading: QuotaNotchReading
++    let now: Date
++    var body: some View {
++        VStack(alignment: .leading, spacing: 0) {
++            HStack(alignment: .center, spacing: NotchLayout.headerGap) {
++                QuotaGlyph().fill(.white, style: FillStyle(eoFill: true))
++                    .scaleEffect(0.94).frame(width: NotchLayout.glyphSize, height: NotchLayout.glyphSize)
++                VStack(alignment: .leading, spacing: 0) {
++                    HStack(spacing: 0) {
++                        Text(reading.l10n("mac.quota.usageTitle")).font(NotchLayout.cardTitle).layoutPriority(1)
++                        if let observed = reading.observationDate {
++                            Spacer(minLength: NotchLayout.px(20))
++                            Text(quotaAge(observed, locale: reading.l10n.locale))
++                                .font(NotchLayout.cardBody).foregroundStyle(NotchLayout.secondary).lineLimit(1)
++                        }
++                    }
++                    if let plan = reading.snapshot?.plan {
++                        Text(plan).font(NotchLayout.cardBody).foregroundStyle(NotchLayout.secondary).lineLimit(1)
++                    }
 +                }
 +            }
-+            .frame(maxWidth: .infinity, alignment: .leading)
-+            .padding(14)
++            if let block = reading.snapshot?.block {
++                Text(block).font(NotchLayout.cardBody).foregroundStyle(NotchLayout.accent(1))
++                    .fixedSize(horizontal: false, vertical: true).padding(.top, NotchLayout.headerToBlock)
++            }
++            if let status = reading.status {
++                Text(status).font(NotchLayout.cardBody).foregroundStyle(NotchLayout.secondary)
++                    .fixedSize(horizontal: false, vertical: true).padding(.top, NotchLayout.headerToBlock)
++            }
++            ForEach(Array((reading.snapshot?.windows ?? []).enumerated()), id: \.element.id) { index, window in
++                VStack(alignment: .leading, spacing: 0) {
++                    HStack(spacing: NotchLayout.px(20)) {
++                        Text(quotaWindowLabel(window, reading.l10n))
++                        Spacer(minLength: 0)
++                        Text(window.resetAt.map { reading.resetText($0, now: now) } ?? "")
++                            .foregroundStyle(NotchLayout.secondary)
++                    }
++                    .font(NotchLayout.cardBody)
++                    .lineLimit(1)
++                    .frame(height: NotchLayout.bodyLineHeight)
++                    if let used = window.usedFraction {
++                        ZStack(alignment: .leading) {
++                            Capsule().fill(NotchLayout.barTrack)
++                            Capsule().fill(NotchLayout.accent(used))
++                                .frame(width: max(NotchLayout.barHeight,
++                                                  (NotchLayout.cardWidth - 2 * NotchLayout.cardPadding) * min(max(used, 0), 1)))
++                        }
++                        .frame(height: NotchLayout.barHeight)
++                        .padding(.top, NotchLayout.labelToBar)
++                    }
++                    Text(window.usedFraction.map { reading.l10n("mac.quota.used", quotaPercent($0, locale: reading.l10n.locale)) }
++                         ?? reading.l10n("mac.quota.unknown"))
++                        .font(NotchLayout.cardBody).lineLimit(1).minimumScaleFactor(0.85)
++                        .frame(height: NotchLayout.bodyLineHeight)
++                        .padding(.top, NotchLayout.barToUsed)
++                }
++                .padding(.top, index == 0 ? NotchLayout.headerToBlock : NotchLayout.blockSpacing)
++            }
++        }
++        .foregroundStyle(.white)
++    }
++}
++
++/// The reference's separate SettingsOrb, not a gear inserted into the notch.
++/// At rest the arc is parallel to the *fluid* flare (not a quarter circle).
++/// DiscToArc's original curve rolls the disc back into that arc on departure.
++struct QuotaSettingsOrb: View {
++    let isHovered: Bool
++    let isTuckedAway: Bool
++    let edge: NotchEdge
++    let action: () -> Void
++    let label: String
++    @Environment(\.accessibilityReduceMotion) private var reduceMotion
++    @State private var release: CGFloat = 1
++    @State private var releasing = false
++    @State private var spins = 0
++
++    var body: some View {
++        Button {
++            spins += 1
++            action()
++        } label: {
++            ZStack {
++                QuotaOrbReturn(progress: releasing ? release : (isHovered ? 0 : 1), edge: edge)
++                    .opacity(isTuckedAway || (!isHovered && !releasing) ? 0 : 1)
++                QuotaOrbMerge(separation: isTuckedAway ? 0 : 1, edge: edge)
++                    .opacity(isHovered || releasing ? 0 : 1)
++                    .animation(reduceMotion ? nil : .easeIn(duration: 0.2), value: isTuckedAway)
++                Image(systemName: "gearshape.fill")
++                    .font(.system(size: NotchLayout.orbGlyph, weight: .regular))
++                    .foregroundStyle(.white).opacity(isHovered ? 1 : 0)
++                    .scaleEffect(isHovered ? 1 : 0.5)
++                    .rotationEffect(.degrees((isHovered ? 0 : -60) + Double(spins) * 360))
++                    .animation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.72), value: spins)
++            }
++            .frame(width: 2 * NotchLayout.orbArcRadius + NotchLayout.orbStroke,
++                   height: 2 * NotchLayout.orbArcRadius + NotchLayout.orbStroke)
++            .contentShape(Circle().size(width: NotchLayout.orbDiameter, height: NotchLayout.orbDiameter)
++                .offset(x: NotchLayout.orbArcRadius + NotchLayout.orbStroke / 2 - NotchLayout.orbDiameter / 2,
++                        y: NotchLayout.orbArcRadius + NotchLayout.orbStroke / 2 - NotchLayout.orbDiameter / 2))
++        }
++        .buttonStyle(.plain).accessibilityLabel(label)
++        .onChange(of: isHovered) { _, hovered in
++            guard !reduceMotion else { return }
++            if hovered { releasing = false; return }
++            var still = Transaction(); still.disablesAnimations = true
++            withTransaction(still) { release = 0; releasing = true }
++            withAnimation(.timingCurve(0.3, 0, 0.2, 1, duration: 0.4).delay(0.1)) {
++                release = 1
++            } completion: {
++                if !isHovered { releasing = false }
++            }
++        }
++        .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.7), value: isHovered)
++        .keyframeAnimator(initialValue: CGFloat(1), trigger: spins) { orb, scale in
++            orb.scaleEffect(scale)
++        } keyframes: { _ in
++            SpringKeyframe(reduceMotion ? 1 : 0.84, duration: 0.09, spring: .snappy)
++            SpringKeyframe(1, duration: 0.34, spring: .bouncy)
++        }
++    }
++}
++
++struct QuotaOrbReturn: View, Animatable {
++    var progress: CGFloat
++    let edge: NotchEdge
++    var animatableData: CGFloat {
++        get { progress }
++        set { progress = newValue }
++    }
++    private func step(_ x: CGFloat) -> CGFloat {
++        let t = min(max(x, 0), 1)
++        return t * t * (3 - 2 * t)
++    }
++    var body: some View {
++        Canvas { context, size in
++            let p = min(max(progress, 0), 1)
++            let center = CGPoint(x: size.width / 2, y: size.height / 2)
++            if p <= 0.001 {
++                context.fill(Path(ellipseIn: CGRect(x: center.x - NotchLayout.orbDiameter / 2,
++                                                    y: center.y - NotchLayout.orbDiameter / 2,
++                                                    width: NotchLayout.orbDiameter, height: NotchLayout.orbDiameter)), with: .color(.black))
++                return
++            }
++            if p >= 0.999 {
++                context.stroke(QuotaSettingsArc.path(center: center, edge: edge), with: .color(.black),
++                               style: StrokeStyle(lineWidth: NotchLayout.orbStroke, lineCap: .round, lineJoin: .round))
++                return
++            }
++            let middle = QuotaSettingsArc.point(0.5, center: center, edge: edge)
++            let onto = step(p / 0.55)
++            let shift = CGPoint(x: (center.x - middle.x) * (1 - onto), y: (center.y - middle.y) * (1 - onto))
++            let half = 0.5 * step((p - 0.08) / 0.82)
++            let width = NotchLayout.orbDiameter + (NotchLayout.orbStroke - NotchLayout.orbDiameter) * step(p / 0.8)
++            var line = Path()
++            for i in 0...64 {
++                let share = 0.5 - half + 2 * half * CGFloat(i) / 64
++                let q = QuotaSettingsArc.point(share, center: center, edge: edge)
++                let at = CGPoint(x: q.x + shift.x, y: q.y + shift.y)
++                if i == 0 { line.move(to: at) } else { line.addLine(to: at) }
++            }
++            context.stroke(line, with: .color(.black), style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
++        }
++        .allowsHitTesting(false)
++    }
++}
++
++/// The returning branch of Codenotch's GooArc. The arc rolls up, grows a
++/// pinched neck onto the original fluid flare, then disappears inside the
++/// still-open notch. Folding starts only after this 200ms merge has finished.
++struct QuotaOrbMerge: View, Animatable {
++    var separation: CGFloat
++    let edge: NotchEdge
++    var animatableData: CGFloat {
++        get { separation }
++        set { separation = newValue }
++    }
++    private func step(_ x: CGFloat) -> CGFloat {
++        let t = min(max(x, 0), 1)
++        return t * t * (3 - 2 * t)
++    }
++    var body: some View {
++        let stroke = NotchLayout.orbStroke
++        let flare = NotchLayout.curlRadius
++        let side = 2 * (flare + 2 * stroke)
++        Canvas { context, size in
++            let t = min(max(separation, 0), 1)
++            let center = CGPoint(x: size.width / 2, y: size.height / 2)
++            let rest = NotchLayout.orbClearance
++            let buried = -(rest + stroke * 1.4)
++            let past = rest * 1.2 * sin(.pi * min(t / 0.85, 1)) * (t < 0.85 ? 1 : 0)
++            let slide = buried * (1 - t) + past
++            let trim = QuotaSettingsArc.trim(for: edge)
++            let a = CGPoint(x: cos(2 * .pi * trim.lowerBound), y: sin(2 * .pi * trim.lowerBound))
++            let b = CGPoint(x: cos(2 * .pi * trim.upperBound), y: sin(2 * .pi * trim.upperBound))
++            let away = CGPoint(x: -(a.x + b.x) / sqrt(2), y: -(a.y + b.y) / sqrt(2))
++            let whole = QuotaSettingsArc.path(center: center, edge: edge)
++                .offsetBy(dx: away.x * slide, dy: away.y * slide)
++            let unrolled = step((t - 0.6) / 0.35)
++            let half = max(0.004, unrolled / 2)
++            let arc = unrolled >= 0.999 ? whole : whole.trimmedPath(from: 0.5 - half, to: 0.5 + half)
++            let width = (stroke * 2.3 + (stroke - stroke * 2.3) * unrolled) * step(t / 0.35)
++            guard width >= 0.4 else { return }
++            let home = 1 + 0.8 * (1 - step((t - 0.04) / 0.32))
++            let goo = stroke * 0.45 * home * step((0.93 - t) / 0.15) * step(t / 0.05)
++            guard goo > 0.2 else {
++                context.stroke(arc, with: .color(.black), style: StrokeStyle(lineWidth: width, lineCap: .round))
++                return
++            }
++            context.addFilter(.alphaThreshold(min: 0.5, color: .black))
++            context.addFilter(.blur(radius: goo))
++            context.drawLayer { layer in
++                layer.stroke(arc, with: .color(.black), style: StrokeStyle(lineWidth: width + goo * 0.4, lineCap: .round))
++                let neck = stroke * 1.1 * step((0.94 - t) / 0.1)
++                if neck > stroke * 0.18 {
++                    let from = QuotaSettingsArc.point(0.5, center: center, edge: edge, offset: -stroke)
++                    let drop = QuotaSettingsArc.point(0.5, center: center, edge: edge, offset: rest + slide)
++                    let reach = step((0.92 - t) / 0.32)
++                    let to = CGPoint(x: from.x + (drop.x - from.x) * reach, y: from.y + (drop.y - from.y) * reach)
++                    let dx = to.x - from.x, dy = to.y - from.y
++                    let length = max(hypot(dx, dy), 0.001)
++                    let px = -dy / length, py = dx / length
++                    func sidePoint(_ at: CGPoint, _ half: CGFloat, _ sign: CGFloat) -> CGPoint {
++                        CGPoint(x: at.x + px * half * sign, y: at.y + py * half * sign)
++                    }
++                    let middle = CGPoint(x: from.x + dx * 0.5, y: from.y + dy * 0.5)
++                    let base = stroke * 2.6 / 2, pinch = neck / 2, top = stroke * 1.4 / 2
++                    var strand = Path()
++                    strand.move(to: sidePoint(from, base, 1))
++                    strand.addQuadCurve(to: sidePoint(to, top, 1), control: sidePoint(middle, pinch, 1))
++                    strand.addLine(to: sidePoint(to, top, -1))
++                    strand.addQuadCurve(to: sidePoint(from, base, -1), control: sidePoint(middle, pinch, -1))
++                    strand.closeSubpath()
++                    layer.fill(strand, with: .color(.black))
++                }
++                let band = stroke + goo * 1.6
++                let body = QuotaSettingsArc.path(center: center, edge: edge, offset: -band / 2)
++                layer.stroke(body, with: .color(.black), style: StrokeStyle(lineWidth: band, lineCap: .round))
++            }
++        }
++        .frame(width: side, height: side)
++        .frame(width: 2 * NotchLayout.orbArcRadius + stroke, height: 2 * NotchLayout.orbArcRadius + stroke)
++        .allowsHitTesting(false)
++    }
++}
+diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
+new file mode 100644
+index 00000000..17cf0edc
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
+@@ -0,0 +1,94 @@
++import SwiftUI
++
++// Adapted from Codenotch at 835550a342871779135b6484d6899161c5222f7c,
++// Copyright (c) 2026 Vinz, MIT. See Resources/Codenotch-LICENSE.txt.
++// Only the freestanding edge notch is needed here; hardware-hole joins and
++// provider-specific drag machinery are deliberately not part of this port.
++struct SideNotchShape: Shape {
++    var edge: NotchEdge = .right
++    var curlRadius: CGFloat = NotchLayout.curlRadius
++    var cornerRadius: CGFloat = NotchLayout.cornerRadius
++
++    var animatableData: AnimatablePair<CGFloat, CGFloat> {
++        get { AnimatablePair(curlRadius, cornerRadius) }
++        set { curlRadius = newValue.first; cornerRadius = newValue.second }
++    }
++
++    func path(in rect: CGRect) -> Path {
++        let depth = edge.isVertical ? rect.width : rect.height
++        let length = edge.isVertical ? rect.height : rect.width
++        // The corner claims half the depth first. Reversing this order makes
++        // the folded tab square, because its flare would consume all its depth.
++        let wanted = max(0, min(cornerRadius, depth / 2))
++        let curl = max(0, min(curlRadius, depth - wanted))
++        let corner = max(0, min(wanted, (length - 2 * curl) / 2))
++        var path = Path()
++        path.move(to: CGPoint(x: depth, y: 0))
++        fluidTurn(&path, to: CGPoint(x: depth - curl, y: curl),
++                  leaving: CGVector(dx: 0, dy: 1), arriving: CGVector(dx: -1, dy: 0))
++        path.addLine(to: CGPoint(x: corner, y: curl))
++        turn(&path, to: CGPoint(x: 0, y: curl + corner),
++             leaving: CGVector(dx: -1, dy: 0), arriving: CGVector(dx: 0, dy: 1))
++        path.addLine(to: CGPoint(x: 0, y: length - curl - corner))
++        turn(&path, to: CGPoint(x: corner, y: length - curl),
++             leaving: CGVector(dx: 0, dy: 1), arriving: CGVector(dx: 1, dy: 0))
++        path.addLine(to: CGPoint(x: depth - curl, y: length - curl))
++        fluidTurn(&path, to: CGPoint(x: depth, y: length),
++                  leaving: CGVector(dx: 1, dy: 0), arriving: CGVector(dx: 0, dy: 1))
++        path.closeSubpath()
++        return path.applying(Self.transform(for: edge, depth: depth))
++            .applying(CGAffineTransform(translationX: rect.minX, y: rect.minY))
++    }
++
++    static func transform(for edge: NotchEdge, depth: CGFloat) -> CGAffineTransform {
++        switch edge {
++        case .right: .identity
++        case .left: CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: depth, ty: 0)
++        case .top: CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: 0, ty: depth)
++        case .bottom: CGAffineTransform(a: 0, b: 1, c: 1, d: 0, tx: 0, ty: 0)
++        }
++    }
++
++    private func turn(_ path: inout Path, to: CGPoint, leaving: CGVector, arriving: CGVector) {
++        guard let from = path.currentPoint else { return }
++        let dx = to.x - from.x, dy = to.y - from.y
++        let out = abs(dx * leaving.dx + dy * leaving.dy) * 0.5523
++        let into = abs(dx * arriving.dx + dy * arriving.dy) * 0.5523
++        path.addCurve(to: to,
++                      control1: CGPoint(x: from.x + leaving.dx * out, y: from.y + leaving.dy * out),
++                      control2: CGPoint(x: to.x - arriving.dx * into, y: to.y - arriving.dy * into))
++    }
++
++    private func fluidTurn(_ path: inout Path, to: CGPoint, leaving: CGVector, arriving: CGVector) {
++        guard let from = path.currentPoint else { return }
++        let along = (to.x - from.x) * leaving.dx + (to.y - from.y) * leaving.dy
++        let across = (to.x - from.x) * arriving.dx + (to.y - from.y) * arriving.dy
++        for step in QuotaFlareWalk.steps.dropFirst() {
++            path.addLine(to: CGPoint(x: from.x + leaving.dx * step.u * along + arriving.dx * step.v * across,
++                                     y: from.y + leaving.dy * step.u * along + arriving.dy * step.v * across))
++        }
++    }
++}
++
++/// Codenotch's 96-step, curvature-ramped quarter turn, shared by the body and
++/// the parallel settings arc. Computed once, not allocated on every draw.
++enum QuotaFlareWalk {
++    static let steps: [(u: CGFloat, v: CGFloat, heading: CGFloat)] = {
++        let p: CGFloat = 0.5, count = 96
++        let bend = (CGFloat.pi / 2) / (1 - p)
++        var heading: CGFloat = 0, u: CGFloat = 0, v: CGFloat = 0
++        var walk: [(u: CGFloat, v: CGFloat, heading: CGFloat)] = [(0, 0, 0)]
++        walk.reserveCapacity(count + 1)
++        for i in 0..<count {
++            let s = (CGFloat(i) + 0.5) / CGFloat(count)
++            let share = s < p ? s / p : (s > 1 - p ? (1 - s) / p : 1)
++            let before = heading
++            heading += bend * share / CGFloat(count)
++            u += cos(heading) / CGFloat(count)
++            v += sin(heading) / CGFloat(count)
++            walk.append((u, v, (before + heading) / 2))
++        }
++        let end = walk[walk.count - 1]
++        return walk.map { ($0.u / end.u, $0.v / end.v, $0.heading) }
++    }()
++}
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+index 10c867dd..5d5ef473 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+@@ -143,8 +143,74 @@ private struct DashboardDetails: View {
+                     .padding(.top, DashboardLayout.sectionSpacing)
+                     .transition(.opacity)
+             }
++            QuotaDashboardSummary(model: model)
+         }
+         .animation(model.dashboardMotion, value: warnings.isEmpty)
+         .animation(model.dashboardMotion, value: model.settings.trafficEnabled)
+     }
+ }
++
++func quotaWarningAccounts(_ snapshots: [CodexQuotaSnapshot]) -> [CodexQuotaSnapshot] {
++    Array(snapshots.filter { account in
++        account.status == .needsAuth || account.block != nil ||
++            account.windows.contains { ($0.usedFraction ?? -1) >= 0.9 }
++    }.prefix(2))
++}
++
++/// A glanceable warning, not a second quota list; the existing Settings page holds the details.
++private struct QuotaDashboardSummary: View {
++    let model: AppModel
++
++    private var accounts: [CodexQuotaSnapshot] { quotaWarningAccounts(model.quota.snapshots) }
++
++    var body: some View {
++        if !accounts.isEmpty {
++            SectionDivider()
++            Button {
++                model.commands?.showSettings(.quota)
++            } label: {
++                VStack(alignment: .leading, spacing: 10) {
++                    Text(model.l10n("mac.quota.title")).font(.headline)
++                    ForEach(accounts, id: \.id) { account in
++                        let window = account.windows.first { $0.id == account.headlineId }
++                        VStack(alignment: .leading, spacing: 4) {
++                            HStack {
++                                Text(account.displayName + (window.map { " · " + quotaWindowLabel($0, model.l10n) } ?? ""))
++                                Spacer()
++                                Text(window?.usedFraction.map { quotaPercent($0, locale: model.l10n.locale) } ?? model.l10n("mac.quota.unknown"))
++                                    .monospacedDigit()
++                            }
++                            if let used = window?.usedFraction {
++                                ProgressView(value: max(0, min(1, used)))
++                                    .tint(quotaAccent(used))
++                            }
++                            if account.status != .ok {
++                                Text(quotaStatus(account, model.l10n))
++                                    .font(.caption).foregroundStyle(.secondary)
++                            }
++                            if account.status == .stale, let observed = account.observedAt {
++                                Text(model.l10n("mac.quota.observed") + ": " + quotaAge(observed, locale: model.l10n.locale))
++                                    .font(.caption).foregroundStyle(.secondary)
++                            }
++                            if let block = account.block {
++                                Text(block).font(.caption).foregroundStyle(.secondary)
++                            }
++                            HStack {
++                                if let reset = window?.resetAt {
++                                    Text(model.l10n("mac.quota.reset", quotaDate(reset, locale: model.l10n.locale)))
++                                }
++                                Spacer()
++                                if let plan = account.plan { Text(plan) }
++                            }
++                            .font(.caption).foregroundStyle(.secondary)
++                        }
++                        .font(.caption)
++                    }
++                }
++                .frame(maxWidth: .infinity, alignment: .leading)
++                .contentShape(Rectangle())
++            }
++            .buttonStyle(.plain)
 +        }
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index f9eb994d..dfa1f1c6 100644
+index f9eb994d..0337427d 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-@@ -343,6 +343,40 @@ enum StringTable {
+@@ -343,6 +343,48 @@ enum StringTable {
          "mac.launchAtLogin.openSettings": Entry("打開系統設定", "打开系统设置", "Open System Settings", "システム設定を開く"),
          "mac.launchAtLogin.requiresApproval": Entry("請在「系統設定」›「一般」›「登入項目」中允許 Agent Speed。", "请在“系统设置”›“通用”›“登录项”中允许 Agent Speed。", "Allow Agent Speed in System Settings › General › Login Items.", "「システム設定」›「一般」›「ログイン項目」で Agent Speed を許可してください。"),
          "mac.launchAtLogin.unavailable": Entry("將 Agent Speed 移到「應用程式」資料夾後即可使用。", "将 Agent Speed 移到“应用程序”文件夹后即可使用。", "Available once Agent Speed is in the Applications folder.", "Agent Speed を「アプリケーション」フォルダに移動すると使用できます。"),
 +        "mac.quota.account": Entry("帳戶", "账户", "Account", "アカウント"),
 +        "mac.quota.block": Entry("限制", "限制", "Limit", "制限"),
-+        "mac.quota.close": Entry("關閉額度浮窗", "关闭额度浮窗", "Close quota panel", "使用枠パネルを閉じる"),
 +        "mac.quota.credits": Entry("點數", "点数", "Credits", "クレジット"),
 +        "mac.quota.creditsLimit": Entry("點數上限", "点数上限", "Credit limit", "クレジット上限"),
-+        "mac.quota.duration": Entry("時段長度", "时段长度", "Window length", "期間の長さ"),
++        "mac.quota.details": Entry("完整資料", "完整信息", "Full details", "すべての詳細"),
++        "mac.quota.diagnostics": Entry("詳細資料", "详细信息", "Details", "詳細"),
++        "mac.quota.edge.bottom": Entry("下方", "下方", "Bottom", "下"),
++        "mac.quota.edge.left": Entry("左側", "左侧", "Left", "左"),
++        "mac.quota.edge.right": Entry("右側", "右侧", "Right", "右"),
++        "mac.quota.edge.top": Entry("上方", "上方", "Top", "上"),
 +        "mac.quota.empty": Entry("尚無額度資料。", "尚无额度数据。", "No quota data yet.", "使用枠データはまだありません。"),
 +        "mac.quota.fidelity": Entry("資料精度", "数据精度", "Data fidelity", "データ精度"),
 +        "mac.quota.fidelity.derived": Entry("推算", "推算", "Derived", "推定"),
 +        "mac.quota.fidelity.manual": Entry("手動輸入", "手动输入", "Manual", "手動入力"),
 +        "mac.quota.fidelity.official": Entry("官方", "官方", "Official", "公式"),
-+        "mac.quota.hint": Entry("浮窗只顯示每個帳戶的主要額度；按一下可查看全部詳情。關閉浮窗會記住此選擇。", "浮窗只显示每个账户的主要额度；点击可查看全部详情。关闭浮窗会记住此选择。", "The panel shows each account’s headline window. Click it for all details. Closing the panel is remembered.", "パネルには各アカウントの主要な使用枠を表示します。クリックすると詳細を確認できます。閉じた状態は保存されます。"),
++        "mac.quota.floating": Entry("顯示懸浮額度", "显示悬浮额度", "Show floating quota", "使用枠をフローティング表示"),
++        "mac.quota.hide": Entry("隱藏懸浮額度", "隐藏悬浮额度", "Hide floating quota", "フローティング表示を隠す"),
 +        "mac.quota.next": Entry("下次可用", "下次可用", "Next available", "次回利用可能"),
 +        "mac.quota.no": Entry("否", "否", "No", "いいえ"),
 +        "mac.quota.observed": Entry("更新時間", "更新时间", "Observed", "取得日時"),
@@ -344,7 +1521,9 @@ index f9eb994d..dfa1f1c6 100644
 +        "mac.quota.refresh": Entry("重新整理", "刷新", "Refresh", "更新"),
 +        "mac.quota.remaining": Entry("剩餘 %@", "剩余 %@", "%@ remaining", "残り %@"),
 +        "mac.quota.reset": Entry("重設：%@", "重置：%@", "Resets: %@", "リセット：%@"),
-+        "mac.quota.show": Entry("顯示額度浮窗", "显示额度浮窗", "Show quota panel", "使用枠パネルを表示"),
++        "mac.quota.resetMinutes": Entry("%@ 分鐘後重設", "%@ 分钟后重置", "Resets in %@ min", "%@ 分後にリセット"),
++        "mac.quota.resetSeconds": Entry("%@ 秒後重設", "%@ 秒后重置", "Resets in %@ sec", "%@ 秒後にリセット"),
++        "mac.quota.resetting": Entry("正在重設…", "正在重置…", "Resetting…", "リセット中…"),
 +        "mac.quota.source": Entry("來源", "来源", "Source", "ソース"),
 +        "mac.quota.status.accessDenied": Entry("存取遭拒", "访问被拒绝", "Access denied", "アクセスが拒否されました"),
 +        "mac.quota.status.error": Entry("無法取得額度", "无法获取额度", "Could not load quota", "使用枠を取得できません"),
@@ -356,6 +1535,7 @@ index f9eb994d..dfa1f1c6 100644
 +        "mac.quota.title": Entry("用量額度", "用量额度", "Quota", "使用枠"),
 +        "mac.quota.unknown": Entry("未知", "未知", "Unknown", "不明"),
 +        "mac.quota.unlimited": Entry("無限", "无限", "Unlimited", "無制限"),
++        "mac.quota.usageTitle": Entry("Codex 用量", "Codex 用量", "Codex Usage", "Codex の使用量"),
 +        "mac.quota.used": Entry("已使用 %@", "已使用 %@", "%@ used", "%@ 使用済み"),
 +        "mac.quota.yes": Entry("是", "是", "Yes", "はい"),
          "mac.report.ws.milliseconds": Entry("%@ ms", "%@ ms", "%@ ms", "%@ ms"),
@@ -363,10 +1543,10 @@ index f9eb994d..dfa1f1c6 100644
          "mac.settings.about.license": Entry("以 MIT 授權開放原始碼", "以 MIT 许可证开源", "Open source under the MIT License", "MIT ライセンスのオープンソース"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 new file mode 100644
-index 00000000..fe7e7ef7
+index 00000000..3e5f9b0c
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,159 @@
 +import AgentSpeedCore
 +import SwiftUI
 +
@@ -374,11 +1554,106 @@ index 00000000..fe7e7ef7
 +    let model: AppModel
 +
 +    var body: some View {
-+        @Bindable var quota = model.quota
++        let quota = model.quota
 +        let l10n = model.l10n
 +        Form {
++            if quota.snapshots.isEmpty {
++                Section { Footnote(l10n("mac.quota.empty")) }
++            }
++            ForEach(quota.snapshots, id: \.id) { account in
++                Section {
++                    HStack(alignment: .top, spacing: 16) {
++                        Text("CX")
++                            .font(.caption.weight(.bold))
++                            .frame(width: 30, height: 30)
++                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
++                        VStack(alignment: .leading, spacing: 4) {
++                            Text(account.displayName).font(.headline)
++                            Text(account.source).font(.caption).foregroundStyle(.secondary)
++                            Text(quotaStatus(account, l10n)).font(.caption2).foregroundStyle(.secondary)
++                            if account.status == .stale, let observed = account.observedAt {
++                                Text("\(l10n("mac.quota.observed")) · \(quotaAge(observed, locale: l10n.locale))")
++                                    .font(.caption2).foregroundStyle(.secondary)
++                            }
++                            if let block = account.block { Text(block).font(.caption2).foregroundStyle(.secondary) }
++                        }.frame(width: 105, alignment: .leading)
++                        VStack(alignment: .leading, spacing: 8) {
++                            ForEach(account.windows, id: \.id) { window in
++                                VStack(alignment: .leading, spacing: 4) {
++                                    HStack {
++                                        Text(quotaWindowLabel(window, l10n)).foregroundStyle(.secondary)
++                                        Spacer()
++                                        Text(window.usedFraction.map { quotaPercent($0, locale: l10n.locale) } ?? l10n("mac.quota.unknown")).monospacedDigit()
++                                    }.font(.caption)
++                                    if let used = window.usedFraction {
++                                        ProgressView(value: max(0, min(1, used))).tint(quotaAccent(used))
++                                    }
++                                    if let reset = window.resetAt {
++                                        Text(l10n("mac.quota.reset", quotaDate(reset, locale: l10n.locale))).font(.caption2).foregroundStyle(.secondary)
++                                    }
++                                }
++                            }
++                        }
++                        .opacity(account.status == .stale ? 0.6 : 1)
++                        if let plan = account.plan {
++                            Text(plan).font(.caption.weight(.semibold)).frame(width: 70, alignment: .trailing)
++                        }
++                    }
++                    .padding(10)
++                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
++                    DisclosureGroup(l10n("mac.quota.details")) {
++                    LabeledContent(l10n("mac.quota.title"), value: quotaStatus(account, l10n))
++                    if let value = account.plan { LabeledContent(l10n("mac.quota.plan"), value: value) }
++                    LabeledContent(l10n("mac.quota.source"), value: account.source)
++                    LabeledContent(l10n("mac.quota.fidelity"), value: l10n("mac.quota.fidelity.\(account.fidelity)"))
++                    if account.status == .stale, let observed = account.observedAt {
++                        LabeledContent(l10n("mac.quota.observed"), value: quotaAge(observed, locale: l10n.locale))
++                    }
++                    if let value = account.block { LabeledContent(l10n("mac.quota.block"), value: value) }
++                    ForEach(account.windows, id: \.id) { window in
++                        VStack(alignment: .leading, spacing: 6) {
++                            HStack {
++                                Text(quotaWindowLabel(window, l10n)).fontWeight(.semibold)
++                                Spacer()
++                                Text(window.usedFraction.map { quotaPercent($0, locale: l10n.locale) } ?? l10n("mac.quota.unknown"))
++                                    .monospacedDigit()
++                            }
++                            if let used = window.usedFraction {
++                                ProgressView(value: max(0, min(1, used)))
++                                    .tint(quotaAccent(used))
++                                HStack {
++                                    Text(l10n("mac.quota.used", quotaPercent(used, locale: l10n.locale)))
++                                    if let remaining = window.remaining { Text("· " + l10n("mac.quota.remaining", quotaPercent(remaining, locale: l10n.locale))) }
++                                }.font(.caption).foregroundStyle(.secondary)
++                            }
++                            if let reset = window.resetAt {
++                                Text(l10n("mac.quota.reset", quotaDate(reset, locale: l10n.locale)))
++                                    .font(.caption).foregroundStyle(.secondary)
++                            }
++                        }
++                        .padding(10)
++                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
++                        .opacity(account.status == .stale ? 0.6 : 1)
++                    }
++                    DisclosureGroup(l10n("mac.quota.diagnostics")) {
++                        if let value = account.account { LabeledContent(l10n("mac.quota.account"), value: value) }
++                        if let value = account.observedAt { LabeledContent(l10n("mac.quota.observed"), value: quotaDate(value, locale: l10n.locale)) }
++                        if let value = account.nextAllowedAt { LabeledContent(l10n("mac.quota.next"), value: quotaDate(value, locale: l10n.locale)) }
++                    }
++                    }
++                }
++                if let credits = account.credits {
++                    Section(l10n("mac.quota.credits")) {
++                        LabeledContent(l10n("mac.quota.credits"), value: credits.unlimited == true ? l10n("mac.quota.unlimited") : (credits.balance ?? (credits.hasCredits.map { l10n($0 ? "mac.quota.yes" : "mac.quota.no") } ?? l10n("mac.quota.unknown"))))
++                        if let value = credits.limit { LabeledContent(l10n("mac.quota.creditsLimit"), value: value.formatted(.number.locale(l10n.locale))) }
++                        if let value = credits.used { Text(l10n("mac.quota.used", value.formatted(.number.locale(l10n.locale)))) }
++                        if let value = credits.usedFraction { Text(l10n("mac.quota.used", quotaPercent(value, locale: l10n.locale))) }
++                        if let value = credits.resetAt { Text(l10n("mac.quota.reset", quotaDate(value, locale: l10n.locale))) }
++                    }
++                }
++            }
 +            Section {
-+                SettingToggle(title: l10n("mac.quota.show"), subtitle: l10n("mac.quota.hint"), isOn: $quota.visible)
++                Toggle(l10n("mac.quota.floating"), isOn: Binding(get: { quota.floatingVisible }, set: { quota.floatingVisible = $0 }))
 +                HStack {
 +                    if !quota.networkEnabled { Footnote(l10n("mac.quota.offline")) }
 +                    Spacer()
@@ -387,42 +1662,29 @@ index 00000000..fe7e7ef7
 +                        .disabled(!quota.networkEnabled || quota.isRefreshing)
 +                }
 +            }
-+            if quota.snapshots.isEmpty {
-+                Section { Footnote(l10n("mac.quota.empty")) }
-+            }
-+            ForEach(quota.snapshots, id: \.id) { account in
-+                Section(account.displayName) {
-+                    LabeledContent(l10n("mac.quota.title"), value: quotaStatus(account, l10n))
-+                    if let value = account.account { LabeledContent(l10n("mac.quota.account"), value: value) }
-+                    if let value = account.plan { LabeledContent(l10n("mac.quota.plan"), value: value) }
-+                    LabeledContent(l10n("mac.quota.source"), value: account.source)
-+                    LabeledContent(l10n("mac.quota.fidelity"), value: l10n("mac.quota.fidelity.\(account.fidelity)"))
-+                    if let value = account.block { LabeledContent(l10n("mac.quota.block"), value: value) }
-+                    if let value = account.observedAt { LabeledContent(l10n("mac.quota.observed"), value: quotaDate(value, locale: l10n.locale)) }
-+                    if let value = account.nextAllowedAt { LabeledContent(l10n("mac.quota.next"), value: quotaDate(value, locale: l10n.locale)) }
-+                    if let credits = account.credits {
-+                        if let value = credits.limit { LabeledContent(l10n("mac.quota.creditsLimit"), value: value.formatted(.number.locale(l10n.locale))) }
-+                        if let value = credits.used { Text(l10n("mac.quota.used", value.formatted(.number.locale(l10n.locale)))) }
-+                        if let value = credits.usedFraction { Text(l10n("mac.quota.used", quotaPercent(value, locale: l10n.locale))) }
-+                        if let value = credits.resetAt { Text(l10n("mac.quota.reset", quotaDate(value, locale: l10n.locale))) }
-+                        LabeledContent(l10n("mac.quota.credits"), value: credits.unlimited == true ? l10n("mac.quota.unlimited") : (credits.balance ?? (credits.hasCredits.map { l10n($0 ? "mac.quota.yes" : "mac.quota.no") } ?? l10n("mac.quota.unknown"))))
-+                    }
-+                    ForEach(account.windows, id: \.id) { window in
-+                        VStack(alignment: .leading, spacing: 4) {
-+                            Text(window.label).fontWeight(.semibold)
-+                            if let used = window.usedFraction ?? window.used { Text(l10n("mac.quota.used", quotaPercent(used, locale: l10n.locale))) }
-+                            if let remaining = window.remaining { Text(l10n("mac.quota.remaining", quotaPercent(remaining, locale: l10n.locale))) }
-+                            if let reset = window.resetAt { Text(l10n("mac.quota.reset", quotaDate(reset, locale: l10n.locale))) }
-+                            if let duration = window.duration { LabeledContent(l10n("mac.quota.duration"), value: Duration.seconds(duration).formatted(.units(allowed: [.days, .hours, .minutes], width: .abbreviated).locale(l10n.locale))) }
-+                        }
-+                    }
-+                }
-+            }
 +        }
 +        .settingsForm()
 +        .onChange(of: quota.networkEnabled) { _, enabled in if enabled { quota.refresh() } }
 +        .onAppear { quota.refresh() }
 +    }
++}
++
++func quotaAccent(_ used: Double) -> Color {
++    used >= 0.9 ? Color(red: 251 / 255, green: 191 / 255, blue: 36 / 255) :
++        Color(red: 91 / 255, green: 140 / 255, blue: 1)
++}
++
++func quotaAge(_ date: Date, locale: Locale) -> String {
++    let formatter = RelativeDateTimeFormatter()
++    formatter.locale = locale
++    formatter.unitsStyle = .full
++    return formatter.localizedString(for: date, relativeTo: Date())
++}
++
++@MainActor func quotaWindowLabel(_ window: CodexQuotaWindow, _ l10n: Localizer) -> String {
++    guard let duration = window.duration, duration > 0 else { return window.label }
++    let length = Duration.seconds(duration).formatted(.units(allowed: [.days, .hours, .minutes, .seconds], width: .abbreviated).locale(l10n.locale))
++    return window.label == "Codex" ? length : "\(window.label) · \(length)"
 +}
 +
 +func quotaDate(_ date: Date, locale: Locale) -> String {
@@ -760,6 +2022,452 @@ index 00000000..d1995bac
 +                           waitingForRefresh: false)
 +    }
 +}
+diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
+new file mode 100644
+index 00000000..7398aa0e
+--- /dev/null
++++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
+@@ -0,0 +1,343 @@
++import AppKit
++import SwiftUI
++import Testing
++@testable import AgentSpeed
++@testable import AgentSpeedCore
++
++@Suite("Native quota notch", .serialized)
++@MainActor
++struct QuotaNotchTests {
++    private let now = Date(timeIntervalSince1970: 1_800_000_000)
++
++    private func snapshot(_ fraction: Double? = 0.21, status: CodexQuotaStatus = .ok,
++                          headlineID: String? = "main:18000") -> CodexQuotaSnapshot {
++        let windows = [
++            CodexQuotaWindow(id: "main:18000", label: "Codex", usedFraction: fraction,
++                             remaining: fraction.map { 1 - $0 }, used: fraction,
++                             resetAt: now.addingTimeInterval(3_060), duration: 18_000),
++            CodexQuotaWindow(id: "main:604800", label: "Codex", usedFraction: 0.52,
++                             remaining: 0.48, used: 0.52, resetAt: now.addingTimeInterval(100_000), duration: 604_800),
++        ]
++        return CodexQuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: status,
++                                  windows: windows, headlineId: headlineID, block: nil, account: nil,
++                                  plan: "Plus", observedAt: now.addingTimeInterval(-300), source: "local",
++                                  credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
++    }
++
++    private func reading(_ snapshot: CodexQuotaSnapshot? = nil, enabled: Bool = true) -> QuotaNotchReading {
++        QuotaNotchReading(snapshot: snapshot, networkEnabled: enabled, l10n: Localizer(preference: .en))
++    }
++
++    @Test func macReferenceMeasurementsAndTypographyAreNotWindowsSizes() {
++        #expect(NotchLayout.ringDiameter == 44)
++        #expect(abs(NotchLayout.sideBodyDepth - 186 * 44.0 / 117) < 0.000_001)
++        #expect(abs(NotchLayout.fontSize(27) - (27 * 44.0 / 117 / 0.714)) < 0.000_001)
++        #expect(NotchLayout.barHeight == 4)
++        #expect(NotchLayout.bodyDepth(for: .top) == NotchLayout.bodyDepth(for: .bottom))
++        #expect(NotchLayout.bodyDepth(for: .top) > NotchLayout.bodyDepth(for: .right))
++        #expect(NotchLayout.cellExtent == 44 + NotchLayout.ringLabelGap + NotchLayout.percentLineHeight)
++        #expect(QuotaFlareWalk.steps.count == 97)
++        #expect(QuotaFlareWalk.steps.first?.u == 0)
++        #expect(QuotaFlareWalk.steps.last?.u == 1)
++        #expect(QuotaFlareWalk.steps.last?.v == 1)
++    }
++
++    @Test func snapshotIdentityUnknownAndStaleRemainTruthful() {
++        let weekly = reading(snapshot(headlineID: "main:604800"))
++        #expect(weekly.fraction == 0.52)
++        #expect(weekly.percentage == "52%")
++        let unknown = reading()
++        #expect(unknown.fraction == nil)
++        #expect(unknown.percentage == "—")
++        #expect(unknown.stale)
++        #expect(unknown.status == unknown.l10n("mac.quota.empty"))
++        let stale = reading(snapshot(0.73, status: .stale))
++        #expect(stale.fraction == 0.73)
++        #expect(stale.percentage == "73%")
++        #expect(stale.stale)
++        #expect(stale.status == stale.l10n("mac.quota.status.stale"))
++        let offline = reading(snapshot(), enabled: false)
++        #expect(offline.status == offline.l10n("mac.quota.offline"))
++        #expect(offline.stale)
++        #expect(offline.observationDate == now.addingTimeInterval(-300))
++        #expect(stale.observationDate == now.addingTimeInterval(-300))
++        #expect(reading(snapshot()).observationDate == nil)
++        // Offline is not manufactured zero usage, nor a fabricated activity.
++        #expect(offline.fraction == 0.21)
++        #expect(reading(snapshot(nil)).fraction == nil)
++    }
++
++    @Test func resetCopyUsesTheMacReferenceRoundingAndWeekBoundary() {
++        let value = reading(snapshot())
++        #expect(value.resetText(now.addingTimeInterval(-1), now: now) == "Resetting…")
++        #expect(value.resetText(now.addingTimeInterval(42), now: now) == "Resets in 42 sec")
++        #expect(value.resetText(now.addingTimeInterval(3_040), now: now) == "Resets in 51 min")
++        #expect(!value.resetText(now.addingTimeInterval(3_599), now: now).contains("60 min"))
++        #expect(!value.resetText(now.addingTimeInterval(26 * 86_400), now: now).contains(":"))
++    }
++
++    @Test func everyEdgeKeepsItsRingLabelTailAndSeparateOrbInsideItsMonitor() {
++        let value = reading(snapshot())
++        let screen = CGRect(x: -1_440, y: -900, width: 1_440, height: 900)
++        for edge in NotchEdge.allCases {
++            let geometry = QuotaNotchGeometry(edge: edge, expanded: true, tooltip: true, settingsHovered: false,
++                                             cardHeight: value.cardHeight, available: screen.size)
++            #expect(screen.contains(geometry.panelFrame(on: screen)))
++            #expect(geometry.bodyPath.contains(geometry.ringCenter))
++            let labelBottom = geometry.ringCenter.y + NotchLayout.ringDiameter / 2
++                + NotchLayout.ringLabelGap + NotchLayout.percentLineHeight
++            #expect(labelBottom <= geometry.bodyRect.maxY)
++            #expect(geometry.hits(geometry.ringCenter))
++            #expect(geometry.region(at: geometry.ringCenter) == .cell)
++            #expect(!geometry.bodyPath.contains(geometry.orbCenter))
++            // The hole in the resting arc is not a giant circular hit target.
++            #expect(!geometry.hits(geometry.orbCenter))
++            #expect(geometry.region(at: geometry.orbCenter) == .settings)
++            let arcMiddle = QuotaSettingsArc.point(0.5, center: geometry.orbCenter, edge: edge)
++            #expect(geometry.hits(arcMiddle))
++            #expect(geometry.region(at: arcMiddle) == .settings)
++            #expect(geometry.tooltipPath.contains(CGPoint(x: geometry.cardRect.midX, y: geometry.cardRect.midY)))
++            #expect(!geometry.tooltipPath.contains(CGPoint(x: geometry.cardRect.minX + 1, y: geometry.cardRect.minY + 1)))
++            if edge.isVertical {
++                #expect(abs(geometry.tailRect.midY - geometry.ringCenter.y) < 0.000_001)
++                #expect(abs(geometry.bodyRect.height - NotchLayout.shapeLength(for: edge)) < 0.000_001)
++            } else {
++                #expect(abs(geometry.tailRect.midX - geometry.ringCenter.x) < 0.000_001)
++                #expect(abs(geometry.bodyRect.width - NotchLayout.shapeLength(for: edge)) < 0.000_001)
++            }
++        }
++    }
++
++    @Test func stationaryPointerRetargetsTheExposedCellAfterOpening() {
++        for edge in NotchEdge.allCases {
++            let value = reading(snapshot())
++            let folded = QuotaNotchGeometry(edge: edge, expanded: false, tooltip: false, settingsHovered: false,
++                                           cardHeight: value.cardHeight)
++            let opened = QuotaNotchGeometry(edge: edge, expanded: true, tooltip: false, settingsHovered: false,
++                                           cardHeight: value.cardHeight)
++            let wake = folded.bodyRect.insetBy(dx: edge.isVertical ? -NotchLayout.pillHotZone / 2 : 0,
++                                               dy: edge.isVertical ? 0 : -NotchLayout.pillHotZone / 2)
++            let cell = CGRect(x: opened.ringCenter.x - NotchLayout.ringDiameter / 2,
++                              y: opened.ringCenter.y - NotchLayout.ringDiameter / 2,
++                              width: NotchLayout.ringDiameter, height: NotchLayout.cellExtent)
++            let overlap = wake.intersection(cell)
++            #expect(!overlap.isNull)
++            let stationary = CGPoint(x: overlap.midX, y: overlap.midY)
++            let hover = QuotaNotchHover()
++            hover.move(to: folded.region(at: stationary))
++            #expect(hover.expanded && !hover.tooltip)
++            // The controller does this immediately after applying new bounds,
++            // using the same pointer, not waiting for a second mouse event.
++            hover.move(to: opened.region(at: stationary))
++            #expect(hover.region == .cell)
++            #expect(hover.tooltip)
++            hover.reset()
++        }
++    }
++
++    @Test func roundedFramesAndActualContentBoundsKeepEveryBezelFlush() {
++        let screen = CGRect(x: -1_441, y: -901, width: 1_441, height: 901)
++        for edge in NotchEdge.allCases {
++            let requested = QuotaNotchGeometry(edge: edge, expanded: true, tooltip: true, settingsHovered: false,
++                                              cardHeight: reading(snapshot()).cardHeight)
++            let frame = requested.panelFrame(on: screen)
++            #expect(frame.minX == frame.minX.rounded())
++            #expect(frame.minY == frame.minY.rounded())
++            #expect(frame.width == frame.width.rounded(.up))
++            #expect(frame.height == frame.height.rounded(.up))
++            let actual = CGSize(width: frame.width + 0.25, height: frame.height + 0.75)
++            let reconciled = QuotaNotchGeometry(edge: edge, expanded: true, tooltip: true, settingsHovered: false,
++                                               cardHeight: reading(snapshot()).cardHeight, actualSize: actual)
++            #expect(reconciled.size == actual)
++            switch edge {
++            case .right:
++                #expect(frame.maxX == screen.maxX)
++                #expect(abs(reconciled.bodyPath.boundingRect.maxX - actual.width) < 0.000_001)
++            case .left:
++                #expect(frame.minX == screen.minX)
++                #expect(abs(reconciled.bodyPath.boundingRect.minX) < 0.000_001)
++            case .top:
++                #expect(frame.maxY == screen.maxY)
++                #expect(abs(reconciled.bodyPath.boundingRect.minY) < 0.000_001)
++            case .bottom:
++                #expect(frame.minY == screen.minY)
++                #expect(abs(reconciled.bodyPath.boundingRect.maxY - actual.height) < 0.000_001)
++            }
++        }
++    }
++
++    @Test func settingsDiscReturnsThenArcMergesBeforeTheNotchFolds() async throws {
++        let hover = QuotaNotchHover()
++        hover.move(to: .settings)
++        hover.move(to: .outside)
++        try await Task.sleep(for: .milliseconds(300))
++        #expect(hover.expanded && !hover.handlesTuckedAway)
++        try await Task.sleep(for: .milliseconds(300))
++        #expect(hover.expanded && hover.handlesTuckedAway)
++        let tucked = QuotaNotchGeometry(edge: .right, expanded: true, tooltip: false, settingsHovered: false,
++                                       cardHeight: reading().cardHeight, handlesTuckedAway: hover.handlesTuckedAway)
++        #expect(tucked.orbPath.isEmpty)
++        try await Task.sleep(for: .milliseconds(400))
++        #expect(!hover.expanded)
++        hover.reset()
++    }
++
++    @Test func returningToTheNotchCancelsPendingHandleMergeAndFold() async throws {
++        let hover = QuotaNotchHover()
++        hover.move(to: .settings)
++        hover.move(to: .bar)
++        hover.move(to: .outside)
++        try await Task.sleep(for: .milliseconds(300))
++        hover.move(to: .cell)
++        try await Task.sleep(for: .milliseconds(750))
++        #expect(hover.expanded && hover.tooltip && !hover.handlesTuckedAway)
++        hover.reset()
++    }
++
++    @Test func foldedWakeZoneDoesNotBlockTheDesktopAndCanReopen() {
++        for edge in NotchEdge.allCases {
++            let geometry = QuotaNotchGeometry(edge: edge, expanded: false, tooltip: false, settingsHovered: false,
++                                             cardHeight: reading().cardHeight)
++            let center = CGPoint(x: geometry.bodyRect.midX, y: geometry.bodyRect.midY)
++            #expect(geometry.hits(center))
++            let wake = CGPoint(x: center.x - edge.outward.x * 12, y: center.y - edge.outward.y * 12)
++            #expect(!geometry.hits(wake))
++            #expect(geometry.region(at: wake) == .bar)
++            let hover = QuotaNotchHover()
++            hover.move(to: geometry.region(at: wake))
++            #expect(hover.expanded)
++            #expect(!hover.tooltip)
++            hover.reset()
++        }
++    }
++
++    @Test func tooltipCanBeTraversedAndFoldingHonorsBothGracePeriods() async throws {
++        let hover = QuotaNotchHover()
++        #expect(!hover.expanded)
++        hover.move(to: .cell)
++        #expect(hover.tooltip && hover.expanded)
++        hover.move(to: .outside)
++        try await Task.sleep(for: .milliseconds(180))
++        #expect(hover.tooltip && hover.expanded)
++        hover.move(to: .tooltip)
++        try await Task.sleep(for: .milliseconds(300))
++        #expect(hover.tooltip && hover.expanded)
++        hover.move(to: .outside)
++        try await Task.sleep(for: .milliseconds(300))
++        #expect(!hover.tooltip && hover.expanded)
++        try await Task.sleep(for: .milliseconds(200))
++        #expect(!hover.expanded)
++        hover.move(to: .bar)
++        #expect(hover.expanded)
++        hover.move(to: .settings)
++        #expect(hover.settingsHovered)
++        hover.move(to: .outside)
++        hover.reset()
++        try await Task.sleep(for: .milliseconds(500))
++        #expect(!hover.expanded && !hover.tooltip && !hover.settingsHovered)
++    }
++
++    @Test func hostingViewRejectsTransparentCornersAndTailBoundingBox() {
++        let value = reading(snapshot())
++        let hover = QuotaNotchHover()
++        hover.move(to: .cell)
++        let geometry = QuotaNotchGeometry(edge: .right, expanded: true, tooltip: true, settingsHovered: false,
++                                         cardHeight: value.cardHeight)
++        let view = QuotaNotchView(reading: value, geometry: geometry,
++                                 onSettings: {}, onEdge: { _ in }, onHide: {})
++        let container = NSView(frame: CGRect(origin: .zero, size: geometry.size))
++        let host = QuotaNotchHostingView(rootView: view)
++        host.geometry = geometry
++        host.sizingOptions = []
++        host.frame = container.bounds
++        container.addSubview(host)
++        let cardCorner = CGPoint(x: geometry.cardRect.minX + 1, y: geometry.cardRect.minY + 1)
++        let tailCorner = CGPoint(x: geometry.tailRect.maxX - 1, y: geometry.tailRect.minY + 1)
++        for point in [CGPoint(x: 1, y: 1), cardCorner, tailCorner] {
++            #expect(!geometry.hits(point))
++            #expect(host.hitTest(host.convert(point, to: container)) == nil)
++        }
++        hover.reset()
++    }
++
++    /// Native SwiftUI/AppKit rendering, not an SVG/HTML approximation. Set the
++    /// output directory to retain every 2x PNG for reference-image comparison:
++    /// AGENT_SPEED_NOTCH_ARTIFACTS=/tmp/quota-notch-native swift test --package-path macos --filter QuotaNotchTests
++    @Test func nativeOffscreenRenderingPreservesShapeAlphaAndUsageInk() throws {
++        _ = NSApplication.shared
++        let destination = ProcessInfo.processInfo.environment["AGENT_SPEED_NOTCH_ARTIFACTS"].map {
++            URL(fileURLWithPath: $0, isDirectory: true)
++        }
++        if let destination { try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true) }
++        for edge in NotchEdge.allCases {
++            for state in ["folded", "expanded", "tooltip", "gear", "stale", "unknown", "offline", "tucked"] {
++                let value = reading(state == "unknown" ? nil : snapshot(0.21, status: state == "stale" ? .stale : .ok),
++                                    enabled: state != "offline")
++                let hover = QuotaNotchHover()
++                if state == "tooltip" || state == "stale" || state == "unknown" || state == "offline" { hover.move(to: .cell) }
++                else if state == "gear" { hover.move(to: .settings) }
++                else if state != "folded" { hover.move(to: .bar) }
++                let geometry = QuotaNotchGeometry(edge: edge, expanded: hover.expanded, tooltip: hover.tooltip,
++                                                 settingsHovered: hover.settingsHovered, cardHeight: value.cardHeight,
++                                                 handlesTuckedAway: state == "tucked")
++                let content = QuotaNotchView(reading: value, geometry: geometry,
++                                            onSettings: {}, onEdge: { _ in }, onHide: {})
++                    .environment(\.accessibilityReduceMotion, true)
++                    .environment(\.accessibilityReduceTransparency, false)
++                let renderer = ImageRenderer(content: content)
++                renderer.scale = 2
++                renderer.isOpaque = false
++                let image = try #require(renderer.cgImage, "Native rendering must produce an image, not skip to a fixture")
++                let bitmap = NSBitmapImageRep(cgImage: image)
++                #expect(image.width == Int((geometry.size.width * 2).rounded(.up)))
++                #expect(image.height == Int((geometry.size.height * 2).rounded(.up)))
++                let corner = try #require(bitmap.colorAt(x: 1, y: 1)?.usingColorSpace(.sRGB))
++                #expect(corner.alphaComponent < 0.01)
++                let bodyCenter = try #require(bitmap.colorAt(x: Int(geometry.bodyRect.midX * 2),
++                                                              y: Int(geometry.bodyRect.midY * 2)))
++                #expect(bodyCenter.alphaComponent > 0.99)
++                if geometry.tooltip {
++                    let tailInk = try #require(bitmap.colorAt(x: Int(geometry.tailRect.midX * 2),
++                                                               y: Int(geometry.tailRect.midY * 2)))
++                    let tailHole = try #require(bitmap.colorAt(x: Int((geometry.tailRect.maxX - 1) * 2),
++                                                                y: Int((geometry.tailRect.minY + 1) * 2)))
++                    #expect(tailInk.alphaComponent > 0.99)
++                    #expect(tailHole.alphaComponent < 0.01)
++                }
++                if geometry.expanded {
++                    let centerInk = try #require(bitmap.colorAt(x: Int(geometry.orbCenter.x * 2),
++                                                                 y: Int(geometry.orbCenter.y * 2)))
++                    if geometry.settingsHovered {
++                        #expect(centerInk.alphaComponent > 0.99)
++                    } else {
++                        #expect(centerInk.alphaComponent < 0.01)
++                        let arc = QuotaSettingsArc.point(0.5, center: geometry.orbCenter, edge: edge)
++                        let arcInk = try #require(bitmap.colorAt(x: Int(arc.x * 2), y: Int(arc.y * 2)))
++                        #expect(geometry.handlesTuckedAway ? arcInk.alphaComponent < 0.01 : arcInk.alphaComponent > 0.99)
++                    }
++                }
++                if state != "folded" {
++                    let radius = (NotchLayout.ringDiameter - NotchLayout.trackStroke) / 2
++                    let x = Int((geometry.ringCenter.x + sin(0.3) * radius) * 2)
++                    let y = Int((geometry.ringCenter.y - cos(0.3) * radius) * 2)
++                    let ink = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
++                    #expect(ink.alphaComponent > 0.99)
++                    if state == "unknown" {
++                        #expect(abs(ink.redComponent - ink.greenComponent) < 0.03)
++                    } else if state == "stale" || state == "offline" {
++                        #expect(ink.greenComponent > 0.35 && ink.greenComponent < 0.55)
++                    } else {
++                        #expect(ink.greenComponent > 0.9)
++                        #expect(ink.redComponent < 0.1)
++                    }
++                }
++                if let destination {
++                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
++                    try png.write(to: destination.appendingPathComponent("native-notch-\(edge.rawValue)-\(state)@2x.png"))
++                }
++                hover.reset()
++            }
++        }
++        if let destination { print("Native notch PNGs: \(destination.path) — \(ProcessInfo.processInfo.operatingSystemVersionString)") }
++    }
++}
+diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
+new file mode 100644
+index 00000000..d384dd7c
+--- /dev/null
++++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
+@@ -0,0 +1,91 @@
++import Foundation
++import Testing
++@testable import AgentSpeed
++@testable import AgentSpeedCore
++
++@Suite("Quota presentation")
++@MainActor
++struct QuotaPresentationTests {
++    private func window(_ used: Double?, duration: TimeInterval? = 18_000, label: String = "Codex") -> CodexQuotaWindow {
++        CodexQuotaWindow(id: "window", label: label, usedFraction: used, remaining: used.map { 1 - $0 },
++                         used: used, resetAt: nil, duration: duration)
++    }
++
++    private func account(_ id: String, status: CodexQuotaStatus = .ok, windows: [CodexQuotaWindow] = [],
++                         block: String? = nil) -> CodexQuotaSnapshot {
++        CodexQuotaSnapshot(id: id, displayName: id, fidelity: "official", status: status, windows: windows,
++                           headlineId: windows.first?.id, block: block, account: nil, plan: nil,
++                           observedAt: nil, source: "local", credits: nil, nextAllowedAt: nil,
++                           waitingForRefresh: false)
++    }
++
++    @Test func flyoutShowsOnlyWarningsAndLimitsRows() {
++        let normal = account("normal", windows: [window(0.899)])
++        let unknown = account("unknown", windows: [window(nil)])
++        let empty = account("empty")
++        #expect(quotaWarningAccounts([normal, unknown, empty]).isEmpty)
++        let near = account("near", windows: [window(0.9)])
++        let blocked = account("blocked", block: "Paused")
++        let auth = account("auth", status: .needsAuth)
++        #expect(quotaWarningAccounts([normal, near, blocked, auth]).map(\.id) == ["near", "blocked"])
++        #expect(quotaWarningAccounts([auth]).map(\.id) == ["auth"])
++    }
++
++    @Test func persistedCooldownShowsWaitingAfterProviderRestart() async throws {
++        let suite = "QuotaPresentationTests.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        let auth = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        defer {
++            defaults.removePersistentDomain(forName: suite)
++            try? FileManager.default.removeItem(at: auth)
++        }
++        try Data(#"{"tokens":{"access_token":"test-token","account_id":"test-account"}}"#.utf8).write(to: auth)
++        let now = Date(timeIntervalSince1970: 1_700_000_000)
++        let first = CodexQuotaProvider(credentialURL: auth, defaults: UserDefaults(suiteName: suite)!, now: { now }) { request in
++            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
++            return (Data(#"{"rate_limit":{"primary_window":{"used_percent":10}}}"#.utf8), response)
++        }
++        #expect(await first.refresh().status == .ok)
++        let restarted = CodexQuotaProvider(credentialURL: auth, defaults: UserDefaults(suiteName: suite)!, now: { now }) { _ in
++            throw URLError(.cannotConnectToHost)
++        }
++        let waiting = await restarted.refresh()
++        #expect(waiting.status == .error)
++        #expect(waiting.waitingForRefresh)
++        let l10n = Localizer(preference: .en)
++        #expect(quotaStatus(waiting, l10n) == l10n("mac.quota.status.waiting"))
++    }
++
++    @Test func windowLabelsUseLocalizedDurationsAndKeepAdditionalNames() {
++        let english = Localizer(preference: .en)
++        let fiveHours = quotaWindowLabel(window(0.5), english)
++        let weekly = quotaWindowLabel(window(0.5, duration: 604_800), english)
++        #expect(fiveHours.contains("5"))
++        #expect(!fiveHours.contains("18000"))
++        #expect(weekly.contains("7"))
++        #expect(!weekly.contains("604800"))
++        #expect(quotaWindowLabel(window(nil, duration: nil, label: "Spark"), english) == "Spark")
++        #expect(quotaWindowLabel(window(nil, duration: 18_000, label: "Spark"), english).hasPrefix("Spark · "))
++    }
++
++    @Test func statusAndUnknownReadingsRemainDistinct() {
++        let english = Localizer(preference: .en)
++        #expect(quotaStatus(account("signed-out", status: .needsAuth), english) == english("mac.quota.status.needsAuth"))
++        #expect(quotaStatus(account("stale", status: .stale, windows: [window(0.2)]), english) == english("mac.quota.status.stale"))
++        #expect(window(nil).usedFraction == nil)
++        #expect(quotaPercent(0, locale: english.locale) != english("mac.quota.unknown"))
++    }
++
++    @Test func floatingVisibilitySurvivesControllerRecreation() throws {
++        let suite = "QuotaPresentationTests.visibility.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let first = QuotaController(defaults: defaults)
++        #expect(first.floatingVisible)
++        first.floatingVisible = false
++        let restored = QuotaController(defaults: defaults)
++        #expect(!restored.floatingVisible)
++        restored.floatingVisible = true
++        #expect(QuotaController(defaults: defaults).floatingVisible)
++    }
++}
 diff --git a/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
 new file mode 100644
 index 00000000..ab8cba6b
@@ -994,12 +2702,24 @@ index 00000000..ab8cba6b
 +    }
 +
 +}
+diff --git a/macos/scripts/build-app.sh b/macos/scripts/build-app.sh
+index 300ed6d2..5ee4c047 100755
+--- a/macos/scripts/build-app.sh
++++ b/macos/scripts/build-app.sh
+@@ -180,6 +180,7 @@ plutil -lint -s "$APP_DIR/Contents/Info.plist" || die "The generated Info.plist
+ 
+ printf 'APPL????' > "$APP_DIR/Contents/PkgInfo"
+ cp "$ICON_FILE" "$APP_DIR/Contents/Resources/AgentSpeed.icns"
++cp "$MACOS_DIR/Resources/Codenotch-LICENSE.txt" "$APP_DIR/Contents/Resources/Codenotch-LICENSE.txt"
+ for arch in x86_64 aarch64; do
+     collector="$COLLECTORS_DIR/linux-$arch/agent-speed-collector"
+     [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 00000000..1d080638
+index 00000000..4124bae7
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,63 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -1039,6 +2759,18 @@ index 00000000..1d080638
 +
 +An authentication failure must not be represented as zero usage. If old data is retained, it must be visibly stale; a previous timestamp must never be advanced on an unsuccessful refresh. Rate limiting is a transient failure, not an empty successful observation. Respect server retry guidance and avoid repeatedly querying the endpoint while it is rate-limited.
 +After restart, a successful poll's persisted interval can block a request even though the observation itself was not persisted. In that case `waitingForRefresh` is true until polling is allowed. Actual 429, decoding, network and service failures have `waitingForRefresh` false, including during a persisted failure backoff; they must remain visibly errors (or stale when an observation exists). Unknown legacy schedule provenance is not reported as a successful wait.
++
++## Desktop presentation
++
++Quota is presented in the existing Settings window as a provider card with progress, following the supplied `desktop-settings.png` design. Show the headline window selected by `headlineId`, its usage and reset when known, and the other available windows and account details without treating provider response order as window identity. Identify windows by their labels and durations; do not assume a primary slot is five-hour or a secondary slot is weekly. Display used and remaining together where space permits.
++
++An optional, separate edge-attached floating quota renderer may also be enabled. Its visual appearance must reproduce [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c), while using this contract's actual Codex snapshot and status semantics. It is a presentation of the same local account data, not another provider, quota history, network source, or change to polling. Do not show fabricated providers or example readings as real data; currently this contract describes the Codex provider, not an implementation of every provider or the mobile document's full schema.
++
++The existing transient menu-bar popover or tray flyout may show a compact quota summary only when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers; open the existing Settings quota page for details.
++
++Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
++
++Unknown usage and reset values are shown as `—` or unknown, never as zero or an invented reset. A known zero remains zero. Show non-official fidelity with `~`; status takes precedence over numerical readings. Retained readings must be visibly stale, with their original observation time or age, and must not appear fresh. Show authentication, access, unsupported, waiting, and error states distinctly rather than implying a successful reading. Display a known block separately from window usage, including its reason when available; do not infer a block from missing data or conflate it with a percentage. Progress graphics may be bounded visually, but labels must preserve reported over-limit usage and negative remaining values.
 +
 +## Codex usage endpoint
 +

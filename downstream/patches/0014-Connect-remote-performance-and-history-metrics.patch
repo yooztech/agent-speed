@@ -5,7 +5,7 @@ Subject: [PATCH 14/19] Connect remote performance and history metrics
 
 ---
  README.md                                     |  40 +-
- docs/shared-collector.md                      |   2 +
+ docs/shared-collector.md                      |    2 +
  linux/collector/CMakeLists.txt                |  30 +-
  linux/collector/main.cpp                      | 234 +-------
  linux/collector/protocol.cpp                  |  66 ++-
@@ -16,19 +16,19 @@ Subject: [PATCH 14/19] Connect remote performance and history metrics
  .../include/agentspeed/history_analyzer.hpp   |  23 +
  .../include/agentspeed/history_canonical.hpp  |  33 ++
  .../core/include/agentspeed/history_store.hpp |   6 +
- linux/core/include/agentspeed/snapshot.hpp    |   3 +
+ linux/core/include/agentspeed/snapshot.hpp    |    3 +
  linux/core/src/engine.cpp                     |   7 +-
  linux/core/src/history_analyzer.cpp           | 201 ++++++-
  linux/core/src/history_canonical.cpp          | 172 ++++++
  linux/core/src/history_store.cpp              |  49 +-
- linux/core/src/monitor_snapshot.cpp           |   9 +
+ linux/core/src/monitor_snapshot.cpp           |   11 +
  linux/tests/CMakeLists.txt                    |  10 +-
  linux/tests/collector_daemon_test.cpp         | 375 ++++++++++++
  linux/tests/collector_integration_test.cpp    | 123 ++++
- linux/tests/collector_publisher_test.cpp      | 548 ++++++++++++++++++
+ linux/tests/collector_publisher_test.cpp      |  755 +
  linux/tests/collector_test.cpp                |  60 ++
  linux/tests/engine_fixture_test.cpp           |  21 +
- linux/tests/sampling_test.cpp                 | 259 +++++++++
+ linux/tests/sampling_test.cpp                 |  272 +
  linux/tests/shared_history_test.cpp           | 463 +++++++++++++++
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 +++
  .../AgentSpeed/App/RemoteSnapshot.swift       |  77 ++-
@@ -49,7 +49,7 @@ Subject: [PATCH 14/19] Connect remote performance and history metrics
  .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 +++++
  .../EngineBehaviorTests.swift                 |   4 +
  spec/METRICS.md                               |  26 +-
- spec/NETWORK.md                               |  63 +-
+ spec/NETWORK.md                               |   75 +-
  spec/strings.json                             |   6 +
  .../src/AgentSpeed.Core/Engine/EngineFrame.cs |   1 +
  .../src/AgentSpeed.Core/Engine/SpeedEngine.cs |   3 +
@@ -75,7 +75,7 @@ Subject: [PATCH 14/19] Connect remote performance and history metrics
  .../RemoteProtocolLifecycleTests.cs           |   2 +-
  .../Perf/PerfHistoryTests.cs                  |  55 ++
  .../PerfPerformanceSectionTests.cs            |  28 +
- 71 files changed, 3482 insertions(+), 319 deletions(-)
+ 71 files changed, 3716 insertions(+), 320 deletions(-)
  create mode 100644 linux/core/include/agentspeed/history_canonical.hpp
  create mode 100644 linux/core/src/history_canonical.cpp
  create mode 100644 linux/tests/collector_daemon_test.cpp
@@ -165,18 +165,18 @@ index 35193b81..9f9eee7e 100644
  8.546 seconds, but no history frame arrived within 90 seconds. During a subsequent 10-second sample, the collector used
  12.63 seconds of CPU time and about 106,988 KiB RSS. The history scan was still running, so these figures describe an ongoing
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
-index 9044b287..68370e9b 100644
+index bb3ab486..2d78d6e0 100644
 --- a/docs/shared-collector.md
 +++ b/docs/shared-collector.md
-@@ -14,6 +14,8 @@ Each subscription has its own input buffer, named timezone, history generation a
+@@ -13,6 +13,8 @@
+ Each subscription has its own input buffer, named timezone, history generation and bounded nonblocking output. A subscriber compares the view's projection generation, not its text, so an unchanged projection is never re-sent and a changed one is always delivered whole; the worker advances that generation only when the newly serialized projection differs from the cached one. Unsent snapshots may coalesce. History and completion frames do not silently coalesce or disappear: a subscriber exceeding the output bound is disconnected and receives a nonzero interrupted-stream failure. Consumers must treat interruption as an incomplete stream and reconnect. A destructive completion drain occurs once per sampler tick and is fanned out to connected subscribers.
  
  The live monitor retains a rolling 48-hour input window so changing a viewer's day boundary does not rebuild discovery, parsing, performance or traffic state. Calendar totals use each view's day start, including offset transitions. History projections are per view; live performance baselines retain the existing host-local-calendar meaning and do not change with an SSH viewer's timezone. Physical traffic sampling and its baseline remain shared; viewing it does not resample the machine. Unknown rates, partial histories and offline gaps retain the existing v1 semantics.
- 
-+Daily history peaks are observed live, not derived from log aggregates. For each view, the sampler raises that view time zone's `peakToday` maximum per calendar day and the history worker persists it in the private cache's `peak_days(zone, day, peak)` table. A projection merges only the peaks stored for its own time zone; the unnamed local view uses the empty zone key. Days the daemon did not observe while running stay unknown (`null`); the collector does not fabricate or backfill them from logs. A local time-zone identity change clears the unnamed view's stored peaks with its other cached projections.
 +
++Daily history peaks are observed live, not derived from log aggregates. For each view, the sampler raises that view time zone's `peakToday` maximum per calendar day and the history worker persists it in the private cache's `peak_days(zone, day, peak)` table. A projection merges only the peaks stored for its own time zone; the unnamed local view uses the empty zone key. Days the daemon did not observe while running stay unknown (`null`); the collector does not fabricate or backfill them from logs. A local time-zone identity change clears the unnamed view's stored peaks with its other cached projections.
+ 
  Any connected subscriber or live/pending authorized lease keeps the daemon active. Closing one bridge's stdin removes only that subscriber. A confirmed lease survives the last SSH exit until expiry, explicit unsubscribe, replacement, terminal relay rejection or bounded invalid-snapshot failure. With no subscribers or leases the daemon exits after 30 seconds. Candidate leases awaiting their first successful publish expire after 75 seconds even when the SSH channel remains open; disconnecting the last waiter cancels an unconfirmed candidate.
  
- Detachment closes inherited SSH descriptors, redirects stdio to `/dev/null`, uses a readiness pipe, and ignores SIGHUP. This is not a guarantee against systemd `KillUserProcesses`, session cgroup destruction, container termination, host shutdown or account policy. Supported background operation requires that policy to allow detached same-user processes to survive the SSH session. No root service or linger setting is installed. A host policy that kills those processes requires operator action outside this feature; re-open SSH and inspect relay freshness rather than reporting continued collection.
 diff --git a/linux/collector/CMakeLists.txt b/linux/collector/CMakeLists.txt
 index b64cb4d1..1eb5023e 100644
 --- a/linux/collector/CMakeLists.txt
@@ -904,10 +904,10 @@ index c67262c7..9f9a3c06 100644
      std::map<int, std::string> priceTables() const;
      void savePriceBindings(const std::map<std::string, int>& bindings, const std::function<std::string(int)>& tableData);
 diff --git a/linux/core/include/agentspeed/snapshot.hpp b/linux/core/include/agentspeed/snapshot.hpp
-index 4fa70e58..1227b36c 100644
+index b7b8d676..6719df1b 100644
 --- a/linux/core/include/agentspeed/snapshot.hpp
 +++ b/linux/core/include/agentspeed/snapshot.hpp
-@@ -43,6 +43,7 @@ struct AgentRow {
+@@ -43,6 +43,7 @@
      // METRICS 6.9 Live thinking: this agent's reasoning tokens per second and share.
      double liveThinking = 0;
      double thinkingShare = 0;
@@ -915,7 +915,7 @@ index 4fa70e58..1227b36c 100644
  };
  
  // 性能 and 思考 of one set of sources (METRICS 6.9 Sets and groups, Live thinking): an orb, the tray, a board.
-@@ -78,6 +79,8 @@ struct SourceRow {
+@@ -78,6 +79,8 @@
      double liveOutput = 0;
      double liveTotal = 0;
      bool liveRateComplete = true;
@@ -1556,10 +1556,10 @@ index 711678e8..9e0994c2 100644
      }
      db_.execute("DELETE FROM meta WHERE key<>'schema'");
 diff --git a/linux/core/src/monitor_snapshot.cpp b/linux/core/src/monitor_snapshot.cpp
-index 90417d3f..a35c9c74 100644
+index 90417d3f..d8a967ee 100644
 --- a/linux/core/src/monitor_snapshot.cpp
 +++ b/linux/core/src/monitor_snapshot.cpp
-@@ -50,6 +50,8 @@ void Monitor::scoreAgents(Snapshot& snap, const std::vector<engine::Response>& r
+@@ -50,6 +50,8 @@
          if (const auto it = thinking.perAgent.find(row.id); it != thinking.perAgent.end()) {
              row.liveThinking = it->second.liveThinking();
              row.thinkingShare = it->second.thinkingShare();
@@ -1568,7 +1568,16 @@ index 90417d3f..a35c9c74 100644
          }
          const auto& info = agents_.at(row.id);
          const auto* reader = actionsOf(row.id);
-@@ -268,6 +270,11 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
+@@ -193,6 +195,8 @@
+     const auto today = engine::todayStats(responses, todayStartMs, nowMs);
+     snap.todayOutput = today.output;
+     snap.todayInput = today.input;
++    snap.todayMeasuredOutput = today.measuredOutput;
++    snap.todayMeasuredMs = today.measuredMs;
+     snap.todayCachedInput = today.cachedInput;
+     snap.todayCacheWriteInput = today.cacheWriteInput;
+     snap.todayReasoning = today.reasoning;
+@@ -268,6 +272,11 @@
          row.available = available;
          row.sessions = sessionCount(kind, todayStartMs);
          if (row.enabled) {
@@ -1580,7 +1589,7 @@ index 90417d3f..a35c9c74 100644
              std::vector<engine::Response> own, ownToday;
              for (const auto& r : responses) {
                  if (r.source != kind) continue;
-@@ -281,6 +288,8 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
+@@ -281,6 +290,8 @@
              row.todayCacheWriteInput = stats.cacheWriteInput;
              row.todayReasoning = stats.reasoning;
              row.todayRequests = stats.requests;
@@ -2131,10 +2140,10 @@ index 6eca14f2..f70a18a2 100644
 +}
 diff --git a/linux/tests/collector_publisher_test.cpp b/linux/tests/collector_publisher_test.cpp
 new file mode 100644
-index 00000000..b9f9350b
+index 00000000..255b0776
 --- /dev/null
 +++ b/linux/tests/collector_publisher_test.cpp
-@@ -0,0 +1,548 @@
+@@ -0,0 +1,755 @@
 +#include <gtest/gtest.h>
 +#include "publisher.hpp"
 +#include "agentspeed/json.hpp"
@@ -2149,6 +2158,16 @@ index 00000000..b9f9350b
 +}
 +bool accepted(const std::string& line) { agentspeed::json::Document d; return d.parse(line) && d.root()["accepted"].isTrue(); }
 +template<class F> bool eventually(F f) { for(int i=0;i<100;++i) {if(f()) return true; std::this_thread::sleep_for(std::chrono::milliseconds(5));} return false; }
++std::string continuitySubscribe(std::int64_t expires = 2593000000LL, const std::string& request = "r", const std::string& lease = "l", const std::string& zone = "UTC") {
++    auto line = subscribe(request, lease);
++    line.replace(line.find("2000000"), 7, std::to_string(expires));
++    line.replace(line.find("\"UTC\""), 5, "\"" + zone + "\"");
++    line.pop_back();
++    return line + ",\"continuity\":true}";
++}
++std::string usageRequested(const std::string& id = "u1", const std::string& date = "1970-01-01", const std::string& zone = "UTC") {
++    return "{\"ok\":true,\"usageRequested\":{\"requestId\":\"" + id + "\",\"usageDate\":\"" + date + "\",\"timezone\":\"" + zone + "\"}}";
++}
 +}
 +TEST(CollectorPublisher, RejectsUntrustedOriginAndControlVersion) {
 +    collector::Publisher::Options o; o.clock=[] {return 1000000;}; o.transport=[](const auto&,const auto&){return collector::Publisher::Result{200};}; collector::Publisher p(o);
@@ -2683,6 +2702,203 @@ index 00000000..b9f9350b
 +    std::this_thread::sleep_for(std::chrono::milliseconds(150));
 +    EXPECT_EQ(calls.load(), 3);
 +}
++
++TEST(CollectorPublisher, ContinuityRequiresExplicitTrueAndAbsoluteThirtyDayLimit) {
++    collector::Publisher::Options options; options.clock = [] { return 1000000; };
++    options.transport = [](const auto&, const auto&) { return collector::Publisher::Result{200}; };
++    collector::Publisher publisher(options);
++    auto caps = publisher.control("{\"version\":1,\"type\":\"capabilities\",\"requestId\":\"c\"}", 1, 1000000);
++    ASSERT_EQ(caps.size(), 1u);
++    EXPECT_NE(caps[0].find("\"live_activity_continuity_v1\""), std::string::npos);
++    EXPECT_NE(caps[0].find("\"activityMaxLeaseSeconds\":2592000"), std::string::npos);
++    auto longLegacy = continuitySubscribe();
++    longLegacy.erase(longLegacy.find(",\"continuity\"")); longLegacy += "}";
++    EXPECT_FALSE(accepted(publisher.control(longLegacy, 1, 1000000).at(0)));
++    for (const auto& mode : {"false", "1", "\"true\"", "null"}) {
++        auto line = continuitySubscribe(); line.replace(line.find("true}"), 4, mode);
++        EXPECT_FALSE(accepted(publisher.control(line, 1, 1000000).at(0)));
++    }
++    EXPECT_FALSE(accepted(publisher.control(continuitySubscribe(2593000001LL), 1, 1000000).at(0)));
++    EXPECT_FALSE(accepted(publisher.control(continuitySubscribe(1000000), 1, 1000000).at(0)));
++    EXPECT_TRUE(publisher.control(continuitySubscribe(), 1, 1000000).empty());
++    // A retry cannot change mode under the same lease, even when both expiries fit eight hours.
++    collector::Publisher other(options);
++    EXPECT_TRUE(other.control(subscribe(), 1, 1000000).empty());
++    EXPECT_FALSE(accepted(other.control(continuitySubscribe(2000000, "r2"), 1, 1000000).at(0)));
++}
++
++namespace {
++class ContinuityPublisher : public ::testing::Test {
++protected:
++    std::atomic<std::int64_t> now{1000000};
++    std::mutex mutex;
++    std::vector<std::string> bodies;
++    std::vector<collector::Publisher::Result> responses;
++    std::unique_ptr<collector::Publisher> publisher;
++    collector::View view;
++    void start(const std::string& zone = "UTC", bool continuity = true) {
++        collector::Publisher::Options options;
++        options.clock = [&] { return now.load(); };
++        options.transport = [&](const auto&, const auto& body) {
++            std::lock_guard<std::mutex> lock(mutex);
++            auto index = bodies.size(); bodies.push_back(body);
++            return index < responses.size() ? responses[index] : collector::Publisher::Result{200};
++        };
++        publisher = std::make_unique<collector::Publisher>(options);
++        ASSERT_TRUE(publisher->control(continuity ? continuitySubscribe(now + 2592000000LL, "r", "l", zone) : subscribe(), 1, now).empty());
++        view = publisher->views().at(0);
++    }
++    void sample(int generating = 0, bool partial = false, std::int64_t input = 100, std::int64_t measuredMs = 2000) {
++        collector::Sample sample;
++        sample.snapshot.nowMs = now;
++        sample.snapshot.generating = generating;
++        sample.snapshot.todayInput = input;
++        sample.snapshot.todayOutput = 200;
++        sample.snapshot.todayMeasuredOutput = measuredMs ? 80 : 0;
++        sample.snapshot.todayMeasuredMs = measuredMs;
++        sample.snapshot.warnings.partialHistory = partial;
++        publisher->sample(view, sample);
++    }
++    void sent(std::size_t count) {
++        ASSERT_TRUE(eventually([&] { std::lock_guard<std::mutex> lock(mutex); return bodies.size() == count; }));
++        // The transport records arrival before the worker commits its success/backoff state.
++        std::this_thread::sleep_for(std::chrono::milliseconds(120));
++    }
++    std::string body(std::size_t index) { std::lock_guard<std::mutex> lock(mutex); return bodies.at(index); }
++};
++}
++
++TEST_F(ContinuityPublisher, QuietRoutineRequestsUsageOnceWithoutExtraAttemptOrScan) {
++    responses = {{200, usageRequested()}, {200, usageRequested()}, {200}};
++    start(); sample(); sent(1);
++    EXPECT_EQ(publisher->replies().size(), 1u);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(body(0))); EXPECT_FALSE(doc.root()["usage"].valid());
++    now += 9999; sample();
++    std::this_thread::sleep_for(std::chrono::milliseconds(120));
++    { std::lock_guard<std::mutex> lock(mutex); EXPECT_EQ(bodies.size(), 1u); }
++    now += 1; sample(); sent(2);
++    ASSERT_TRUE(doc.parse(body(1))); auto usage = doc.root()["usage"];
++    EXPECT_EQ(usage.size(), 9u); EXPECT_EQ(usage["requestId"].string(), "u1");
++    EXPECT_EQ(usage["input"].truncated(), 100); EXPECT_EQ(usage["output"].truncated(), 200);
++    EXPECT_EQ(usage["measuredOutput"].truncated(), 80); EXPECT_EQ(usage["measuredMs"].truncated(), 2000);
++    EXPECT_TRUE(usage["complete"].isTrue()); EXPECT_EQ(usage["sampledAt"].truncated(), now.load());
++    now += 10000; sample(); sent(3);
++    ASSERT_TRUE(doc.parse(body(2))); EXPECT_FALSE(doc.root()["usage"].valid());
++    // This test supplies Snapshot directly: no sampler/history refresh or extra request is involved.
++}
++
++TEST_F(ContinuityPublisher, EdgesDeferUsageAndFailureRetriesFreshAtNormalBackoffSlot) {
++    responses = {{200, usageRequested()}, {200, usageRequested()}, {502}, {200, usageRequested("u2")}, {204}};
++    start(); sample(); sent(1);
++    now += 1; sample(1); sent(2);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(body(1))); EXPECT_FALSE(doc.root()["usage"].valid());
++    now += 10000; sample(1, true, 101); sent(3);
++    ASSERT_TRUE(doc.parse(body(2))); EXPECT_EQ(doc.root()["usage"]["input"].truncated(), 101);
++    EXPECT_FALSE(doc.root()["usage"]["complete"].isTrue());
++    now += 9999; sample(0); // Even an edge cannot bypass failure backoff.
++    std::this_thread::sleep_for(std::chrono::milliseconds(120));
++    { std::lock_guard<std::mutex> lock(mutex); EXPECT_EQ(bodies.size(), 3u); }
++    now += 1; sample(1, false, 150, 0); sent(4);
++    ASSERT_TRUE(doc.parse(body(3))); auto usage = doc.root()["usage"];
++    EXPECT_EQ(usage["requestId"].string(), "u1"); EXPECT_EQ(usage["input"].truncated(), 150);
++    EXPECT_EQ(usage["measuredMs"].truncated(), 0); EXPECT_TRUE(usage["complete"].isTrue());
++    EXPECT_EQ(usage["sampledAt"].truncated(), now.load());
++    now += 10000; sample(1); sent(5);
++    ASSERT_TRUE(doc.parse(body(4))); EXPECT_EQ(doc.root()["usage"]["requestId"].string(), "u2");
++    now += 10000; sample(1); sent(6);
++    ASSERT_TRUE(doc.parse(body(5))); EXPECT_FALSE(doc.root()["usage"].valid());
++}
++
++TEST_F(ContinuityPublisher, MidnightAndMismatchedTimezoneReturnExplicitNullReceipt) {
++    now = 86395000;
++    responses = {{200, usageRequested()}, {200, usageRequested("u2", "1970-01-02", "America/Los_Angeles")}, {200}};
++    start(); sample(); sent(1);
++    now += 10000; sample(); sent(2);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(body(1)));
++    auto usage = doc.root()["usage"];
++    EXPECT_EQ(usage["usageDate"].string(), "1970-01-01");
++    for (const auto& field : {"input", "output", "measuredOutput", "measuredMs"}) EXPECT_TRUE(usage[field].isNull());
++    EXPECT_FALSE(usage["complete"].isTrue()); EXPECT_EQ(usage["sampledAt"].truncated(), now.load());
++    now += 10000; sample(); sent(3);
++    ASSERT_TRUE(doc.parse(body(2))); usage = doc.root()["usage"];
++    EXPECT_EQ(usage["timezone"].string(), "America/Los_Angeles"); EXPECT_TRUE(usage["input"].isNull());
++    EXPECT_FALSE(usage["complete"].isTrue());
++}
++
++TEST_F(ContinuityPublisher, BindingTimezoneDefinesRequestedCalendarAndConservativeCoverage) {
++    responses = {{200, usageRequested("u1", "1969-12-31", "America/Los_Angeles")}, {200}};
++    start("America/Los_Angeles"); sample(); sent(1);
++    now += 10000;
++    collector::Sample s; s.snapshot.nowMs = now; s.snapshot.todayInput = 55; s.snapshot.todayOutput = 90;
++    s.snapshot.warnings.unreadableFiles = 1;
++    publisher->sample(view, s); sent(2);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(body(1))); auto usage = doc.root()["usage"];
++    EXPECT_EQ(usage["input"].truncated(), 55); EXPECT_EQ(usage["output"].truncated(), 90);
++    EXPECT_EQ(usage["measuredMs"].truncated(), 0); EXPECT_FALSE(usage["complete"].isTrue());
++}
++
++TEST_F(ContinuityPublisher, RequestsRequireBoundedSuccessful200AndRealDate) {
++    responses = {{201, usageRequested()}, {200, "{\"ok\":false,\"usageRequested\":{\"requestId\":\"x\",\"usageDate\":\"1970-01-01\",\"timezone\":\"UTC\"}}"},
++        {200, usageRequested("bad", "1970-02-30")}, {200, usageRequested(std::string(129, 'x'))},
++        {200, usageRequested("bad", "1970-01-01", "../UTC")}, {200, usageRequested() + std::string(4096, ' ')},
++        {200, "{malformed"}, {200, usageRequested()}, {200}};
++    start();
++    for (std::size_t i = 0; i < responses.size(); ++i) {
++        if (i) now += 10000;
++        sample(); sent(i + 1);
++        agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(body(i)));
++        EXPECT_EQ(doc.root()["usage"].valid(), i == responses.size() - 1);
++    }
++}
++
++TEST_F(ContinuityPublisher, LegacyIgnoresUsageRequest) {
++    responses = {{200, usageRequested()}, {200}};
++    start("UTC", false); sample(1); sent(1);
++    now += 10000; sample(1); sent(2);
++    agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(body(1))); EXPECT_FALSE(doc.root()["usage"].valid());
++}
++
++TEST(CollectorPublisher, ContinuityCancelledInflightResponseCannotSeedReplacementUsage) {
++    std::atomic<std::int64_t> now{1000000};
++    std::atomic<bool> entered{false}, release{false}; std::atomic<int> calls{0};
++    std::mutex mutex; std::string replacementBody;
++    collector::Publisher::Options options; options.clock = [&] { return now.load(); };
++    options.transport = [&](const auto&, const auto& body) {
++        if (++calls == 1) { entered = true; while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1)); return collector::Publisher::Result{200, usageRequested()}; }
++        { std::lock_guard<std::mutex> lock(mutex); replacementBody = body; }
++        return collector::Publisher::Result{200};
++    };
++    collector::Publisher publisher(options);
++    ASSERT_TRUE(publisher.control(continuitySubscribe(), 1, now).empty());
++    auto view = publisher.views().at(0); collector::Sample s; s.snapshot.nowMs = now;
++    publisher.sample(view, s);
++    const bool started = eventually([&] { return entered.load(); });
++    if (!started) { release = true; FAIL() << "transport did not start"; }
++    auto cancel = publisher.control("{\"version\":1,\"type\":\"live_activity_unsubscribe\",\"controlVersion\":2,\"requestId\":\"u\",\"leaseId\":\"l\"}", 1, now);
++    EXPECT_TRUE(accepted(cancel.at(0)));
++    EXPECT_TRUE(publisher.control(continuitySubscribe(2593000000LL, "r2", "l2"), 1, now).empty());
++    now += 1; s.snapshot.nowMs = now; publisher.sample(view, s); release = true;
++    ASSERT_TRUE(eventually([&] { return calls == 2; }));
++    std::vector<std::pair<std::uint64_t, std::string>> replies;
++    ASSERT_TRUE(eventually([&] { auto batch = publisher.replies(); replies.insert(replies.end(), batch.begin(), batch.end()); return replies.size() == 2; }));
++    EXPECT_FALSE(accepted(replies[0].second)); EXPECT_TRUE(accepted(replies[1].second));
++    std::lock_guard<std::mutex> lock(mutex); agentspeed::json::Document doc;
++    ASSERT_TRUE(doc.parse(replacementBody)); EXPECT_FALSE(doc.root()["usage"].valid());
++}
++
++TEST_F(ContinuityPublisher, ConfirmedBindingOutlivesAppleDestinationButNeverRenewsItsExpiry) {
++    const auto expires = now + 2592000000LL;
++    start(); sample(); sent(1);
++    auto replies = publisher->replies(); ASSERT_EQ(replies.size(), 1u); EXPECT_TRUE(accepted(replies[0].second));
++    publisher->disconnected(1);
++    now += 28800001; sample(); sent(2);
++    EXPECT_TRUE(publisher->authorized(now));
++    EXPECT_TRUE(accepted(publisher->control(continuitySubscribe(expires, "retry"), 2, now).at(0)));
++    EXPECT_FALSE(accepted(publisher->control(continuitySubscribe(now + 2592000000LL, "renew"), 2, now).at(0)));
++    now = expires; EXPECT_FALSE(publisher->authorized(now));
++    auto cancelled = publisher->control("{\"version\":1,\"type\":\"live_activity_unsubscribe\",\"controlVersion\":2,\"requestId\":\"stop\",\"leaseId\":\"l\"}", 2, now);
++    EXPECT_TRUE(accepted(cancelled.at(0))); EXPECT_TRUE(publisher->views().empty());
++}
 diff --git a/linux/tests/collector_test.cpp b/linux/tests/collector_test.cpp
 index b8f1673d..db077a21 100644
 --- a/linux/tests/collector_test.cpp
@@ -2806,10 +3022,10 @@ index 8121f0bb..9421b2e5 100644
  constexpr double kTolerance = 1e-6;
 diff --git a/linux/tests/sampling_test.cpp b/linux/tests/sampling_test.cpp
 new file mode 100644
-index 00000000..8089b407
+index 00000000..ef706aaa
 --- /dev/null
 +++ b/linux/tests/sampling_test.cpp
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,272 @@
 +#include <gtest/gtest.h>
 +
 +#include "sampling.hpp"
@@ -2867,6 +3083,10 @@ index 00000000..8089b407
 +    ASSERT_TRUE(losAngeles);
 +    ASSERT_TRUE(kiritimati);
 +    const collector::View utc{std::string("UTC"), agentspeed::TimeZone::utc()};
++    // No duration field, but timestamp equals the final event's end: this valid zero-width
++    // interval contributes 30 measured tokens over the engine's widened 500 ms minimum.
++    std::ofstream(file, std::ios::app)
++        << R"({"type":"message","id":"untimed","parentId":null,"timestamp":"2026-10-19T23:31:00.000Z","message":{"role":"assistant","content":[],"api":"openai-responses","provider":"openai","model":"gpt-5.5","usage":{"input":10,"output":30,"totalTokens":40},"stopReason":"stop","timestamp":1792452660000}})" << '\n';
 +    const collector::View west{std::string("America/Los_Angeles"), losAngeles};
 +    const collector::View east{std::string("Pacific/Kiritimati"), kiritimati};
 +    constexpr std::int64_t now = 1792476000000LL; // 2026-10-20 06:00 UTC
@@ -2878,9 +3098,16 @@ index 00000000..8089b407
 +    EXPECT_EQ(utcSample.snapshot.nowMs, now);
 +    EXPECT_EQ(westBefore.snapshot.nowMs, now);
 +    EXPECT_NE(utcSample.snapshot.todayStartMs, westBefore.snapshot.todayStartMs);
++    EXPECT_EQ(westBefore.snapshot.todayOutput, 440);
++    EXPECT_EQ(eastSample.snapshot.todayOutput, 440);
++    EXPECT_EQ(westBefore.snapshot.todayInput, 370);
++    EXPECT_EQ(westBefore.snapshot.todayMeasuredOutput, 440);
++    EXPECT_EQ(westBefore.snapshot.todayMeasuredMs, 3500);
++    EXPECT_EQ(eastSample.snapshot.todayMeasuredOutput, 440);
++    EXPECT_EQ(utcSample.snapshot.todayMeasuredMs, 0);
++    EXPECT_EQ(westBefore.snapshot.todayMeasuredOutput, westAfter.snapshot.todayMeasuredOutput);
++    EXPECT_EQ(westBefore.snapshot.todayMeasuredMs, westAfter.snapshot.todayMeasuredMs);
 +    EXPECT_EQ(utcSample.snapshot.todayOutput, 0);
-+    EXPECT_EQ(westBefore.snapshot.todayOutput, 410);
-+    EXPECT_EQ(eastSample.snapshot.todayOutput, 410);
 +    EXPECT_EQ(westBefore.snapshot.todayStartMs, westAfter.snapshot.todayStartMs);
 +    EXPECT_EQ(westBefore.snapshot.todayOutput, westAfter.snapshot.todayOutput);
 +    EXPECT_EQ(westBefore.snapshot.todayRequests, westAfter.snapshot.todayRequests);
@@ -2894,6 +3121,8 @@ index 00000000..8089b407
 +    EXPECT_NE(nextDay.snapshot.todayStartMs, westBefore.snapshot.todayStartMs);
 +    EXPECT_EQ(nextDay.snapshot.todayOutput, 0);
 +    EXPECT_EQ(nextDay.snapshot.todayRequests, 0);
++    EXPECT_EQ(nextDay.snapshot.todayMeasuredOutput, 0);
++    EXPECT_EQ(nextDay.snapshot.todayMeasuredMs, 0);
 +}
 +
 +TEST(CollectorSampler, NamedViewPeakIsProjectedAndPersisted) {
@@ -4362,7 +4591,7 @@ index a87c8283..2274432d 100644
  A response whose `endMs` is before `0001-01-03T00:00:00Z` or after `9999-12-29T23:59:59.999Z` (only broken timestamps
  get there, 3.1, 3.6) has no date, since in some time zone it would fall outside the years 0001–9999: it is left out of
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index c49834db..1ea8f918 100644
+index c49834db..cd0bd5d7 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -2,9 +2,11 @@
@@ -4379,7 +4608,7 @@ index c49834db..1ea8f918 100644
  
  ## 1. Common rules
  
-@@ -243,9 +245,27 @@ reconnection must not join disconnected curve segments into a continuous measure
+@@ -243,9 +245,27 @@
  After the client requests its time zone, `today_day`, `today_start_ms` and snapshot today totals use that zone;
  `today_day` is in `YYYY-MM-DD` form or null if conversion fails. Untagged or null-zone snapshots retain collector-local
  compatibility behavior. Snapshot and history frames identify their aggregation time zone; history from an older
@@ -4410,7 +4639,7 @@ index c49834db..1ea8f918 100644
  
  Each configured host has a stable identity; remote sources are identified by host and source kind. Local sources and
  all enabled remote sources appear together in the native macOS dashboard. Local diagnostic reports and live reporting
-@@ -263,3 +283,36 @@ If the flag is absent, completeness is unknown, including when history is empty.
+@@ -263,3 +283,48 @@
  stale/offline, not evidence of an idle agent or zero usage. Unavailable measurements remain unknown and in-progress
  rates derived from prior completions are estimates; see `spec/METRICS.md`.
  
@@ -4440,13 +4669,25 @@ index c49834db..1ea8f918 100644
 +keeps only the latest real sample, at least ten seconds apart; it does not replay a backlog or rewrite timestamps.
 +
 +A positive subscription acknowledgment requires the first successful fresh-sample publish. A confirmed lease may
-+outlive every SSH subscription but cannot exceed its authorized expiry (at most eight hours); the daemon cannot
-+renew it. Explicit lease unsubscribe, replacement and terminal relay rejection stop that publisher. The mobile app
++outlive every SSH subscription but cannot exceed its absolute authorized expiry: at most eight hours normally,
++or 30 days only with negotiated `live_activity_continuity_v1` and explicit Boolean `continuity: true`. Neither
++mode can self-renew. The continuity activity ID is a publisher binding, independent of the relay's Apple
++eight-hour destination. Explicit lease unsubscribe, replacement and terminal relay rejection stop that publisher. The mobile app
 +separately revokes relay authorization; activity-level DELETE operations must not race a newer lease. With no clients
 +or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup policy may kill it earlier; no system
 +service or linger policy is installed. Only existing activities are updated: no alert, sound, banner, ordinary
 +completion notification or push-to-start is sent. Local relay verification does not prove Cloudflare/APNs/iPhone delivery.
 +
++
++Continuity keeps ordinary ten-second latest-only publishes even on quiet hosts, with the same edge and backoff
++rules. A bounded successful HTTP 200 JSON `{ "ok": true, "usageRequested": { "requestId": ..., "usageDate": ..., "timezone": ... } }`
++may request a minimal top-level `usage` receipt on the next routine publish, never an extra request or scan.
++The receipt echoes those fields, actual `sampledAt`, same-snapshot `input`/`output` lower bounds, finals-only
++`measuredOutput`/`measuredMs`, and conservative input/output coverage `complete`. Zero measured milliseconds
++means unknown average, not zero speed. A date/timezone mismatch returns four null counts and `complete: false`.
++Failed attempts retain the request for the next fresh normal sample; successful 2xx clears only the sent receipt.
++Only one pending request and the most recently successful receipt ID are retained for bounded deduplication.
++The full schema, generation fencing and valid response bounds are in `docs/shared-collector.md`.
 diff --git a/spec/strings.json b/spec/strings.json
 index f3b0992c..771f6c56 100644
 --- a/spec/strings.json

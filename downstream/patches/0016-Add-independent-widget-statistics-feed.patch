@@ -27,11 +27,11 @@ read-side compatibility layer is temporary and is removed once this publisher ru
 deployed, so null past days are not an acceptable long-term output of the collector.
 ---
  README.md                                 |  18 +-
- docs/shared-collector.md                  |  87 +++++++
+ docs/shared-collector.md                  |   87 +
  linux/collector/CMakeLists.txt            |   4 +-
  linux/collector/daemon.cpp                |  21 +-
  linux/collector/protocol.cpp              |   1 +
- linux/collector/publisher.cpp             |   9 +-
+ linux/collector/publisher.cpp             |    9 +-
  linux/collector/relay_http.hpp            |  16 ++
  linux/collector/sampling.cpp              |  60 ++++-
  linux/collector/sampling.hpp              |  19 +-
@@ -43,15 +43,15 @@ deployed, so null past days are not an acceptable long-term output of the collec
  linux/core/src/history.cpp                |  10 +-
  linux/core/src/history_store.cpp          |   3 +
  linux/tests/CMakeLists.txt                |   2 +
- linux/tests/collector_publisher_test.cpp  |   7 +
+ linux/tests/collector_publisher_test.cpp  |    7 +
  linux/tests/collector_test.cpp            |   5 +-
  linux/tests/history_test.cpp              |  64 +++++
- linux/tests/sampling_test.cpp             | 130 +++++++++-
+ linux/tests/sampling_test.cpp             |  140 +-
  linux/tests/widget_publisher_test.cpp     | 281 ++++++++++++++++++++
  linux/tests/widget_statistics_smoke.py    | 300 ++++++++++++++++++++++
  linux/tests/widget_statistics_test.cpp    | 282 ++++++++++++++++++++
- spec/NETWORK.md                           |  35 +++
- 25 files changed, 1857 insertions(+), 30 deletions(-)
+ spec/NETWORK.md                           |   36 +-
+ 25 files changed, 1862 insertions(+), 36 deletions(-)
  create mode 100644 linux/collector/relay_http.hpp
  create mode 100644 linux/collector/widget_publisher.cpp
  create mode 100644 linux/collector/widget_publisher.hpp
@@ -98,17 +98,17 @@ index 51ccd86c..11f3d372 100644
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
  stale data, not as idle or zero usage; reconnection replaces its snapshot and history rather than adding them again.
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
-index 68370e9b..2f949024 100644
+index 2d78d6e0..b7b82749 100644
 --- a/docs/shared-collector.md
 +++ b/docs/shared-collector.md
-@@ -86,3 +86,90 @@ Build the prepared tree with CMake 3.22+, C++20, pkg-config, zstd, Brotli, SQLit
+@@ -98,3 +98,90 @@
  CMake's normal test executable uses a separately compiled test-only HOME namespace and one-second idle period so process tests cannot attach to the maintainer's canonical daemon. Neither override exists in the distribution executable. `AGENTSPEED_BUILD_SSH_SMOKE=ON` additionally builds the explicitly non-distributable `agentspeed-collector-ssh-smoke`: it uses the same libcurl path but a compile-time fixed localhost TLS endpoint and test CA, with canonical passwd-home and production 30-second idle behavior. Never package that executable.
  
  `linux/tests/shared_collector_ssh_smoke.py` runs a local sshd, a disposable Unix account and an isolated TLS relay, then cleans them up. It requires local root only for that isolated account/sshd; it never accesses a production host or modifies a system SSH service. Its JSON results identify actual scenarios and limits. It does not prove Cloudflare deployment, APNs acceptance or iPhone delivery. Real signed-iPhone testing, deployed Worker/App Attest configuration, Apple credentials, ARM64 runtime, and native Mac/Windows UI remain separate acceptance prerequisites.
 +
 +## Independent Widget statistics feed (unreleased)
 +
-+Widget statistics are a separate opt-in authorization, not an extension of ActivityKit's eight-hour lease.
++Widget statistics are a separate opt-in authorization, not an Apple destination or an implicit extension of any ActivityKit binding.
 +The same effective-UID/executable-digest daemon and existing scan/parser pipeline supply timestamped input/output counts;
 +there is no extra Monitor, per-widget scanner, ordinary notification, or indefinite mobile SSH session.
 +Negotiation requires outer `version: 1`, `controlVersion: 2`, capability `widget_statistics_v2`,
@@ -298,7 +298,7 @@ index 8b946cce..69e17fe6 100644
                << ",\"measured_output\":" << value.measuredOutput << ",\"measured_ms\":" << value.measuredMs
                << ",\"cost_micro_usd\":"; optionalNumber(o, value.costMicroUsd);
 diff --git a/linux/collector/publisher.cpp b/linux/collector/publisher.cpp
-index 0bc34801..77059a74 100644
+index d858c9f0..7381629d 100644
 --- a/linux/collector/publisher.cpp
 +++ b/linux/collector/publisher.cpp
 @@ -1,3 +1,4 @@
@@ -306,7 +306,7 @@ index 0bc34801..77059a74 100644
  #include "publisher.hpp"
  #include "agentspeed/json.hpp"
  #include "agentspeed/report_json.hpp"
-@@ -53,8 +54,7 @@ size_t headerWrite(char* p,size_t a,size_t b,void* opaque) {
+@@ -54,8 +55,7 @@
  }
  Publisher::Result curlTransport(const std::string& lease,const std::string& body) {
      Publisher::Result r;
@@ -316,13 +316,14 @@ index 0bc34801..77059a74 100644
      CURL* c=curl_easy_init(); if (!c) return r;
   #ifdef AGENTSPEED_COLLECTOR_TEST_RELAY
      curl_easy_setopt(c,CURLOPT_URL,"https://localhost:19443/v1/publish");
-@@ -266,9 +266,10 @@ std::vector<std::string> Publisher::control(const std::string& line, std::uint64
+@@ -312,10 +312,11 @@
      if (type == "capabilities") {
          if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 || !text(request, 128)) return {};
          return {J::object({{"version", J::of(1)}, {"type", J::of("capabilities")},
--            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("shared_collector_v1")})},
-+            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("shared_collector_v1"), J::of("widget_statistics_v2")})},
+-            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("live_activity_continuity_v1"), J::of("shared_collector_v1")})},
++            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("live_activity_continuity_v1"), J::of("shared_collector_v1"), J::of("widget_statistics_v2")})},
              {"controlVersion", J::of(2)}, {"subscribeTimeoutMs", J::of(75000)},
+             {"activityMaxLeaseSeconds", J::of(2592000)},
 -            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)}}).compact() + "\n"};
 +            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)},
 +            {"widgetMinPublishIntervalMs", J::of(1800000)}, {"widgetMaxLeaseSeconds", J::of(2592000)}}).compact() + "\n"};
@@ -1185,10 +1186,10 @@ index c65c934e..5e18f84d 100644
      shared_history_test.cpp
      current_values_test.cpp
 diff --git a/linux/tests/collector_publisher_test.cpp b/linux/tests/collector_publisher_test.cpp
-index b9f9350b..35a375a3 100644
+index db1ad6c6..2f1ce06d 100644
 --- a/linux/tests/collector_publisher_test.cpp
 +++ b/linux/tests/collector_publisher_test.cpp
-@@ -25,6 +25,13 @@ TEST(CollectorPublisher, AdvertisesActivityEdgeCapability) {
+@@ -35,6 +35,13 @@
      EXPECT_NE(response[0].find("\"live_activity_edges_v1\""), std::string::npos);
      EXPECT_NE(response[0].find("\"live_activity_quiet_v1\""), std::string::npos);
      EXPECT_NE(response[0].find("\"minPublishIntervalMs\":10000"), std::string::npos);
@@ -1305,7 +1306,7 @@ index 178a2af3..461be9b3 100644
 +    EXPECT_FALSE(restored->models.at("null").input);
 +}
 diff --git a/linux/tests/sampling_test.cpp b/linux/tests/sampling_test.cpp
-index 8089b407..1df660ee 100644
+index 50474909..4db85b3e 100644
 --- a/linux/tests/sampling_test.cpp
 +++ b/linux/tests/sampling_test.cpp
 @@ -1,9 +1,11 @@
@@ -1320,10 +1321,15 @@ index 8089b407..1df660ee 100644
  #include <chrono>
  #include <cstdlib>
  #include <ctime>
-@@ -179,6 +181,122 @@ TEST(CollectorSampler, SamplingNeverDrainsCompletions) {
+@@ -191,11 +193,27 @@
      std::filesystem::remove_all(home);
  }
  
+-// A subscriber decides whether to resend the whole projection by comparing one integer, so the
+-// sampler must advance that generation exactly when the projection text changes: re-deriving the
+-// same days must not look like a new projection, and each view has its own generation.
+-TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
+-    char home[] = "/tmp/agentspeed-sampler-generation-XXXXXX";
 +namespace {
 +std::string stampOf(std::int64_t ms) {
 +    const std::time_t seconds = static_cast<std::time_t>(ms / 1000);
@@ -1345,22 +1351,21 @@ index 8089b407..1df660ee 100644
 +// today). The past days stay real once the projection catches up.
 +TEST(CollectorSampler, WidgetHistoryStaysCoveredAcrossMidnight) {
 +    char home[] = "/tmp/agentspeed-sampler-widget-XXXXXX";
-+    ASSERT_NE(mkdtemp(home), nullptr);
-+    struct TempHome {
-+        const char* path;
-+        ~TempHome() { std::filesystem::remove_all(path); }
-+    } tempHome{home};
-+    ScopedEnv homeEnv("HOME", home);
-+    ScopedEnv agentEnv("PI_CODING_AGENT_DIR", nullptr);
-+    ScopedEnv sessionEnv("PI_CODING_AGENT_SESSION_DIR", nullptr);
-+    ScopedEnv configEnv("PI_CONFIG_DIR", ".omp");
-+    ScopedEnv codexEnv("CODEX_HOME", nullptr);
-+    ScopedEnv claudeEnv("CLAUDE_CONFIG_DIR", nullptr);
-+    ScopedEnv deepseekEnv("DSH_HOME", nullptr);
-+    ScopedEnv xdgEnv("XDG_DATA_HOME", nullptr);
-+    ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
-+    ScopedEnv tzEnv("TZ", "UTC");
-+
+     ASSERT_NE(mkdtemp(home), nullptr);
+     struct TempHome {
+         const char* path;
+@@ -212,14 +230,106 @@
+     ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
+     ScopedEnv tzEnv("TZ", "UTC");
+ 
+-    auto formatStamp = [](std::int64_t ms) {
+-        const std::time_t seconds = static_cast<std::time_t>(ms / 1000);
+-        std::tm utc{};
+-        gmtime_r(&seconds, &utc);
+-        char text[32];
+-        std::strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
+-        return std::string(text);
+-    };
 +    using namespace std::chrono;
 +    const auto today = floor<days>(system_clock::now());
 +    const auto yesterday = today - days{1};
@@ -1440,25 +1445,31 @@ index 8089b407..1df660ee 100644
 +    EXPECT_EQ(doc.root()["usageDate"].string(), labelOf(t1ms));
 +}
 +
- // A subscriber decides whether to resend the whole projection by comparing one integer, so the
- // sampler must advance that generation exactly when the projection text changes: re-deriving the
- // same days must not look like a new projection, and each view has its own generation.
-@@ -200,14 +318,6 @@ TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
-     ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
-     ScopedEnv tzEnv("TZ", "UTC");
- 
--    auto formatStamp = [](std::int64_t ms) {
--        const std::time_t seconds = static_cast<std::time_t>(ms / 1000);
--        std::tm utc{};
--        gmtime_r(&seconds, &utc);
--        char text[32];
--        std::strftime(text, sizeof(text), "%Y-%m-%dT%H:%M:%S.000Z", &utc);
--        return std::string(text);
--    };
++// A subscriber decides whether to resend the whole projection by comparing one integer, so the
++// sampler must advance that generation exactly when the projection text changes: re-deriving the
++// same days must not look like a new projection, and each view has its own generation.
++TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
++    char home[] = "/tmp/agentspeed-sampler-generation-XXXXXX";
++    ASSERT_NE(mkdtemp(home), nullptr);
++    struct TempHome {
++        const char* path;
++        ~TempHome() { std::filesystem::remove_all(path); }
++    } tempHome{home};
++    ScopedEnv homeEnv("HOME", home);
++    ScopedEnv agentEnv("PI_CODING_AGENT_DIR", nullptr);
++    ScopedEnv sessionEnv("PI_CODING_AGENT_SESSION_DIR", nullptr);
++    ScopedEnv configEnv("PI_CONFIG_DIR", ".omp");
++    ScopedEnv codexEnv("CODEX_HOME", nullptr);
++    ScopedEnv claudeEnv("CLAUDE_CONFIG_DIR", nullptr);
++    ScopedEnv deepseekEnv("DSH_HOME", nullptr);
++    ScopedEnv xdgEnv("XDG_DATA_HOME", nullptr);
++    ScopedEnv geminiEnv("GEMINI_CLI_HOME", nullptr);
++    ScopedEnv tzEnv("TZ", "UTC");
++
      using namespace std::chrono;
      const auto today = floor<days>(system_clock::now());
      const auto noon = today + hours{12};
-@@ -217,9 +327,9 @@ TEST(CollectorSampler, ProjectionGenerationTracksTheProjectionText) {
+@@ -229,9 +339,9 @@
      const auto dir = std::filesystem::path(home) / ".omp/agent/sessions/-generation-project";
      std::filesystem::create_directories(dir);
      std::ofstream(dir / "session.jsonl")
@@ -2352,13 +2363,13 @@ index 00000000..e7612b9e
 +    EXPECT_EQ(day["unpricedRequests"].raw(), "0");
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index e02d042a..e7465f31 100644
+index 006ad6bd..05884a2b 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
-@@ -338,3 +338,38 @@ or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup poli
- service or linger policy is installed. Only existing activities are updated: no alert, sound, banner, ordinary
- completion notification or push-to-start is sent. Local relay verification does not prove Cloudflare/APNs/iPhone delivery.
- 
+@@ -350,3 +350,38 @@
+ Failed attempts retain the request for the next fresh normal sample; successful 2xx clears only the sent receipt.
+ Only one pending request and the most recently successful receipt ID are retained for bounded deduplication.
+ The full schema, generation fencing and valid response bounds are in `docs/shared-collector.md`.
 +
 +## 9. Independent opt-in Widget statistics relay (unreleased)
 +

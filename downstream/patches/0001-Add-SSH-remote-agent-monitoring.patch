@@ -6,7 +6,7 @@ Subject: [PATCH 01/19] Add SSH remote agent monitoring
 ---
  .github/workflows/linux.yml                   |   4 +-
  README.md                                     |  66 +-
- docs/shared-collector.md                      |  86 +++
+ docs/shared-collector.md                      |   98 +
  linux/CMakeLists.txt                          |   1 +
  linux/collector/CMakeLists.txt                |   6 +
  linux/collector/daemon.cpp                    | 379 ++++++++++
@@ -16,15 +16,15 @@ Subject: [PATCH 01/19] Add SSH remote agent monitoring
  linux/collector/main.cpp                      | 144 ++++
  linux/collector/protocol.cpp                  |  99 +++
  linux/collector/protocol.hpp                  |  22 +
- linux/collector/publisher.cpp                 | 433 +++++++++++
+ linux/collector/publisher.cpp                 |  489 +
  linux/collector/publisher.hpp                 |  37 +
  linux/collector/sampling.cpp                  | 269 +++++++
  linux/collector/sampling.hpp                  |  44 ++
  linux/core/include/agentspeed/engine.hpp      |   2 +
- linux/core/include/agentspeed/snapshot.hpp    |   2 +
+ linux/core/include/agentspeed/snapshot.hpp    |    5 +
  linux/core/src/engine.cpp                     |  17 +-
  linux/core/src/history_analyzer.cpp           |   2 +-
- linux/core/src/monitor_snapshot.cpp           |   2 +
+ linux/core/src/monitor_snapshot.cpp           |    2 +
  linux/core/src/omp_parser.cpp                 |  29 +-
  linux/docker/Dockerfile                       |   2 +-
  linux/tests/CMakeLists.txt                    |   6 +-
@@ -44,8 +44,8 @@ Subject: [PATCH 01/19] Add SSH remote agent monitoring
  macos/scripts/build-linux-collector.sh        |  45 ++
  spec/DESIGN.md                                |   7 +
  spec/METRICS.md                               |   9 +
- spec/NETWORK.md                               |  49 +-
- 41 files changed, 3509 insertions(+), 42 deletions(-)
+ spec/NETWORK.md                               |   50 +-
+ 41 files changed, 3580 insertions(+), 43 deletions(-)
  create mode 100644 docs/shared-collector.md
  create mode 100644 linux/collector/CMakeLists.txt
  create mode 100644 linux/collector/daemon.cpp
@@ -170,10 +170,10 @@ index d2ab76a7..e11a6f51 100644
  
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
 new file mode 100644
-index 00000000..9044b287
+index 00000000..bb3ab486
 --- /dev/null
 +++ b/docs/shared-collector.md
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,98 @@
 +# Shared Linux collector and activity publishing
 +
 +This feature changes the Linux collector, not ActivityKit authorization. A foreground iPhone must create an existing live activity, obtain an activity-scoped lease from the relay through App Attest, and send that lease over host-key-verified SSH. The collector never receives an Apple provider key, installation management credential, or global password. It does not request notification permission, send alerts, start activities remotely, or keep iOS SSH alive indefinitely.
@@ -212,6 +212,7 @@ index 00000000..9044b287
 +- `controlVersion: 2`;
 +- `subscribeTimeoutMs: 75000`;
 +- `minPublishIntervalMs: 10000`;
++- `activityMaxLeaseSeconds: 2592000` and capability `live_activity_continuity_v1` for explicit continuity bindings;
 +- `relayUrl: "https://agent-speed.yooztech.com"`.
 +
 +`live_activity_subscribe` retains `requestId`, `relayUrl`, `lease`, `activityId`, `leaseId`, and absolute integer Unix-millisecond `expiresAt`. It requires the following additional fields:
@@ -222,9 +223,9 @@ index 00000000..9044b287
 +| `hostId`, `hostName` | Exact strings used by the phone to register the activity with the relay. These are not the collector machine ID or a guessed hostname. |
 +| `timezone` | Valid named IANA zone, fixed for this lease. A different activity timezone requires rotation and a new subscription. |
 +
-+`expiresAt` must be in the future and no more than eight hours away. The bearer is opaque; the collector neither decodes nor extends it. Request and lease identifiers, waiter count, active leases and replay state are bounded.
++Without Boolean `continuity: true`, `expiresAt` must be in the future and no more than eight hours away; legacy quiet suppression remains unchanged. Explicit continuity permits at most 30 days (2592000000 ms) from subscription, still an absolute, non-self-renewing authorization. In this mode `activityId` identifies the publisher binding, independently of the relay's replaceable Apple eight-hour destination. The opaque bearer is never decoded or extended. Repeating a subscription cannot slide its expiry or change its continuity mode; a different mode requires a new lease. Request and lease identifiers, waiter count, active leases and replay state remain bounded.
 +
-+The response type remains `live_activity_subscribe_ack`. Both positive and negative responses contain integer `version: 1`, `controlVersion: 2`, the exact `requestId`, `activityId`, `leaseId`, `expiresAt`, and Boolean `accepted`. Negative responses additionally contain a safe `error`: `invalid_request`, `conflicting_request`, `busy`, `timeout`, `cancelled`, or `relay_rejected`. A positive response is emitted only after an HTTP 2xx first publish of a fresh real collector sample; parsing a control frame or storing a lease is not confirmation.
++The response type remains `live_activity_subscribe_ack`. Both positive and negative responses contain integer `version: 1`, `controlVersion: 2`, the exact `requestId`, `activityId`, `leaseId`, `expiresAt`, and Boolean `accepted`. Negative responses additionally contain a safe `error`: `invalid_request`, `conflicting_request`, `busy`, `timeout`, `cancelled`, or `relay_rejected`. A positive response is emitted only after an HTTP 2xx first publish of a fresh real collector sample; parsing a control frame or storing a lease is not confirmation. This confirms relay acceptance and persistence of validated data, not APNs acceptance or device delivery; `apnsAccepted: false` in a successful response does not invalidate the publisher ACK.
 +
 +The phone must retain a 5-second control-write timeout but wait **90 seconds** for a subscribe response. Capability and unsubscribe requests may keep their shorter wait. A controller timeout, foreground cancellation or stale generation is not proof that the server never received the request: send an unsubscribe for that exact lease and independently revoke the relay activity; persist failed revocation work. Late acknowledgments must not restore display authority. A candidate whose retry deadline cannot fit within 75 seconds fails rather than acknowledging early, bypassing relay limits, or reusing an old sample.
 +
@@ -236,11 +237,22 @@ index 00000000..9044b287
 +
 +## Publishing and failures
 +
-+Publishing runs on a dedicated worker thread; socket clients and the collection thread do not perform network I/O. There is one latest sample per lease, not a retry backlog. Sampling remains approximately once per second; after a successful response, ordinary attempts wait at least ten seconds from response completion, so network latency cannot shorten the relay's arrival-based window. A known idle-to-active or active-to-idle transition may send the latest sample immediately, bypassing only that routine interval. A positive `generating` or `tools` count means active; both zero mean idle; negative or otherwise unknown counts do not imply idle. Speed is not used. The first known state establishes a baseline; unknown samples do not change it. The state is consumed when an attempt starts, not when it succeeds, and transitions during a request or backoff collapse to the latest state. Failure backoff, `Retry-After`, freshness and lease limits still apply. A lease whose samples stay quiet — a complete live rate of zero with no generating agents and no tools — and whose daily output has not moved is not attempted again once the relay holds that state, so an idle machine spends no relay requests and no APNs; activity, a changed daily output or a fresh subscription ends the quiet run and publishing resumes normally. Only a successful response records the quiet state, so confirmation, the transition frames, failure backoff and `Retry-After` keep their meaning. No priority field is added: the relay determines priority itself. The body contains only `snapshot` with the Worker-supported minimal fields:
++Publishing runs on a dedicated worker thread; socket clients and the collection thread do not perform network I/O. There is one latest sample per lease, not a retry backlog. Sampling remains approximately once per second; after a successful response, ordinary attempts wait at least ten seconds from response completion, so network latency cannot shorten the relay's arrival-based window. A known idle-to-active or active-to-idle transition may send the latest sample immediately, bypassing only that routine interval. A positive `generating` or `tools` count means active; both zero mean idle; negative or otherwise unknown counts do not imply idle. Speed is not used. The first known state establishes a baseline; unknown samples do not change it. The state is consumed when an attempt starts, not when it succeeds, and transitions during a request or backoff collapse to the latest state. Failure backoff, `Retry-After`, freshness and lease limits still apply. A legacy lease whose samples stay quiet — a complete live rate of zero with no generating agents and no tools — and whose daily output has not moved is not attempted again once the relay holds that state; activity, changed daily output or a fresh subscription ends the quiet run. Continuity leases do not suppress quiet routine attempts. Only a successful response records the quiet state, so confirmation, transition frames, failure backoff and `Retry-After` keep their meaning. No priority field is added: the relay determines priority itself. Unless a continuity usage receipt is pending for a routine attempt, the body contains only `snapshot` with the Worker-supported minimal fields:
 +
 +`version`, `hostId`, `hostName`, `sampledAt`, `status`, `speed`, `generating`, `tools`, `todayOutput`, `rxBytesPerSecond`, `txBytesPerSecond`, `title`.
 +
 +`sampledAt` is the sampled snapshot's real `nowMs`; status is `live`; speed is the complete live-output rate or null; daily output uses the fixed activity timezone; traffic is the physical machine receive/transmit rate or null; title is null. Raw logs, project paths, commands, histories and SSH credentials are not uploaded. A dead or backward-clock sampler cannot be made fresh by changing send time. Samples must be newer than the last attempted sample, at most 30 seconds old and not in the future locally. The relay additionally enforces its own freshness/strict-order checks.
++
++### Continuity usage handshake
++
++Continuity keeps the normal ten-second latest-only HTTPS cadence even while quiet; only legacy bindings suppress unchanged quiet states. Existing immediate known-state edges, trusted fixed origin, first genuine 2xx ACK, expiry, cancellation, generation fencing and retry/backoff rules are unchanged. It adds no timer, scanner, extra request or endpoint. Ordinary publishes remain `{ "snapshot": ... }` until requested usage is pending.
++
++Only an HTTP **200** response of at most 4096 bytes, parsed as a JSON object (depth at most 16) with `ok: true`, may contain `usageRequested: { requestId, usageDate, timezone }`. The ID is a nonempty bounded string (128 bytes), the date is a real `YYYY-MM-DD`, and the timezone is a valid named zone (256 bytes). One request is pending per binding; duplicates of that request or the most recently successful receipt are ignored. A different request arriving while one is pending does not displace it.
++
++The next normal routine publish, never an extra immediate edge, adds a top-level `usage` object with exactly `requestId`, `usageDate`, `timezone`, `sampledAt`, `input`, `output`, `measuredOutput`, `measuredMs`, and `complete`. These counts come directly from the same sampler snapshot's existing `todayStats` result, for the binding's calendar day/timezone, with no history refresh or rescan. Input/output are known lower bounds. `complete` conservatively requires no partial-history, unreadable-file, malformed-line or unsupported-parser warning; it describes input/output coverage, not whether all output is measurable. The measured pair includes only final responses with valid measured durations; `1000 * measuredOutput / measuredMs` is a measured-subset average, unknown when `measuredMs` is zero. Cached input and reasoning are already included in the totals, not added again. Internal measured fields do not change ordinary SSH snapshot wire data.
++
++If the requested date or timezone does not match the fresh sample, the receipt still echoes that exact request ID/date/timezone and the actual `sampledAt`, but all four counts are null and `complete` is false. A failed HTTP attempt retains the pending request; the next normal opportunity after existing backoff uses a fresh sample, never the failed payload. Only 2xx clears a sent receipt. If that success also contains a new valid request, clearing the old receipt and installing the new request are atomic. Late responses from cancelled, expired or replaced generations cannot restore requests, receipts or authority.
++
 +
 +The in-process libcurl transport verifies TLS certificates and hostnames, permits HTTPS only, follows no redirects, ignores proxy and netrc environment configuration, limits connection/DNS to three seconds and the entire request to six seconds, and bounds response bodies to 4096 bytes. Asynchronous DNS support is required. A failed transport produces no raw provider error/body/authorization logging. Bearers are never passed in argv, environment variables or URLs.
 +
@@ -251,7 +263,7 @@ index 00000000..9044b287
 +- 429: honor `Retry-After`, at least ten seconds; `apns_backoff` requires at least sixty seconds. Confirmation and lease expiry still apply.
 +- 502/transport failures: bounded exponential backoff, latest fresh sample only. Confirmed authorization remains bounded by expiry and can recover after an outage.
 +
-+The relay reserves `lastSentAt` and `lastSample` before APNs I/O. Thus even a 502 cannot be retried with the same sample. Rotation preserves the relay's rate window; a newly rotated lease may legitimately wait longer than the old five-second mobile timeout.
++The continuity relay returns HTTP 200 `{ok:true,apnsAccepted:boolean,usageRequested?:...}` after validating and persisting a real snapshot, independently of Apple destination delivery. APNs 429/503, network failures and destination-specific 410 remain accurately recorded and backed off inside the relay; they do not become publisher failures or terminate the thirty-day binding. Publisher authorization failures (401/403/410), schema errors (400), database failures (500) and genuine publisher rate limits (429) remain HTTP failures handled normally by the collector. Only fresh samples are retried; successful persistence does not authorize replay or bypass the publisher rate window. Legacy relay responses may still expose APNs failure/backoff as described above.
 +
 +## Build and verification surfaces
 +
@@ -1082,13 +1094,14 @@ index 00000000..b01ec5ef
 +}
 diff --git a/linux/collector/publisher.cpp b/linux/collector/publisher.cpp
 new file mode 100644
-index 00000000..0bc34801
+index 00000000..d858c9f0
 --- /dev/null
 +++ b/linux/collector/publisher.cpp
-@@ -0,0 +1,433 @@
+@@ -0,0 +1,489 @@
 +#include "publisher.hpp"
 +#include "agentspeed/json.hpp"
 +#include "agentspeed/report_json.hpp"
++#include "agentspeed/pricing.hpp"
 +#include <curl/curl.h>
 +#include <algorithm>
 +#include <chrono>
@@ -1179,6 +1192,12 @@ index 00000000..0bc34801
 +        if (generating == 0 && tools == 0) return Activity::idle;
 +        return Activity::unknown;
 +    }
++    struct UsageRequest { std::string id, date, zone; };
++    struct UsageSample {
++        std::string date;
++        std::int64_t input = 0, output = 0, measuredOutput = 0, measuredMs = 0;
++        bool complete = false;
++    };
 +    struct Lease {
 +        std::string activity, id, token, host, name, zone;
 +        std::int64_t expires = 0, deadline = 0, created = 0, last = 0, next = 0;
@@ -1188,6 +1207,10 @@ index 00000000..0bc34801
 +        View view;
 +        bool confirmed = false;
 +        int failures = 0;
++        bool continuity = false;
++        std::optional<UsageRequest> usageRequest;
++        std::string completedUsage;
++        UsageSample usageSample;
 +        int invalidSnapshots = 0;
 +        std::vector<Waiter> waiters;
 +        std::string payload;
@@ -1263,7 +1286,7 @@ index 00000000..0bc34801
 +                    now < candidate->failureUntil || candidate->payload.empty()) continue;
 +                // The relay already holds this quiet state: attempting again would only spend a
 +                // relay request and an APNs delivery on a machine that is producing nothing.
-+                if (candidate->quiet && candidate->deliveredQuiet && candidate->quietToday == candidate->deliveredToday) continue;
++                if (!candidate->continuity && candidate->quiet && candidate->deliveredQuiet && candidate->quietToday == candidate->deliveredToday) continue;
 +                const bool edge = candidate->sampledActivity != Activity::unknown &&
 +                    candidate->attemptedActivity != Activity::unknown &&
 +                    candidate->sampledActivity != candidate->attemptedActivity;
@@ -1285,6 +1308,23 @@ index 00000000..0bc34801
 +            auto token = it->token;
 +            auto body = it->payload;
 +            const bool attemptedQuiet = it->quiet;
++            const bool edge = it->sampledActivity != Activity::unknown &&
++                it->attemptedActivity != Activity::unknown && it->sampledActivity != it->attemptedActivity;
++            std::string usageId;
++            if (!edge && it->usageRequest) {
++                const auto& request = *it->usageRequest;
++                const auto& sample = it->usageSample;
++                const bool matches = request.date == sample.date && request.zone == it->zone;
++                auto value = [&](std::int64_t n) { return matches ? J::of(n) : J::null(); };
++                auto usage = J::object({{"requestId", J::of(request.id)}, {"usageDate", J::of(request.date)},
++                    {"timezone", J::of(request.zone)}, {"sampledAt", J::of(it->sampled)},
++                    {"input", value(sample.input)}, {"output", value(sample.output)},
++                    {"measuredOutput", value(sample.measuredOutput)}, {"measuredMs", value(sample.measuredMs)},
++                    {"complete", J::of(matches && sample.complete)}});
++                body.pop_back();
++                body += ",\"usage\":" + usage.compact() + "}";
++                usageId = request.id;
++            }
 +            const std::int64_t attemptedToday = it->quietToday;
 +            it->last = it->sampled;
 +            if (it->sampledActivity != Activity::unknown) it->attemptedActivity = it->sampledActivity;
@@ -1307,6 +1347,24 @@ index 00000000..0bc34801
 +                it->failureUntil = 0;
 +                it->deliveredQuiet = attemptedQuiet;
 +                it->deliveredToday = attemptedToday;
++                // Clear only the receipt actually sent; then accept a new request atomically.
++                if (!usageId.empty() && it->usageRequest && it->usageRequest->id == usageId) {
++                    it->completedUsage = usageId;
++                    it->usageRequest.reset();
++                }
++                if (it->continuity && result.status == 200 && result.body.size() <= 4096) {
++                    agentspeed::json::Document response;
++                    if (response.parse(result.body, 16) && response.root().isObject() && response.root()["ok"].isTrue()) {
++                        auto requested = response.root()["usageRequested"];
++                        auto requestId = requested["requestId"].string().value_or("");
++                        auto date = requested["usageDate"].string().value_or("");
++                        auto zone = requested["timezone"].string().value_or("");
++                        if (!it->usageRequest && requested.isObject() && text(requestId, 128) &&
++                            requestId != it->completedUsage && agentspeed::pricing::UtcDay::isDateText(date) &&
++                            agentspeed::pricing::UtcDay::instantMs(date) && zoneName(zone) && agentspeed::TimeZone::load(zone))
++                            it->usageRequest = UsageRequest{std::move(requestId), std::move(date), std::move(zone)};
++                    }
++                }
 +                if (!it->confirmed) {
 +                    it->confirmed = true;
 +                    finish(*it, true, nullptr);
@@ -1354,8 +1412,9 @@ index 00000000..0bc34801
 +    if (type == "capabilities") {
 +        if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 || !text(request, 128)) return {};
 +        return {J::object({{"version", J::of(1)}, {"type", J::of("capabilities")},
-+            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("shared_collector_v1")})},
++            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("live_activity_continuity_v1"), J::of("shared_collector_v1")})},
 +            {"controlVersion", J::of(2)}, {"subscribeTimeoutMs", J::of(75000)},
++            {"activityMaxLeaseSeconds", J::of(2592000)},
 +            {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)}}).compact() + "\n"};
 +    }
 +    auto ackType = type + "_ack";
@@ -1390,12 +1449,14 @@ index 00000000..0bc34801
 +    auto host = root["hostId"].string().value_or("");
 +    auto name = root["hostName"].string().value_or("");
 +    auto zone = root["timezone"].string().value_or("");
++    const bool continuity = root["continuity"].isTrue();
 +    if ((relay != origin && relay != std::string(origin) + "/") || !text(token, 4096, true) ||
 +        !text(activity, 256) || !text(host, 1024) || !utf8(host) || !text(name, 1024) ||
-+        !utf8(name) || !zoneName(zone) || expires <= now || expires - now > 28800000) return bad("invalid_request");
++        !utf8(name) || !zoneName(zone) || expires <= now ||
++        expires - now > (continuity ? 2592000000LL : 28800000LL)) return bad("invalid_request");
 +    auto tz = agentspeed::TimeZone::load(zone);
 +    if (!tz) return bad("invalid_request");
-+    auto binding = std::string("s:") + J::array({J::of(activity), J::of(id), J::of(token), J::of(host), J::of(name), J::of(zone), J::of(expires)}).compact();
++    auto binding = std::string("s:") + J::array({J::of(activity), J::of(id), J::of(token), J::of(host), J::of(name), J::of(zone), J::of(expires), J::of(continuity)}).compact();
 +    auto requestIt = impl_->requests.find({client, request});
 +    if (requestIt != impl_->requests.end() && requestIt->second.binding != binding) return bad("conflicting_request");
 +    std::size_t outstanding = impl_->pending.size();
@@ -1404,7 +1465,7 @@ index 00000000..0bc34801
 +    auto it = std::find_if(impl_->leases.begin(), impl_->leases.end(), [&](const Impl::Lease& lease) { return lease.id == id; });
 +    if (it != impl_->leases.end()) {
 +        if (it->activity != activity || it->token != token || it->host != host || it->name != name ||
-+            it->zone != zone || it->expires != expires) return bad("conflicting_request");
++            it->zone != zone || it->expires != expires || it->continuity != continuity) return bad("conflicting_request");
 +        if (it->confirmed) {
 +            auto response = ack(ackType, request, activity, id, expires, true);
 +            if (impl_->requests.size() >= 256 && requestIt == impl_->requests.end()) impl_->requests.erase(impl_->requests.begin());
@@ -1432,6 +1493,7 @@ index 00000000..0bc34801
 +        Impl::Lease lease;
 +        lease.activity = activity; lease.id = id; lease.token = token; lease.host = host;
 +        lease.name = name; lease.zone = zone; lease.expires = expires; lease.created = now;
++        lease.continuity = continuity;
 +        lease.deadline = now + impl_->options.confirmationMs;
 +        lease.generation = ++impl_->generation;
 +        lease.view = {zone, tz};
@@ -1466,6 +1528,12 @@ index 00000000..0bc34801
 +            lease.payload = std::move(body);
 +            lease.sampled = snapshot.nowMs;
 +            lease.sampledActivity = Impl::activity(snapshot.generating, snapshot.tools);
++            if (lease.continuity) {
++                lease.usageSample = {agentspeed::pricing::UtcDay(snapshot.nowMs + view.zone->offsetMs(snapshot.nowMs)).label(),
++                    snapshot.todayInput, snapshot.todayOutput, snapshot.todayMeasuredOutput, snapshot.todayMeasuredMs,
++                    !snapshot.warnings.partialHistory && snapshot.warnings.unreadableFiles == 0 &&
++                    snapshot.warnings.malformedLines == 0 && snapshot.warnings.unsupported.empty()};
++            }
 +            if (lease.attemptedActivity == Impl::Activity::unknown && lease.sampledActivity != Impl::Activity::unknown)
 +                lease.attemptedActivity = lease.sampledActivity;
 +            // Unknown rates are not quiet: a missing measurement must not look like zero work.
@@ -1901,10 +1969,10 @@ index 8b1aefd2..6a72fa35 100644
  LiveRate liveRate(const std::vector<Response>& responses, const std::vector<Agent>& agents, std::int64_t now);
  
 diff --git a/linux/core/include/agentspeed/snapshot.hpp b/linux/core/include/agentspeed/snapshot.hpp
-index 08d56e03..54297547 100644
+index 08d56e03..526430fc 100644
 --- a/linux/core/include/agentspeed/snapshot.hpp
 +++ b/linux/core/include/agentspeed/snapshot.hpp
-@@ -28,6 +28,7 @@ struct AgentRow {
+@@ -28,6 +28,7 @@
      Phase phase = Phase::Idle;
      double liveOutput = 0;
      double liveTotal = 0;
@@ -1912,7 +1980,7 @@ index 08d56e03..54297547 100644
      int depth = 0;
      bool subagent = false;
      std::optional<std::string> parentId;
-@@ -103,6 +104,7 @@ struct Snapshot {
+@@ -103,6 +104,7 @@
      std::int64_t nowMs = 0;
      double liveOutput = 0;
      double liveTotal = 0;
@@ -1920,6 +1988,16 @@ index 08d56e03..54297547 100644
      double estimatedShare = 0;
      std::int64_t todayOutput = 0;
      std::int64_t todayInput = 0;
+@@ -133,6 +135,9 @@
+     report::Facts report;
+     bool demo = false;
+     std::int64_t todayStartMs = 0;
++    // Internal same-tick finals-only subset; not additional ordinary snapshot wire fields.
++    std::int64_t todayMeasuredOutput = 0;
++    std::int64_t todayMeasuredMs = 0;
+     Warnings warnings;
+ };
+ 
 diff --git a/linux/core/src/engine.cpp b/linux/core/src/engine.cpp
 index b9cbdbe6..118ad88d 100644
 --- a/linux/core/src/engine.cpp

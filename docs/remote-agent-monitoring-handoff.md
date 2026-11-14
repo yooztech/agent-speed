@@ -546,3 +546,47 @@ Release 交叉编译均通过。未运行 Windows 原生 UI，未发布新安装
 未经单独授权不推送、不打标签、不运行 Release，也不声称 fork.9 已修复。
 
 
+## 有界 publisher continuity（本地未发布）
+
+实现归入原功能补丁 0001、0014、0016，沿完整有序队列重放，不修改维护 checkout 的根应用源码。
+新增 `live_activity_continuity_v1` 与 `activityMaxLeaseSeconds:2592000`，仅显式布尔
+`continuity:true` 允许最长三十天的绝对 publisher binding；发布不续期，旧订阅仍限八小时。
+Apple 目的地轮换属于 relay/mobile，不延长 collector 的授权。首次实际 HTTP 2xx 才确认订阅，
+取消、替换与迟到响应继续按 binding generation 隔离。continuity 静默机器仍走十秒 latest-only
+普通发布，失败退避和成功响应完成后的间隔不变。
+
+只有 HTTP 200 的有界 `{ok:true,usageRequested:{requestId,usageDate,timezone}}` 请求概览。
+下一次普通发布才附带 `usage`，边沿不额外带概览，不额外扫描日志；失败保留请求并使用新鲜样本重试，
+2xx 原子清除旧回执后才保存同响应的新请求。一个 pending 加最近完成 ID 提供有界去重。
+日期或时区与实际样本不匹配时仍回请求标识，但四项计数全部 null、`complete:false`，
+`sampledAt` 保留实际样本时间。固定时区当日 input/output 可为已知下界；`complete` 仅表示其采集覆盖。
+measuredOutput/measuredMs 来自同次 todayStats 的 final 可测子集，并行响应时长求和，
+平均为 `1000*measuredOutput/measuredMs`，分母为零时未知，不能用总 output 代替 measuredOutput。
+
+本地 production 配置资产：`artifacts/activitykit-continuity/linux-x86_64/agent-speed-collector-linux-x86_64`。
+SHA-256：`e3fae5165e21b15ac317c68aedb69c51f9980de2f7c674438ef5c689b269f27a`。
+同目录 metadata/checksum；暂存字节的 `--identity` 已精确匹配 `shared-collector-v2 ` 加摘要和单个换行。
+本机 Linux x86_64/glibc 2.36 loader 依赖解析通过，不保证其他主机或架构。
+移动侧必须同时刷新 ELF/SHA/manifest，使用新的 `collector-v2-<sha>` 内容寻址路径，
+运行时拒绝缺失 continuity capability 或错误上限；不得覆盖旧资产、清空旧 daemon/cache 或用旧链清理伤后继。
+完整队列归档及最终构建、验证边界见同目录根部 BUILDINFO 与 verification 日志；本地产物不是 GitHub Release。
+未 commit/push/tag/release/deploy，未访问生产、调用 Apple 或证明 APNs/iPhone 投递。
+
+实际验证：全 21 项队列完成独立重放；production target Release 编译成功。
+首轮 focused 47 项中 45 通过、2 个新增测试断言失败：误把 JSON object 的 size 当字段数，
+以及漏计有效零宽 final 响应按 500ms 最小测量时长计入的 30 output。
+仅修测试，删除无效字段数断言、修正同日 measured 为 440/3500；仅重跑两项均通过，
+之前 45 项未重复。metadata 三项测试通过；首轮失败与后续窄验证日志全部保留。
+构建源码 commit/tree 为 `3b67a5b72c6a22b32e256adaad383d7d69e0da66` /
+`842e322c2fa1a1252d5be735fccfa6a550ec214b`；测试修正后重放 commit/tree 为
+`9cc9d8c0841949d28de9e7b294eb8329b545555f` / `9d86546dc16d9b2704c793000bea77400c1aa5aa`。
+两次重放只使用 git am 现有队列，不创建新的开发提交；修正未变更 runtime，也未重新构建 production ELF。
+本轮未运行真实 continuity SSH/TLS 联验、Apple/APNs、原生 UI 或完整 Release 门禁。
+
+后续 mobile/relay 合同确认（仅文档）：HTTP200 `{ok:true,apnsAccepted:boolean,usageRequested?:...}`
+表示真实 snapshot 校验并持久化；首次 2xx ACK 不代表 APNs 接受或设备送达。
+APNs429/503、网络错误及具体目的地410由 relay 内部准确记录并退避，不累积为 publisher 失败。
+publisher 自身401/403/410、schema400、数据库500及真正publisher限流429仍返回 HTTP 错误。
+此澄清已修改原0001的产品协议文档及 downstream README，未改 runtime、未重构建或重复测试。
+已交付资产、BUILDINFO/source-queue归档保留构建时与测试修正后的来源，不追写为本次纯文档澄清后的队列。
+

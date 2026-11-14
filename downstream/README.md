@@ -110,21 +110,34 @@ rate, distinct from the zero live rate of a disconnected host; last known totals
 
 ### Codex quota on macOS and Windows (unreleased)
 
-The quota patches add separate, optional floating panels and Quota settings
-panes. They read the existing local Codex login without modifying credentials and
-poll the account usage endpoint independently of the speed monitor. The quota
-contract, polling rules and synthetic response fixtures are in the prepared
-tree's `spec/QUOTA.md`. Unknown values remain unknown, not zero.
+The quota patches add an optional Codenotch-style edge-attached floating surface
+and a Subscription page inside the existing Settings window. The floating
+renderer is pinned to Codenotch commit `835550a342871779135b6484d6899161c5222f7c`:
+macOS uses its native shape and layout, while Windows hosts its HTML/CSS/SVG in
+WebView2 rather than approximating those pixels with WPF controls. Windows needs
+the Microsoft Edge WebView2 Runtime; if unavailable, Settings reports that
+requirement instead of substituting a different surface. Settings retains the
+supplied account-card/progress-bar design. The existing transient dashboard
+flyout shows at most two summaries near a limit, when blocked, or when sign-in
+is required; clicking one opens Settings. Status-item bodies, taskbar widgets,
+orbs and History do not carry quota data.
+The local Codex login is read without modifying credentials, and account usage
+polling is independent of the speed monitor. The contract, polling rules and
+synthetic fixtures are in the prepared tree's `spec/QUOTA.md`. Unknown readings
+remain unknown, not zero.
 
 The quota persistence regression gives each provider actor its own `UserDefaults`
 instance for the same suite, avoiding non-Sendable instance sharing under Swift 6.
 The provider and all ten quota tests compile and pass under Swift 6.2 on Linux in
-a disposable package using swift-crypto and FoundationNetworking. This does not
-validate the full macOS package, native panel or real-login behavior; those still
-require target-platform verification. The Windows application cross-compiles on
-Linux and focused quota core tests pass; native Windows panel and real-login
-behavior remain unverified. Claude quota and Linux quota interfaces are future
-phases.
+a disposable package using swift-crypto and FoundationNetworking. The macOS core
+tests, update-relaunch checks, app-bundle build and archive verification also
+passed in [Release run 43440127058](https://github.com/yooztech/agent-speed/actions/runs/43440127058).
+The redesigned native surfaces and real-login behavior remain unverified on
+Windows and macOS. A same-browser fixture comparison can establish equality of
+the shipped Windows renderer and its pinned reference for the compared states;
+it does not establish native window placement, hit testing, font rasterization
+or mixed-DPI behavior. Do not claim pixel identity without matching native
+screenshots. Claude quota and Linux quota interfaces are future phases.
 
 ### Standalone collector release assets (unreleased)
 
@@ -200,6 +213,26 @@ Unix account must adopt the versioned deployment and daemon identity handshake;
 already-shipped same-UID executables cannot be remotely constrained by the new
 daemon. Host logout/cgroup policy must permit detached processes; no root
 service or linger setting is installed.
+
+The pending `live_activity_continuity_v1` capability separates a publisher
+binding from the relay's individual Apple activity destinations. Only an explicit
+`continuity: true` subscription may use the advertised
+`activityMaxLeaseSeconds: 2592000` limit; its absolute expiry is not renewed by
+publishing. Legacy subscriptions retain their eight-hour limit. Continuity keeps
+the normal ten-second latest-only cadence even when quiet, subject to existing
+backoff and response-completion deadlines. A successful normal publish response
+may request one daily usage summary for the next normal request; this reuses the
+same fixed-timezone sample without a second log scan. Input/output are known
+lower bounds when coverage is incomplete. The measured output/time pair covers
+only final responses with valid durations; completeness of input/output coverage
+does not imply every output token has a measured duration. Mobile and relay
+consumers must negotiate this capability; existing published assets do not gain
+continuity support from these maintenance changes.
+For continuity, HTTP 200 `{ok:true,apnsAccepted:boolean,usageRequested?:...}`
+confirms validated snapshot persistence at the relay, not APNs acceptance or
+device delivery. Apple destination failures and their backoff stay inside the
+relay and do not terminate the publisher binding. Publisher authorization,
+schema, database and genuine publisher rate-limit failures remain HTTP errors.
 
 ### Remote parity corrections (unreleased)
 
