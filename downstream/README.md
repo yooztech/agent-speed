@@ -148,9 +148,27 @@ captures and use explicit AppKit image/color/file types. Release run
 with 15 assertion issues. The subsequent repair shares the real settings-arc
 target between window interception and the button, tests reset-date semantics
 instead of punctuation, and compares pixels against matched native controls
-in a common color space. All 32 captures remain. The repaired tests have not
-yet passed on macOS. Linux syntax checks and language probes must not be
-reported as macOS validation.
+in a common color space. Release run
+[`43559746957`](https://github.com/yooztech/agent-speed/actions/runs/43559746957)
+then compiled the application and tests; its two remaining failing notch tests
+reported 58 issues on each attempt, all from full-strength green/blue samples
+being compared with source-color literals. The matched native-control
+comparisons passed. Native offscreen rendering, preference-rendering checks,
+pixel comparisons, and PNG encoding comparisons are now moved out of ordinary
+`QuotaNotchTests` into the explicit debug-only `QuotaNotchVisualHarness` route.
+The actual notch/settings-orb rendering and provider behavior are unchanged;
+the optional harness still renders those real components, retains the canonical
+paint/attenuation comparisons at their existing thresholds, and writes all 32
+2x edge/state PNGs. From a prepared tree on macOS, run
+`swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native`
+to opt into those diagnostics. They are not discovered by `swift test` and do
+not block Release as ordinary tests. Geometry, hit routing, folding, animation,
+unknown/status, and reset-formatting regressions remain in the registered
+`swift test --package-path macos --filter QuotaNotchTests` suite, without test
+skip conditions, widened assertions, or replacement wiring-only assertions.
+No tests or builds have been run for this separation; the optional harness and
+remaining native tests have not yet been validated on macOS. Linux syntax
+checks and language probes must not be reported as macOS validation.
 The redesigned native surfaces and real-login behavior remain unverified on
 Windows and macOS. A same-browser fixture comparison can establish equality of
 the shipped Windows renderer and its pinned reference for the compared states;
