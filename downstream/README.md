@@ -137,8 +137,16 @@ macOS notch: the cached `NSFont` and two `Animatable` witnesses violated Swift 6
 isolation. Feature patch 0020 now keeps font measurement on the main actor and
 uses sendable value state with nonisolated animation witnesses. The focused
 Linux Swift 6.2 language probe passes strict concurrency checking; this is not
-an AppKit/SwiftUI SDK build. Native macOS compilation remains unverified after
-the repair, and the failed release has not been rerun by this change.
+an AppKit/SwiftUI SDK build. The subsequent Release run `43551664293` reached
+the app-test compilation and failed in the snapshot harness: the system
+accessibility environment properties are read-only, not writable overrides.
+Snapshot rendering now supplies explicit internal accessibility preferences to
+the actual notch and its settings orb; normal application rendering still reads
+the real system environment. The native bitmap tests retain all 32 edge/state
+captures and use explicit AppKit image/color/file types. This repair has not
+yet been compiled or executed against the macOS SDK.
+The macOS build and tests have not passed for this redesigned surface. Linux
+syntax checks and language probes must not be reported as macOS validation.
 The redesigned native surfaces and real-login behavior remain unverified on
 Windows and macOS. A same-browser fixture comparison can establish equality of
 the shipped Windows renderer and its pinned reference for the compared states;

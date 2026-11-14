@@ -1,4 +1,4 @@
-From b8472ca90c707e99ced7f201788be15dcc4f8fed Mon Sep 17 00:00:00 2001
+From d07bd98e4a31c400c63484765e5c92b8a1d77af6 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 19:15:28 +0800
 Subject: [PATCH 20/21] Add macOS Codex quota monitoring
@@ -10,7 +10,7 @@ Subject: [PATCH 20/21] Add macOS Codex quota monitoring
  macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
  .../AgentSpeed/App/QuotaController.swift      |  61 ++
  .../AgentSpeed/App/QuotaGlyphOutline.swift    |  84 ++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 961 ++++++++++++++++++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 981 ++++++++++++++++++
  .../AgentSpeed/App/QuotaNotchShape.swift      |  94 ++
  .../AgentSpeed/Dashboard/DashboardView.swift  |  66 ++
  .../AgentSpeed/Localization/StringTable.swift |  42 +
@@ -18,14 +18,14 @@ Subject: [PATCH 20/21] Add macOS Codex quota monitoring
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
  .../AgentSpeed/Support/MenuFactory.swift      |   1 +
  .../AgentSpeedCore/CodexQuotaProvider.swift   | 278 +++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 376 +++++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 429 ++++++++
  .../QuotaPresentationTests.swift              |  91 ++
- .../CodexQuotaProviderTests.swift             | 228 +++++
+ .../CodexQuotaProviderTests.swift             | 228 ++++
  macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 |  65 ++
+ spec/QUOTA.md                                 |  67 ++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 21 files changed, 2603 insertions(+), 2 deletions(-)
+ 21 files changed, 2678 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -348,10 +348,10 @@ index 00000000..0a8403c6
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 00000000..74b35a93
+index 00000000..59764b6f
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,961 @@
+@@ -0,0 +1,981 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -957,16 +957,36 @@ index 00000000..74b35a93
 +    }
 +}
 +
++/// Snapshot callers can pin rendering without writing SwiftUI's read-only
++/// accessibility environment values. Production callers leave this unspecified.
++struct QuotaNotchRenderingPreferences: Equatable, Sendable {
++    let reduceMotion: Bool
++    let reduceTransparency: Bool
++}
++
 +struct QuotaNotchView: View {
 +    let reading: QuotaNotchReading
 +    let geometry: QuotaNotchGeometry
 +    let onSettings: () -> Void
 +    let onEdge: (NotchEdge) -> Void
 +    let onHide: () -> Void
-+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
++    var renderingPreferences: QuotaNotchRenderingPreferences? = nil
++    @Environment(\.accessibilityReduceMotion) private var environmentReduceMotion
++    @Environment(\.accessibilityReduceTransparency) private var environmentReduceTransparency
++
++    var effectiveRenderingPreferences: QuotaNotchRenderingPreferences {
++        renderingPreferences ?? QuotaNotchRenderingPreferences(reduceMotion: environmentReduceMotion,
++                                                              reduceTransparency: environmentReduceTransparency)
++    }
++
++    var settingsOrb: QuotaSettingsOrb {
++        QuotaSettingsOrb(isHovered: geometry.settingsHovered, isTuckedAway: geometry.handlesTuckedAway,
++                         edge: geometry.edge, action: onSettings, label: reading.l10n("mac.quota.title"),
++                         renderingPreferences: effectiveRenderingPreferences)
++    }
 +
 +    var body: some View {
++        let preferences = effectiveRenderingPreferences
 +        ZStack(alignment: .topLeading) {
 +            SideNotchShape(edge: geometry.edge).fill(.black)
 +                .contentShape(SideNotchShape(edge: geometry.edge))
@@ -982,11 +1002,10 @@ index 00000000..74b35a93
 +            cell
 +                .opacity(geometry.expanded ? 1 : 0)
 +                .accessibilityHidden(!geometry.expanded)
-+                .animation(reduceMotion ? nil : .spring(response: 0.48, dampingFraction: 0.8), value: geometry.expanded)
++                .animation(preferences.reduceMotion ? nil : .spring(response: 0.48, dampingFraction: 0.8), value: geometry.expanded)
 +                .allowsHitTesting(false)
 +            if geometry.expanded {
-+                QuotaSettingsOrb(isHovered: geometry.settingsHovered, isTuckedAway: geometry.handlesTuckedAway,
-+                                 edge: geometry.edge, action: onSettings, label: reading.l10n("mac.quota.title"))
++                settingsOrb
 +                    .position(geometry.orbCenter)
 +            }
 +            if geometry.tooltip {
@@ -1002,7 +1021,7 @@ index 00000000..74b35a93
 +                .frame(width: geometry.cardRect.width, height: geometry.cardRect.height)
 +                .clipShape(RoundedRectangle(cornerRadius: NotchLayout.cardCorner, style: .circular))
 +                .overlay {
-+                    if reduceTransparency {
++                    if preferences.reduceTransparency {
 +                        RoundedRectangle(cornerRadius: NotchLayout.cardCorner, style: .circular)
 +                            .strokeBorder(NotchLayout.ringTrack, lineWidth: 1)
 +                    }
@@ -1014,12 +1033,13 @@ index 00000000..74b35a93
 +        .frame(width: geometry.size.width, height: geometry.size.height)
 +        .foregroundStyle(.white)
 +        .environment(\.colorScheme, .dark)
-+        .animation(reduceMotion ? nil : .spring(response: 0.62, dampingFraction: 0.72), value: geometry.expanded)
-+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: geometry.tooltip)
++        .animation(preferences.reduceMotion ? nil : .spring(response: 0.62, dampingFraction: 0.72), value: geometry.expanded)
++        .animation(preferences.reduceMotion ? nil : .easeInOut(duration: 0.16), value: geometry.tooltip)
 +    }
 +
 +    private var cell: some View {
-+        VStack(spacing: NotchLayout.ringLabelGap) {
++        let preferences = effectiveRenderingPreferences
++        return VStack(spacing: NotchLayout.ringLabelGap) {
 +            ZStack {
 +                Circle().strokeBorder(NotchLayout.ringTrack, lineWidth: NotchLayout.trackStroke)
 +                if let fraction = reading.fraction {
@@ -1028,15 +1048,15 @@ index 00000000..74b35a93
 +                        .stroke(NotchLayout.accent(fraction, blocked: reading.snapshot?.block != nil),
 +                                style: StrokeStyle(lineWidth: NotchLayout.progressStroke, lineCap: .round))
 +                        .rotationEffect(.degrees(-90))
-+                        .animation(reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.9), value: fraction)
++                        .animation(preferences.reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.9), value: fraction)
 +                }
 +                QuotaGlyph().fill(.white, style: FillStyle(eoFill: true))
 +                    .scaleEffect(0.94).frame(width: NotchLayout.glyphSize, height: NotchLayout.glyphSize)
 +                    .opacity(reading.snapshot?.block != nil || (reading.fraction ?? 0) >= 1
-+                             ? (reduceTransparency ? 0.7 : 0.35) : 1)
++                             ? (preferences.reduceTransparency ? 0.7 : 0.35) : 1)
 +            }
 +            .frame(width: NotchLayout.ringDiameter, height: NotchLayout.ringDiameter)
-+            .opacity(reading.stale ? (reduceTransparency ? 0.75 : 0.45) : 1)
++            .opacity(reading.stale ? (preferences.reduceTransparency ? 0.75 : 0.45) : 1)
 +            Text(reading.percentage).font(NotchLayout.percent)
 +                .fixedSize().frame(height: NotchLayout.percentLineHeight)
 +        }
@@ -1140,7 +1160,7 @@ index 00000000..74b35a93
 +    let edge: NotchEdge
 +    let action: () -> Void
 +    let label: String
-+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
++    let renderingPreferences: QuotaNotchRenderingPreferences
 +    @State private var release: CGFloat = 1
 +    @State private var releasing = false
 +    @State private var spins = 0
@@ -1155,13 +1175,13 @@ index 00000000..74b35a93
 +                    .opacity(isTuckedAway || (!isHovered && !releasing) ? 0 : 1)
 +                QuotaOrbMerge(separation: isTuckedAway ? 0 : 1, edge: edge)
 +                    .opacity(isHovered || releasing ? 0 : 1)
-+                    .animation(reduceMotion ? nil : .easeIn(duration: 0.2), value: isTuckedAway)
++                    .animation(renderingPreferences.reduceMotion ? nil : .easeIn(duration: 0.2), value: isTuckedAway)
 +                Image(systemName: "gearshape.fill")
 +                    .font(.system(size: NotchLayout.orbGlyph, weight: .regular))
 +                    .foregroundStyle(.white).opacity(isHovered ? 1 : 0)
 +                    .scaleEffect(isHovered ? 1 : 0.5)
 +                    .rotationEffect(.degrees((isHovered ? 0 : -60) + Double(spins) * 360))
-+                    .animation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.72), value: spins)
++                    .animation(renderingPreferences.reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.72), value: spins)
 +            }
 +            .frame(width: 2 * NotchLayout.orbArcRadius + NotchLayout.orbStroke,
 +                   height: 2 * NotchLayout.orbArcRadius + NotchLayout.orbStroke)
@@ -1171,7 +1191,7 @@ index 00000000..74b35a93
 +        }
 +        .buttonStyle(.plain).accessibilityLabel(label)
 +        .onChange(of: isHovered) { _, hovered in
-+            guard !reduceMotion else { return }
++            guard !renderingPreferences.reduceMotion else { return }
 +            if hovered { releasing = false; return }
 +            var still = Transaction(); still.disablesAnimations = true
 +            withTransaction(still) { release = 0; releasing = true }
@@ -1181,11 +1201,11 @@ index 00000000..74b35a93
 +                if !isHovered { releasing = false }
 +            }
 +        }
-+        .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.7), value: isHovered)
++        .animation(renderingPreferences.reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.7), value: isHovered)
 +        .keyframeAnimator(initialValue: CGFloat(1), trigger: spins) { orb, scale in
 +            orb.scaleEffect(scale)
 +        } keyframes: { _ in
-+            SpringKeyframe(reduceMotion ? 1 : 0.84, duration: 0.09, spring: .snappy)
++            SpringKeyframe(renderingPreferences.reduceMotion ? 1 : 0.84, duration: 0.09, spring: .snappy)
 +            SpringKeyframe(1, duration: 0.34, spring: .bouncy)
 +        }
 +    }
@@ -2028,10 +2048,10 @@ index 00000000..d1995bac
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 00000000..9b4c151f
+index 00000000..d1d49288
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,429 @@
 +import AppKit
 +import SwiftUI
 +import Testing
@@ -2327,6 +2347,63 @@ index 00000000..9b4c151f
 +        hover.reset()
 +    }
 +
++    private func render<Content: View>(_ renderer: ImageRenderer<Content>) throws -> NSBitmapImageRep {
++        renderer.scale = 2
++        renderer.isOpaque = false
++        let image: CGImage = try #require(renderer.cgImage, "Native rendering must produce an image, not skip to a fixture")
++        let bitmap: NSBitmapImageRep = NSBitmapImageRep(cgImage: image)
++        return bitmap
++    }
++
++    @Test func explicitRenderingPreferencesReachTheNotchAndItsSettingsOrb() throws {
++        _ = NSApplication.shared
++        let value = reading(snapshot(0.21, status: .stale))
++        let geometry = QuotaNotchGeometry(edge: .right, expanded: true, tooltip: false, settingsHovered: false,
++                                         cardHeight: value.cardHeight)
++        let radius = (NotchLayout.ringDiameter - NotchLayout.trackStroke) / 2
++        let x = Int((geometry.ringCenter.x + sin(0.3) * radius) * 2)
++        let y = Int((geometry.ringCenter.y - cos(0.3) * radius) * 2)
++        for reduceMotion in [false, true] {
++            for reduceTransparency in [false, true] {
++                let preferences = QuotaNotchRenderingPreferences(reduceMotion: reduceMotion,
++                                                                 reduceTransparency: reduceTransparency)
++                let content = QuotaNotchView(reading: value, geometry: geometry,
++                                            onSettings: {}, onEdge: { _ in }, onHide: {},
++                                            renderingPreferences: preferences)
++                #expect(content.effectiveRenderingPreferences == preferences)
++                #expect(content.settingsOrb.renderingPreferences == preferences)
++                let bitmap: NSBitmapImageRep = try render(ImageRenderer<QuotaNotchView>(content: content))
++                let ink: NSColor = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(NSColorSpace.sRGB))
++                #expect(abs(ink.greenComponent - (reduceTransparency ? 0.75 : 0.45)) < 0.1)
++            }
++        }
++    }
++
++    @Test func productionRenderingDefaultsInheritTheRealAccessibilityEnvironment() throws {
++        _ = NSApplication.shared
++        let value = reading(snapshot(0.21, status: .stale))
++        let geometry = QuotaNotchGeometry(edge: .right, expanded: true, tooltip: false, settingsHovered: false,
++                                         cardHeight: value.cardHeight)
++        let content = QuotaNotchView(reading: value, geometry: geometry,
++                                    onSettings: {}, onEdge: { _ in }, onHide: {})
++        #expect(content.renderingPreferences == nil)
++        var inherited: QuotaNotchRenderingPreferences?
++        // Observe the actual render environment without assigning either of its
++        // read-only accessibility properties or substituting another renderer.
++        let actual: NSBitmapImageRep = try render(ImageRenderer(content: content.transformEnvironment(\.self) { environment in
++            inherited = QuotaNotchRenderingPreferences(reduceMotion: environment.accessibilityReduceMotion,
++                                                       reduceTransparency: environment.accessibilityReduceTransparency)
++        }))
++        let preferences = try #require(inherited, "The native renderer must evaluate its real environment")
++        let explicit = QuotaNotchView(reading: value, geometry: geometry,
++                                     onSettings: {}, onEdge: { _ in }, onHide: {},
++                                     renderingPreferences: preferences)
++        let expected: NSBitmapImageRep = try render(ImageRenderer<QuotaNotchView>(content: explicit))
++        let actualPNG: Data = try #require(actual.representation(using: NSBitmapImageRep.FileType.png, properties: [:]))
++        let expectedPNG: Data = try #require(expected.representation(using: NSBitmapImageRep.FileType.png, properties: [:]))
++        #expect(actualPNG == expectedPNG)
++    }
++
 +    /// Native SwiftUI/AppKit rendering, not an SVG/HTML approximation. Set the
 +    /// output directory to retain every 2x PNG for reference-image comparison:
 +    /// AGENT_SPEED_NOTCH_ARTIFACTS=/tmp/quota-notch-native swift test --package-path macos --filter QuotaNotchTests
@@ -2348,17 +2425,13 @@ index 00000000..9b4c151f
 +                                                 settingsHovered: hover.settingsHovered, cardHeight: value.cardHeight,
 +                                                 handlesTuckedAway: state == "tucked")
 +                let content = QuotaNotchView(reading: value, geometry: geometry,
-+                                            onSettings: {}, onEdge: { _ in }, onHide: {})
-+                    .environment(\.accessibilityReduceMotion, true)
-+                    .environment(\.accessibilityReduceTransparency, false)
-+                let renderer = ImageRenderer(content: content)
-+                renderer.scale = 2
-+                renderer.isOpaque = false
-+                let image = try #require(renderer.cgImage, "Native rendering must produce an image, not skip to a fixture")
-+                let bitmap = NSBitmapImageRep(cgImage: image)
-+                #expect(image.width == Int((geometry.size.width * 2).rounded(.up)))
-+                #expect(image.height == Int((geometry.size.height * 2).rounded(.up)))
-+                let corner = try #require(bitmap.colorAt(x: 1, y: 1)?.usingColorSpace(.sRGB))
++                                            onSettings: {}, onEdge: { _ in }, onHide: {},
++                                            renderingPreferences: QuotaNotchRenderingPreferences(reduceMotion: true,
++                                                                                                  reduceTransparency: false))
++                let bitmap: NSBitmapImageRep = try render(ImageRenderer<QuotaNotchView>(content: content))
++                #expect(bitmap.pixelsWide == Int((geometry.size.width * 2).rounded(.up)))
++                #expect(bitmap.pixelsHigh == Int((geometry.size.height * 2).rounded(.up)))
++                let corner: NSColor = try #require(bitmap.colorAt(x: 1, y: 1)?.usingColorSpace(NSColorSpace.sRGB))
 +                #expect(corner.alphaComponent < 0.01)
 +                let bodyCenter = try #require(bitmap.colorAt(x: Int(geometry.bodyRect.midX * 2),
 +                                                              y: Int(geometry.bodyRect.midY * 2)))
@@ -2387,7 +2460,7 @@ index 00000000..9b4c151f
 +                    let radius = (NotchLayout.ringDiameter - NotchLayout.trackStroke) / 2
 +                    let x = Int((geometry.ringCenter.x + sin(0.3) * radius) * 2)
 +                    let y = Int((geometry.ringCenter.y - cos(0.3) * radius) * 2)
-+                    let ink = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
++                    let ink: NSColor = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(NSColorSpace.sRGB))
 +                    #expect(ink.alphaComponent > 0.99)
 +                    if state == "unknown" {
 +                        #expect(abs(ink.redComponent - ink.greenComponent) < 0.03)
@@ -2399,7 +2472,7 @@ index 00000000..9b4c151f
 +                    }
 +                }
 +                if let destination {
-+                    let png = try #require(bitmap.representation(using: .png, properties: [:]))
++                    let png: Data = try #require(bitmap.representation(using: NSBitmapImageRep.FileType.png, properties: [:]))
 +                    try png.write(to: destination.appendingPathComponent("native-notch-\(edge.rawValue)-\(state)@2x.png"))
 +                }
 +                hover.reset()
@@ -2753,10 +2826,10 @@ index 300ed6d2..5ee4c047 100755
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 00000000..ebf09708
+index 00000000..10c21b10
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,67 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -2808,6 +2881,8 @@ index 00000000..ebf09708
 +Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
 +
 +The macOS notch caches its AppKit body font and measures tooltip text on the main actor. Orb return/merge views contain only sendable scalar/edge values, and expose nonisolated `Animatable` data following the existing chart/height animation pattern; their geometry, curves, and timing remain unchanged. `QuotaNotchTests` includes a detached-task interpolation regression that exercises the generic `Animatable & Sendable` witnesses, including unclamped values and every edge. Run it with the native macOS SDK under Swift 6 strict concurrency; a Linux compiler model can check the isolation pattern but cannot validate AppKit/SwiftUI SDK declarations or native rendering.
++
++Native notch snapshots use the actual `QuotaNotchView` and its nested `QuotaSettingsOrb`, with an internal `QuotaNotchRenderingPreferences` input that pins reduced motion on and reduced transparency off for all 32 edge/state PNGs. Without an explicit input, the production view reads the real SwiftUI accessibility environment and passes the resolved preferences to the orb; tests never assign those read-only environment properties. Regression coverage exercises both explicit preference flags, checks propagation to the actual orb, verifies the stale-ring pixels, and compares the default native rendering with explicit preferences read from its real environment. The existing shape, alpha, usage-ink, and 2x image-size assertions remain required. Native image/bitmap, sRGB color-space, and PNG file-type calls use explicit SDK types rather than relying on inference after a failed view expression. These tests still require a full macOS SDK compilation and native test run; parsing or a Linux type model cannot establish that they compile or render correctly.
 +
 +Unknown usage and reset values are shown as `—` or unknown, never as zero or an invented reset. A known zero remains zero. Show non-official fidelity with `~`; status takes precedence over numerical readings. Retained readings must be visibly stale, with their original observation time or age, and must not appear fresh. Show authentication, access, unsupported, waiting, and error states distinctly rather than implying a successful reading. Display a known block separately from window usage, including its reason when available; do not infer a block from missing data or conflate it with a percentage. Progress graphics may be bounded visually, but labels must preserve reported over-limit usage and negative remaining values.
 +
