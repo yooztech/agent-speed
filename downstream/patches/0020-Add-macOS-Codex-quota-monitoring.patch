@@ -1,4 +1,4 @@
-From f9e0eb9f734659f6683d2a1fd84ff06da9917972 Mon Sep 17 00:00:00 2001
+From b8472ca90c707e99ced7f201788be15dcc4f8fed Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 19:15:28 +0800
 Subject: [PATCH 20/21] Add macOS Codex quota monitoring
@@ -10,7 +10,7 @@ Subject: [PATCH 20/21] Add macOS Codex quota monitoring
  macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
  .../AgentSpeed/App/QuotaController.swift      |  61 ++
  .../AgentSpeed/App/QuotaGlyphOutline.swift    |  84 ++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 957 ++++++++++++++++++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 961 ++++++++++++++++++
  .../AgentSpeed/App/QuotaNotchShape.swift      |  94 ++
  .../AgentSpeed/Dashboard/DashboardView.swift  |  66 ++
  .../AgentSpeed/Localization/StringTable.swift |  42 +
@@ -18,14 +18,14 @@ Subject: [PATCH 20/21] Add macOS Codex quota monitoring
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
  .../AgentSpeed/Support/MenuFactory.swift      |   1 +
  .../AgentSpeedCore/CodexQuotaProvider.swift   | 278 +++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 343 +++++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 376 +++++++
  .../QuotaPresentationTests.swift              |  91 ++
  .../CodexQuotaProviderTests.swift             | 228 +++++
  macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 |  63 ++
+ spec/QUOTA.md                                 |  65 ++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 21 files changed, 2564 insertions(+), 2 deletions(-)
+ 21 files changed, 2603 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -348,10 +348,10 @@ index 00000000..0a8403c6
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 00000000..22ab4b6a
+index 00000000..74b35a93
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,957 @@
+@@ -0,0 +1,961 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -361,7 +361,7 @@ index 00000000..22ab4b6a
 +// Copyright (c) 2026 Vinz, MIT. See Resources/Codenotch-LICENSE.txt.
 +// These are the macOS Design/NotchLayout/Palette/Typography measurements,
 +// not the independently sized Windows implementation.
-+enum NotchEdge: String, CaseIterable {
++enum NotchEdge: String, CaseIterable, Sendable {
 +    case right, left, top, bottom
 +    var isVertical: Bool { self == .right || self == .left }
 +    var outward: CGPoint {
@@ -418,7 +418,10 @@ index 00000000..22ab4b6a
 +    static let cardBody = Font.system(size: fontSize(18), weight: .regular)
 +    static let percentLineHeight = lineHeight(NSFont.systemFont(ofSize: fontSize(27), weight: .semibold))
 +    static let titleLineHeight = lineHeight(NSFont.systemFont(ofSize: fontSize(26), weight: .semibold))
++    // AppKit's cached font stays on the UI actor; scalar geometry remains nonisolated.
++    @MainActor
 +    static let bodyFont = NSFont.systemFont(ofSize: fontSize(18), weight: .regular)
++    @MainActor
 +    static let bodyLineHeight = lineHeight(bodyFont)
 +    static var cellExtent: CGFloat { ringDiameter + ringLabelGap + percentLineHeight }
 +    static var ringMargin: CGFloat { (sideBodyDepth - ringDiameter) / 2 }
@@ -441,6 +444,7 @@ index 00000000..22ab4b6a
 +        return Color(red: 0, green: 1, blue: 136.0 / 255)
 +    }
 +
++    @MainActor
 +    static func textHeight(_ text: String) -> CGFloat {
 +        max(bodyLineHeight, ceil((text as NSString).boundingRect(
 +            with: CGSize(width: cardWidth - 2 * cardPadding, height: .greatestFiniteMagnitude),
@@ -1187,10 +1191,10 @@ index 00000000..22ab4b6a
 +    }
 +}
 +
-+struct QuotaOrbReturn: View, Animatable {
++struct QuotaOrbReturn: View, Animatable, Sendable {
 +    var progress: CGFloat
 +    let edge: NotchEdge
-+    var animatableData: CGFloat {
++    nonisolated var animatableData: CGFloat {
 +        get { progress }
 +        set { progress = newValue }
 +    }
@@ -1234,10 +1238,10 @@ index 00000000..22ab4b6a
 +/// The returning branch of Codenotch's GooArc. The arc rolls up, grows a
 +/// pinched neck onto the original fluid flare, then disappears inside the
 +/// still-open notch. Folding starts only after this 200ms merge has finished.
-+struct QuotaOrbMerge: View, Animatable {
++struct QuotaOrbMerge: View, Animatable, Sendable {
 +    var separation: CGFloat
 +    let edge: NotchEdge
-+    var animatableData: CGFloat {
++    nonisolated var animatableData: CGFloat {
 +        get { separation }
 +        set { separation = newValue }
 +    }
@@ -2024,10 +2028,10 @@ index 00000000..d1995bac
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 00000000..7398aa0e
+index 00000000..9b4c151f
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,343 @@
+@@ -0,0 +1,376 @@
 +import AppKit
 +import SwiftUI
 +import Testing
@@ -2070,6 +2074,39 @@ index 00000000..7398aa0e
 +        #expect(QuotaFlareWalk.steps.first?.u == 0)
 +        #expect(QuotaFlareWalk.steps.last?.u == 1)
 +        #expect(QuotaFlareWalk.steps.last?.v == 1)
++    }
++
++    @Test func cachedBodyFontRetainsTheReferenceMetricsOnTheMainActor() {
++        let font = NotchLayout.bodyFont
++        #expect(font === NotchLayout.bodyFont)
++        #expect(font.pointSize == NotchLayout.fontSize(18))
++        #expect(NotchLayout.bodyLineHeight == ceil(font.ascender - font.descender + font.leading))
++        #expect(NotchLayout.textHeight("") == NotchLayout.bodyLineHeight)
++    }
++
++    @Test func orbAnimationDataCanBeInterpolatedOutsideTheMainActor() async {
++        for edge in NotchEdge.allCases {
++            let returning = QuotaOrbReturn(progress: 0, edge: edge)
++            let merging = QuotaOrbMerge(separation: 1, edge: edge)
++            for value in [CGFloat(-0.25), 0, 0.001, 0.5, 0.999, 1, 1.25] {
++                // Cross a real concurrency boundary and dispatch through Animatable's
++                // nonisolated witness, rather than just inspecting source annotations.
++                let (returned, merged) = await Task.detached {
++                    (Self.interpolated(returning, to: value), Self.interpolated(merging, to: value))
++                }.value
++                #expect(returned.progress == value)
++                #expect(merged.separation == value)
++                #expect(returned.edge == edge && merged.edge == edge)
++                #expect(returning.progress == 0 && merging.separation == 1)
++            }
++        }
++    }
++
++    private nonisolated static func interpolated<T: Animatable & Sendable>(_ original: T, to value: CGFloat) -> T
++        where T.AnimatableData == CGFloat {
++        var result = original
++        result.animatableData = value
++        return result
 +    }
 +
 +    @Test func snapshotIdentityUnknownAndStaleRemainTruthful() {
@@ -2716,10 +2753,10 @@ index 300ed6d2..5ee4c047 100755
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 00000000..4124bae7
+index 00000000..ebf09708
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,65 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -2769,6 +2806,8 @@ index 00000000..4124bae7
 +The existing transient menu-bar popover or tray flyout may show a compact quota summary only when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers; open the existing Settings quota page for details.
 +
 +Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
++
++The macOS notch caches its AppKit body font and measures tooltip text on the main actor. Orb return/merge views contain only sendable scalar/edge values, and expose nonisolated `Animatable` data following the existing chart/height animation pattern; their geometry, curves, and timing remain unchanged. `QuotaNotchTests` includes a detached-task interpolation regression that exercises the generic `Animatable & Sendable` witnesses, including unclamped values and every edge. Run it with the native macOS SDK under Swift 6 strict concurrency; a Linux compiler model can check the isolation pattern but cannot validate AppKit/SwiftUI SDK declarations or native rendering.
 +
 +Unknown usage and reset values are shown as `—` or unknown, never as zero or an invented reset. A known zero remains zero. Show non-official fidelity with `~`; status takes precedence over numerical readings. Retained readings must be visibly stale, with their original observation time or age, and must not appear fresh. Show authentication, access, unsupported, waiting, and error states distinctly rather than implying a successful reading. Display a known block separately from window usage, including its reason when available; do not infer a block from missing data or conflate it with a percentage. Progress graphics may be bounded visually, but labels must preserve reported over-limit usage and negative remaining values.
 +
