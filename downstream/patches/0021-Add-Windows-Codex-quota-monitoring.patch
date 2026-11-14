@@ -1,10 +1,10 @@
-From 7b77c59c377c40afba9e24a5d981fa538c7c8c08 Mon Sep 17 00:00:00 2001
+From 4051a17e9f08467b8149102b645b2c79da45ab5e Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 20:09:33 +0800
 Subject: [PATCH 21/21] Add Windows Codex quota monitoring
 
 ---
- spec/QUOTA.md                                 |    4 +-
+ spec/QUOTA.md                                 |    6 +-
  .../src/AgentSpeed.Core/CodexQuotaProvider.cs |  227 ++
  .../Localization/Strings.Windows.json         |   43 +
  .../Menus/QuickMenuModel.cs                   |    1 +
@@ -12,7 +12,7 @@ Subject: [PATCH 21/21] Add Windows Codex quota monitoring
  .../Settings/QuotaFormat.cs                   |   54 +
  .../Settings/QuotaNotchLayout.cs              |   22 +
  .../Settings/SettingsSerializer.cs            |   12 +
- windows/src/AgentSpeed/AgentSpeed.csproj      |    8 +
+ windows/src/AgentSpeed/AgentSpeed.csproj      |   12 +-
  windows/src/AgentSpeed/App/AppController.cs   |   13 +
  .../AgentSpeed/Dashboard/DashboardWindow.xaml |    2 +
  .../Dashboard/DashboardWindow.xaml.cs         |    2 +
@@ -30,7 +30,9 @@ Subject: [PATCH 21/21] Add Windows Codex quota monitoring
  .../QuotaFormatTests.cs                       |   87 +
  .../QuotaNotchLayoutTests.cs                  |   48 +
  .../Reporting/ReportMenuTests.cs              |   11 +-
- 26 files changed, 3879 insertions(+), 10 deletions(-)
+ .../AgentSpeed.Windows.Tests.csproj           |    3 +-
+ .../AgentSpeed.ProfileHarness.csproj          |    3 +-
+ 28 files changed, 3888 insertions(+), 13 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchLayout.cs
@@ -44,7 +46,7 @@ Subject: [PATCH 21/21] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 4124bae7..23b4546c 100644
+index e0a41411..f9a9fdda 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,7 +1,9 @@
@@ -58,6 +60,15 @@ index 4124bae7..23b4546c 100644
  ## Snapshot
  
  A snapshot has the following logical fields. Optional values are nullable; a missing reading is **unknown**, not zero. Dates are instants (when serialized, ISO 8601 UTC); durations are seconds. IDs are stable machine identifiers, not localized presentation strings.
+@@ -44,6 +46,8 @@ Quota is presented in the existing Settings window as a provider card with progr
+ 
+ An optional, separate edge-attached floating quota renderer may also be enabled. Its visual appearance must reproduce [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c), while using this contract's actual Codex snapshot and status semantics. It is a presentation of the same local account data, not another provider, quota history, network source, or change to polling. Do not show fabricated providers or example readings as real data; currently this contract describes the Codex provider, not an implementation of every provider or the mobile document's full schema.
+ 
++On Windows, the existing WebView2 composition renderer also requires the managed Windows SDK and CsWinRT projections (`Microsoft.Windows.SDK.NET.dll` and `WinRT.Runtime.dll`), not only `Microsoft.Web.WebView2.Wpf.dll`, `Microsoft.Web.WebView2.Core.dll` and the architecture-matched native `WebView2Loader.dll`. The application, native Windows tests and profiling harness target `net10.0-windows10.0.17763.0`, matching the pinned WebView2 WPF assembly's declared Windows 10 version 1809 platform requirement rather than raising it to a newer SDK baseline. This supplies the managed runtime dependencies for both x64 and ARM64 self-contained single-file publications. They belong inside `AgentSpeed.exe`; the existing ZIP and per-user installer distribute that same executable. The separately installed Microsoft Edge WebView2 browser Runtime remains an optional floating-notch requirement reported in Settings when unavailable. The pinned HTML renderer and ordinary app startup behavior are otherwise unchanged.
++
+ The existing transient menu-bar popover or tray flyout may show a compact quota summary only when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers; open the existing Settings quota page for details.
+ 
+ Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
 diff --git a/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
 new file mode 100644
 index 00000000..bbc7b11f
@@ -516,10 +527,21 @@ index 760f5860..4d09f9f1 100644
              ShowOrbs = ReadBool(root, "showOrbs", ReadBool(orb, "show", d.ShowOrb)),
              OrbNames = OrbNamesModes.Parse(ReadString(root, "orbNames")),
 diff --git a/windows/src/AgentSpeed/AgentSpeed.csproj b/windows/src/AgentSpeed/AgentSpeed.csproj
-index dd4c0c0a..59605193 100644
+index dd4c0c0a..cc37d8a6 100644
 --- a/windows/src/AgentSpeed/AgentSpeed.csproj
 +++ b/windows/src/AgentSpeed/AgentSpeed.csproj
-@@ -47,12 +47,20 @@
+@@ -1,7 +1,9 @@
+ <Project Sdk="Microsoft.NET.Sdk">
+   <PropertyGroup>
+     <OutputType>WinExe</OutputType>
+-    <TargetFramework>net10.0-windows</TargetFramework>
++    <!-- WebView2CompositionControl uses Windows SDK/CsWinRT types; the versioned TFM supplies their runtime assemblies. -->
++    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
++    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+     <UseWPF>true</UseWPF>
+     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+     <AssemblyName>AgentSpeed</AssemblyName>
+@@ -47,12 +49,20 @@
      <PackageReference Include="Vortice.DXGI" Version="[3.8.3]" />
      <PackageReference Include="Vortice.DirectComposition" Version="[3.8.3]" />
      <PackageReference Include="Vortice.D3DCompiler" Version="[3.8.3]" />
@@ -4289,3 +4311,30 @@ index aaa5ffb2..630baf40 100644
      }
  
      [Theory]
+diff --git a/windows/tests/AgentSpeed.Windows.Tests/AgentSpeed.Windows.Tests.csproj b/windows/tests/AgentSpeed.Windows.Tests/AgentSpeed.Windows.Tests.csproj
+index 50a29c91..b10694aa 100644
+--- a/windows/tests/AgentSpeed.Windows.Tests/AgentSpeed.Windows.Tests.csproj
++++ b/windows/tests/AgentSpeed.Windows.Tests/AgentSpeed.Windows.Tests.csproj
+@@ -1,6 +1,7 @@
+ <Project Sdk="Microsoft.NET.Sdk">
+   <PropertyGroup>
+-    <TargetFramework>net10.0-windows</TargetFramework>
++    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
++    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+     <UseWPF>true</UseWPF>
+     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+     <RootNamespace>AgentSpeed.Windows.Tests</RootNamespace>
+diff --git a/windows/tools/AgentSpeed.ProfileHarness/AgentSpeed.ProfileHarness.csproj b/windows/tools/AgentSpeed.ProfileHarness/AgentSpeed.ProfileHarness.csproj
+index 02c86b11..c6d818f4 100644
+--- a/windows/tools/AgentSpeed.ProfileHarness/AgentSpeed.ProfileHarness.csproj
++++ b/windows/tools/AgentSpeed.ProfileHarness/AgentSpeed.ProfileHarness.csproj
+@@ -1,7 +1,8 @@
+ <Project Sdk="Microsoft.NET.Sdk">
+   <PropertyGroup>
+     <OutputType>Exe</OutputType>
+-    <TargetFramework>net10.0-windows</TargetFramework>
++    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
++    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+     <UseWPF>true</UseWPF>
+     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+     <AssemblyName>AgentSpeed.ProfileHarness</AssemblyName>
