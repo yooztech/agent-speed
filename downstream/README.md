@@ -35,6 +35,19 @@ Release tags are created from the already-committed `downstream/patch-build`
 revision selected at invocation, not a later workspace revision. Published tags
 and assets remain immutable.
 
+### Windows/macOS parity is mandatory
+
+Every product adjustment must land for Windows and macOS in the same task,
+including provider behavior, persistence, refresh scheduling, settings, localized
+wording and floating-window interactions. Native implementations may use different
+APIs, but user-visible capabilities and behavioral contracts must remain aligned.
+Do not report a Windows-only implementation as complete or silently defer macOS.
+An intentional platform-only exception requires explicit user approval. Focused
+portable checks must identify what they actually exercise; unavailable native UI,
+SDK or live-account verification remains explicitly unverified, never a reason to
+omit the corresponding implementation.
+
+
 
 ## Remote sources
 
@@ -51,6 +64,15 @@ On Windows, source switches for local monitoring do not filter remote sources.
 Remote data remains associated with its host. An orb's host/source exclusions
 are separate: excluding a source on one host affects that orb and its associated
 views without excluding the same source on another host.
+The editor includes alternate connections retained by machine/source deduplication;
+each connection remains independently selectable, while readings count a machine's
+source only once after applying exclusions. Duplicate host labels are disambiguated
+by connection information. On both platforms, an orb-opened dashboard follows that
+orb's current selection without waiting for a new sample; global entries remain
+global. Hiding or deleting the associated orb closes its dashboard rather than
+silently displaying all sources. These corrections belong to feature patch 0011;
+native desktop behavior still requires Windows/macOS acceptance, not a Linux-only
+test or syntax check.
 Undetected sources do not make an otherwise valid rate incomplete; detected
 sources with unknown rates and offline intervals remain unknown and produce
 history gaps. Chart estimate indicators mean that the visible range contains
@@ -215,36 +237,17 @@ adapter beside Codex. Quota bars, rings and flyout summaries show remaining allo
 period colors are stable and warnings are separate. Dashboard and quota-window
 visibility controls remain independent.
 
-Release run `43681439158` exposed Windows-native failures after the Core and
-Presentation suites passed. The input repair preserves Nonzero winding when
-wrapping the grip fan in a transformed WPF geometry, so overlapping routes remain
-a union instead of becoming EvenOdd holes. Native path tests enter at explicit
-painted coordinates rather than sampling the CI runner's physical cursor; their
-route, HWND-region, capture and collapse assertions remain enabled. A fixed-frame
-native regression also covers all edges and 1x, 1.25x and 2x scales.
-Quota refresh completion now returns to the surface's owning Dispatcher even
-when startup has no synchronization context, including reader validity checks
-and rendering. Regression cases cover active rendering, disposal, source removal
-and consent revocation. The Settings composition test locates preferences after
-all account cards instead of assuming a single account. The corrected 22-patch
-queue replays successfully; its Windows test project cross-compiles on Linux and
-all 124 focused Presentation `QuotaNotch` tests pass. Native Windows execution
-remains unverified; these checks are not WPF runtime validation.
+The Windows quota fixes preserve Nonzero winding in transformed grip geometry
+and return asynchronous quota completion to the surface's owning Dispatcher.
+Reader disposal, source removal and consent revocation still invalidate pending
+results. Settings composition checks support multiple account cards, and flyout
+bars show remaining allowance rather than used allowance.
 
-Release run `43683803058` completed the native suite without the former STA
-crash but still failed interaction cases and one new allowance assertion. WPF
-synchronously resamples the physical cursor during capture, so synthetic press
-tests now isolate desktop mouse-coordinate events while retaining real capture
-and loss notifications. Each case runs and shuts down its own Dispatcher;
-capture loss goes through native `ReleaseCapture`. Alt-body points are selected
-outside actual upright cell bounds rather than assuming a cell is bare body.
-An eight-case portable regression checks that painted body strip across all
-edges and representative layouts. The dispatcher regression now correctly
-expects 5% remaining for 95% used, not 95% remaining. Local cross-compilation
-succeeds and all 190 focused `QuotaNotch`/`QuotaFormatTests` cases pass.
-These are not native Windows execution results. The reported right-edge
-`GetWindowRgn` disappearance has not been reproduced or established fixed on
-Windows; its assertions remain strict, with no retry or region-reapply fallback.
+The downstream-only live-HWND region, synthetic desktop mouse-path and native
+capture harness is removed. It is not an additional Release requirement for
+quota windows. Portable geometry/state checks, isolated WPF control tests,
+provider and refresh-lifecycle regressions remain; none establishes desktop
+click-through, mixed-DPI behavior or native input acceptance.
 
 The approved multi-window design retains the supplier logo and matte center disk,
 round progress caps and native concave flares. Rings run from longest period outside
@@ -268,6 +271,51 @@ but is not WPF font/pixel/input proof. The current environment has neither local
 OpenCode credentials nor an authenticated Console session: no real subscription
 request or native desktop acceptance has been claimed. These checks are not a
 Release and do not authorize publication.
+
+Quota base corrections belong to their platform's existing feature patch:
+`0020` owns macOS Codex behavior and native surfaces, `0021` owns Windows Codex,
+and `0022` owns the multi-window/OpenCode Go increment and its integration.
+Shared prerequisites must be introduced before their consumers; patch 0022 is
+not a holding area for unrelated macOS corrections. Codex and Go restore private,
+account-partitioned structured snapshots offline as stale; Codex adds optional
+reset-card count/expiry and the same one-shot startup-floor exception, while
+authentication rejection, legacy schedules, failures and usage/reset-endpoint
+429 deadlines remain binding. Source selection and automatic/manual polling now
+belong to the application lifecycle rather than a visible subscription surface.
+macOS now exposes automatic refresh, All sources/individual source selection and
+the independent default-off Keep expanded switch. Native account cards include
+all remaining-allowance windows, reset countdowns, balances/reset cards and the
+original update timestamp. The floating panel includes every enabled account
+and its windows, with hover folding, the external arc/disc/six-drop grip, drag
+capture/placement, context-menu settings and local observation-boundary labels.
+The old single-provider picker and gear/settings action are removed. Eleven
+changed native Swift/test files pass syntax parsing; two tests extracted from
+the actual production grip-motion implementation pass, including exact delayed
+poses, return-to-idle and reduced motion. This is not native UI acceptance.
+The opt-in macOS visual harness now defines 176 four-edge/theme/scale/state
+notch captures and four localized details captures; it has not run on this host.
+The repartitioned queue replays all 22 patches in a fresh prepared tree. Its final
+Git tree is exactly `872156c9c88834c214b2342067babd7a6973f523`, identical to the
+pre-repartition tree: this changes patch ownership, not the delivered source.
+Patches 0001–0019 are preserved; 0020 now contains the complete base macOS
+implementation, 0021 retains the base Windows implementation, and 0022 adds Go
+and its multi-window integration without hiding the base platform corrections.
+At the 0020 boundary alone, the real Codex/model/persistence sources compile in
+a Linux Swift 6.2 portable package without Go or SQLite; twelve base native
+source/test files also pass syntax parsing. These dependency checks are not a
+macOS SDK build or native desktop acceptance. The final-source tests below were
+not rerun for this ownership-only change because the final tree is identical.
+The Linux Swift 6.2 portable package executes the real models, providers and
+persistence code: all 32 tests in four suites pass, including cache corruption,
+startup throttling, reset-endpoint 429, token rotation and cancelled/replaced
+requests. Controller code and its tests compile with Swift 6 strict concurrency,
+but their executable cannot link against this host's Swift 6.2.0 Observation
+runtime (`swift::threading::fatal` is missing from its dynamic runtime exports).
+The attempted Swift 6.2.1 toolchain download timed out; no product workaround,
+suppression or substitute controller was introduced. Controller runtime tests,
+macOS SDK builds, native desktop rendering/input and real accounts remain
+unverified here. This is not a package or Release.
+
 
 The floating surface is drawn directly with cached WPF paths, glyphs and text.
 The main surface uses a bounded, stable animation canvas and the details card
@@ -459,11 +507,10 @@ Windows frame times, end-to-end input latency or a native visual acceptance.
 Native-dev.2 fixes the frozen-path initialization failure reported on Windows
 and integrates compact account cards and direct source selection. Its Windows
 test assembly and self-contained win-x64 publication build with no warnings or
-errors, and 311 related Presentation tests pass. `QuotaNotchWindowTests` now
-exercises the real Surface-to-Show startup on all four edges, painted versus
-transparent points, installed native regions and safe copyable failure stages.
-It is included in the registered Windows filter but has only compiled here;
-the Windows startup and layout assertions have not executed on this Linux host.
+errors, and 311 related Presentation tests pass. The subsequently added
+`QuotaNotchWindowTests` live-window harness has been removed; it is not part of
+the registered Windows filter or the Release gate. Native desktop startup,
+click-through and layout acceptance are not established by Linux compilation.
 
 
 Portable geometry/input/placement checks and compilation are not native Windows

@@ -1,160 +1,192 @@
-From 4fe6139cec67ba1211ed7f6b44db6b8e8b531bec Mon Sep 17 00:00:00 2001
-From: Downstream Patch Queue <downstream@localhost>
-Date: Fri, 13 Nov 2026 20:09:33 +0800
-Subject: [PATCH] Add Windows Codex quota monitoring
+From 826e36fc64cdadfcaff6c9a08fa248a4470dc8fc Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Sun, 15 Nov 2026 15:52:42 +0800
+Subject: [PATCH 21/22] Add Windows Codex quota monitoring
 
+- Preserve the existing Windows Codex base implementation unchanged.
+- Extend the shared Codex contract to Windows without registering OpenCode Go.
 ---
- spec/QUOTA.md                                      |   52 +-
- windows/src/AgentSpeed.Core/AgentSpeed.Core.csproj |    1 +
- windows/src/AgentSpeed.Core/CodexQuotaProvider.cs  |  411 ++++++
- windows/src/AgentSpeed.Core/QuotaSnapshot.cs       |   20 +
- .../Localization/Strings.Windows.json              |   85 ++
- .../AgentSpeed.Presentation/Menus/MenuAction.cs    |    3 +
- .../AgentSpeed.Presentation/Menus/OrbMenuModel.cs  |    2 +-
- .../Menus/QuickMenuModel.cs                        |   15 +-
- .../Settings/AppSettings.cs                        |   30 +
- .../Settings/QuotaFormat.cs                        |  112 ++
- .../Settings/QuotaNotchGeometry.cs                 |  292 ++++
- .../Settings/QuotaNotchGeometryFilter.cs           |  190 +++
- .../Settings/QuotaNotchGeometryOrb.cs              |   99 ++
- .../Settings/QuotaNotchGeometryRaster.cs           |   69 +
- .../Settings/QuotaNotchGripMotion.cs               |  141 ++
- .../Settings/QuotaNotchLayout.cs                   |   79 ++
- .../Settings/SettingsSerializer.cs                 |   38 +
- windows/src/AgentSpeed/AgentSpeed.csproj           |    6 +
- windows/src/AgentSpeed/App/AppController.cs        |   16 +
- .../src/AgentSpeed/Dashboard/DashboardWindow.xaml  |    2 +
- .../AgentSpeed/Dashboard/DashboardWindow.xaml.cs   |    2 +
- windows/src/AgentSpeed/Menus/MenuBuilder.cs        |    3 +
- windows/src/AgentSpeed/Settings/QuotaCodex.svg     |    1 +
- .../src/AgentSpeed/Settings/QuotaDisplayClock.cs   |   60 +
- .../src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt |   49 +
- windows/src/AgentSpeed/Settings/QuotaNotchGoo.cs   |   95 ++
- .../src/AgentSpeed/Settings/QuotaNotchRegion.cs    |  118 ++
- windows/src/AgentSpeed/Settings/QuotaNotchView.cs  |  421 ++++++
- .../src/AgentSpeed/Settings/QuotaNotchWindow.cs    |  759 +++++++++++
- .../src/AgentSpeed/Settings/QuotaSettingsPage.cs   |  315 +++++
- windows/src/AgentSpeed/Settings/QuotaSurface.cs    |  355 +++++
- .../src/AgentSpeed/Settings/SettingsViewModel.cs   |    1 +
- .../src/AgentSpeed/Settings/SettingsWindow.xaml    |   12 +-
- .../src/AgentSpeed/Settings/SettingsWindow.xaml.cs |   27 +-
- windows/src/AgentSpeed/Theme/Styles.xaml           |    4 +-
- .../CodexQuotaProviderTests.cs                     |  727 ++++++++++
- .../OrbMenuModelTests.cs                           |   43 +-
- .../QuotaFormatTests.cs                            |  251 ++++
- .../QuotaNotchBodyInputTests.cs                    |   67 +
- .../QuotaNotchFilterParityTests.cs                 |  209 +++
- .../QuotaNotchGeometryFilterTests.cs               |   35 +
- .../QuotaNotchGeometryOrbTests.cs                  |  139 ++
- .../QuotaNotchGeometryRasterTests.cs               |   29 +
- .../QuotaNotchGeometryTests.cs                     |  215 +++
- .../QuotaNotchGripMotionTests.cs                   |  137 ++
- .../QuotaNotchLayoutTests.cs                       |  241 ++++
- .../Reporting/ReportMenuTests.cs                   |   11 +-
- .../SettingsSerializerTests.cs                     |  109 ++
- .../QuotaDisplayClockTests.cs                      |   63 +
- .../QuotaNotchViewTests.cs                         |  302 +++++
- .../QuotaNotchWindowTests.cs                       | 1394 ++++++++++++++++++++
- .../QuotaSettingsPageTests.cs                      |  386 ++++++
- .../AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs  |  505 +++++++
- 53 files changed, 8703 insertions(+), 45 deletions(-)
+ spec/QUOTA.md                                 |  32 +-
+ .../AgentSpeed.Core/AgentSpeed.Core.csproj    |   1 +
+ .../src/AgentSpeed.Core/CodexQuotaProvider.cs | 411 ++++++++++
+ windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |  20 +
+ .../Localization/Strings.Windows.json         |  85 ++
+ .../Menus/MenuAction.cs                       |   3 +
+ .../Menus/OrbMenuModel.cs                     |   2 +-
+ .../Menus/QuickMenuModel.cs                   |  15 +-
+ .../Settings/AppSettings.cs                   |  30 +
+ .../Settings/QuotaFormat.cs                   | 112 +++
+ .../Settings/QuotaNotchGeometry.cs            | 292 +++++++
+ .../Settings/QuotaNotchGeometryFilter.cs      | 190 +++++
+ .../Settings/QuotaNotchGeometryOrb.cs         |  99 +++
+ .../Settings/QuotaNotchGeometryRaster.cs      |  69 ++
+ .../Settings/QuotaNotchGripMotion.cs          | 141 ++++
+ .../Settings/QuotaNotchLayout.cs              |  79 ++
+ .../Settings/SettingsSerializer.cs            |  38 +
+ windows/src/AgentSpeed/AgentSpeed.csproj      |   6 +
+ windows/src/AgentSpeed/App/AppController.cs   |  16 +
+ .../AgentSpeed/Dashboard/DashboardWindow.xaml |   2 +
+ .../Dashboard/DashboardWindow.xaml.cs         |   2 +
+ windows/src/AgentSpeed/Menus/MenuBuilder.cs   |   3 +
+ .../src/AgentSpeed/Settings/QuotaCodex.svg    |   1 +
+ .../AgentSpeed/Settings/QuotaDisplayClock.cs  |  60 ++
+ .../Settings/QuotaNotch.LICENSE.txt           |  49 ++
+ .../src/AgentSpeed/Settings/QuotaNotchGoo.cs  |  95 +++
+ .../AgentSpeed/Settings/QuotaNotchRegion.cs   | 118 +++
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs | 421 ++++++++++
+ .../AgentSpeed/Settings/QuotaNotchWindow.cs   | 759 ++++++++++++++++++
+ .../AgentSpeed/Settings/QuotaSettingsPage.cs  | 315 ++++++++
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   | 355 ++++++++
+ .../AgentSpeed/Settings/SettingsViewModel.cs  |   1 +
+ .../AgentSpeed/Settings/SettingsWindow.xaml   |  12 +-
+ .../Settings/SettingsWindow.xaml.cs           |  27 +-
+ windows/src/AgentSpeed/Theme/Styles.xaml      |   4 +-
+ .../CodexQuotaProviderTests.cs                | 727 +++++++++++++++++
+ .../OrbMenuModelTests.cs                      |  43 +-
+ .../QuotaFormatTests.cs                       | 251 ++++++
+ .../QuotaNotchBodyInputTests.cs               |  67 ++
+ .../QuotaNotchFilterParityTests.cs            | 209 +++++
+ .../QuotaNotchGeometryFilterTests.cs          |  35 +
+ .../QuotaNotchGeometryOrbTests.cs             | 139 ++++
+ .../QuotaNotchGeometryRasterTests.cs          |  29 +
+ .../QuotaNotchGeometryTests.cs                | 215 +++++
+ .../QuotaNotchGripMotionTests.cs              | 137 ++++
+ .../QuotaNotchLayoutTests.cs                  | 241 ++++++
+ .../Reporting/ReportMenuTests.cs              |  11 +-
+ .../SettingsSerializerTests.cs                | 109 +++
+ .../QuotaDisplayClockTests.cs                 |  63 ++
+ .../QuotaNotchViewTests.cs                    | 302 +++++++
+ .../QuotaSettingsPageTests.cs                 | 386 +++++++++
+ .../QuotaSurfaceTests.cs                      | 505 ++++++++++++
+ 52 files changed, 7281 insertions(+), 53 deletions(-)
+ create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
+ create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
+ create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
+ create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
+ create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryFilter.cs
+ create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryOrb.cs
+ create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryRaster.cs
+ create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGripMotion.cs
+ create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchLayout.cs
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaCodex.svg
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaDisplayClock.cs
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchGoo.cs
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchRegion.cs
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchView.cs
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
+ create mode 100644 windows/src/AgentSpeed/Settings/QuotaSurface.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchBodyInputTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchFilterParityTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryFilterTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryOrbTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryRasterTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGripMotionTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaDisplayClockTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index e0a41411..b6aeba76 100644
+index 4add9bc2..b87cdf77 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
-@@ -1,7 +1,9 @@
+@@ -1,8 +1,8 @@
 -# Codex quota contract (macOS phase one)
 +# Codex quota contract (macOS and Windows)
  
  This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
  
+-On macOS, the provider reads `auth.json` from a non-empty `CODEX_HOME` directory when set. Otherwise, it reads `~/.codex/auth.json`. The file is read-only; credentials are used only for the local account request. The provider follows the same snapshot, endpoint, status, freshness, and backoff semantics described below.
 +On macOS and Windows, the provider reads `auth.json` from a non-empty `CODEX_HOME` directory when set. Otherwise, it reads `~/.codex/auth.json` on macOS or `%USERPROFILE%\.codex\auth.json` on Windows. The file is read-only; credentials are used only for the local account request. Both platforms follow the same snapshot, endpoint, status, freshness, and backoff semantics described below.
-+
+ 
  ## Snapshot
  
- A snapshot has the following logical fields. Optional values are nullable; a missing reading is **unknown**, not zero. Dates are instants (when serialized, ISO 8601 UTC); durations are seconds. IDs are stable machine identifiers, not localized presentation strings.
-@@ -21,6 +23,7 @@ A snapshot has the following logical fields. Optional values are nullable; a mis
+@@ -23,7 +23,7 @@ A snapshot has the following logical fields. Optional values are nullable; a mis
  | `nextAllowedAt` | Nullable earliest next permitted refresh time, if the provider is backing off. |
  | `waitingForRefresh` | True only when a persisted successful polling interval prevents a refresh and no observation is available in this process. Status remains `error` for compatibility; display this condition as waiting, not a failed request. |
  | `credits` | Nullable credit information: `hasCredits` and `unlimited` are nullable booleans, `balance` is a nullable decimal string. `limit` and `used` are nullable numeric absolute amounts in provider-reported spend units, with no inferred currency; `usedFraction` and `resetAt` describe the individual spend-control allowance. A balance of `"0"` is known zero, not unknown. The allowance's `usedFraction` is not clamped and may exceed 1. |
-+| `resetCreditsAvailable` | Windows: nullable nonnegative count of available rate-limit reset cards, queried from the separate reset-credits endpoint. Independent of usage credit balance and spend allowance; missing or failed lookups are unknown, never zero. |
+-| `resetCreditsAvailable` | Nullable nonnegative count of available rate-limit reset cards, queried from the separate reset-credits endpoint on macOS. Independent of usage credit balance and spend allowance; missing or failed lookups are unknown, never zero. |
++| `resetCreditsAvailable` | Nullable nonnegative count of available rate-limit reset cards, queried from the separate reset-credits endpoint on both platforms. Independent of usage credit balance and spend allowance; missing or failed lookups are unknown, never zero. |
  
  A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`, and `duration`. `id` is stable and unique within a snapshot; `label` is display text. For Codex windows, `usedFraction` and `used` are the reported percentage divided by 100, and `remaining` is 1 minus that fraction. These nullable fractions are not absolute counts and are not clamped: usage may exceed 1 and remaining may be negative. Zero is known zero, not unknown. `resetAt` is a nullable absolute instant and `duration` is a nullable window length in seconds. Unknown fields remain null, including an unknown fraction on an otherwise valid window.
  
-@@ -36,13 +39,52 @@ A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`,
+@@ -39,7 +39,7 @@ A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`,
  * `error`: a network, decoding, service, or other failure that does not establish a more specific state.
  
  An authentication failure must not be represented as zero usage. If old data is retained, it must be visibly stale; a previous timestamp must never be advanced on an unsuccessful refresh. Rate limiting is a transient failure, not an empty successful observation. Respect server retry guidance and avoid repeatedly querying the endpoint while it is rate-limited.
--After restart, a successful poll's persisted interval can block a request even though the observation itself was not persisted. In that case `waitingForRefresh` is true until polling is allowed. Actual 429, decoding, network and service failures have `waitingForRefresh` false, including during a persisted failure backoff; they must remain visibly errors (or stale when an observation exists). Unknown legacy schedule provenance is not reported as a successful wait.
-+On macOS, a persisted successful polling interval can prevent a post-restart request even when the observation itself is unavailable; that legacy condition uses `waitingForRefresh`. Windows persists the last successfully parsed, structured account snapshot and hydrates it before rendering the subscription surfaces. Restored observations retain their original `observedAt`, unknown values and reported reset instants, and are visibly stale until a new successful response; an elapsed reset never synthesizes a full allowance. Cache data is private, versioned and partitioned by the current authenticated account's digest, with no tokens, request headers or raw responses. Missing, corrupt, unsupported-version or mismatched-account cache entries are cache misses, not zero readings. An absent or rejected local identity must not expose another account's cached observation. Actual 429, decoding, network and service failures remain errors or stale observations, never successful waiting states.
+-macOS persists the last successfully parsed, structured account snapshot and hydrate it at application startup, including with networking disabled. Restored observations retain their original `observedAt`, unknown values and reported reset instants, and are visibly stale until a new successful response; an elapsed reset never synthesizes a full allowance. Cache data is private, versioned and partitioned by the current authenticated account's digest, with no tokens, request headers or raw responses. Missing, corrupt, unsupported-version or mismatched-account cache entries are cache misses, not zero readings. An absent or rejected local identity must not expose another account's cached observation. Actual 429, decoding, network and service failures remain errors or stale observations, never successful waiting states. Legacy schedules without a usable observation may still produce `waitingForRefresh` until their preserved deadline.
++Both platforms persist the last successfully parsed, structured account snapshot and hydrate it at application startup, including with networking disabled. Restored observations retain their original `observedAt`, unknown values and reported reset instants, and are visibly stale until a new successful response; an elapsed reset never synthesizes a full allowance. Cache data is private, versioned and partitioned by the current authenticated account's digest, with no tokens, request headers or raw responses. Missing, corrupt, unsupported-version or mismatched-account cache entries are cache misses, not zero readings. An absent or rejected local identity must not expose another account's cached observation. Actual 429, decoding, network and service failures remain errors or stale observations, never successful waiting states. Legacy schedules without a usable observation may still produce `waitingForRefresh` until their preserved deadline.
  
  ## Desktop presentation
  
- Quota is presented in the existing Settings window as a provider card with progress, following the supplied `desktop-settings.png` design. Show the headline window selected by `headlineId`, its usage and reset when known, and the other available windows and account details without treating provider response order as window identity. Identify windows by their labels and durations; do not assume a primary slot is five-hour or a secondary slot is weekly. Display used and remaining together where space permits.
+@@ -47,22 +47,26 @@ Quota is presented in the existing Settings window as source-neutral account car
  
--An optional, separate edge-attached floating quota renderer may also be enabled. Its visual appearance must reproduce [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c), while using this contract's actual Codex snapshot and status semantics. It is a presentation of the same local account data, not another provider, quota history, network source, or change to polling. Do not show fabricated providers or example readings as real data; currently this contract describes the Codex provider, not an implementation of every provider or the mobile document's full schema.
-+On Windows, Subscription is a source-neutral account list and settings group, not a Codex-specific page. Only the real Codex adapter is currently enabled in the source registry; do not invent other accounts, providers or example readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Do not fill missing optional values with repeated unknown labels, invent a quota window when no window was returned, or draw a progress track for unknown usage. A provider without an observation gets one concise state-specific explanation (loading, not yet refreshed, waiting, sign-in required, offline, denied, unsupported or error); an unavailable window reading is labelled unavailable rather than measured zero. Known zero and retained stale readings remain visible, with the original observation timestamp and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Present status and a blocking reason without duplication. The page follows the user's existing Light, Dark or System setting, including live changes, and never overrides the Settings window's theme.
-+
-+Windows Subscription follows the approved visual preview: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows, and source selection reproduces the existing orb source editor: a rounded group, All sources with its include-future-sources explanation, an inset divider and ordinary checkbox/source-dot/name rows. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
-+
-+Available reset cards may include a nearest reported expiration, `resetCreditsNextExpiry`, parsed independently of the count from valid ISO-8601 `expires_at` fields of entries whose status is exactly `available`. Used and expired cards do not supply this value. Missing or invalid dates remain unknown; count, quota-window reset and observation time never substitute for expiration. A partial list establishes only the nearest known reported expiration. Do not show a card expiration when the authoritative available count is zero.
-+
-+Windows quota graphics show remaining allowance: `clamp(1 - usedFraction, 0, 1)` fills bars and rings, while labels preserve the actual remaining value and unknown stays unknown. Warning thresholds still use actual used quota. The underlying snapshot's `usedFraction` is never inverted. Persisted `quota.sources` and `quota.autoRefresh` control enabled sources and automatic versus manual refresh; manual refresh still obeys the provider's existing floor and backoff.
-+
-+The Windows floating details card's bottom successful-observation label is a short relative update age derived from the original `observedAt`, not a timeless “latest” indicator: “Updated just now”, “Updated Xm ago”, “Updated Xh ago” or “Updated Xd ago” (Simplified Chinese: “刚刚更新”, “X分钟前更新”, “X小时前更新”, “X天前更新”; Traditional Chinese and Japanese are localized too). Missing `observedAt` is unknown and future observations never produce negative ages. Offline, stale, waiting, authentication and error states keep precedence. The details card and an open tray summary refresh only their visible local labels at the next observation-relative minute boundary: opening an observation aged 59 or 119 seconds schedules one second, not another full minute. Recompute the deadline after snapshot/visibility changes, clamp sub-millisecond deadlines to one millisecond, and stop on hidden/unloaded/disposed displays. The collapsed/main quota window has no age timer. These clocks never request HTTP or alter provider polling/backoff; Subscription's approved absolute update timestamp and reset-countdown layout remain unchanged.
-+
-+Windows quota startup belongs to the application, not any visible surface. With a supported source enabled, hydrate the current account's last successful observation immediately, including when network access is disabled. Independently attempt one startup refresh as soon as networking is permitted, even in manual periodic-refresh mode and without opening Settings or the floating panel. This one-shot startup request may bypass only the ordinary five-minute floor following a successful observation; persisted 429 Retry-After, failure backoff and unchanged-token authentication rejection still apply. Source and network toggles within the same Surface lifetime do not repeatedly grant this exception. Automatic mode then continues the normal five-minute cadence while all surfaces are closed; manual mode stops periodic requests. Explicit non-startup refreshes still obey the ordinary floor and backoff. Network errors retain the last good snapshot with its original observation time. Cancellation, disposal and account/token changes must prevent obsolete in-flight results from replacing the currently displayed account or its persisted snapshot.
-+For migration, a legacy Windows schedule without a validated version-1 account snapshot cannot distinguish a normal successful floor from an optional reset-credit 429 extension. Preserve its future `NextAllowedAt` rather than granting the startup bypass. After that deadline, a successful request upgrades the structured snapshot and independent retry deadline; subsequent application starts may bypass only the ordinary successful floor.
-+
+ Subscription is a source-neutral account list and settings group, with the real Codex adapter; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
+ 
+-macOS Subscription follows the approved account-card layout using native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
++Windows and macOS Subscription follow the approved account-card layout using their native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
+ 
+ Available reset cards may include a nearest reported expiration, `resetCreditsNextExpiry`, parsed independently of the count from valid ISO-8601 `expires_at` fields of entries whose status is exactly `available`. Used and expired cards do not supply this value. Missing or invalid dates remain unknown; count, quota-window reset and observation time never substitute for expiration. A partial list establishes only the nearest known reported expiration. Do not show a card expiration when the authoritative available count is zero.
+ 
+ Quota graphics show remaining allowance; clamp only graphic fill, not reported numeric labels or the underlying used fraction. Unknown readings remain unknown. Window colors identify periods, not warning severity: monthly blue, weekly green, five-hour lilac; warnings use separate status text. Persisted source and automatic-refresh preferences control providers independently, and manual refresh still obeys their backoff.
+ 
+-On macOS the floating details card's bottom successful-observation label is a short relative update age derived from the original `observedAt`, not a timeless “latest” indicator: “Updated just now”, “Updated Xm ago”, “Updated Xh ago” or “Updated Xd ago” (Simplified Chinese: “刚刚更新”, “X分钟前更新”, “X小时前更新”, “X天前更新”; Traditional Chinese and Japanese are localized too). Missing `observedAt` is unknown and future observations never produce negative ages. Offline, stale, waiting, authentication and error states keep precedence. The details card and an open tray/menu summary refresh only their visible local labels at the next observation-relative minute boundary: opening an observation aged 59 or 119 seconds schedules one second, not another full minute. Recompute the deadline after snapshot/visibility changes, clamp sub-millisecond deadlines to one millisecond, and stop on hidden/unloaded/disposed displays. The collapsed/main quota window has no age timer. These clocks never request HTTP or alter provider polling/backoff; Subscription's absolute update timestamp and reset-countdown layout remain unchanged.
++On both platforms the floating details card's bottom successful-observation label is a short relative update age derived from the original `observedAt`, not a timeless “latest” indicator: “Updated just now”, “Updated Xm ago”, “Updated Xh ago” or “Updated Xd ago” (Simplified Chinese: “刚刚更新”, “X分钟前更新”, “X小时前更新”, “X天前更新”; Traditional Chinese and Japanese are localized too). Missing `observedAt` is unknown and future observations never produce negative ages. Offline, stale, waiting, authentication and error states keep precedence. The details card and an open tray/menu summary refresh only their visible local labels at the next observation-relative minute boundary: opening an observation aged 59 or 119 seconds schedules one second, not another full minute. Recompute the deadline after snapshot/visibility changes, clamp sub-millisecond deadlines to one millisecond, and stop on hidden/unloaded/disposed displays. The collapsed/main quota window has no age timer. These clocks never request HTTP or alter provider polling/backoff; Subscription's absolute update timestamp and reset-countdown layout remain unchanged.
+ 
+-Quota startup on macOS belongs to the application, not any visible surface. With a supported source enabled, hydrate the current account's last successful observation, including when network access is disabled. Independently attempt one startup refresh as soon as networking is permitted, even in manual periodic-refresh mode and without opening Settings or the floating panel. This one-shot startup request may bypass only the ordinary five-minute floor following a successful observation; persisted 429 Retry-After, failure backoff and unchanged-token authentication rejection still apply. Source and network toggles within the same application lifetime do not repeatedly grant this exception. Automatic mode then continues the normal five-minute cadence while all surfaces are closed; manual mode stops periodic requests. Explicit non-startup refreshes still obey the ordinary floor and backoff. Network errors retain the last good snapshot with its original observation time. Cancellation, disposal and account/token changes must prevent obsolete in-flight results from replacing the currently displayed account or its persisted snapshot.
++Quota startup on both platforms belongs to the application, not any visible surface. With a supported source enabled, hydrate the current account's last successful observation, including when network access is disabled. Independently attempt one startup refresh as soon as networking is permitted, even in manual periodic-refresh mode and without opening Settings or the floating panel. This one-shot startup request may bypass only the ordinary five-minute floor following a successful observation; persisted 429 Retry-After, failure backoff and unchanged-token authentication rejection still apply. Source and network toggles within the same application lifetime do not repeatedly grant this exception. Automatic mode then continues the normal five-minute cadence while all surfaces are closed; manual mode stops periodic requests. Explicit non-startup refreshes still obey the ordinary floor and backoff. Network errors retain the last good snapshot with its original observation time. Cancellation, disposal and account/token changes must prevent obsolete in-flight results from replacing the currently displayed account or its persisted snapshot.
+ For migration, a legacy schedule without a validated version-1 account snapshot cannot distinguish a normal successful floor from an optional reset-credit 429 extension. Preserve its future `nextAllowedAt` rather than granting the startup bypass. After that deadline, a successful request upgrades the structured snapshot and independent retry deadline; subsequent application starts may bypass only the ordinary successful floor.
+ 
+-By default, without pointer attention, the macOS panel start and rest as a collapsed strip: 10 by 79 logical pixels on vertical edges or 79 by 10 on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
 +Dashboard floating windows and the quota floating panel have independent context-menu controls. On Windows, the quota panel uses direct WPF drawing in tightly bounded native windows for the main shape and its details card. The host owns physical monitor/work-area placement, closest-edge dragging, persisted monitor/edge/along position, and DPI correction. Drawing, hit classification, and the operating-system window region use the same geometry, leaving unpainted corners and holes available to other desktop windows. Successful region handles are owned by Windows; intermediate handles and handles from failed region updates are released by the application. A region setup failure hides the panel rather than leaving a transparent rectangular input blocker. The panel follows the existing ThemeService's resolved light/dark appearance, including live System changes.
-+
+ 
+-On macOS the Subscription preference “Keep expanded” (Simplified Chinese: “保持展开”) sits immediately after the floating-panel visibility switch. It defaults off and persists independently of visibility and monitor/edge/along placement; missing or nonboolean values retain the off default without a settings-version migration. When enabled, the first visible body is already expanded at startup or re-show, even if Settings has never been opened. Leaving the panel does not collapse its body. This preference changes only the body target: it does not synthesize pointer attention, reveal the six-dot grip, open an account card, refresh quota or rebuild a provider. The resting arc still follows body expansion and the arc/disc/dots retain their independent real hover/held interaction. Disabling the preference applies immediately but preserves any real body/card/menu/grace/pending-drag/active-drag attention until that interaction ends. Hide/close clear interaction and stop finite motion; re-show reads the preference again, and settled pinned rest has no continuous rendering subscription.
 +The main HWND keeps a bounded animation canvas stable while the painted shape changes. Its actual input region excludes unused canvas except for the small control padding and narrow connecting routes described below; this is not a screen-sized interception rectangle. The body-center anchor remains stable while expanding, collapsing and dragging. This stationary-anchor principle was also cross-checked against [WIsland's native Qt window](https://github.com/AsamiAkito/wisland/blob/11ebd0f0a3af2afcb5b8a4d9792f4f6f011f53f4/wisland/ui/island.py); desktop capture, constant compact animation and cursor polling are not used. The control-pocket liquid filter, tight local source rasterizer and shared alpha-mask input conversion run only for finite arc/disc/drop transitions, not for the body or desktop. The native region converter treats a null flattened transform as identity before appending DPI, and frozen parsed paths receive transforms through an immutable parent geometry group.
+ 
+-The expanded macOS floating panel have an independently visible quarter-circle affordance in the trailing flare pocket. This is not the body's outline, a blank body hotspot, an internal footer or a settings shortcut. Settings remains available through the context menu and tray/main Settings entry; no gear or permanent disc is restored. The original Codenotch `SettingsHandle.swift` describes the arc as saying "there is something here". The reference Windows geometry (`windows/codenotch/ui/notch.html` at `835550a`, lines 1983–1984 and 2223–2354) supplies GooArc, DiscToArc and DiscMerge shapes. Arc and temporary disc retain their 0.9 reference scale: arc radius 25.65 logical pixels, fill stroke 6.12 with an 8.12 outer stroke, and disc radius 20.97. The enlarged dot grid is independently 8.0 neutral diameter and 12.5 pitch, with the existing 30% hover growth to 10.4, one-pixel outlines and held squeeze ratios unchanged. Do not globally enlarge the arc or body to enlarge the dots. All are derived from the flare center `(38.7, BodyEnd + 38.7)`; the final grid moves only eight logical pixels along the edge from that center rather than adding the original 43.2 external reach. Left/right grids are three columns by two rows; the same edge transform makes top/bottom grids two columns by three rows. Fill and outlines use the panel palette (dark `#000000`/`#2e2e2e`, light `#f5f5f7`/`#d2d2d7`), not six bright white ink dots.
++By default, without pointer attention, both native panels start and rest as a collapsed strip: 10 by 79 logical pixels on vertical edges or 79 by 10 on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
 +
-+By default, without pointer attention, the Windows panel starts and rests as the canonical collapsed `CreateMain(0)` strip: 10 by 79 DIP on vertical edges or 79 by 10 DIP on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
++On both platforms the Subscription preference “Keep expanded” (Simplified Chinese: “保持展开”) sits immediately after the floating-panel visibility switch. It defaults off and persists independently of visibility and monitor/edge/along placement; missing or nonboolean values retain the off default without a settings-version migration. When enabled, the first visible body is already expanded at startup or re-show, even if Settings has never been opened. Leaving the panel does not collapse its body. This preference changes only the body target: it does not synthesize pointer attention, reveal the six-dot grip, open an account card, refresh quota or rebuild a provider. The resting arc still follows body expansion and the arc/disc/dots retain their independent real hover/held interaction. Disabling the preference applies immediately but preserves any real body/card/menu/grace/pending-drag/active-drag attention until that interaction ends. Hide/close clear interaction and stop finite motion; re-show reads the preference again, and settled pinned rest has no continuous rendering subscription.
 +
-+The Windows Subscription preference “Keep expanded” (Simplified Chinese: “保持展开”) sits immediately after the floating-panel visibility switch. It defaults off and persists as the boolean `quotaNotch.keepExpanded`, independently of `quotaNotch.show` and monitor/edge/along placement; missing or nonboolean values retain the off default without a settings-version migration. When enabled, the first native region and first visible body are already expanded at startup or re-show, even if Settings has never been opened. Leaving the panel does not collapse its body. This preference changes only the body target: it does not synthesize pointer attention, reveal the six-dot grip, open an account card, refresh quota or rebuild a provider. The resting arc still follows body expansion and the arc/disc/dots retain their independent real hover/held interaction. Disabling the preference applies immediately but preserves any real body/card/menu/grace/pending-drag/active-drag attention until that interaction ends. Hide/close clear interaction and stop finite motion; re-show reads the preference again, and settled pinned rest has no continuous rendering subscription.
-+
-+The expanded Windows floating panel has an independently visible quarter-circle affordance in the trailing flare pocket. This is not the body's outline, a blank body hotspot, an internal footer or a settings shortcut. Settings remains available through the context menu and tray/main Settings entry; no gear or permanent disc is restored. The original Codenotch `SettingsHandle.swift` describes the arc as saying "there is something here". Its Windows geometry (`windows/codenotch/ui/notch.html` at `835550a`, lines 1983–1984 and 2223–2354) supplies GooArc, DiscToArc and DiscMerge shapes. Arc and temporary disc retain their 0.9 reference scale: arc radius 25.65 DIP, fill stroke 6.12 with an 8.12-DIP outer stroke, and disc radius 20.97. The enlarged dot grid is independently 8.0-DIP neutral diameter and 12.5-DIP pitch, with the existing 30% hover growth to 10.4 DIP, one-DIP outlines and held squeeze ratios unchanged. Do not globally enlarge the arc or body to enlarge the dots. All are derived from the flare center `(38.7, BodyEnd + 38.7)`; the final grid moves only eight DIP along the edge from that center rather than adding the original 43.2-DIP external reach. Left/right grids are three columns by two rows; the same edge transform makes top/bottom grids two columns by three rows. Fill and one-DIP dot/disc outlines use the panel palette (dark `#000000`/`#2e2e2e`, light `#f5f5f7`/`#d2d2d7`), not six bright white ink dots.
-+
-+The outlined resting arc has 8.49 DIP of true radial clearance from the outlined circular body flare; the temporary full disc has 17.23 DIP. Neutral outlined dot paint spans X 21.7–55.7 and Y `BodyEnd + 35.95`–`BodyEnd + 57.45`, a 34-by-21.5-DIP envelope; settled hover paint is 36.4 by 23.9 DIP. Hit padding, radial bridge, activation fan and liquid core/neck consumers use the actual production dot/grid geometry, not independently enlarged SVGs or a blanket input rectangle. `GripPaintClearance` measures the actual quarter curve including its endpoints, not the full circle or a bounding rectangle; `ArcGripPaintClearance` measures the retained outlined arc against all six outlined dots, including hover. These production methods drive regressions and the frame probe. The animation canvas still conservatively reserves 32.97 DIP beyond the flare for transient disc/filter bounds, without making that envelope interactive or moving the screen anchor.
-+
-+Expansion alone starts the independent arc separation (340-ms delay, 950-ms cubic-bezier `(0.35,0,0.25,1)`), so the resting expanded body presents a visible entry without first finding an invisible hotspot. Hovering the control family rolls the arc toward a temporary source disc over 220 ms; after a further 20 ms, the disc contracts into the nearby six drops over the reference 420-ms division curve. The original entry arc remains visibly painted and hittable throughout that morph and alongside the final dots. The disc is not another permanently lit black ball. On leave, drops flow back over 200 ms, the disc waits another 100 ms and rolls back into the arc over 400 ms. Collapse uses the reference 260-ms quick arc return. Hover uses a 220-ms-response/0.55-damping spring; a captured press squeezes dot radius by 30% and pitch by 18% without shifting its painted center. Reduced motion settles every channel and finite terminal states unsubscribe from rendering.
-+
-+Each frame derives the visible entry arc, temporary disc, core/neck, six drops and their input routes from the same `GripFrame`. The moving small control is the current six-dot paint plus two-DIP padding (28.31 by 19.4 DIP at its normal terminal pose). An eight-DIP radial bridge crosses only the actual body-to-arc gap; while the family is active it continues from the entry toward the pocket center, joining the short center-to-dots corridor. These narrow routes are intentionally alpha 1/255; the visible arc itself never disappears from hit classification during a morph. There is no invisible disc-sized or envelope-sized hit rectangle. Arbitrarily slow movement between body, arc, disc, routes and dots must keep the whole family expanded and revealed; merely visiting the quota card must not light six dots over desktop text. Grip-family and Alt-body presses capture before the same four-DIP radial threshold in all directions; pending/active gestures hold expansion and release resamples and persists the physical monitor/edge/along anchor. Quota cells, details and refresh semantics remain separate from drag handling.
-+
-+While the disc or drops are active, `GetControlFanPath` adds only the eight-DIP straight corridors from the resting arc's two endpoints and midpoint to each current drop center. This supports direct, arbitrarily slow travel to any of the six dots rather than requiring an undiscoverable centerline detour. Coincident early drops share a corridor. The compound path uses nonzero winding so route overlaps union without holes; it stays within the arc-to-dot pocket plus the four-DIP corridor half-width, is painted at alpha 1/255, and is absent from ordinary expanded arc-only rest. The fixed animation envelope and unused parts of the orb-sized pocket are not promoted to input rectangles.
-+
-+Pointer entry during the arc's initial emergence also retains its exact last-painted GooArc phase and return flags in `GripFrame`. `CreateOrbCarry` reconstructs that same visible source and filtered input while the resting entry and disc/drop transition proceed; the carry clears only after the entire family returns. This prevents a stationary pointer on the moving, compressed arc from falling through when the source changes. It stores scalar motion state, not a rendered snapshot, rectangle or continuously sampled pointer history.
-+
-+Subscription Settings no longer exposes runtime diagnostics or a credential-storage footnote. Safe initialization/placement stage and exception type/HResult state may remain internal to the native host for tests; no page callback or hidden replacement diagnostic UI is retained. Pointer events and finite transitions drive the panel lifecycle; it has no continuous cursor, browser bridge, or bitmap polling loop. Provider refresh and backoff remain independent of this rendering lifecycle.
-+
-+An optional, separate edge-attached floating quota renderer may also be enabled. Its visual appearance follows [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c), except for the deliberately omitted Windows settings shortcut and compact, moderately spaced external moving grip described above, while using this contract's actual Codex snapshot and status semantics. It presents the same local account data, not another provider, quota history, network source or polling implementation. Do not present fabricated providers or example readings as real data; only the Codex adapter is currently implemented.
-+
++Both expanded floating panels have an independently visible quarter-circle affordance in the trailing flare pocket. This is not the body's outline, a blank body hotspot, an internal footer or a settings shortcut. Settings remains available through the context menu and tray/main Settings entry; no gear or permanent disc is restored. The original Codenotch `SettingsHandle.swift` describes the arc as saying "there is something here". The reference Windows geometry (`windows/codenotch/ui/notch.html` at `835550a`, lines 1983–1984 and 2223–2354) supplies GooArc, DiscToArc and DiscMerge shapes. Arc and temporary disc retain their 0.9 reference scale: arc radius 25.65 logical pixels, fill stroke 6.12 with an 8.12 outer stroke, and disc radius 20.97. The enlarged dot grid is independently 8.0 neutral diameter and 12.5 pitch, with the existing 30% hover growth to 10.4, one-pixel outlines and held squeeze ratios unchanged. Do not globally enlarge the arc or body to enlarge the dots. All are derived from the flare center `(38.7, BodyEnd + 38.7)`; the final grid moves only eight logical pixels along the edge from that center rather than adding the original 43.2 external reach. Left/right grids are three columns by two rows; the same edge transform makes top/bottom grids two columns by three rows. Fill and outlines use the panel palette (dark `#000000`/`#2e2e2e`, light `#f5f5f7`/`#d2d2d7`), not six bright white ink dots.
+ 
+ The outlined resting arc has 8.49 DIP of true radial clearance from the outlined circular body flare; the temporary full disc has 17.23 DIP. Neutral outlined dot paint spans X 21.7–55.7 and Y `BodyEnd + 35.95`–`BodyEnd + 57.45`, a 34-by-21.5-DIP envelope; settled hover paint is 36.4 by 23.9 DIP. Hit padding, radial bridge, activation fan and liquid core/neck consumers use the actual production dot/grid geometry, not independently enlarged SVGs or a blanket input rectangle. `GripPaintClearance` measures the actual quarter curve including its endpoints, not the full circle or a bounding rectangle; `ArcGripPaintClearance` measures the retained outlined arc against all six outlined dots, including hover. These production methods drive regressions and the frame probe. The animation canvas still conservatively reserves 32.97 DIP beyond the flare for transient disc/filter bounds, without making that envelope interactive or moving the screen anchor.
+ 
+@@ -78,6 +82,10 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
+ 
+ The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
+ 
 +The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
 +
 +Windows startup regressions use the real `QuotaSurface` → `Window.Show` → `SourceInitialized` path with ephemeral settings, networking and automatic polling disabled, and no credentials. They require a visible HWND, nonzero placement, an opaque black collapsed bar in both themes, transparent unused canvas, and a nonempty installed native region that includes only the painted bar on all four edges. Deterministic pointer/card/grace and menu/drag-state regressions exercise real paint and installed input regions with reduced motion, while finite animation runs are advanced to their terminal samples without sleeps. The body-to-grip route is sampled through the production pointer handlers, visible pixels and installed native region, with grace expiration driven between samples to represent arbitrarily slow movement. Both grip and Alt-body presses must acquire real mouse capture, remain pending below threshold, move the anchor above threshold, resample a different edge on release, persist the result and release capture; another physical monitor is used when available. An explicitly expanded injected first-render failure must be hidden and retain a safe stage/type/HResult/inner-exception diagnostic in the native runtime state. These are Windows-only regressions, not claims based on a portable geometry check.
++
+ The existing transient menu-bar popover or tray flyout may show a compact quota summary when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers, but include every available quota window within each displayed provider; open the existing Settings quota page for details.
  
- The existing transient menu-bar popover or tray flyout may show a compact quota summary only when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers; open the existing Settings quota page for details.
+ Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
+@@ -91,7 +99,7 @@ swift test --package-path macos --filter QuotaNotchTests
+ swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native
+ ```
  
-@@ -61,7 +103,7 @@ The first command runs the ordinary geometry, typography, animation interpolatio
+-The first command runs the ordinary geometry, state, motion, hit-routing, folding, unknown/status, and reset-formatting regressions; it does not render offscreen images or compare pixels/PNG encodings. The second explicitly opts into `QuotaNotchVisualHarness` via the existing debug launch-option mechanism. It renders the actual Codex `QuotaNotchView` and painted control-family input mask on four edges, in both themes at 1x and 2x, for eleven body/control/status states (176 notch PNGs), plus four localized details PNGs. It exits nonzero on diagnostic failure, including missing native images or PNG encoding/write failures. This opt-in native route is not part of ordinary test discovery or the Release gate. It runs before application activation without real credentials and requires the native macOS SDK and a GUI login session.
++The first command runs the ordinary geometry, state, motion, hit-routing, folding, unknown/status, and reset-formatting regressions; it does not render offscreen images or compare pixels/PNG encodings. The second explicitly opts into `QuotaNotchVisualHarness` via the existing debug launch-option mechanism. It renders the actual multi-source `QuotaNotchView` and painted control-family input mask on four edges, in both themes at 1x and 2x, for eleven body/control/status states (176 notch PNGs), plus four localized details PNGs. It exits nonzero on diagnostic failure, including missing native images or PNG encoding/write failures. This opt-in native route is not part of ordinary test discovery or the Release gate. It runs before application activation without real credentials and requires the native macOS SDK and a GUI login session.
  
- The optional captures pin reduced motion on and reduced transparency off through `QuotaNotchRenderingPreferences`. Without an explicit input, the unchanged production view reads the real SwiftUI accessibility environment and passes the resolved preferences to the orb. The optional harness exercises both explicit preference flags and observes the real render environment without assigning its read-only properties. Ordinary tests do not retain standalone preference-wiring equality assertions in place of the moved visual checks. Public immutable quota snapshot/window value initializers support synthetic harness input without `@testable` imports; provider parsing, polling, credentials, and runtime UI paint are unchanged.
+ The optional captures use fixed synthetic frames and credential-free observations, not live requests or substitute browser graphics. They exercise folded, resting arc, emerging arc, temporary disc, dividing drops, six drops, held, stale, offline, unknown and authentication states. The harness checks tight native bounds, opaque paint against the shared input mask, the resting arc's transparent hole and every revealed drop's draggable target. Its four localized details captures cover English, Simplified Chinese, Traditional Chinese and Japanese.
  
--The settings wake region must include the actual fluid flare-parallel arc, not only the old circular hot zone: the arc's midpoint lies outside that circle on every edge. The AppKit interception gate and SwiftUI button share `QuotaSettingsTarget`; at rest only the stroked arc intercepts clicks, leaving its central hole transparent. On hover the target retains that arc footprint and adds the settings disc, so a stationary pointer can wake and click the control without cycling between outside and settings as its shape changes. Tucked handles are not clickable. Native tests cover five arc positions on all four edges, both before and after hover, the actual button content shape, hosting-view hit routing, and the transparent hole.
-+On macOS, the settings wake region must include the actual fluid flare-parallel arc, not only the old circular hot zone: the arc's midpoint lies outside that circle on every edge. The AppKit interception gate and SwiftUI button share `QuotaSettingsTarget`; at rest only the stroked arc intercepts clicks, leaving its central hole transparent. On hover the target retains that arc footprint and adds the settings disc, so a stationary pointer can wake and click the control without cycling between outside and settings as its shape changes. Tucked handles are not clickable. Native macOS tests cover five arc positions on all four edges, both before and after hover, the actual button content shape, hosting-view hit routing, and the transparent hole.
- 
- The optional visual harness retains the canonical native paint control with the same pixel-aligned overlapping strokes: the white 18.8% track, #00ff88 progress, and outer 45% stale opacity (75% with reduced transparency) over opaque black, plus a full-strength control. Opacity is not an encoded sRGB channel value: comparing a final green sample directly with 0.45 or 0.75 ignores native compositing, the track, and color-space conversion. All RGB samples are converted with `NSColor.usingColorSpace(NSColorSpace.sRGB)` and decoded to linear light before comparison with matched controls; both the progress-over-track and uncovered-track samples are checked. Fresh, stale, offline, and unknown states use the same unchanged thresholds and rendering contract. These optional controls establish compositing correctness, not pixel identity to a captured Codenotch screenshot.
- 
-@@ -76,6 +118,8 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
+@@ -109,7 +117,7 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
  `GET https://chatgpt.com/backend-api/wham/usage` uses the local Codex session's bearer access token and `ChatGPT-Account-Id`; `Accept: application/json` requests JSON. Never place either credential in fixtures or logs. `plan_type` is the plan when supplied. The main `rate_limit.primary_window` and `rate_limit.secondary_window` are independent; parse each without discarding a valid sibling because another is null or malformed. A window's numeric `used_percent` converts to `usedFraction` by dividing by 100 without clamping. `limit_window_seconds` gives duration. `reset_at` is Unix epoch seconds; when absent, `reset_after_seconds` is relative to the observation time. Null or omitted data stays unknown. A non-null 0 percentage is a valid measurement.
  `additional_rate_limits` is an array of feature-scoped rate-limit objects (`limit_name`, `metered_feature`, `rate_limit`), not a replacement for the main account windows. `code_review_rate_limit` may contain another pair. Preserve source scope when representing these windows. A malformed extra must not destroy usable main data. `spend_control.individual_limit` is a separate credit-backed allowance: its `limit` and `used` can be decimal strings, `used_percent` is a percentage, and `reset_at` is epoch seconds. The response's `credits` balance is distinct from that allowance and from unused reset credits at the separate `/wham/rate-limit-reset-credits` endpoint; none is interchangeable with another.
  
-+On Windows, each successful usage poll also queries `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits` with the same account credentials. This optional reading never replaces or invalidates usable quota windows. A nonnegative integer `available_count` is authoritative; otherwise only a complete, recognized reset-credit status list can establish the available count. Malformed, unsupported or unavailable responses produce an unknown count, not an invented zero or a retained stale count labelled fresh. A reset-endpoint 429 extends the shared persisted request floor using Retry-After; rejected credentials suppress that optional endpoint for the unchanged token without changing a successful usage observation to an authentication failure. Both requests remain within the provider's coalesced, rate-limited refresh operation; no credentials or account identifiers are included in diagnostics.
-+
+-On macOS, each successful usage poll also queries `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits` with the same account credentials. This optional reading never replaces or invalidates usable quota windows. A nonnegative integer `available_count` is authoritative; otherwise only a complete, recognized reset-credit status list can establish the available count. Malformed, unsupported or unavailable responses produce an unknown count, not an invented zero or a retained stale count labelled fresh. A reset-endpoint 429 extends the shared persisted request floor using Retry-After; rejected credentials suppress that optional endpoint for the unchanged token without changing a successful usage observation to an authentication failure. Both requests remain within the provider's coalesced, rate-limited refresh operation; no credentials or account identifiers are included in diagnostics.
++On both platforms, each successful usage poll also queries `GET https://chatgpt.com/backend-api/wham/rate-limit-reset-credits` with the same account credentials. This optional reading never replaces or invalidates usable quota windows. A nonnegative integer `available_count` is authoritative; otherwise only a complete, recognized reset-credit status list can establish the available count. Malformed, unsupported or unavailable responses produce an unknown count, not an invented zero or a retained stale count labelled fresh. A reset-endpoint 429 extends the shared persisted request floor using Retry-After; rejected credentials suppress that optional endpoint for the unchanged token without changing a successful usage observation to an authentication failure. Both requests remain within the provider's coalesced, rate-limited refresh operation; no credentials or account identifiers are included in diagnostics.
+ 
  Synthetic, credential-free examples: [`fixtures/codex-quota.json`](fixtures/codex-quota.json) shows main windows, an extra, a code-review window with unknown usage, and spend control; [`fixtures/codex-credit-quota.json`](fixtures/codex-credit-quota.json) shows missing rolling windows and a known zero balance. Their timestamps are examples, not current reset predictions. These are illustrative endpoint payloads, not captures of a real account.
  Both endpoint fixtures are raw provider responses, not snapshots; parsing either produces snapshot fidelity `official`.
- 
 diff --git a/windows/src/AgentSpeed.Core/AgentSpeed.Core.csproj b/windows/src/AgentSpeed.Core/AgentSpeed.Core.csproj
 index fe867767..7e567f9b 100644
 --- a/windows/src/AgentSpeed.Core/AgentSpeed.Core.csproj
@@ -7166,1406 +7198,6 @@ index 00000000..5e1a9af2
 +        thread.SetApartmentState(ApartmentState.STA);
 +        thread.Start(); thread.Join();
 +        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
-+    }
-+}
-diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-new file mode 100644
-index 00000000..4878b12c
---- /dev/null
-+++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-@@ -0,0 +1,1394 @@
-+using System.IO;
-+using System.Net.Http;
-+using System.Collections;
-+using System.ComponentModel;
-+using System.Reflection;
-+using System.Runtime.ExceptionServices;
-+using System.Runtime.InteropServices;
-+using System.Windows;
-+using System.Windows.Input;
-+using System.Windows.Interop;
-+using System.Windows.Media;
-+using System.Windows.Media.Imaging;
-+using System.Windows.Threading;
-+using AgentSpeed.Core;
-+using AgentSpeed.Interop;
-+using AgentSpeed.Presentation.Localization;
-+using AgentSpeed.Presentation.Layout;
-+using AgentSpeed.Presentation.Settings;
-+using AgentSpeed.Services;
-+using AgentSpeed.Settings;
-+
-+namespace AgentSpeed.Windows.Tests;
-+
-+public sealed class QuotaNotchWindowTests
-+{
-+    [Theory]
-+    [InlineData("left", false)]
-+    [InlineData("right", false)]
-+    [InlineData("top", false)]
-+    [InlineData("bottom", false)]
-+    [InlineData("left", true)]
-+    [InlineData("right", true)]
-+    [InlineData("top", true)]
-+    [InlineData("bottom", true)]
-+    public void EnabledSurfaceStartupShowsOnlyBlackBarAndReportsSuccess(string edge, bool dark) => OnSta(() =>
-+    {
-+        using var settings = new SettingsService(Dispatcher.CurrentDispatcher);
-+        settings.MakeEphemeral();
-+        settings.Update(s => s with
-+        {
-+            ShowQuotaNotch = true, AutoRefreshQuota = false, NetworkEnabled = false,
-+            QuotaAllSources = false, QuotaSources = ["codex"], QuotaNotchEdge = edge
-+        });
-+        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
-+        // Exercise the application's real consumer, including SourceInitialized and its
-+        // caught-error path. A swallowed startup exception must fail visible assertions.
-+        using var quotaFiles = new IsolatedQuotaFiles();
-+        using var surface = new QuotaSurface(settings, loc, dark, quotaFiles.CreateProvider);
-+        PumpLayout();
-+
-+        var source = Assert.Single(PresentationSource.CurrentSources.OfType<HwndSource>(),
-+            source => source.Dispatcher.CheckAccess() && source.RootVisual is QuotaNotchWindow);
-+        var window = Assert.IsType<QuotaNotchWindow>(source.RootVisual);
-+        var diagnostic = window.RuntimeDiagnostic;
-+        Assert.Contains("initialized=True", diagnostic);
-+        Assert.Contains("failed=False", diagnostic);
-+        Assert.Contains("failure=none", diagnostic);
-+        Assert.Contains("visible=True", diagnostic);
-+        Assert.DoesNotContain("placements=0;", diagnostic);
-+        Assert.True(window.IsVisible);
-+        Assert.True(IsWindowVisible(source.Handle));
-+        Assert.True(User32.GetWindowRect(source.Handle, out var nativeBounds));
-+        Assert.True(nativeBounds.Width > 1 && nativeBounds.Height > 1);
-+        var monitor = Assert.IsType<MonitorInfo>(Monitors.FromWindow(source.Handle));
-+        Assert.True(nativeBounds.Left < monitor.WorkArea.Right && nativeBounds.Right > monitor.WorkArea.Left &&
-+            nativeBounds.Top < monitor.WorkArea.Bottom && nativeBounds.Bottom > monitor.WorkArea.Top,
-+            "Startup left the native window outside the visible monitor work area.");
-+        var view = Assert.IsType<QuotaNotchView>(window.Content);
-+        Assert.True(view.ActualWidth > 1 && view.ActualHeight > 1);
-+        bool horizontal = edge is "top" or "bottom";
-+        var model = QuotaNotchGeometry.CreateMain(0, 1, horizontal, edge == "bottom");
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1, horizontal);
-+        var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(model));
-+        var center = transform.Apply(new(model.BodyDepth / 2, (model.BodyStart + model.BodyEnd) / 2));
-+        var painted = new Point(center.X, center.Y);
-+        var clear = edge switch
-+        {
-+            "left" => new Point(view.Extent.Width - 1, 1),
-+            "top" => new Point(1, view.Extent.Height - 1),
-+            _ => new Point(1, 1)
-+        };
-+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width),
-+            (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
-+        bitmap.Render(view);
-+        Assert.Equal(255, AlphaAt(bitmap, painted));
-+        Assert.Equal(0, AlphaAt(bitmap, clear));
-+        AssertBlackAt(bitmap, painted);
-+        Assert.Equal(horizontal ? 79 : 10, view.InputGeometry.Bounds.Width, 4);
-+        Assert.Equal(horizontal ? 10 : 79, view.InputGeometry.Bounds.Height, 4);
-+        var unused = transform.Apply(new(30, (model.BodyStart + model.BodyEnd) / 2));
-+        var blank = new Point(unused.X, unused.Y);
-+        Assert.Equal(0, AlphaAt(bitmap, blank));
-+        Assert.Equal(QuotaNotchTarget.Body, view.HitTestTarget(painted).Target);
-+        Assert.Equal(QuotaNotchTarget.None, view.HitTestTarget(blank).Target);
-+
-+        // Check the actual installed OS region, not just the renderer's hit-test data.
-+        var region = CreateRectRgn(0, 0, 0, 0);
-+        Assert.NotEqual(nint.Zero, region);
-+        try
-+        {
-+            Assert.True(GetWindowRgn(source.Handle, region) > 1, "Startup left an empty or missing native region.");
-+            Assert.NotNull(source.CompositionTarget);
-+            var device = source.CompositionTarget.TransformToDevice;
-+            AssertInRegion(region, device.Transform(painted), true);
-+            AssertInRegion(region, device.Transform(clear), false);
-+            AssertInRegion(region, device.Transform(blank), false);
-+        }
-+        finally { DeleteObject(region); }
-+    });
-+
-+    [Theory]
-+    [InlineData("left", false)]
-+    [InlineData("right", false)]
-+    [InlineData("top", false)]
-+    [InlineData("bottom", false)]
-+    [InlineData("left", true)]
-+    [InlineData("right", true)]
-+    [InlineData("top", true)]
-+    [InlineData("bottom", true)]
-+    public void KeepExpandedFirstNativeRegionAndVisibleFrameHaveExpandedBodyAndOnlyRestingArc(string edge, bool dark) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings(edge);
-+        settings.Update(s => s with { KeepQuotaNotchExpanded = true });
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), dark);
-+        window.SetReduceMotion(true);
-+        var attention = new List<bool>();
-+        window.AttentionChanged += attention.Add;
-+        int initialized = 0;
-+        window.SourceInitialized += (_, _) =>
-+        {
-+            initialized++;
-+            // This runs after the real SourceInitialized placement but before native show.
-+            // A private expansion target alone cannot satisfy paint AND installed-region checks.
-+            AssertBodyState(window, edge, expanded: true);
-+        };
-+        try
-+        {
-+            window.Show();
-+            Assert.Equal(1, initialized);
-+            PumpLayout();
-+            Assert.True(IsWindowVisible(new WindowInteropHelper(window).Handle));
-+            Assert.Contains("initialized=True", window.RuntimeDiagnostic);
-+            Assert.Contains("failed=False", window.RuntimeDiagnostic);
-+            AssertBodyState(window, edge, expanded: true);
-+            AssertIdleArcOnly(window, edge);
-+            Assert.Empty(attention);
-+            Assert.DoesNotContain(window.OwnedWindows.Cast<Window>(), card => card.IsVisible);
-+            Leave(window);
-+            ExpireGrace(window);
-+            AssertBodyState(window, edge, expanded: true);
-+            AssertIdleArcOnly(window, edge);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData("body")]
-+    [InlineData("card")]
-+    [InlineData("grace")]
-+    public void DisablingKeepExpandedPreservesRealBodyCardAndGraceAttention(string hold) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings("right");
-+        settings.Update(s => s with { KeepQuotaNotchExpanded = true });
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(true);
-+        var attention = new List<bool>();
-+        window.AttentionChanged += attention.Add;
-+        try
-+        {
-+            window.Show(); PumpLayout();
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var model = QuotaNotchGeometry.CreateMain(1, 1);
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
-+            var transform = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model));
-+            Invoke(window, "PointerEnter", BodyPoint(view));
-+            var card = Assert.Single(window.OwnedWindows.Cast<Window>());
-+            if (hold == "card")
-+            {
-+                var cell = transform.Apply(new(model.RingCenterX, model.RingCenterY));
-+                var local = new Point(cell.X, cell.Y);
-+                Invoke(window, "PointerMove", local, view.PointToScreen(local));
-+                Assert.True(card.IsVisible);
-+                Leave(window);
-+                Enter(card);
-+            }
-+            else if (hold == "grace") Leave(window);
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
-+            AssertBodyState(window, "right", expanded: true);
-+            Assert.Equal(new[] { true }, attention);
-+            if (hold == "card") Leave(card);
-+            else if (hold == "body") Leave(window);
-+            AssertBodyState(window, "right", expanded: true);
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: false);
-+            Assert.False(card.IsVisible);
-+            Assert.Equal(new[] { true, false }, attention);
-+            // Repinning a genuinely idle body must not reopen the old card or invent attention.
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = true });
-+            AssertBodyState(window, "right", expanded: true);
-+            AssertIdleArcOnly(window, "right");
-+            Assert.False(card.IsVisible);
-+            Assert.Equal(new[] { true, false }, attention);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData(false, false)]
-+    [InlineData(false, true)]
-+    [InlineData(true, false)]
-+    [InlineData(true, true)]
-+    public void DisablingKeepExpandedHonorsPendingAndActiveCaptureThroughReleaseOrLoss(bool activeDrag, bool loseCapture) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings("right");
-+        settings.Update(s => s with { KeepQuotaNotchExpanded = true });
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(true);
-+        int refreshes = 0;
-+        window.RefreshRequested += () => refreshes++;
-+        try
-+        {
-+            window.Show(); PumpLayout();
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var local = BodyPoint(view);
-+            var screen = view.PointToScreen(local);
-+            Invoke(window, "PointerEnter", local);
-+            Invoke(window, "PointerPress", local, ModifierKeys.Alt, screen);
-+            AssertCaptured(window);
-+            Assert.True(Field<bool>(window, "_pendingDrag"));
-+            if (activeDrag)
-+            {
-+                var moved = new Point(screen.X, screen.Y + Field<double>(window, "_pressScale") * 8);
-+                Invoke(window, "PointerMove", view.PointFromScreen(moved), moved);
-+            }
-+            Leave(window);
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: true);
-+            Assert.True(window.IsMouseCaptured);
-+            if (loseCapture) LoseNativeCapture();
-+            else Invoke(window, "PointerRelease", new Point(-100, -100), view.PointToScreen(new Point(-100, -100)));
-+            Assert.False(window.IsMouseCaptured);
-+            Leave(window);
-+            AssertBodyState(window, settings.Current.QuotaNotchEdge, expanded: true);
-+            ExpireGrace(window);
-+            AssertBodyState(window, settings.Current.QuotaNotchEdge, expanded: false);
-+            Assert.Equal(0, refreshes);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Fact]
-+    public void DisablingKeepExpandedWaitsForMenuCloseAndItsGrace() => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings("right");
-+        settings.Update(s => s with { KeepQuotaNotchExpanded = true });
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(true);
-+        try
-+        {
-+            window.Show();
-+            // Isolate menu ownership without moving the shared runner's physical cursor.
-+            SetField(window, "_menuOpen", true);
-+            Invoke(window, "UpdateTargets");
-+            Leave(window);
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: true);
-+            Invoke(window, "MenuClosed", window, new RoutedEventArgs());
-+            AssertBodyState(window, "right", expanded: true);
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: false);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData(false)]
-+    [InlineData(true)]
-+    public void KeepExpandedToggleAndReshowSettleAndUnsubscribeWithoutHiddenAnimation(bool reducedMotion) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings("right");
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(reducedMotion);
-+        try
-+        {
-+            window.Show(); PumpLayout();
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = true });
-+            if (!reducedMotion)
-+            {
-+                Assert.Contains("rendering=True", window.RuntimeDiagnostic);
-+                AdvanceFiniteMotion(window);
-+            }
-+            AssertBodyState(window, "right", expanded: true);
-+            AssertIdleArcOnly(window, "right");
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
-+            if (!reducedMotion) AdvanceFiniteMotion(window);
-+            AssertBodyState(window, "right", expanded: false);
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = true });
-+            window.Hide();
-+            Assert.False(window.IsVisible);
-+            Assert.Contains("rendering=False", window.RuntimeDiagnostic);
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = true });
-+            Assert.Contains("rendering=False", window.RuntimeDiagnostic);
-+            window.Show();
-+            // The first re-shown body is already open; only its independent arc may animate.
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var model = QuotaNotchGeometry.CreateMain(1, 1);
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
-+            var body = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model)).Apply(new(30, (model.BodyStart + model.BodyEnd) / 2));
-+            AssertPaintedInput(window, new Point(body.X, body.Y));
-+            if (!reducedMotion) AdvanceFiniteMotion(window);
-+            AssertBodyState(window, "right", expanded: true);
-+            AssertIdleArcOnly(window, "right");
-+            window.Close();
-+            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
-+            Assert.Contains("rendering=False", window.RuntimeDiagnostic);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData("left", false)]
-+    [InlineData("right", false)]
-+    [InlineData("top", false)]
-+    [InlineData("bottom", false)]
-+    [InlineData("left", true)]
-+    [InlineData("right", true)]
-+    [InlineData("top", true)]
-+    [InlineData("bottom", true)]
-+    public void SlowPointerPathFromVisibleArcToEveryDotAndCardTransferKeepBodyOpen(string edge, bool altBodyDrag) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings(edge);
-+        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
-+        var window = new QuotaNotchWindow(settings, loc, false);
-+        window.SetReduceMotion(true);
-+        try
-+        {
-+            window.Show();
-+            PumpLayout();
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var folded = QuotaNotchGeometry.CreateMain(0, 1, edge is "top" or "bottom", edge == "bottom");
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
-+            var foldedTransform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(folded));
-+            var bar = foldedTransform.Apply(new(5, 39.5));
-+            var barPoint = new Point(bar.X, bar.Y);
-+            AssertBodyState(window, edge, expanded: false);
-+            // Routed MouseEventArgs.GetPosition would read the runner's real cursor,
-+            // not this synthetic path. Start every entry on the painted black bar.
-+            AssertPaintedInput(window, barPoint);
-+            Invoke(window, "PointerEnter", barPoint);
-+            AssertBodyState(window, edge, expanded: true);
-+            Invoke(window, "Hover", new QuotaNotchHit(QuotaNotchTarget.Cell, "codex"));
-+            var card = Field<Window>(window, "_card");
-+            Assert.True(card.IsVisible);
-+            Leave(window);
-+            var grace = Field<DispatcherTimer>(window, "_leaveGrace");
-+            Assert.Equal(TimeSpan.FromMilliseconds(250), grace.Interval);
-+            Assert.True(grace.IsEnabled);
-+            AssertBodyState(window, edge, expanded: true);
-+            Enter(card);
-+            Assert.False(grace.IsEnabled);
-+            // A queued timeout must not collapse a card that has gained the pointer.
-+            ExpireGrace(window);
-+            Assert.True(card.IsVisible);
-+            AssertBodyState(window, edge, expanded: true);
-+            Leave(card);
-+            Assert.True(grace.IsEnabled);
-+            AssertBodyState(window, edge, expanded: true);
-+            ExpireGrace(window);
-+            Assert.False(card.IsVisible);
-+            AssertBodyState(window, edge, expanded: false);
-+            AssertPaintedInput(window, barPoint);
-+            Invoke(window, "PointerEnter", barPoint);
-+            AssertBodyState(window, edge, expanded: true);
-+            Leave(window);
-+            Assert.True(grace.IsEnabled);
-+            AssertBodyState(window, edge, expanded: true);
-+            // Enter through the actual black strip, not a fabricated Grip hit.
-+            Invoke(window, "PointerEnter", barPoint);
-+            AssertBodyState(window, edge, expanded: true);
-+            var expanded = QuotaNotchGeometry.CreateMain(1, 1, edge is "top" or "bottom", edge == "bottom");
-+            RevealGrip(window, edge);
-+            var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(expanded));
-+            var dot = transform.Apply(QuotaNotchGeometry.GetGripDot(expanded, 1).Center);
-+            var gripPoint = new Point(dot.X, dot.Y);
-+            // Walk DIRECTLY from both endpoints and the middle of the visible arc
-+            // to EACH dot, including synthetic contour-rebuild leaves. Every sample
-+            // expires grace; no route is allowed to depend on beating the timer.
-+            var center = QuotaNotchGeometry.GetOrbCenter(expanded);
-+            QuotaNotchGeometry.Point[] entries = [new(center.X - QuotaNotchGeometry.ArcRadius, center.Y),
-+                new(center.X - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5), center.Y - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5)),
-+                new(center.X, center.Y - QuotaNotchGeometry.ArcRadius)];
-+            foreach (var anchor in entries)
-+                for (int index = 0; index < 6; index++)
-+                {
-+                    var entry = transform.Apply(anchor);
-+                    var target = transform.Apply(QuotaNotchGeometry.GetGripDot(expanded, index).Center);
-+                    for (int i = 0; i <= 24; i++)
-+                    {
-+                        var point = new Point(entry.X + (target.X - entry.X) * i / 24,
-+                            entry.Y + (target.Y - entry.Y) * i / 24);
-+                        AssertPaintedInput(window, point);
-+                        Assert.Equal(QuotaNotchTarget.Grip, view.HitTestTarget(point).Target);
-+                        Invoke(window, "PointerMove", point, view.PointToScreen(point));
-+                        Invoke(window, "PointerLeave", point);
-+                        ExpireGrace(window);
-+                        Assert.Equal(1, Field<QuotaNotchGripMotion>(window, "_gripMotion").Frame.Reveal);
-+                        AssertBodyState(window, edge, expanded: true);
-+                    }
-+                }
-+            Assert.Equal(QuotaNotchTarget.Grip, view.HitTestTarget(gripPoint).Target);
-+            AssertClearInput(window, new Point(view.Extent.Width - 1, view.Extent.Height - 1));
-+            var unusedPocket = transform.Apply(new(center.X + 20, center.Y - 12));
-+            AssertClearInput(window, new Point(unusedPocket.X, unusedPocket.Y));
-+            var localPress = altBodyDrag ? BodyPoint(view) : new Point(dot.X, dot.Y);
-+            Assert.Equal(altBodyDrag ? QuotaNotchTarget.Body : QuotaNotchTarget.Grip,
-+                view.HitTestTarget(localPress).Target);
-+            var pressScreen = view.PointToScreen(localPress);
-+            Invoke(window, "PointerPress", localPress, altBodyDrag ? ModifierKeys.Alt : ModifierKeys.None, pressScreen);
-+            AssertCaptured(window);
-+            Assert.True(Field<bool>(window, "_pendingDrag"));
-+            var monitor = Monitors.FromWindow(new WindowInteropHelper(window).Handle)!;
-+            var smallMove = new Point(pressScreen.X + monitor.Scale * 2, pressScreen.Y);
-+            Invoke(window, "PointerMove", view.PointFromScreen(smallMove), smallMove);
-+            Assert.True(Field<bool>(window, "_pendingDrag"));
-+            Assert.False(Field<bool>(window, "_dragging"));
-+            Leave(window);
-+            ExpireGrace(window);
-+            AssertBodyState(window, edge, expanded: true);
-+            // Exercise another monitor too when a Windows runner actually has one.
-+            var destination = Monitors.All().FirstOrDefault(m => m.DeviceName != monitor.DeviceName) ?? monitor;
-+            var work = destination.WorkRect;
-+            var move = new Point(work.Right - 1, work.Y + work.Height * .75);
-+            Invoke(window, "PointerMove", view.PointFromScreen(move), move);
-+            Assert.True(Field<bool>(window, "_dragging"));
-+            Assert.False(Field<bool>(window, "_pendingDrag"));
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: true);
-+            var release = new Point(work.X + work.Width * .75, work.Y + 1);
-+            var expected = QuotaNotchLayout.SnapDrag(work, new PointD(release.X, release.Y),
-+                Field<double>(window, "_grabOffsetDip"), destination.Scale);
-+            Invoke(window, "PointerRelease", view.PointFromScreen(release), release);
-+            Assert.False(window.IsMouseCaptured);
-+            Assert.False(Field<bool>(window, "_dragging"));
-+            Assert.False(Field<bool>(window, "_pendingDrag"));
-+            Assert.Equal(expected.Edge, settings.Current.QuotaNotchEdge);
-+            Assert.Equal(expected.Along, settings.Current.QuotaNotchAlong, 6);
-+            Assert.Equal(destination.DeviceName, settings.Current.QuotaNotchMonitor);
-+            Assert.NotEqual(.5, settings.Current.QuotaNotchAlong);
-+            // The target follows the captured grab point; release can still be over it.
-+            // A genuine subsequent leave, rather than a stale capture-era flag, folds it.
-+            Leave(window);
-+            Assert.True(grace.IsEnabled);
-+            AssertBodyState(window, expected.Edge, expanded: true);
-+            ExpireGrace(window);
-+            AssertBodyState(window, expected.Edge, expanded: false);
-+            var releasedEnvelope = QuotaNotchGeometry.CreateEnvelope(1, settings.Current.QuotaNotchEdge is "top" or "bottom");
-+            Assert.Equal(new Size(releasedEnvelope.Length, releasedEnvelope.Depth), view.Extent);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData("left", 1)]
-+    [InlineData("right", 1)]
-+    [InlineData("top", 1)]
-+    [InlineData("bottom", 1)]
-+    [InlineData("left", 1.25)]
-+    [InlineData("right", 1.25)]
-+    [InlineData("top", 1.25)]
-+    [InlineData("bottom", 1.25)]
-+    [InlineData("left", 2)]
-+    [InlineData("right", 2)]
-+    [InlineData("top", 2)]
-+    [InlineData("bottom", 2)]
-+    public void FixedGripFramePreservesOverlappingRoutesInPaintHitAndNativeRegion(string edge, double scale) => OnSta(() =>
-+    {
-+        // Keep this renderer/region regression independent of live mouse events and
-+        // grace timers. It isolates the transformed compound fan's winding rule.
-+        var view = new QuotaNotchView(new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En));
-+        var window = new Window { Width = 400, Height = 400, ShowInTaskbar = false, ShowActivated = false };
-+        using var installed = new QuotaNotchRegion();
-+        var region = CreateRectRgn(0, 0, 0, 0);
-+        Assert.NotEqual(nint.Zero, region);
-+        try
-+        {
-+            var hwnd = new WindowInteropHelper(window).EnsureHandle();
-+            bool horizontal = edge is "top" or "bottom";
-+            var model = QuotaNotchGeometry.CreateMain(1, 1, horizontal, edge == "bottom");
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1, horizontal);
-+            var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(model));
-+            var device = new Matrix(scale, 0, 0, scale, 0, 0);
-+            var center = QuotaNotchGeometry.GetOrbCenter(model);
-+            QuotaNotchGeometry.Point[] entries = [new(center.X - QuotaNotchGeometry.ArcRadius, center.Y),
-+                new(center.X - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5), center.Y - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5)),
-+                new(center.X, center.Y - QuotaNotchGeometry.ArcRadius)];
-+            foreach (double hover in new[] { 0d, 1d })
-+            {
-+                var frame = new QuotaNotchGeometry.GripFrame(1, Hover: hover, Arc: 1);
-+                view.Update(new([], ["codex"], true, false, edge, 1, Grip: frame));
-+                view.Measure(view.Extent); view.Arrange(new Rect(view.Extent));
-+                var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width),
-+                    (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
-+                bitmap.Render(view);
-+                installed.Apply(hwnd, view.InputGeometry, device);
-+                Assert.True(GetWindowRgn(hwnd, region) > 1);
-+                foreach (var anchor in entries)
-+                    for (int index = 0; index < 6; index++)
-+                    {
-+                        var entry = transform.Apply(anchor);
-+                        var target = transform.Apply(QuotaNotchGeometry.GetGripDot(model, frame, index).Center);
-+                        for (int i = 0; i <= 24; i++)
-+                        {
-+                            var point = new Point(entry.X + (target.X - entry.X) * i / 24,
-+                                entry.Y + (target.Y - entry.Y) * i / 24);
-+                            string sample = $"edge={edge}; scale={scale}; hover={hover}; anchor={anchor}; dot={index}; sample={i}; point={point}";
-+                            Assert.True(view.InputGeometry.FillContains(point), sample);
-+                            Assert.Equal(QuotaNotchTarget.Grip, view.HitTestTarget(point).Target);
-+                            Assert.True(AlphaAt(bitmap, point) > 0, sample);
-+                            var pixel = device.Transform(point);
-+                            Assert.True(PtInRegion(region, (int)Math.Round(pixel.X), (int)Math.Round(pixel.Y)), sample);
-+                        }
-+                    }
-+                var pocket = transform.Apply(new(center.X + 20, center.Y - 12));
-+                var clear = new Point(pocket.X, pocket.Y);
-+                Assert.False(view.InputGeometry.FillContains(clear));
-+                Assert.Equal(QuotaNotchTarget.None, view.HitTestTarget(clear).Target);
-+                Assert.Equal(0, AlphaAt(bitmap, clear));
-+                AssertInRegion(region, device.Transform(clear), false);
-+            }
-+        }
-+        finally { DeleteObject(region); window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData(0, 1, false)]
-+    [InlineData(0, -1, false)]
-+    [InlineData(1, 0, false)]
-+    [InlineData(-1, 0, false)]
-+    [InlineData(0, 1, true)]
-+    [InlineData(0, -1, true)]
-+    [InlineData(1, 0, true)]
-+    [InlineData(-1, 0, true)]
-+    public void PressCapturesBeforeThresholdAndTracksEveryDirectionOutsidePaint(int dx, int dy, bool altBody) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings("right");
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(true);
-+        try
-+        {
-+            window.Show();
-+            PumpLayout();
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
-+            var folded = QuotaNotchGeometry.CreateMain(0, 1);
-+            var bar = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(folded)).Apply(new(5, 39.5));
-+            Invoke(window, "PointerEnter", new Point(bar.X, bar.Y));
-+            var model = QuotaNotchGeometry.CreateMain(1, 1);
-+            var transform = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model));
-+            RevealGrip(window, "right");
-+            // Start between the dots, using production hit-testing, not a fabricated target.
-+            var p = transform.Apply(model.Grip);
-+            var press = altBody ? BodyPoint(view) : new Point(p.X, p.Y);
-+            Assert.Equal(altBody ? QuotaNotchTarget.Body : QuotaNotchTarget.Grip, view.HitTestTarget(press).Target);
-+            var screen = view.PointToScreen(press);
-+            var before = Field<QuotaNotchBounds?>(window, "_bounds");
-+            var refreshes = 0;
-+            window.RefreshRequested += () => refreshes++;
-+            Invoke(window, "PointerPress", press, altBody ? ModifierKeys.Alt : ModifierKeys.None, screen);
-+            AssertCaptured(window);
-+            Assert.True(Field<bool>(window, "_pendingDrag"));
-+            Assert.False(Field<bool>(window, "_dragging"));
-+            Assert.Equal(before, Field<QuotaNotchBounds?>(window, "_bounds"));
-+            var scale = Field<double>(window, "_pressScale");
-+            var pending = new Point(screen.X + dx * 3 * scale, screen.Y + dy * 3 * scale);
-+            Invoke(window, "PointerMove", view.PointFromScreen(pending), pending);
-+            Assert.True(window.IsMouseCaptured);
-+            Assert.True(Field<bool>(window, "_pendingDrag"));
-+            Assert.False(Field<bool>(window, "_dragging"));
-+            Assert.Equal(before, Field<QuotaNotchBounds?>(window, "_bounds"));
-+            Leave(window);
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: true);
-+            var threshold = new Point(screen.X + dx * 4 * scale, screen.Y + dy * 4 * scale);
-+            var targetMonitor = Monitors.FromPoint(new POINT { X = (int)Math.Round(threshold.X), Y = (int)Math.Round(threshold.Y) })!;
-+            var atThreshold = QuotaNotchLayout.SnapDrag(targetMonitor.WorkRect, new PointD(threshold.X, threshold.Y),
-+                Field<double>(window, "_grabOffsetDip"), targetMonitor.Scale);
-+            Invoke(window, "PointerMove", view.PointFromScreen(threshold), threshold);
-+            Assert.True(window.IsMouseCaptured);
-+            Assert.True(Field<bool>(window, "_dragging"));
-+            Assert.False(Field<bool>(window, "_pendingDrag"));
-+            Assert.Equal(atThreshold.Edge, Field<string>(window, "_edge"));
-+            Assert.Equal(atThreshold.Along, Field<double>(window, "_along"), 6);
-+            // A single captured move can land completely outside the old native region.
-+            var move = new Point(screen.X + dx * 160 * scale, screen.Y + dy * 160 * scale);
-+            var oldLocal = view.PointFromScreen(move);
-+            Assert.Equal(QuotaNotchTarget.None, view.HitTestTarget(oldLocal).Target);
-+            var monitor = Monitors.FromPoint(new POINT { X = (int)Math.Round(move.X), Y = (int)Math.Round(move.Y) })!;
-+            var expected = QuotaNotchLayout.SnapDrag(monitor.WorkRect, new PointD(move.X, move.Y),
-+                Field<double>(window, "_grabOffsetDip"), monitor.Scale);
-+            Invoke(window, "PointerMove", oldLocal, move);
-+            Assert.True(window.IsMouseCaptured);
-+            Assert.True(Field<bool>(window, "_dragging"));
-+            Assert.False(Field<bool>(window, "_pendingDrag"));
-+            Assert.Equal(expected.Along, Field<double>(window, "_along"), 6);
-+            AssertBodyState(window, expected.Edge, expanded: true);
-+            Invoke(window, "PointerRelease", view.PointFromScreen(move), move);
-+            Assert.False(window.IsMouseCaptured);
-+            Assert.False(Field<bool>(window, "_dragging"));
-+            Assert.False(Field<bool>(window, "_pendingDrag"));
-+            Assert.Equal(default, Field<QuotaNotchHit>(window, "_pressed"));
-+            Assert.Equal(expected.Edge, settings.Current.QuotaNotchEdge);
-+            Assert.Equal(expected.Along, settings.Current.QuotaNotchAlong, 6);
-+            Assert.Equal(0, refreshes);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData(false)]
-+    [InlineData(true)]
-+    public void PendingReleaseOrCaptureLossClearsPressWithoutDraggingOrRefreshing(bool loseCapture) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings("right");
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(true);
-+        try
-+        {
-+            window.Show();
-+            PumpLayout();
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
-+            var folded = QuotaNotchGeometry.CreateMain(0, 1);
-+            var bar = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(folded)).Apply(new(5, 39.5));
-+            Invoke(window, "PointerEnter", new Point(bar.X, bar.Y));
-+            var model = QuotaNotchGeometry.CreateMain(1, 1);
-+            var transform = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model));
-+            RevealGrip(window, "right");
-+            var p = transform.Apply(model.Grip);
-+            var press = new Point(p.X, p.Y);
-+            var screen = view.PointToScreen(press);
-+            var refreshes = 0;
-+            window.RefreshRequested += () => refreshes++;
-+            var before = settings.Current;
-+            Invoke(window, "PointerPress", press, ModifierKeys.None, screen);
-+            AssertCaptured(window);
-+            Assert.True(Field<bool>(window, "_pendingDrag"));
-+            Leave(window);
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: true);
-+            if (loseCapture) LoseNativeCapture();
-+            else Invoke(window, "PointerRelease", press, screen);
-+            Assert.False(window.IsMouseCaptured);
-+            Assert.False(Field<bool>(window, "_pendingDrag"));
-+            Assert.False(Field<bool>(window, "_dragging"));
-+            Assert.Equal(default, Field<QuotaNotchHit>(window, "_pressed"));
-+            Assert.Equal(before, settings.Current);
-+            Assert.Equal(0, refreshes);
-+            Leave(window);
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: false);
-+            // A real cell press/release remains click-to-refresh, never pending drag.
-+            Invoke(window, "PointerEnter", new Point(bar.X, bar.Y));
-+            var c = transform.Apply(new(model.RingCenterX, model.RingCenterY));
-+            var cell = new Point(c.X, c.Y);
-+            Assert.Equal(QuotaNotchTarget.Cell, view.HitTestTarget(cell).Target);
-+            var cellScreen = view.PointToScreen(cell);
-+            Invoke(window, "PointerPress", cell, ModifierKeys.None, cellScreen);
-+            Assert.True(window.IsMouseCaptured);
-+            Assert.False(Field<bool>(window, "_pendingDrag"));
-+            Invoke(window, "PointerRelease", cell, cellScreen);
-+            Assert.Equal(1, refreshes);
-+            Assert.False(window.IsMouseCaptured);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Fact]
-+    public void ActiveCaptureLossCommitsAnchorAndClearsGestureWithoutRefresh() => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings("right");
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(true);
-+        try
-+        {
-+            window.Show();
-+            PumpLayout();
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
-+            var folded = QuotaNotchGeometry.CreateMain(0, 1);
-+            var bar = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(folded)).Apply(new(5, 39.5));
-+            Invoke(window, "PointerEnter", new Point(bar.X, bar.Y));
-+            var model = QuotaNotchGeometry.CreateMain(1, 1);
-+            RevealGrip(window, "right");
-+            var p = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model)).Apply(model.Grip);
-+            var press = new Point(p.X, p.Y);
-+            var screen = view.PointToScreen(press);
-+            var refreshes = 0;
-+            window.RefreshRequested += () => refreshes++;
-+            Invoke(window, "PointerPress", press, ModifierKeys.None, screen);
-+            var move = new Point(screen.X, screen.Y + Field<double>(window, "_pressScale") * 8);
-+            Invoke(window, "PointerMove", view.PointFromScreen(move), move);
-+            Assert.True(Field<bool>(window, "_dragging"));
-+            // Steal/release at the OS boundary: the real WM_CAPTURECHANGED must
-+            // reach WPF and the application's LostMouseCapture handler.
-+            LoseNativeCapture();
-+            Assert.False(window.IsMouseCaptured);
-+            Assert.False(Field<bool>(window, "_dragging"));
-+            Assert.False(Field<bool>(window, "_pendingDrag"));
-+            Assert.Equal(default, Field<QuotaNotchHit>(window, "_pressed"));
-+            Assert.Equal(Field<string>(window, "_edge"), settings.Current.QuotaNotchEdge);
-+            Assert.Equal(Field<double>(window, "_along"), settings.Current.QuotaNotchAlong, 6);
-+            Assert.Equal(0, refreshes);
-+            Leave(window);
-+            ExpireGrace(window);
-+            AssertBodyState(window, settings.Current.QuotaNotchEdge, expanded: false);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData("_menuOpen")]
-+    [InlineData("_dragging")]
-+    [InlineData("_pendingDrag")]
-+    public void MenuAndDragHoldsKeepPaintedBodyOpenWithoutPointer(string hold) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings("right");
-+        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
-+        var window = new QuotaNotchWindow(settings, loc, true);
-+        window.SetReduceMotion(true);
-+        try
-+        {
-+            window.Show();
-+            Enter(window);
-+            // Isolate each host interaction state without moving the real desktop cursor.
-+            SetField(window, hold, true);
-+            Leave(window);
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: true);
-+            SetField(window, hold, false);
-+            Invoke(window, "StartGrace");
-+            Invoke(window, "UpdateTargets");
-+            Assert.True(Field<DispatcherTimer>(window, "_leaveGrace").IsEnabled);
-+            AssertBodyState(window, "right", expanded: true);
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: false);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Fact]
-+    public void ExpansionMotionFinishesAndReducedMotionSettlesWithoutRendering() => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings("right");
-+        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
-+        var window = new QuotaNotchWindow(settings, loc, true);
-+        window.SetReduceMotion(false);
-+        try
-+        {
-+            window.Show();
-+            Enter(window);
-+            Invoke(window, "Hover", new QuotaNotchHit(QuotaNotchTarget.Body));
-+            Assert.Contains("rendering=True", window.RuntimeDiagnostic);
-+            FinishMotion(window);
-+            AssertBodyState(window, "right", expanded: true);
-+            Leave(window);
-+            ExpireGrace(window);
-+            Assert.Contains("rendering=True", window.RuntimeDiagnostic);
-+            FinishMotion(window);
-+            AssertBodyState(window, "right", expanded: false);
-+            Enter(window);
-+            window.SetReduceMotion(true);
-+            AssertBodyState(window, "right", expanded: true);
-+            Leave(window);
-+            ExpireGrace(window);
-+            AssertBodyState(window, "right", expanded: false);
-+            window.Hide();
-+            window.Show();
-+            AssertBodyState(window, "right", expanded: false);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Fact]
-+    public void InitializationFailureReportsStageAndSafeExceptionChainInRuntimeDiagnostic() => OnSta(() =>
-+    {
-+        using var settings = new SettingsService(Dispatcher.CurrentDispatcher);
-+        settings.MakeEphemeral();
-+        settings.Update(s => s with { QuotaAllSources = false, QuotaSources = ["codex"] });
-+        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
-+        var window = new QuotaNotchWindow(settings, loc, true);
-+        const string secret = "private-account private-token C:\\private\\auth.json private-payload";
-+        var failure = new InvalidOperationException(secret, new Win32Exception(5, secret));
-+        var failures = 0;
-+        window.InitializationFailed += _ => failures++;
-+        // Fault the real first render through its input, rather than invoking Fail or
-+        // adding a production retry/test hook. Show catches this internally.
-+        window.Update(new UnreadableSnapshots(failure), true);
-+        // Explicitly arrange an expanded first render so the injected unreadable
-+        // snapshot is consumed; the normal startup contract above stays collapsed.
-+        SetField(window, "_expansion", 1d);
-+        try
-+        {
-+            window.Show();
-+            PumpLayout();
-+            Assert.Equal(1, failures);
-+            Assert.False(window.IsVisible);
-+            var diagnostic = window.RuntimeDiagnostic;
-+            Assert.Contains("failed=True", diagnostic);
-+            Assert.Contains("initialized=False", diagnostic);
-+            Assert.Contains("stage=main.view", diagnostic);
-+            Assert.Contains($"System.InvalidOperationException/0x{failure.HResult:X8}", diagnostic);
-+            Assert.Contains($"System.ComponentModel.Win32Exception/0x{failure.InnerException!.HResult:X8}/native=5", diagnostic);
-+            foreach (var value in new[] { "private-account", "private-token", "C:\\private", "private-payload" })
-+                Assert.DoesNotContain(value, diagnostic);
-+            Assert.Contains("placements=0;", diagnostic);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData("left")]
-+    [InlineData("right")]
-+    [InlineData("top")]
-+    [InlineData("bottom")]
-+    public void VisibleArcOpensTemporaryDiscAndKeepsStationaryAndSlowPointerReachable(string edge) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings(edge);
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(true);
-+        try
-+        {
-+            window.Show(); PumpLayout(); Enter(window);
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var main = QuotaNotchGeometry.CreateMain(1, 1, edge is "top" or "bottom", edge == "bottom");
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
-+            var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(main));
-+            var center = QuotaNotchGeometry.GetOrbCenter(main);
-+            var entry = transform.Apply(new(center.X - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5),
-+                center.Y - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5)));
-+            var arc = new Point(entry.X, entry.Y);
-+            AssertPaintedInput(window, arc);
-+            var motion = Field<QuotaNotchGripMotion>(window, "_gripMotion");
-+            Assert.Equal(0, motion.Frame.Reveal);
-+            window.SetReduceMotion(false);
-+            Invoke(window, "PointerMove", arc, view.PointToScreen(arc));
-+            // Advance real production tracks to the disc endpoint, before the delayed
-+            // drops. No fabricated hits, sleeps or alternate renderer are involved.
-+            AdvanceControlTracks(window, 220);
-+            Assert.True(motion.Frame.Disc > .5);
-+            Invoke(window, "PointerLeave", arc);
-+            ExpireGrace(window);
-+            AssertPaintedInput(window, arc);
-+            var pocket = transform.Apply(center);
-+            for (int i = 0; i <= 24; i++)
-+            {
-+                var point = new Point(arc.X + (pocket.X - arc.X) * i / 24,
-+                    arc.Y + (pocket.Y - arc.Y) * i / 24);
-+                AssertPaintedInput(window, point);
-+                Invoke(window, "PointerMove", point, view.PointToScreen(point));
-+                Invoke(window, "PointerLeave", point);
-+                ExpireGrace(window);
-+                AssertPaintedInput(window, arc);
-+                Assert.Equal(QuotaNotchTarget.Grip, view.HitTestTarget(point).Target);
-+            }
-+            window.SetReduceMotion(true);
-+            Assert.Equal(1, motion.Frame.Reveal);
-+            Assert.Equal(0, motion.Frame.Disc);
-+            AssertPaintedInput(window, arc);
-+            AssertBodyState(window, edge, expanded: true);
-+            var outside = new Point(view.Extent.Width - 1, view.Extent.Height - 1);
-+            AssertClearInput(window, outside);
-+            Invoke(window, "PointerMove", outside, view.PointToScreen(outside));
-+            ExpireGrace(window);
-+            AssertBodyState(window, edge, expanded: false);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    private static void AdvanceControlTracks(QuotaNotchWindow window, double milliseconds)
-+    {
-+        var motion = Field<QuotaNotchGripMotion>(window, "_gripMotion");
-+        foreach (var name in new[] { "_arc", "_disc", "_reveal" })
-+        {
-+            var field = typeof(QuotaNotchGripMotion).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
-+            var track = field.GetValue(motion)!;
-+            var start = track.GetType().GetField("_start", BindingFlags.Instance | BindingFlags.NonPublic)!;
-+            start.SetValue(track, (double)start.GetValue(track)! - milliseconds);
-+            field.SetValue(motion, track);
-+        }
-+        Invoke(window, "Animate", null, EventArgs.Empty);
-+    }
-+
-+    [Theory]
-+    [InlineData("left")]
-+    [InlineData("right")]
-+    [InlineData("top")]
-+    [InlineData("bottom")]
-+    public void IndependentGripTimelineKeepsPaintHitAndInstalledRegionOnSameFrame(string edge) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings(edge);
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(true);
-+        try
-+        {
-+            window.Show(); PumpLayout(); Enter(window);
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var main = QuotaNotchGeometry.CreateMain(1, 1, edge is "top" or "bottom", edge == "bottom");
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
-+            var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(main));
-+            var dormant = transform.Apply(main.Grip);
-+            var entry = QuotaNotchGeometry.GetOrbCenter(main);
-+            var arc = transform.Apply(new(entry.X - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5),
-+                entry.Y - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5)));
-+            AssertPaintedInput(window, new Point(arc.X, arc.Y));
-+            Assert.Equal(QuotaNotchTarget.None, view.HitTestTarget(new Point(dormant.X, dormant.Y)).Target);
-+            RevealGrip(window, edge);
-+            window.SetReduceMotion(false);
-+            var motion = Field<QuotaNotchGripMotion>(window, "_gripMotion");
-+            motion.Reset(); motion.SetTargets(true, true, false, false, 0, false);
-+            foreach (double time in new[] { 50d, 110, 180, 220, 300, 360, 420, 520, 2000 })
-+            {
-+                var frame = motion.Sample(time);
-+                Invoke(window, "RenderAndPlace");
-+                AssertPaintedInput(window, new Point(arc.X, arc.Y));
-+                var orb = QuotaNotchGeometry.CreateOrb(main, frame);
-+                if (orb.ArcPath is { } path)
-+                {
-+                    Geometry.Parse(path).GetFlattenedPathGeometry().GetPointAtFractionLength(.5, out var middle, out _);
-+                    var p = transform.Apply(new(middle.X, middle.Y));
-+                    AssertPaintedInput(window, new Point(p.X, p.Y));
-+                }
-+                if (frame.Reveal > .01)
-+                {
-+                    var dot = transform.Apply(QuotaNotchGeometry.GetGripDot(main, frame, 1).Center);
-+                    AssertPaintedInput(window, new Point(dot.X, dot.Y));
-+                    var box = QuotaNotchGeometry.GetGripHitBox(main, frame);
-+                    var padding = transform.Apply(new(box.X + 1, box.Y + box.Height / 2));
-+                    AssertPaintedInput(window, new Point(padding.X, padding.Y));
-+                }
-+                AssertClearInput(window, new Point(view.Extent.Width - 1, view.Extent.Height - 1));
-+            }
-+            Assert.False(motion.Active);
-+            motion.SetTargets(true, false, false, false, 2100, false);
-+            foreach (double time in new[] { 2150d, 2200, 2250 })
-+            {
-+                var frame = motion.Sample(time);
-+                Invoke(window, "RenderAndPlace");
-+                var dot = transform.Apply(QuotaNotchGeometry.GetGripDot(main, frame, 1).Center);
-+                AssertPaintedInput(window, new Point(dot.X, dot.Y));
-+            }
-+            motion.Sample(4000);
-+            Invoke(window, "RenderAndPlace");
-+            var bodyPoint = BodyPoint(view);
-+            Invoke(window, "PointerMove", bodyPoint, view.PointToScreen(bodyPoint));
-+            window.SetReduceMotion(true);
-+            Assert.False(motion.Active);
-+            Assert.Contains("rendering=False", window.RuntimeDiagnostic);
-+            Assert.Equal(QuotaNotchTarget.None, view.HitTestTarget(new Point(dormant.X, dormant.Y)).Target);
-+            AssertBodyState(window, edge, expanded: true);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData(false, 1)]
-+    [InlineData(false, 1.25)]
-+    [InlineData(false, 2)]
-+    [InlineData(true, 1)]
-+    [InlineData(true, 1.25)]
-+    [InlineData(true, 2)]
-+    public void LiquidArcAndGripImagesInstallMatchingNativeRegionPixels(bool arc, double scale) => OnSta(() =>
-+    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
-+        Geometry source = Geometry.Empty;
-+        double blur;
-+        if (arc)
-+        {
-+            var shape = QuotaNotchGeometry.CreateOrb(main, new(Arc: .55));
-+            Assert.True(shape.Liquid);
-+            blur = shape.Blur;
-+            if (shape.ArcPath is { } path)
-+                source = new CombinedGeometry(GeometryCombineMode.Union, source,
-+                    Geometry.Parse(path).GetWidenedPathGeometry(new Pen(Brushes.Black, shape.ArcWidth + 2)));
-+            if (shape.BandPath is { } band)
-+                source = new CombinedGeometry(GeometryCombineMode.Union, source,
-+                    Geometry.Parse(band).GetWidenedPathGeometry(new Pen(Brushes.Black, shape.BandWidth)));
-+            if (shape.NeckPath is { } neck)
-+                source = new CombinedGeometry(GeometryCombineMode.Union, source, Geometry.Parse(neck));
-+        }
-+        else
-+        {
-+            var frame = new QuotaNotchGeometry.GripFrame(.4, Arc: 1, Disc: .4);
-+            var shape = QuotaNotchGeometry.CreateGrip(main, frame);
-+            Assert.True(shape.Liquid);
-+            blur = shape.Blur;
-+            source = new EllipseGeometry(new Point(shape.Core.Center.X, shape.Core.Center.Y), shape.Core.Radius, shape.Core.Radius);
-+            if (shape.NeckPath is { } neck)
-+                source = new CombinedGeometry(GeometryCombineMode.Union, source, Geometry.Parse(neck));
-+            for (int i = 0; i < 6; i++)
-+            {
-+                var dot = QuotaNotchGeometry.GetGripDot(main, frame, i);
-+                source = new CombinedGeometry(GeometryCombineMode.Union, source,
-+                    new EllipseGeometry(new Point(dot.Center.X, dot.Center.Y), dot.Radius, dot.Radius));
-+            }
-+        }
-+        var filtered = new QuotaNotchGoo().Create(source, blur, scale, Colors.Gray, Colors.Black)
-+            ?? throw new InvalidOperationException("A liquid production frame must produce pixels and input together.");
-+        var image = Assert.IsAssignableFrom<BitmapSource>(filtered.Image);
-+        var pixels = new byte[image.PixelWidth * image.PixelHeight * 4];
-+        image.CopyPixels(pixels, image.PixelWidth * 4, 0);
-+        var window = new Window { Width = 400, Height = 400, ShowInTaskbar = false, ShowActivated = false };
-+        using var installed = new QuotaNotchRegion();
-+        var region = CreateRectRgn(0, 0, 0, 0);
-+        Assert.NotEqual(nint.Zero, region);
-+        try
-+        {
-+            var hwnd = new WindowInteropHelper(window).EnsureHandle();
-+            installed.Apply(hwnd, filtered.Input, new Matrix(scale, 0, 0, scale, 0, 0));
-+            Assert.True(GetWindowRgn(hwnd, region) > 1);
-+            int paintedCount = 0, clearCount = 0;
-+            for (int y = 0; y < image.PixelHeight; y++)
-+                for (int x = 0; x < image.PixelWidth; x++)
-+                {
-+                    bool painted = pixels[(y * image.PixelWidth + x) * 4 + 3] != 0;
-+                    var point = new Point(filtered.Bounds.X + (x + .5) / scale,
-+                        filtered.Bounds.Y + (y + .5) / scale);
-+                    Assert.Equal(painted, filtered.Input.FillContains(point));
-+                    Assert.Equal(painted, PtInRegion(region, (int)Math.Floor(point.X * scale),
-+                        (int)Math.Floor(point.Y * scale)));
-+                    if (painted) paintedCount++; else clearCount++;
-+                }
-+            Assert.True(paintedCount > 0 && clearCount > 0);
-+        }
-+        finally { DeleteObject(region); window.Close(); }
-+    });
-+
-+    [Theory]
-+    [InlineData("left")]
-+    [InlineData("right")]
-+    [InlineData("top")]
-+    [InlineData("bottom")]
-+    public void TouchingEmergingArcCarriesExactPaintAndInstalledInputThroughReveal(string edge) => OnSta(() =>
-+    {
-+        using var settings = InteractionSettings(edge);
-+        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
-+        window.SetReduceMotion(true);
-+        try
-+        {
-+            window.Show(); PumpLayout(); Enter(window);
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var motion = Field<QuotaNotchGripMotion>(window, "_gripMotion");
-+            motion.Reset(); motion.SetTargets(true, false, false, false, 0, false);
-+            var settled = new QuotaNotchView(new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En));
-+            settled.Update(new([], ["codex"], true, true, edge, 1, Grip: new(1, 1, Arc: 1)));
-+            Point? touch = null;
-+            QuotaNotchGeometry.GripFrame emerging = default;
-+            // Select actual painted geometry, not a guessed bulb coordinate. A finite
-+            // set spans the early compressed neck through its unrolling quarter arc.
-+            foreach (double time in new[] { 500d, 580, 650, 730, 815 })
-+            {
-+                emerging = motion.Sample(time);
-+                Assert.InRange(emerging.Arc, .001, .999);
-+                Invoke(window, "RenderAndPlace");
-+                for (int y = 2; y < view.Extent.Height - 2 && touch is null; y++)
-+                    for (int x = 2; x < view.Extent.Width - 2; x++)
-+                    {
-+                        var point = new Point(x, y);
-+                        if (view.HitTestTarget(point).Target != QuotaNotchTarget.Grip || settled.InputGeometry.FillContains(point)) continue;
-+                        if (!new[] { new Point(x - 1, y), new Point(x + 1, y), new Point(x, y - 1), new Point(x, y + 1) }
-+                            .All(p => view.HitTestTarget(p).Target == QuotaNotchTarget.Grip && !settled.InputGeometry.FillContains(p))) continue;
-+                        touch = point;
-+                        break;
-+                    }
-+                if (touch.HasValue) break;
-+            }
-+            Assert.True(touch.HasValue, "Production emergence frames must exercise a painted contour outside the resting family's input.");
-+            var entry = touch!.Value;
-+            AssertPaintedInput(window, entry);
-+            window.SetReduceMotion(false);
-+            Invoke(window, "PointerMove", entry, view.PointToScreen(entry));
-+            Assert.Equal(emerging.Arc, motion.Frame.EntryArc);
-+            Invoke(window, "PointerLeave", entry);
-+            ExpireGrace(window);
-+            AssertPaintedInput(window, entry);
-+            window.SetReduceMotion(true);
-+            Assert.Equal(1, motion.Frame.Reveal);
-+            AssertPaintedInput(window, entry);
-+            var outside = new Point(view.Extent.Width - 1, view.Extent.Height - 1);
-+            Invoke(window, "PointerMove", outside, view.PointToScreen(outside));
-+            ExpireGrace(window);
-+            AssertBodyState(window, edge, expanded: false);
-+        }
-+        finally { window.Close(); }
-+    });
-+
-+    private static void FinishMotion(QuotaNotchWindow window)
-+    {
-+        // Advance the actual finite runs to their terminal samples without sleeping
-+        // or depending on compositor frame delivery on a shared Windows runner.
-+        var run = Field<object>(window, "_expansionRun");
-+        run.GetType().GetField("_start", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(run, -10000d);
-+        SetField(window, "_expansionRun", run);
-+        Invoke(window, "Animate", null, EventArgs.Empty);
-+        Field<QuotaNotchGripMotion>(window, "_gripMotion").Settle();
-+        Invoke(window, "RenderAndPlace");
-+        Invoke(window, "StopMotion");
-+    }
-+
-+    private static void RevealGrip(QuotaNotchWindow window, string edge)
-+    {
-+        var view = Assert.IsType<QuotaNotchView>(window.Content);
-+        var model = QuotaNotchGeometry.CreateMain(1, 1, edge is "top" or "bottom", edge == "bottom");
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
-+        var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(model));
-+        var center = QuotaNotchGeometry.GetOrbCenter(model);
-+        var wake = transform.Apply(new(center.X - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5),
-+            center.Y - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5)));
-+        var point = new Point(wake.X, wake.Y);
-+        Assert.Equal(QuotaNotchTarget.Grip, view.HitTestTarget(point).Target);
-+        AssertPaintedInput(window, point);
-+        Invoke(window, "PointerMove", point, view.PointToScreen(point));
-+        if (!Field<bool>(window, "_reduceMotion")) FinishMotion(window);
-+        Assert.Equal(1, Field<QuotaNotchGripMotion>(window, "_gripMotion").Frame.Reveal);
-+    }
-+
-+    private static SettingsService InteractionSettings(string edge)
-+    {
-+        var settings = new SettingsService(Dispatcher.CurrentDispatcher);
-+        settings.MakeEphemeral();
-+        settings.Update(s => s with
-+        {
-+            ShowQuotaNotch = true, AutoRefreshQuota = false, NetworkEnabled = false,
-+            QuotaAllSources = false, QuotaSources = ["codex"], QuotaNotchEdge = edge
-+        });
-+        return settings;
-+    }
-+
-+    private static Point BodyPoint(QuotaNotchView view)
-+    {
-+        // Use the renderer's actual measured geometry, not default cell dimensions:
-+        // its upright reading area can cover the old depth=12/end-40 guesses.
-+        var model = (QuotaNotchGeometry.Main)typeof(QuotaNotchView)
-+            .GetField("_main", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view)!;
-+        var matrix = (Matrix)typeof(QuotaNotchView)
-+            .GetField("_matrix", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view)!;
-+        var point = matrix.Transform(new Point(3, (model.BodyStart + model.BodyEnd) / 2));
-+        foreach (var sample in new[] { point, new Point(point.X - 2, point.Y), new Point(point.X + 2, point.Y),
-+            new Point(point.X, point.Y - 2), new Point(point.X, point.Y + 2) })
-+            Assert.Equal(QuotaNotchTarget.Body, view.HitTestTarget(sample).Target);
-+        return point;
-+    }
-+
-+    private static void AssertCaptured(QuotaNotchWindow window)
-+    {
-+        Assert.True(window.IsMouseCaptured, window.RuntimeDiagnostic);
-+        Assert.Equal(new WindowInteropHelper(window).Handle, GetCapture());
-+    }
-+
-+    private static void LoseNativeCapture()
-+    {
-+        Assert.True(ReleaseCapture());
-+        PumpLayout();
-+    }
-+
-+    private static void Enter(Window window)
-+    {
-+        if (window is QuotaNotchWindow notch)
-+        {
-+            var view = Assert.IsType<QuotaNotchView>(notch.Content);
-+            Invoke(notch, "PointerEnter", BodyPoint(view));
-+        }
-+        else window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseEnterEvent });
-+    }
-+    private static void Leave(Window window)
-+    {
-+        if (window is QuotaNotchWindow notch) Invoke(notch, "PointerLeave", new Point(-100, -100));
-+        else window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseLeaveEvent });
-+    }
-+    private static void ExpireGrace(QuotaNotchWindow window) => Invoke(window, "LeaveGraceElapsed", null, EventArgs.Empty);
-+    private static T Field<T>(QuotaNotchWindow window, string name) =>
-+        (T)typeof(QuotaNotchWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
-+    private static void SetField(QuotaNotchWindow window, string name, object value) =>
-+        typeof(QuotaNotchWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, value);
-+    private static void Invoke(QuotaNotchWindow window, string name, params object?[] args) =>
-+        typeof(QuotaNotchWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, args);
-+
-+    private static void AdvanceFiniteMotion(QuotaNotchWindow window)
-+    {
-+        var run = Field<object>(window, "_expansionRun");
-+        run.GetType().GetField("_start", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(run, -10000d);
-+        SetField(window, "_expansionRun", run);
-+        Invoke(window, "Animate", null, EventArgs.Empty);
-+        // Advance real independent tracks, but never call Settle/StopMotion: the host
-+        // must reach and unsubscribe its own terminal state for the assertions to pass.
-+        AdvanceControlTracks(window, 10000);
-+    }
-+
-+    private static void AssertIdleArcOnly(QuotaNotchWindow window, string edge)
-+    {
-+        var model = QuotaNotchGeometry.CreateMain(1, 1, edge is "top" or "bottom", edge == "bottom");
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
-+        var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(model));
-+        var center = QuotaNotchGeometry.GetOrbCenter(model);
-+        var arc = transform.Apply(new(center.X - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5),
-+            center.Y - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5)));
-+        AssertPaintedInput(window, new Point(arc.X, arc.Y));
-+        for (int i = 0; i < 6; i++)
-+        {
-+            var dot = transform.Apply(QuotaNotchGeometry.GetGripDot(model, i).Center);
-+            AssertClearInput(window, new Point(dot.X, dot.Y));
-+        }
-+    }
-+
-+    private static void AssertBodyState(QuotaNotchWindow window, string edge, bool expanded)
-+    {
-+        var view = Assert.IsType<QuotaNotchView>(window.Content);
-+        bool horizontal = edge is "top" or "bottom";
-+        var model = QuotaNotchGeometry.CreateMain(expanded ? 1 : 0, 1, horizontal, edge == "bottom");
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1, horizontal);
-+        var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(model));
-+        var bodyCenter = transform.Apply(new(30, (model.BodyStart + model.BodyEnd) / 2));
-+        var point = new Point(bodyCenter.X, bodyCenter.Y);
-+        Assert.Equal(expanded, view.InputGeometry.FillContains(point));
-+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width), (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
-+        bitmap.Render(view);
-+        Assert.Equal(expanded ? 255 : 0, (int)AlphaAt(bitmap, point));
-+        var source = HwndSource.FromHwnd(new WindowInteropHelper(window).Handle)!;
-+        var region = CreateRectRgn(0, 0, 0, 0);
-+        Assert.NotEqual(nint.Zero, region);
-+        try
-+        {
-+            Assert.True(GetWindowRgn(source.Handle, region) > 1, window.RuntimeDiagnostic);
-+            AssertInRegion(region, source.CompositionTarget!.TransformToDevice.Transform(point), expanded);
-+            if (!expanded)
-+            {
-+                var open = QuotaNotchGeometry.CreateMain(1, 1, horizontal, edge == "bottom");
-+                var openTransform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(open));
-+                foreach (var p in new[] { open.Grip, new QuotaNotchGeometry.Point(open.Grip.X, open.BodyEnd + 2) })
-+                {
-+                    var external = openTransform.Apply(p);
-+                    var local = new Point(external.X, external.Y);
-+                    Assert.Equal(0, AlphaAt(bitmap, local));
-+                    AssertInRegion(region, source.CompositionTarget.TransformToDevice.Transform(local), false);
-+                }
-+            }
-+        }
-+        finally { DeleteObject(region); }
-+        Assert.Contains("rendering=False", window.RuntimeDiagnostic);
-+    }
-+
-+    private static void AssertPaintedInput(QuotaNotchWindow window, Point point)
-+    {
-+        var view = Assert.IsType<QuotaNotchView>(window.Content);
-+        Assert.True(view.InputGeometry.FillContains(point), $"point={point}; {window.RuntimeDiagnostic}");
-+        Assert.NotEqual(QuotaNotchTarget.None, view.HitTestTarget(point).Target);
-+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width), (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
-+        bitmap.Render(view);
-+        Assert.InRange((int)AlphaAt(bitmap, point), 1, 255);
-+        var source = HwndSource.FromHwnd(new WindowInteropHelper(window).Handle)!;
-+        var region = CreateRectRgn(0, 0, 0, 0);
-+        Assert.NotEqual(nint.Zero, region);
-+        try
-+        {
-+            Assert.True(GetWindowRgn(source.Handle, region) > 1, window.RuntimeDiagnostic);
-+            var pixel = source.CompositionTarget!.TransformToDevice.Transform(point);
-+            Assert.True(PtInRegion(region, (int)Math.Round(pixel.X), (int)Math.Round(pixel.Y)),
-+                $"point={point}; pixel={pixel}; {window.RuntimeDiagnostic}");
-+        }
-+        finally { DeleteObject(region); }
-+    }
-+
-+    private static void AssertClearInput(QuotaNotchWindow window, Point point)
-+    {
-+        var view = Assert.IsType<QuotaNotchView>(window.Content);
-+        Assert.Equal(QuotaNotchTarget.None, view.HitTestTarget(point).Target);
-+        Assert.False(view.InputGeometry.FillContains(point));
-+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width), (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
-+        bitmap.Render(view);
-+        Assert.Equal(0, AlphaAt(bitmap, point));
-+        var source = HwndSource.FromHwnd(new WindowInteropHelper(window).Handle)!;
-+        var region = CreateRectRgn(0, 0, 0, 0);
-+        Assert.NotEqual(nint.Zero, region);
-+        try
-+        {
-+            Assert.True(GetWindowRgn(source.Handle, region) > 1);
-+            AssertInRegion(region, source.CompositionTarget!.TransformToDevice.Transform(point), false);
-+        }
-+        finally { DeleteObject(region); }
-+    }
-+
-+    private static void AssertBlackAt(BitmapSource bitmap, Point point)
-+    {
-+        var pixel = new byte[4];
-+        bitmap.CopyPixels(new Int32Rect((int)point.X, (int)point.Y, 1, 1), pixel, 4, 0);
-+        Assert.Equal(new byte[] { 0, 0, 0, 255 }, pixel);
-+    }
-+
-+    private static byte AlphaAt(BitmapSource bitmap, Point point)
-+    {
-+        var pixel = new byte[4];
-+        bitmap.CopyPixels(new Int32Rect((int)point.X, (int)point.Y, 1, 1), pixel, 4, 0);
-+        return pixel[3];
-+    }
-+
-+    private static void AssertInRegion(nint region, Point point, bool expected) =>
-+        Assert.Equal(expected, PtInRegion(region, (int)Math.Round(point.X), (int)Math.Round(point.Y)));
-+
-+
-+    private static void PumpLayout() => Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-+
-+    private static void OnSta(Action action)
-+    {
-+        Exception? failure = null;
-+        var thread = new Thread(() =>
-+        {
-+            var dispatcher = Dispatcher.CurrentDispatcher;
-+            var input = InputManager.Current;
-+            // MouseDevice.ChangeMouseCapture synchronously calls Synchronize(),
-+            // which invents a move at the physical desktop cursor before capture
-+            // returns. It must not interleave with our explicit coordinate path.
-+            // Filter only test input at the dispatcher boundary; keep OS capture,
-+            // WPF Got/LostMouseCapture and production handlers entirely intact.
-+            input.PreProcessInput += IgnoreDesktopPointer;
-+            dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
-+            {
-+                try { action(); }
-+                catch (Exception e) { failure = e; }
-+                finally
-+                {
-+                    input.PreProcessInput -= IgnoreDesktopPointer;
-+                    dispatcher.InvokeShutdown();
-+                }
-+            });
-+            Dispatcher.Run();
-+        });
-+        thread.SetApartmentState(ApartmentState.STA);
-+        thread.Start();
-+        thread.Join();
-+        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
-+    }
-+
-+    private static void IgnoreDesktopPointer(object sender, PreProcessInputEventArgs e)
-+    {
-+        if (e.StagingItem.Input is MouseEventArgs mouse &&
-+            mouse.RoutedEvent != Mouse.GotMouseCaptureEvent && mouse.RoutedEvent != Mouse.LostMouseCaptureEvent)
-+            e.Cancel();
-+    }
-+
-+    private sealed class UnreadableSnapshots(Exception failure) : IReadOnlyList<QuotaSnapshot>
-+    {
-+        public int Count => 1;
-+        public QuotaSnapshot this[int index] => throw failure;
-+        public IEnumerator<QuotaSnapshot> GetEnumerator() => throw failure;
-+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
-+    }
-+
-+    [DllImport("gdi32.dll")]
-+    private static extern nint CreateRectRgn(int left, int top, int right, int bottom);
-+    [DllImport("user32.dll")]
-+    private static extern int GetWindowRgn(nint hwnd, nint region);
-+    [DllImport("gdi32.dll")]
-+    [return: MarshalAs(UnmanagedType.Bool)]
-+    private static extern bool PtInRegion(nint region, int x, int y);
-+    [DllImport("gdi32.dll")]
-+    [return: MarshalAs(UnmanagedType.Bool)]
-+    private static extern bool DeleteObject(nint region);
-+    [DllImport("user32.dll")]
-+    [return: MarshalAs(UnmanagedType.Bool)]
-+    private static extern bool IsWindowVisible(nint hwnd);
-+    [DllImport("user32.dll")]
-+    private static extern nint GetCapture();
-+    [DllImport("user32.dll")]
-+    [return: MarshalAs(UnmanagedType.Bool)]
-+    private static extern bool ReleaseCapture();
-+
-+    private sealed class IsolatedQuotaFiles : IDisposable
-+    {
-+        private readonly string _directory = Path.Combine(Path.GetTempPath(), "quota-notch-native-" + Guid.NewGuid().ToString("N"));
-+        public IsolatedQuotaFiles() => Directory.CreateDirectory(_directory);
-+        public CodexQuotaProvider CreateProvider() => new(
-+            Path.Combine(_directory, "missing-auth.json"), Path.Combine(_directory, "cache"),
-+            new HttpClient(new RejectNetworkHandler()), () => DateTimeOffset.UnixEpoch);
-+        public void Dispose() => Directory.Delete(_directory, recursive: true);
-+    }
-+
-+    private sealed class RejectNetworkHandler : HttpMessageHandler
-+    {
-+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-+            throw new InvalidOperationException("The native startup test must not perform HTTP.");
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs

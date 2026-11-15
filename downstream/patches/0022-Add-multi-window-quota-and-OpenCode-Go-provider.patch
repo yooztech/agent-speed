@@ -1,52 +1,59 @@
-From 6e2dcf23d76498ca842f16f585bc867211b1834e Mon Sep 17 00:00:00 2001
-From: Downstream Patch Queue <downstream@localhost>
-Date: Sun, 15 Nov 2026 13:17:10 +0800
-Subject: [PATCH] Add multi-window quota and OpenCode Go provider
+From 7d341782b36df677aa40ba63b284abec1075d180 Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Sun, 15 Nov 2026 15:53:04 +0800
+Subject: [PATCH 22/22] Add multi-window quota and OpenCode Go provider
 
+- Add the real OpenCode Go credentials/provider, SQLite access, registry/source registration, logo and entitlement copy.
+- Add Go period/provider/lifecycle coverage and integration reference; retain the original Windows multi-window/Go increment.
+- Reuse the complete source-neutral macOS Codex base without duplicating persistence, controllers or native geometry.
 ---
- macos/Package.swift                                |   5 +-
- macos/Resources/Codenotch-LICENSE.txt              |   7 +
- macos/Resources/strings.macos.json                 |   7 +-
- macos/Sources/AgentSpeed/App/QuotaController.swift |  31 +-
- macos/Sources/AgentSpeed/App/QuotaNotch.swift      | 177 ++++++---
- .../AgentSpeed/App/QuotaNotchVisualHarness.swift   |  31 +-
- macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift |  36 ++
- .../AgentSpeed/Dashboard/DashboardView.swift       |  39 +-
- .../AgentSpeed/Localization/StringTable.swift      |   7 +-
- .../SettingsWindow/Panes/QuotaPane.swift           |  57 +--
- .../AgentSpeedCore/CodexQuotaProvider.swift        | 122 ++-----
- .../AgentSpeedCore/OpenCodeGoCredentials.swift     |  98 +++++
- .../AgentSpeedCore/OpenCodeGoQuotaProvider.swift   | 244 +++++++++++++
- macos/Sources/AgentSpeedCore/Quota.swift           | 122 +++++++
- macos/Sources/CSQLite/module.modulemap             |   5 +
- macos/Sources/CSQLite/shim.h                       |   1 +
- .../Tests/AgentSpeedAppTests/QuotaNotchTests.swift |  62 +++-
- .../QuotaPresentationTests.swift                   |  18 +-
- .../CodexQuotaProviderTests.swift                  |   5 +-
- .../OpenCodeGoQuotaProviderTests.swift             | 211 +++++++++++
- macos/Tests/AgentSpeedCoreTests/QuotaTests.swift   |  50 +++
- spec/QUOTA.md                                      |  24 +-
- windows/src/AgentSpeed.Core/CodexQuotaProvider.cs  |   2 +-
- windows/src/AgentSpeed.Core/IQuotaProvider.cs      |  10 +
- .../src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs | 401 +++++++++++++++++++++
- windows/src/AgentSpeed.Core/QuotaSnapshot.cs       |   8 +
- .../Localization/Strings.Windows.json              |   4 +
- .../Settings/QuotaFormat.cs                        |  60 ++-
- .../Settings/QuotaNotchGeometry.cs                 |  70 ++--
- .../src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt |   3 +-
- windows/src/AgentSpeed/Settings/QuotaNotchView.cs  | 125 +++++--
- .../src/AgentSpeed/Settings/QuotaSettingsPage.cs   |  12 +-
- windows/src/AgentSpeed/Settings/QuotaSurface.cs    | 139 ++++---
- .../OpenCodeGoQuotaProviderTests.cs                | 401 +++++++++++++++++++++
- .../QuotaFormatTests.cs                            |  62 +++-
- .../QuotaNotchGeometryTests.cs                     |  55 ++-
- .../SettingsSerializerTests.cs                     |  24 +-
- .../QuotaNotchViewTests.cs                         |  87 +++++
- .../QuotaNotchWindowTests.cs                       |   2 +-
- .../QuotaSettingsPageTests.cs                      |  89 ++++-
- .../QuotaSurfaceProviderCollectionTests.cs         | 171 +++++++++
- .../AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs  | 131 ++++++-
- 42 files changed, 2796 insertions(+), 419 deletions(-)
+ macos/Package.swift                           |   5 +-
+ macos/Resources/Codenotch-LICENSE.txt         |   2 +-
+ .../App/QuotaNotchVisualHarness.swift         |   8 +-
+ .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +-
+ .../AgentSpeed/Localization/StringTable.swift |   1 +
+ .../SettingsWindow/Panes/QuotaPane.swift      |   4 +-
+ .../OpenCodeGoCredentials.swift               |  98 +++++
+ .../OpenCodeGoQuotaProvider.swift             | 276 ++++++++++++
+ macos/Sources/AgentSpeedCore/Quota.swift      |   2 +-
+ macos/Sources/CSQLite/module.modulemap        |   5 +
+ macos/Sources/CSQLite/shim.h                  |   1 +
+ .../QuotaControllerTests.swift                |  26 +-
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  |  10 +-
+ .../QuotaPresentationTests.swift              |   4 +-
+ .../OpenCodeGoQuotaProviderTests.swift        | 213 ++++++++++
+ .../QuotaLifecycleTests.swift                 |  28 +-
+ .../AgentSpeedCoreTests/QuotaTests.swift      |   8 +
+ spec/QUOTA.md                                 |  16 +-
+ .../src/AgentSpeed.Core/CodexQuotaProvider.cs |   2 +-
+ windows/src/AgentSpeed.Core/IQuotaProvider.cs |  10 +
+ .../OpenCodeGoQuotaProvider.cs                | 401 ++++++++++++++++++
+ windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   8 +
+ .../Localization/Strings.Windows.json         |   4 +
+ .../Settings/QuotaFormat.cs                   |  60 ++-
+ .../Settings/QuotaNotchGeometry.cs            |  70 +--
+ .../Settings/QuotaNotch.LICENSE.txt           |   3 +-
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs | 125 ++++--
+ .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  12 +-
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   | 139 +++---
+ .../OpenCodeGoQuotaProviderTests.cs           | 401 ++++++++++++++++++
+ .../QuotaFormatTests.cs                       |  62 ++-
+ .../QuotaNotchGeometryTests.cs                |  55 ++-
+ .../SettingsSerializerTests.cs                |  24 +-
+ .../QuotaNotchViewTests.cs                    |  87 ++++
+ .../QuotaSettingsPageTests.cs                 |  89 +++-
+ .../QuotaSurfaceProviderCollectionTests.cs    | 171 ++++++++
+ .../QuotaSurfaceTests.cs                      | 131 +++++-
+ 37 files changed, 2367 insertions(+), 213 deletions(-)
+ create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
+ create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
+ create mode 100644 macos/Sources/CSQLite/module.modulemap
+ create mode 100644 macos/Sources/CSQLite/shim.h
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift
+ create mode 100644 windows/src/AgentSpeed.Core/IQuotaProvider.cs
+ create mode 100644 windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/OpenCodeGoQuotaProviderTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
 
 diff --git a/macos/Package.swift b/macos/Package.swift
 index c7b998e5..0500f99e 100644
@@ -79,532 +86,73 @@ index c7b998e5..0500f99e 100644
          ),
          .testTarget(
 diff --git a/macos/Resources/Codenotch-LICENSE.txt b/macos/Resources/Codenotch-LICENSE.txt
-index b61a8d37..846b0b88 100644
+index 495b4aee..846b0b88 100644
 --- a/macos/Resources/Codenotch-LICENSE.txt
 +++ b/macos/Resources/Codenotch-LICENSE.txt
-@@ -1,3 +1,10 @@
-+Codenotch attribution
-+
+@@ -1,6 +1,6 @@
+ Codenotch attribution
+ 
+-The native quota notch UI, its geometry and marks, and the Codex
 +The native quota notch UI, its geometry and marks, and the Codex/OpenCode
-+credential, usage parsing and provider ports include code adapted from
-+https://github.com/vinzdg/codenotch at 835550a342871779135b6484d6899161c5222f7c.
-+The following license applies to those portions.
-+
- MIT License
- 
- Copyright (c) 2026 Vinz
-diff --git a/macos/Resources/strings.macos.json b/macos/Resources/strings.macos.json
-index 96d64973..883c5b16 100644
---- a/macos/Resources/strings.macos.json
-+++ b/macos/Resources/strings.macos.json
-@@ -26,11 +26,16 @@
-   "mac.quota.next": {"zh-Hant":"下次可用","zh-Hans":"下次可用","en":"Next available","ja":"次回利用可能"},
-   "mac.quota.status.ok": {"zh-Hant":"正常","zh-Hans":"正常","en":"Current","ja":"最新"},
-   "mac.quota.status.stale": {"zh-Hant":"資料過期","zh-Hans":"数据过期","en":"Stale","ja":"古いデータ"},
--  "mac.quota.status.needsAuth": {"zh-Hant":"需要登入 Codex","zh-Hans":"需要登录 Codex","en":"Sign in to Codex","ja":"Codex にサインインしてください"},
-+  "mac.quota.status.needsAuth": {"zh-Hant":"需要登入 %@","zh-Hans":"需要登录 %@","en":"Sign in to %@","ja":"%@ にサインインしてください"},
-   "mac.quota.status.accessDenied": {"zh-Hant":"存取遭拒","zh-Hans":"访问被拒绝","en":"Access denied","ja":"アクセスが拒否されました"},
-   "mac.quota.status.unsupported": {"zh-Hant":"不支援","zh-Hans":"不支持","en":"Unsupported","ja":"非対応"},
-   "mac.quota.status.error": {"zh-Hant":"無法取得額度","zh-Hans":"无法获取额度","en":"Could not load quota","ja":"使用枠を取得できません"},
-   "mac.quota.status.waiting": {"zh-Hant":"等待下次更新","zh-Hans":"等待下次更新","en":"Waiting for next refresh","ja":"次の更新を待機中"},
-+  "mac.quota.period.month": {"zh-Hant":"月","zh-Hans":"月","en":"Month","ja":"月"},
-+  "mac.quota.period.week": {"zh-Hant":"週","zh-Hans":"周","en":"Week","ja":"週"},
-+  "mac.quota.period.fiveHours": {"zh-Hant":"5 小時","zh-Hans":"5 小时","en":"5h","ja":"5時間"},
-+  "mac.quota.noAllowance": {"zh-Hant":"此帳戶沒有可用的 %@ 訂閱額度","zh-Hans":"此账户没有可用的 %@ 订阅额度","en":"No %@ subscription allowance on this account","ja":"このアカウントに %@ の利用枠はありません"},
-+  "mac.quota.limitReached": {"zh-Hant":"已達額度限制","zh-Hans":"已达额度限制","en":"Allowance reached","ja":"利用枠の上限に達しました"},
-   "mac.launchAtLogin.requiresApproval": {
-     "zh-Hant": "請在「系統設定」›「一般」›「登入項目」中允許 Agent Speed。",
-     "zh-Hans": "请在“系统设置”›“通用”›“登录项”中允许 Agent Speed。",
-diff --git a/macos/Sources/AgentSpeed/App/QuotaController.swift b/macos/Sources/AgentSpeed/App/QuotaController.swift
-index a235b5b8..cd2c1c65 100644
---- a/macos/Sources/AgentSpeed/App/QuotaController.swift
-+++ b/macos/Sources/AgentSpeed/App/QuotaController.swift
-@@ -5,19 +5,27 @@ import Observation
- /// Owns quota refresh state; credentials remain with the provider.
- @MainActor @Observable
- final class QuotaController {
--    private let provider = CodexQuotaProvider()
-+    private let providers: [any QuotaProvider]
-     private var task: Task<Void, Never>?
-     private var timer: Timer?
--    private(set) var snapshots: [CodexQuotaSnapshot] = []
-+    private(set) var snapshots: [QuotaSnapshot] = []
-     private(set) var isRefreshing = false
-     private(set) var networkEnabled = false
-     var floatingVisible: Bool {
-         didSet { defaults.set(floatingVisible, forKey: "quota.floatingVisible") }
-     }
-     private let defaults: UserDefaults
-+    var selectedProviderID: String {
-+        didSet { defaults.set(selectedProviderID, forKey: "quota.selectedProviderID") }
-+    }
-+    var selectedSnapshot: QuotaSnapshot? {
-+        snapshots.first { $0.id == selectedProviderID } ?? snapshots.first
-+    }
- 
--    init(defaults: UserDefaults = .standard) {
-+    init(defaults: UserDefaults = .standard, providers: [any QuotaProvider] = QuotaProviderRegistry.makeProviders()) {
-         self.defaults = defaults
-+        self.providers = providers
-+        selectedProviderID = defaults.string(forKey: "quota.selectedProviderID") ?? "codex"
-         floatingVisible = defaults.object(forKey: "quota.floatingVisible") as? Bool ?? true
-     }
- 
-@@ -26,7 +34,9 @@ final class QuotaController {
-         networkEnabled = enabled
-         if !enabled {
-             task?.cancel()
--            Task { [provider] in await provider.cancel() }
-+            Task { [providers] in
-+                for provider in providers { await provider.cancel() }
-+            }
-             task = nil
-             isRefreshing = false
-             timer?.invalidate()
-@@ -39,10 +49,17 @@ final class QuotaController {
-     func refresh() {
-         guard networkEnabled, !isRefreshing else { return }
-         isRefreshing = true
--        task = Task { [weak self, provider] in
--            let snapshot = await provider.refresh()
-+        task = Task { [weak self, providers] in
-+            let snapshots = await withTaskGroup(of: (Int, QuotaSnapshot).self) { group in
-+                for (index, provider) in providers.enumerated() {
-+                    group.addTask { (index, await provider.refresh()) }
-+                }
-+                var results: [(Int, QuotaSnapshot)] = []
-+                for await result in group { results.append(result) }
-+                return results.sorted { $0.0 < $1.0 }.map(\.1)
-+            }
-             guard !Task.isCancelled, let self else { return }
--            self.snapshots = [snapshot]
-+            self.snapshots = snapshots
-             self.isRefreshing = false
-             self.task = nil
-             self.scheduleRefresh()
-diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index b3986a0f..801d7731 100644
---- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-+++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -83,11 +83,21 @@ enum NotchLayout {
-     static func ringAlong(for edge: NotchEdge) -> CGFloat {
-         curlRadius + (edge.isVertical ? padTop : (padTop + padBottom) / 2) + ringDiameter / 2
-     }
-+    static func periodColor(_ window: QuotaWindow) -> Color {
-+        switch window.period {
-+        case .month: Color(red: 67 / 255, green: 143 / 255, blue: 229 / 255)
-+        case .week: Color(red: 34 / 255, green: 217 / 255, blue: 148 / 255)
-+        case .fiveHours: Color(red: 161 / 255, green: 138 / 255, blue: 217 / 255)
-+        case .other: Color(red: 137 / 255, green: 166 / 255, blue: 187 / 255)
-+        }
-+    }
- 
-     static func accent(_ used: Double, blocked: Bool = false) -> Color {
--        if blocked || used >= 0.7 { return Color(red: 1, green: 63.0 / 255, blue: 0) }
--        if used >= 0.5 { return Color(red: 242.0 / 255, green: 1, blue: 0) }
--        return Color(red: 0, green: 1, blue: 136.0 / 255)
-+        blocked || used >= 0.9 ? .orange : Color(red: 34 / 255, green: 217 / 255, blue: 148 / 255)
-+    }
-+
-+    static func outerDiameter(_ count: Int) -> CGFloat {
-+        ringDiameter + CGFloat(max(0, count - 1)) * 12
-     }
- 
-     @MainActor
-@@ -106,18 +116,36 @@ enum NotchLayout {
- /// be exercised offscreen without injecting fixtures into the running app.
- @MainActor
- struct QuotaNotchReading {
--    let snapshot: CodexQuotaSnapshot?
-+    let snapshot: QuotaSnapshot?
-     let networkEnabled: Bool
-     let l10n: Localizer
- 
--    var headline: CodexQuotaWindow? {
--        guard let snapshot else { return nil }
--        return snapshot.windows.first(where: { $0.id == snapshot.headlineId }) ?? snapshot.windows.first
--    }
--    var fraction: Double? { headline?.usedFraction }
--    var stale: Bool { !networkEnabled || snapshot?.status == .stale || fraction == nil }
-+    var windows: [QuotaWindow] { QuotaWindow.ordered(snapshot?.windows ?? []) }
-+    var fraction: Double? { windows.first?.remainingFraction }
-+    var stale: Bool { !networkEnabled || snapshot?.status == .stale || windows.allSatisfy { $0.remainingFraction == nil } }
-     var observationDate: Date? { stale ? snapshot?.observedAt : nil }
-     var percentage: String { fraction.map { quotaPercent($0, locale: l10n.locale) } ?? "—" }
-+    var outerDiameter: CGFloat { NotchLayout.outerDiameter(windows.count) }
-+    var readingRows: [[QuotaWindow]] {
-+        stride(from: 0, to: windows.count, by: 3).map { Array(windows[$0..<min($0 + 3, windows.count)]) }
-+    }
-+    func compactReading(_ window: QuotaWindow) -> String {
-+        quotaWindowLabel(window, l10n) + " " + (window.remainingFraction.map { quotaPercent($0, locale: l10n.locale) } ?? "—")
-+    }
-+    var contentSize: CGSize {
-+        guard windows.count > 1 else {
-+            let font = NSFont.systemFont(ofSize: NotchLayout.fontSize(27), weight: .semibold)
-+            let width = ceil((percentage as NSString).size(withAttributes: [.font: font]).width)
-+            return CGSize(width: max(NotchLayout.ringDiameter, width), height: NotchLayout.cellExtent)
-+        }
-+        let font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
-+        let width = readingRows.map { row in
-+            row.reduce(CGFloat(0)) { $0 + ceil((compactReading($1) as NSString).size(withAttributes: [.font: font]).width) + 9 }
-+                + CGFloat(max(0, row.count - 1)) * 8
-+        }.max() ?? 0
-+        return CGSize(width: max(outerDiameter, width),
-+                      height: outerDiameter + NotchLayout.ringLabelGap + CGFloat(readingRows.count) * 15)
-+    }
-     var status: String? {
-         guard networkEnabled else { return l10n("mac.quota.offline") }
-         guard let snapshot else { return l10n("mac.quota.empty") }
-@@ -149,7 +177,7 @@ struct QuotaNotchReading {
-         if snapshot?.plan != nil { height += NotchLayout.bodyLineHeight }
-         if let block = snapshot?.block { height += NotchLayout.headerToBlock + NotchLayout.textHeight(block) }
-         if let status { height += NotchLayout.headerToBlock + NotchLayout.textHeight(status) }
--        for (index, window) in (snapshot?.windows ?? []).enumerated() {
-+        for (index, window) in windows.enumerated() {
-             height += index == 0 ? NotchLayout.headerToBlock : NotchLayout.blockSpacing
-             height += 2 * NotchLayout.bodyLineHeight + NotchLayout.barToUsed
-             if window.usedFraction != nil { height += NotchLayout.labelToBar + NotchLayout.barHeight }
-@@ -178,16 +206,27 @@ struct QuotaNotchGeometry {
-     let orbPath: Path
-     let settingsWakePath: Path
- 
-+    let contentRect: CGRect
-+    let outerDiameter: CGFloat
-+
-     init(edge: NotchEdge, expanded: Bool, tooltip: Bool, settingsHovered: Bool,
-          cardHeight: CGFloat, available: CGSize = CGSize(width: 1_000, height: 1_000),
--         actualSize: CGSize? = nil, handlesTuckedAway: Bool = false) {
-+         actualSize: CGSize? = nil, handlesTuckedAway: Bool = false,
-+         ringCount: Int = 1, contentSize: CGSize? = nil) {
-         self.edge = edge
-         self.expanded = expanded
-         self.tooltip = tooltip
-         self.settingsHovered = settingsHovered
-         self.handlesTuckedAway = handlesTuckedAway
--        let depth = NotchLayout.bodyDepth(for: edge)
--        let length = NotchLayout.shapeLength(for: edge)
-+        let diameter = NotchLayout.outerDiameter(ringCount)
-+        outerDiameter = diameter
-+        let content = contentSize ?? CGSize(width: diameter,
-+                                             height: diameter + NotchLayout.ringLabelGap + NotchLayout.percentLineHeight)
-+        let topPad = ringCount > 1 ? max(NotchLayout.padTop, NotchLayout.cornerRadius) : NotchLayout.padTop
-+        let bottomPad = ringCount > 1 ? max(NotchLayout.padBottom, NotchLayout.cornerRadius) : NotchLayout.padBottom
-+        let depth = edge.isVertical ? max(NotchLayout.sideBodyDepth, content.width + 2 * NotchLayout.ringMargin)
-+            : content.height + 2 * NotchLayout.ringMargin
-+        let length = topPad + bottomPad + (edge.isVertical ? content.height : content.width) + 2 * NotchLayout.curlRadius
-         let alongRoom = max(length + NotchLayout.orbDiameter, edge.isVertical ? cardHeight + 8 : NotchLayout.cardWidth + 8)
-         let acrossRoom = depth + NotchLayout.tailGap + NotchLayout.tailLength
-             + (edge.isVertical ? NotchLayout.cardWidth : cardHeight) + 4
-@@ -214,8 +253,12 @@ struct QuotaNotchGeometry {
-         bodyRect = CGRect(origin: origin, size: edge.isVertical
-                           ? CGSize(width: bodyDepth, height: bodyLength)
-                           : CGSize(width: bodyLength, height: bodyDepth))
--        let ringInset = NotchLayout.ringMargin + NotchLayout.ringDiameter / 2
--        ringCenter = point(start + NotchLayout.ringAlong(for: edge), edge == .bottom ? depth - ringInset : ringInset)
-+        let ringInset = edge.isVertical ? depth / 2 : NotchLayout.ringMargin + diameter / 2
-+        let ringAlong = NotchLayout.curlRadius + (edge.isVertical ? topPad + diameter / 2
-+                                                                 : (topPad + bottomPad + content.width) / 2)
-+        ringCenter = point(start + ringAlong, edge == .bottom ? depth - ringInset : ringInset)
-+        contentRect = CGRect(x: ringCenter.x - content.width / 2, y: ringCenter.y - diameter / 2,
-+                             width: content.width, height: content.height)
-         orbCenter = point(start + length, NotchLayout.curlRadius)
-         let height = min(cardHeight, max(1, edge.isVertical ? size.height - 8
-                                         : size.height - depth - NotchLayout.tailGap - NotchLayout.tailLength - 4))
-@@ -263,13 +306,10 @@ struct QuotaNotchGeometry {
-             // its footprint as it becomes a disc, so a stationary pointer can
-             // both wake and click it without hover oscillation.
-             if settingsWakePath.contains(point) { return .settings }
--            let cell = CGRect(x: ringCenter.x - NotchLayout.ringDiameter / 2,
--                              y: ringCenter.y - NotchLayout.ringDiameter / 2,
--                              width: NotchLayout.ringDiameter, height: NotchLayout.cellExtent)
--            if cell.contains(point) && bodyPath.contains(point) { return .cell }
-+            if contentRect.contains(point) && bodyPath.contains(point) { return .cell }
-             return bodyPath.contains(point) ? .bar : .outside
-         }
--        // A larger wake region is observed, never made mouse-intercepting.
-+        // Observe the wake region without intercepting the transparent desktop.
-         let wake = bodyRect.insetBy(dx: edge.isVertical ? -NotchLayout.pillHotZone / 2 : 0,
-                                    dy: edge.isVertical ? 0 : -NotchLayout.pillHotZone / 2)
-         return wake.contains(point) ? .bar : .outside
-@@ -545,7 +585,7 @@ final class QuotaNotchController {
-         if !model.quota.floatingVisible { hover.reset() }
-         withObservationTracking {
-             let visible = model.quota.floatingVisible
--            let reading = QuotaNotchReading(snapshot: model.quota.snapshots.first,
-+            let reading = QuotaNotchReading(snapshot: model.quota.selectedSnapshot,
-                                            networkEnabled: model.quota.networkEnabled, l10n: model.l10n)
-             let expanded = hover.expanded, tooltip = hover.tooltip, settings = hover.settingsHovered
-             let tucked = hover.handlesTuckedAway
-@@ -557,11 +597,13 @@ final class QuotaNotchController {
-             displayID = Self.id(screen)
-             let requested = QuotaNotchGeometry(edge: edge, expanded: expanded, tooltip: tooltip,
-                                               settingsHovered: settings, cardHeight: reading.cardHeight,
--                                              available: screen.frame.size, handlesTuckedAway: tucked)
-+                                              available: screen.frame.size, handlesTuckedAway: tucked,
-+                                              ringCount: reading.windows.count, contentSize: reading.contentSize)
-             panel.setFrame(requested.panelFrame(on: screen.frame), display: true)
-             let geometry = QuotaNotchGeometry(edge: edge, expanded: expanded, tooltip: tooltip,
-                                              settingsHovered: settings, cardHeight: reading.cardHeight,
--                                             actualSize: container.bounds.size, handlesTuckedAway: tucked)
-+                                             actualSize: container.bounds.size, handlesTuckedAway: tucked,
-+                                             ringCount: reading.windows.count, contentSize: reading.contentSize)
-             self.geometry = geometry
-             let view = QuotaNotchView(reading: reading, geometry: geometry,
-                                      onSettings: { [weak self] in self?.model.commands?.showSettings(.quota) },
-@@ -706,30 +748,61 @@ struct QuotaNotchView: View {
-         let preferences = effectiveRenderingPreferences
-         return VStack(spacing: NotchLayout.ringLabelGap) {
-             ZStack {
--                Circle().strokeBorder(NotchLayout.ringTrack, lineWidth: NotchLayout.trackStroke)
--                if let fraction = reading.fraction {
--                    Circle().inset(by: NotchLayout.trackStroke / 2)
--                        .trim(from: 0, to: min(max(fraction, 0), 1))
--                        .stroke(NotchLayout.accent(fraction, blocked: reading.snapshot?.block != nil),
--                                style: StrokeStyle(lineWidth: NotchLayout.progressStroke, lineCap: .round))
--                        .rotationEffect(.degrees(-90))
--                        .animation(preferences.reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.9), value: fraction)
-+                Circle().fill(Color(white: 0.165))
-+                    .overlay(Circle().strokeBorder(Color(white: 0.225), lineWidth: 0.5))
-+                    .frame(width: NotchLayout.ringDiameter - 2 * NotchLayout.trackStroke,
-+                           height: NotchLayout.ringDiameter - 2 * NotchLayout.trackStroke)
-+                if reading.windows.isEmpty {
-+                    Circle().strokeBorder(NotchLayout.ringTrack, lineWidth: NotchLayout.trackStroke)
-+                        .frame(width: NotchLayout.ringDiameter, height: NotchLayout.ringDiameter)
-                 }
--                QuotaGlyph().fill(.white, style: FillStyle(eoFill: true))
--                    .scaleEffect(0.94).frame(width: NotchLayout.glyphSize, height: NotchLayout.glyphSize)
--                    .opacity(reading.snapshot?.block != nil || (reading.fraction ?? 0) >= 1
--                             ? (preferences.reduceTransparency ? 0.7 : 0.35) : 1)
-+                ForEach(Array(reading.windows.enumerated()), id: \.element.id) { index, window in
-+                    let diameter = reading.outerDiameter - CGFloat(index) * 12
-+                    ZStack {
-+                        Circle().strokeBorder(NotchLayout.ringTrack, lineWidth: NotchLayout.trackStroke)
-+                        if let remaining = window.remainingFraction {
-+                            Circle().inset(by: NotchLayout.trackStroke / 2)
-+                                .trim(from: 0, to: min(max(remaining, 0), 1))
-+                                .stroke(NotchLayout.periodColor(window),
-+                                        style: StrokeStyle(lineWidth: NotchLayout.progressStroke, lineCap: .round))
-+                                .rotationEffect(.degrees(-90))
-+                                .animation(preferences.reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.9), value: remaining)
-+                        }
-+                    }
-+                    .frame(width: diameter, height: diameter)
-+                    .opacity(window.remainingFraction == nil ? 0.45 : 1)
-+                }
-+                QuotaSourceLogo(providerID: reading.snapshot?.id)
-+                    .frame(width: NotchLayout.glyphSize, height: NotchLayout.glyphSize)
-             }
--            .frame(width: NotchLayout.ringDiameter, height: NotchLayout.ringDiameter)
-+            .frame(width: reading.outerDiameter, height: reading.outerDiameter)
-             .opacity(reading.stale ? (preferences.reduceTransparency ? 0.75 : 0.45) : 1)
--            Text(reading.percentage).font(NotchLayout.percent)
--                .fixedSize().frame(height: NotchLayout.percentLineHeight)
-+            if reading.windows.count <= 1 {
-+                Text(reading.percentage).font(NotchLayout.percent)
-+                    .fixedSize().frame(height: NotchLayout.percentLineHeight)
-+            } else {
-+                VStack(spacing: 0) {
-+                    ForEach(Array(reading.readingRows.enumerated()), id: \.offset) { _, row in
-+                        HStack(spacing: 8) {
-+                            ForEach(row, id: \.id) { window in
-+                                HStack(spacing: 4) {
-+                                    Circle().fill(NotchLayout.periodColor(window)).frame(width: 5, height: 5)
-+                                    Text(reading.compactReading(window)).fixedSize()
-+                                }
-+                            }
-+                        }
-+                        .frame(height: 15)
-+                    }
-+                }
-+                .font(.system(size: 10, weight: .semibold)).monospacedDigit()
-+            }
-         }
--        .frame(width: NotchLayout.ringDiameter, height: NotchLayout.cellExtent)
--        .position(x: geometry.ringCenter.x,
--                  y: geometry.ringCenter.y - NotchLayout.ringDiameter / 2 + NotchLayout.cellExtent / 2)
-+        .frame(width: geometry.contentRect.width, height: geometry.contentRect.height)
-+        .position(x: geometry.contentRect.midX, y: geometry.contentRect.midY)
-         .accessibilityElement(children: .ignore)
--        .accessibilityLabel("Codex, \(reading.percentage)\(reading.status.map { ", \($0)" } ?? "")")
-+        .accessibilityLabel((reading.snapshot?.displayName ?? reading.l10n("mac.quota.title")) + ", " +
-+                            reading.windows.map { reading.compactReading($0) }.joined(separator: ", ") +
-+                            (reading.status.map { ", \($0)" } ?? ""))
-     }
- }
- 
-@@ -758,11 +831,11 @@ struct QuotaNotchTooltipContent: View {
-     var body: some View {
-         VStack(alignment: .leading, spacing: 0) {
-             HStack(alignment: .center, spacing: NotchLayout.headerGap) {
--                QuotaGlyph().fill(.white, style: FillStyle(eoFill: true))
--                    .scaleEffect(0.94).frame(width: NotchLayout.glyphSize, height: NotchLayout.glyphSize)
-+                QuotaSourceLogo(providerID: reading.snapshot?.id)
-+                    .frame(width: NotchLayout.glyphSize, height: NotchLayout.glyphSize)
-                 VStack(alignment: .leading, spacing: 0) {
-                     HStack(spacing: 0) {
--                        Text(reading.l10n("mac.quota.usageTitle")).font(NotchLayout.cardTitle).layoutPriority(1)
-+                        Text(reading.snapshot?.displayName ?? reading.l10n("mac.quota.title")).font(NotchLayout.cardTitle).layoutPriority(1)
-                         if let observed = reading.observationDate {
-                             Spacer(minLength: NotchLayout.px(20))
-                             Text(quotaAge(observed, locale: reading.l10n.locale))
-@@ -775,14 +848,14 @@ struct QuotaNotchTooltipContent: View {
-                 }
-             }
-             if let block = reading.snapshot?.block {
--                Text(block).font(NotchLayout.cardBody).foregroundStyle(NotchLayout.accent(1))
-+                Text(reading.snapshot.map { quotaBlock($0, block, reading.l10n) } ?? block).font(NotchLayout.cardBody).foregroundStyle(NotchLayout.accent(1))
-                     .fixedSize(horizontal: false, vertical: true).padding(.top, NotchLayout.headerToBlock)
-             }
-             if let status = reading.status {
-                 Text(status).font(NotchLayout.cardBody).foregroundStyle(NotchLayout.secondary)
-                     .fixedSize(horizontal: false, vertical: true).padding(.top, NotchLayout.headerToBlock)
-             }
--            ForEach(Array((reading.snapshot?.windows ?? []).enumerated()), id: \.element.id) { index, window in
-+            ForEach(Array(reading.windows.enumerated()), id: \.element.id) { index, window in
-                 VStack(alignment: .leading, spacing: 0) {
-                     HStack(spacing: NotchLayout.px(20)) {
-                         Text(quotaWindowLabel(window, reading.l10n))
-@@ -796,14 +869,14 @@ struct QuotaNotchTooltipContent: View {
-                     if let used = window.usedFraction {
-                         ZStack(alignment: .leading) {
-                             Capsule().fill(NotchLayout.barTrack)
--                            Capsule().fill(NotchLayout.accent(used))
--                                .frame(width: max(NotchLayout.barHeight,
--                                                  (NotchLayout.cardWidth - 2 * NotchLayout.cardPadding) * min(max(used, 0), 1)))
-+                            Capsule().fill(NotchLayout.periodColor(window))
-+                                .frame(width: max(0,
-+                                                  (NotchLayout.cardWidth - 2 * NotchLayout.cardPadding) * min(max(1 - used, 0), 1)))
-                         }
-                         .frame(height: NotchLayout.barHeight)
-                         .padding(.top, NotchLayout.labelToBar)
-                     }
--                    Text(window.usedFraction.map { reading.l10n("mac.quota.used", quotaPercent($0, locale: reading.l10n.locale)) }
-+                    Text(window.remainingFraction.map { reading.l10n("mac.quota.remaining", quotaPercent($0, locale: reading.l10n.locale)) }
-                          ?? reading.l10n("mac.quota.unknown"))
-                         .font(NotchLayout.cardBody).lineLimit(1).minimumScaleFactor(0.85)
-                         .frame(height: NotchLayout.bodyLineHeight)
+ credential, usage parsing and provider ports include code adapted from
+ https://github.com/vinzdg/codenotch at 835550a342871779135b6484d6899161c5222f7c.
+ The following license applies to those portions.
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
-index 61f8874d..af177642 100644
+index 60469a19..a1cb3f86 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
-@@ -44,22 +44,22 @@ struct QuotaNotchVisualHarness {
-         return value
-     }
+@@ -4,7 +4,7 @@ import AppKit
+ import Darwin
+ import SwiftUI
  
--    private func snapshot(_ fraction: Double? = 0.21, status: CodexQuotaStatus = .ok,
--                          headlineID: String? = "main:18000") -> CodexQuotaSnapshot {
-+    private func snapshot(_ fraction: Double? = 0.21, status: QuotaStatus = .ok,
-+                          headlineID: String? = "main:18000") -> QuotaSnapshot {
-         let windows = [
--            CodexQuotaWindow(id: "main:18000", label: "Codex", usedFraction: fraction,
-+            QuotaWindow(id: "main:18000", label: "", usedFraction: fraction,
-                              remaining: fraction.map { 1 - $0 }, used: fraction,
-                              resetAt: now.addingTimeInterval(3_060), duration: 18_000),
--            CodexQuotaWindow(id: "main:604800", label: "Codex", usedFraction: 0.52,
-+            QuotaWindow(id: "main:604800", label: "", usedFraction: 0.52,
-                              remaining: 0.48, used: 0.52, resetAt: now.addingTimeInterval(100_000), duration: 604_800),
+-/// Opt-in native captures of the production Codex renderer and its exact
++/// Opt-in native captures of the production multi-source renderer and its exact
+ /// painted input mask. Never runs in the live app without the diagnostic flag.
+ @MainActor
+ struct QuotaNotchVisualHarness {
+@@ -44,7 +44,7 @@ struct QuotaNotchVisualHarness {
+             QuotaWindow(id: "weekly", label: "", usedFraction: unknown ? nil : 0.52, remaining: nil, used: nil, resetAt: now.addingTimeInterval(100_000), duration: nil),
+             QuotaWindow(id: "rolling", label: "", usedFraction: unknown ? nil : 0.21, remaining: nil, used: nil, resetAt: now.addingTimeInterval(3_060), duration: nil),
          ]
--        return CodexQuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: status,
-+        return QuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: status,
-                                   windows: windows, headlineId: headlineID, block: nil, account: nil,
-                                   plan: "Plus", observedAt: now.addingTimeInterval(-300), source: "local",
-                                   credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
-     }
- 
--    private func reading(_ snapshot: CodexQuotaSnapshot? = nil, enabled: Bool = true) -> QuotaNotchReading {
-+    private func reading(_ snapshot: QuotaSnapshot? = nil, enabled: Bool = true) -> QuotaNotchReading {
-         QuotaNotchReading(snapshot: snapshot, networkEnabled: enabled, l10n: Localizer(preference: .en))
-     }
- 
-@@ -71,20 +71,20 @@ struct QuotaNotchVisualHarness {
-     }
- 
-     /// Independent canonical native paint: overlapping white 18.8% track and
--    /// #00ff88 progress, with outer stale opacity, over opaque black.
-+    /// stable weekly green remaining progress, with stale opacity, over opaque black.
-     private func referenceRing(_ geometry: QuotaNotchGeometry, opacity: Double, known: Bool) throws -> NSBitmapImageRep {
-         let control = ZStack(alignment: .topLeading) {
-             Color.black
-             ZStack {
-                 Circle().strokeBorder(Color.white.opacity(0.188), lineWidth: NotchLayout.trackStroke)
-                 if known {
--                    Circle().inset(by: NotchLayout.trackStroke / 2).trim(from: 0, to: 0.21)
--                        .stroke(Color(red: 0, green: 1, blue: 136.0 / 255),
-+                    Circle().inset(by: NotchLayout.trackStroke / 2).trim(from: 0, to: 0.48)
-+                        .stroke(Color(red: 34.0 / 255, green: 217.0 / 255, blue: 148.0 / 255),
-                                 style: StrokeStyle(lineWidth: NotchLayout.progressStroke, lineCap: .round))
-                         .rotationEffect(.degrees(-90))
-                 }
+-        let snapshot = QuotaSnapshot(id: id, displayName: "Codex", fidelity: "official",
++        let snapshot = QuotaSnapshot(id: id, displayName: id == "codex" ? "Codex" : "OpenCode Go", fidelity: "official",
+                                      status: state == "stale" ? .stale : state == "auth" ? .needsAuth : .ok, windows: windows,
+                                      headlineId: "rolling", block: nil, account: "local account", plan: "Plus",
+                                      observedAt: now.addingTimeInterval(-300), source: "local", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
+@@ -76,7 +76,7 @@ struct QuotaNotchVisualHarness {
+             for dark in [true, false] {
+                 for scale in [CGFloat(1), 2] {
+                     for (state, frame) in states {
+-                        let readings = [reading("codex", state: state)]
++                        let readings = [reading("codex", state: state), reading("opencode-go", state: state)]
+                         let ring = readings.map(\.outerDiameter).max() ?? 56
+                         let cell = CGSize(width: max(ring, readings.map(\.readingWidth).max() ?? 56), height: max(80, ring + 4 + (readings.map(\.readingHeight).max() ?? 20)))
+                         let geometry = QuotaNotchGeometry(edge: edge, expansion: state == "folded" ? 0 : 1, count: readings.count, cellSize: cell, ringSize: ring)
+@@ -116,7 +116,7 @@ struct QuotaNotchVisualHarness {
              }
--            .frame(width: NotchLayout.ringDiameter, height: NotchLayout.ringDiameter)
-+            .frame(width: geometry.outerDiameter, height: geometry.outerDiameter)
-             .opacity(opacity)
-             .position(geometry.ringCenter)
          }
-@@ -94,7 +94,7 @@ struct QuotaNotchVisualHarness {
-     }
- 
-     private func ringInk(_ bitmap: NSBitmapImageRep, geometry: QuotaNotchGeometry, angle: Double) throws -> NSColor {
--        let radius = (NotchLayout.ringDiameter - NotchLayout.trackStroke) / 2
-+        let radius = (geometry.outerDiameter - NotchLayout.trackStroke) / 2
-         let x = Int((geometry.ringCenter.x + sin(angle) * radius) * 2)
-         let y = Int((geometry.ringCenter.y - cos(angle) * radius) * 2)
-         return try require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(NSColorSpace.sRGB))
-@@ -109,7 +109,7 @@ struct QuotaNotchVisualHarness {
-             let value = Double(component)
-             return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
-         }
--        for angle in [0.3, 2.6] { // progress over track, and uncovered track
-+        for angle in [0.3, 4.6] { // progress over track, and uncovered track
-             let actual = try ringInk(bitmap, geometry: geometry, angle: angle)
-             let control = try ringInk(expected, geometry: geometry, angle: angle)
-             let full = try ringInk(fullStrength, geometry: geometry, angle: angle)
-@@ -132,7 +132,7 @@ struct QuotaNotchVisualHarness {
-     private mutating func explicitRenderingPreferencesReachTheNotchAndItsSettingsOrb() throws {
-         let value = reading(snapshot(0.21, status: .stale))
-         let geometry = QuotaNotchGeometry(edge: .right, expanded: true, tooltip: false, settingsHovered: false,
--                                         cardHeight: value.cardHeight)
-+                                         cardHeight: value.cardHeight, ringCount: value.windows.count, contentSize: value.contentSize)
-         let fresh = QuotaNotchView(reading: reading(snapshot()), geometry: geometry,
-                                    onSettings: {}, onEdge: { _ in }, onHide: {},
-                                    renderingPreferences: QuotaNotchRenderingPreferences(reduceMotion: true,
-@@ -156,7 +156,7 @@ struct QuotaNotchVisualHarness {
-     private mutating func productionRenderingDefaultsInheritTheRealAccessibilityEnvironment() throws {
-         let value = reading(snapshot(0.21, status: .stale))
-         let geometry = QuotaNotchGeometry(edge: .right, expanded: true, tooltip: false, settingsHovered: false,
--                                         cardHeight: value.cardHeight)
-+                                         cardHeight: value.cardHeight, ringCount: value.windows.count, contentSize: value.contentSize)
-         let content = QuotaNotchView(reading: value, geometry: geometry,
-                                     onSettings: {}, onEdge: { _ in }, onHide: {})
-         check(content.renderingPreferences == nil, "production rendering leaves accessibility overrides unspecified")
-@@ -188,7 +188,8 @@ struct QuotaNotchVisualHarness {
-                 else if state != "folded" { hover.move(to: .bar) }
-                 let geometry = QuotaNotchGeometry(edge: edge, expanded: hover.expanded, tooltip: hover.tooltip,
-                                                  settingsHovered: hover.settingsHovered, cardHeight: value.cardHeight,
--                                                 handlesTuckedAway: state == "tucked")
-+                                                 handlesTuckedAway: state == "tucked",
-+                                                 ringCount: value.windows.count, contentSize: value.contentSize)
-                 let content = QuotaNotchView(reading: value, geometry: geometry,
-                                             onSettings: {}, onEdge: { _ in }, onHide: {},
-                                             renderingPreferences: QuotaNotchRenderingPreferences(reduceMotion: true,
+         for preference in [LanguagePreference.en, .zhHans, .zhHant, .ja] {
+-            let value = reading("codex", state: "stale")
++            let value = reading("opencode-go", state: "stale")
+             let localized = QuotaNotchReading(snapshot: value.snapshot, networkEnabled: false, l10n: Localizer(preference: preference))
+             let bitmap = try render(QuotaNotchTooltipContent(reading: localized, now: now).background(.black).environment(\.colorScheme, .dark), scale: 2)
+             try save(bitmap, to: directory.appendingPathComponent("native-quota-details-\(localized.l10n.language.rawValue)@2x.png"))
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
-new file mode 100644
-index 00000000..150fe7b9
---- /dev/null
+index c1200063..621a9b30 100644
+--- a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
-@@ -0,0 +1,36 @@
-+import SwiftUI
-+
-+/// OpenCode mark: official transparent-dark brand SVG from anomalyco/opencode.
-+/// OpenAI mark: existing Codenotch outline, retaining its attribution.
-+struct QuotaSourceLogo: View {
-+    let providerID: String?
-+
-+    var body: some View {
-+        Group {
-+            switch providerID {
-+            case "codex":
-+                QuotaGlyph().fill(.white, style: FillStyle(eoFill: true)).scaleEffect(0.94)
+@@ -1,6 +1,6 @@
+ import SwiftUI
+ 
+-/// Official Codex vector, matching the Windows quota renderer.
++/// Official OpenCode and Codex vectors, matching the Windows quota renderer.
+ struct QuotaSourceLogo: View {
+     let providerID: String?
+     var ink: Color = .white
+@@ -10,6 +10,23 @@ struct QuotaSourceLogo: View {
+             switch providerID {
+             case "codex":
+                 QuotaGlyph().fill(ink, style: FillStyle(eoFill: true))
 +            case "opencode-go":
 +                GeometryReader { proxy in
 +                    let width = proxy.size.width * 0.8
@@ -614,462 +162,51 @@ index 00000000..150fe7b9
 +                            path.addRect(CGRect(x: 0, y: 0, width: width, height: height))
 +                            path.addRect(CGRect(x: width * 0.25, y: height * 0.2,
 +                                                width: width * 0.5, height: height * 0.6))
-+                        }.fill(.white, style: FillStyle(eoFill: true))
-+                        Rectangle().fill(.white.opacity(0.28))
++                        }.fill(ink, style: FillStyle(eoFill: true))
++                        Rectangle().fill(ink.opacity(0.35))
 +                            .frame(width: width * 0.5, height: height * 0.4)
 +                            .offset(x: width * 0.25, y: height * 0.4)
 +                    }
 +                    .frame(width: width, height: height)
 +                    .frame(width: proxy.size.width, height: height)
 +                }
-+            default:
-+                EmptyView()
-+            }
-+        }
-+        .accessibilityHidden(true)
-+    }
-+}
-diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-index 5d5ef473..d02e945c 100644
---- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-+++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-@@ -150,7 +150,7 @@ private struct DashboardDetails: View {
-     }
- }
- 
--func quotaWarningAccounts(_ snapshots: [CodexQuotaSnapshot]) -> [CodexQuotaSnapshot] {
-+func quotaWarningAccounts(_ snapshots: [QuotaSnapshot]) -> [QuotaSnapshot] {
-     Array(snapshots.filter { account in
-         account.status == .needsAuth || account.block != nil ||
-             account.windows.contains { ($0.usedFraction ?? -1) >= 0.9 }
-@@ -161,7 +161,7 @@ func quotaWarningAccounts(_ snapshots: [CodexQuotaSnapshot]) -> [CodexQuotaSnaps
- private struct QuotaDashboardSummary: View {
-     let model: AppModel
- 
--    private var accounts: [CodexQuotaSnapshot] { quotaWarningAccounts(model.quota.snapshots) }
-+    private var accounts: [QuotaSnapshot] { quotaWarningAccounts(model.quota.snapshots) }
- 
-     var body: some View {
-         if !accounts.isEmpty {
-@@ -172,17 +172,27 @@ private struct QuotaDashboardSummary: View {
-                 VStack(alignment: .leading, spacing: 10) {
-                     Text(model.l10n("mac.quota.title")).font(.headline)
-                     ForEach(accounts, id: \.id) { account in
--                        let window = account.windows.first { $0.id == account.headlineId }
-                         VStack(alignment: .leading, spacing: 4) {
-                             HStack {
--                                Text(account.displayName + (window.map { " · " + quotaWindowLabel($0, model.l10n) } ?? ""))
-+                                QuotaSourceLogo(providerID: account.id).frame(width: 14, height: 14)
-+                                Text(account.displayName)
-                                 Spacer()
--                                Text(window?.usedFraction.map { quotaPercent($0, locale: model.l10n.locale) } ?? model.l10n("mac.quota.unknown"))
--                                    .monospacedDigit()
-+                                if let plan = account.plan { Text(plan).foregroundStyle(.secondary) }
-                             }
--                            if let used = window?.usedFraction {
--                                ProgressView(value: max(0, min(1, used)))
--                                    .tint(quotaAccent(used))
-+                            ForEach(QuotaWindow.ordered(account.windows), id: \.id) { window in
-+                                HStack {
-+                                    Text(quotaWindowLabel(window, model.l10n))
-+                                    Spacer()
-+                                    Text(window.remainingFraction.map { model.l10n("mac.quota.remaining", quotaPercent($0, locale: model.l10n.locale)) }
-+                                         ?? model.l10n("mac.quota.unknown")).monospacedDigit()
-+                                }
-+                                if let remaining = window.remainingFraction {
-+                                    ProgressView(value: max(0, min(1, remaining))).tint(NotchLayout.periodColor(window))
-+                                }
-+                                if let reset = window.resetAt {
-+                                    Text(model.l10n("mac.quota.reset", quotaDate(reset, locale: model.l10n.locale)))
-+                                        .foregroundStyle(.secondary)
-+                                }
-                             }
-                             if account.status != .ok {
-                                 Text(quotaStatus(account, model.l10n))
-@@ -193,16 +203,9 @@ private struct QuotaDashboardSummary: View {
-                                     .font(.caption).foregroundStyle(.secondary)
-                             }
-                             if let block = account.block {
--                                Text(block).font(.caption).foregroundStyle(.secondary)
--                            }
--                            HStack {
--                                if let reset = window?.resetAt {
--                                    Text(model.l10n("mac.quota.reset", quotaDate(reset, locale: model.l10n.locale)))
--                                }
--                                Spacer()
--                                if let plan = account.plan { Text(plan) }
-+                                Text(quotaBlock(account, block, model.l10n)).font(.caption).foregroundStyle(.secondary)
-                             }
--                            .font(.caption).foregroundStyle(.secondary)
-+
-                         }
-                         .font(.caption)
-                     }
+             default:
+                 EmptyView()
+             }
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index 0337427d..9724a18d 100644
+index 484da0a8..49c737e7 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-@@ -374,11 +374,16 @@ enum StringTable {
-         "mac.quota.source": Entry("來源", "来源", "Source", "ソース"),
-         "mac.quota.status.accessDenied": Entry("存取遭拒", "访问被拒绝", "Access denied", "アクセスが拒否されました"),
-         "mac.quota.status.error": Entry("無法取得額度", "无法获取额度", "Could not load quota", "使用枠を取得できません"),
--        "mac.quota.status.needsAuth": Entry("需要登入 Codex", "需要登录 Codex", "Sign in to Codex", "Codex にサインインしてください"),
-+        "mac.quota.status.needsAuth": Entry("需要登入 %@", "需要登录 %@", "Sign in to %@", "%@ にサインインしてください"),
-         "mac.quota.status.ok": Entry("正常", "正常", "Current", "最新"),
-         "mac.quota.status.stale": Entry("資料過期", "数据过期", "Stale", "古いデータ"),
-         "mac.quota.status.unsupported": Entry("不支援", "不支持", "Unsupported", "非対応"),
-         "mac.quota.status.waiting": Entry("等待下次更新", "等待下次更新", "Waiting for next refresh", "次の更新を待機中"),
-+        "mac.quota.period.month": Entry("月", "月", "Month", "月"),
-+        "mac.quota.period.week": Entry("週", "周", "Week", "週"),
-+        "mac.quota.period.fiveHours": Entry("5 小時", "5 小时", "5h", "5時間"),
-+        "mac.quota.noAllowance": Entry("此帳戶沒有可用的 %@ 訂閱額度", "此账户没有可用的 %@ 订阅额度", "No %@ subscription allowance on this account", "このアカウントに %@ の利用枠はありません"),
-+        "mac.quota.limitReached": Entry("已達額度限制", "已达额度限制", "Allowance reached", "利用枠の上限に達しました"),
-         "mac.quota.title": Entry("用量額度", "用量额度", "Quota", "使用枠"),
-         "mac.quota.unknown": Entry("未知", "未知", "Unknown", "不明"),
-         "mac.quota.unlimited": Entry("無限", "无限", "Unlimited", "無制限"),
+@@ -391,6 +391,7 @@ enum StringTable {
+         "mac.quota.used": Entry("已使用 %@", "已使用 %@", "%@ used", "%@ 使用済み"),
+         "mac.quota.yes": Entry("是", "是", "Yes", "はい"),
+         "mac.quota.codexSignIn": Entry("請先登入 Codex，然後重新整理。", "请先登录 Codex，然后刷新。", "Sign in to Codex, then refresh.", "Codex にサインインしてから更新してください。"),
++        "mac.quota.noGoSubscription": Entry("此帳戶沒有 OpenCode Go 訂閱", "此账户没有 OpenCode Go 订阅", "No OpenCode Go subscription on this account", "このアカウントには OpenCode Go の契約がありません"),
+         "mac.quota.periodHours": Entry("%@h", "%@h", "%@h", "%@h"),
+         "mac.quota.keepExpanded": Entry("保持展開", "保持展开", "Keep expanded", "展開したままにする"),
+         "mac.quota.allSources": Entry("全部來源", "全部来源", "All sources", "すべてのソース"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-index 3e5f9b0c..31b44eb7 100644
+index 15c9243f..17dbe0ef 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-@@ -14,10 +14,10 @@ struct QuotaPane: View {
-             ForEach(quota.snapshots, id: \.id) { account in
-                 Section {
-                     HStack(alignment: .top, spacing: 16) {
--                        Text("CX")
--                            .font(.caption.weight(.bold))
--                            .frame(width: 30, height: 30)
--                            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-+                        QuotaSourceLogo(providerID: account.id)
-+                            .frame(width: 22, height: 22)
-+                            .padding(4)
-+                            .background(Color.black, in: RoundedRectangle(cornerRadius: 8))
-                         VStack(alignment: .leading, spacing: 4) {
-                             Text(account.displayName).font(.headline)
-                             Text(account.source).font(.caption).foregroundStyle(.secondary)
-@@ -26,18 +26,18 @@ struct QuotaPane: View {
-                                 Text("\(l10n("mac.quota.observed")) · \(quotaAge(observed, locale: l10n.locale))")
-                                     .font(.caption2).foregroundStyle(.secondary)
-                             }
--                            if let block = account.block { Text(block).font(.caption2).foregroundStyle(.secondary) }
-+                            if let block = account.block { Text(quotaBlock(account, block, l10n)).font(.caption2).foregroundStyle(.secondary) }
-                         }.frame(width: 105, alignment: .leading)
-                         VStack(alignment: .leading, spacing: 8) {
--                            ForEach(account.windows, id: \.id) { window in
-+                            ForEach(QuotaWindow.ordered(account.windows), id: \.id) { window in
-                                 VStack(alignment: .leading, spacing: 4) {
-                                     HStack {
-                                         Text(quotaWindowLabel(window, l10n)).foregroundStyle(.secondary)
-                                         Spacer()
--                                        Text(window.usedFraction.map { quotaPercent($0, locale: l10n.locale) } ?? l10n("mac.quota.unknown")).monospacedDigit()
-+                                        Text(window.remainingFraction.map { l10n("mac.quota.remaining", quotaPercent($0, locale: l10n.locale)) } ?? l10n("mac.quota.unknown")).monospacedDigit()
-                                     }.font(.caption)
-                                     if let used = window.usedFraction {
--                                        ProgressView(value: max(0, min(1, used))).tint(quotaAccent(used))
-+                                        ProgressView(value: max(0, min(1, 1 - used))).tint(NotchLayout.periodColor(window))
-                                     }
-                                     if let reset = window.resetAt {
-                                         Text(l10n("mac.quota.reset", quotaDate(reset, locale: l10n.locale))).font(.caption2).foregroundStyle(.secondary)
-@@ -60,18 +60,18 @@ struct QuotaPane: View {
-                     if account.status == .stale, let observed = account.observedAt {
-                         LabeledContent(l10n("mac.quota.observed"), value: quotaAge(observed, locale: l10n.locale))
-                     }
--                    if let value = account.block { LabeledContent(l10n("mac.quota.block"), value: value) }
--                    ForEach(account.windows, id: \.id) { window in
-+                    if let value = account.block { LabeledContent(l10n("mac.quota.block"), value: quotaBlock(account, value, l10n)) }
-+                    ForEach(QuotaWindow.ordered(account.windows), id: \.id) { window in
-                         VStack(alignment: .leading, spacing: 6) {
-                             HStack {
-                                 Text(quotaWindowLabel(window, l10n)).fontWeight(.semibold)
-                                 Spacer()
--                                Text(window.usedFraction.map { quotaPercent($0, locale: l10n.locale) } ?? l10n("mac.quota.unknown"))
-+                                Text(window.remainingFraction.map { l10n("mac.quota.remaining", quotaPercent($0, locale: l10n.locale)) } ?? l10n("mac.quota.unknown"))
-                                     .monospacedDigit()
-                             }
-                             if let used = window.usedFraction {
--                                ProgressView(value: max(0, min(1, used)))
--                                    .tint(quotaAccent(used))
-+                                ProgressView(value: max(0, min(1, 1 - used)))
-+                                    .tint(NotchLayout.periodColor(window))
-                                 HStack {
-                                     Text(l10n("mac.quota.used", quotaPercent(used, locale: l10n.locale)))
-                                     if let remaining = window.remaining { Text("· " + l10n("mac.quota.remaining", quotaPercent(remaining, locale: l10n.locale))) }
-@@ -104,6 +104,11 @@ struct QuotaPane: View {
-                 }
-             }
-             Section {
-+                if !quota.snapshots.isEmpty {
-+                    Picker(l10n("mac.quota.source"), selection: Binding(get: { quota.selectedProviderID }, set: { quota.selectedProviderID = $0 })) {
-+                        ForEach(quota.snapshots, id: \.id) { account in Text(account.displayName).tag(account.id) }
-+                    }
-+                }
-                 Toggle(l10n("mac.quota.floating"), isOn: Binding(get: { quota.floatingVisible }, set: { quota.floatingVisible = $0 }))
-                 HStack {
-                     if !quota.networkEnabled { Footnote(l10n("mac.quota.offline")) }
-@@ -120,9 +125,9 @@ struct QuotaPane: View {
-     }
+@@ -80,7 +80,7 @@ struct QuotaSourceDefinition: Identifiable, Sendable {
+     let name: String
  }
  
--func quotaAccent(_ used: Double) -> Color {
--    used >= 0.9 ? Color(red: 251 / 255, green: 191 / 255, blue: 36 / 255) :
--        Color(red: 91 / 255, green: 140 / 255, blue: 1)
-+
-+@MainActor func quotaBlock(_ account: QuotaSnapshot, _ block: String, _ l10n: Localizer) -> String {
-+    account.id == "opencode-go" ? l10n("mac.quota.limitReached") : block
- }
+-let quotaSources = [QuotaSourceDefinition(id: "codex", name: "Codex")]
++let quotaSources = [QuotaSourceDefinition(id: "codex", name: "Codex"), QuotaSourceDefinition(id: "opencode-go", name: "OpenCode Go")]
  
- func quotaAge(_ date: Date, locale: Locale) -> String {
-@@ -132,10 +137,14 @@ func quotaAge(_ date: Date, locale: Locale) -> String {
-     return formatter.localizedString(for: date, relativeTo: Date())
- }
- 
--@MainActor func quotaWindowLabel(_ window: CodexQuotaWindow, _ l10n: Localizer) -> String {
--    guard let duration = window.duration, duration > 0 else { return window.label }
--    let length = Duration.seconds(duration).formatted(.units(allowed: [.days, .hours, .minutes, .seconds], width: .abbreviated).locale(l10n.locale))
--    return window.label == "Codex" ? length : "\(window.label) · \(length)"
-+@MainActor func quotaWindowLabel(_ window: QuotaWindow, _ l10n: Localizer) -> String {
-+    let period: String
-+    if window.period != .other {
-+        period = l10n("mac.quota.period.\(window.period.rawValue)")
-+    } else if let duration = window.duration, duration.isFinite, duration > 0 {
-+        period = Duration.seconds(duration).formatted(.units(allowed: [.days, .hours, .minutes, .seconds], width: .abbreviated).locale(l10n.locale))
-+    } else { return window.label.isEmpty ? window.id : window.label }
-+    return window.label.isEmpty ? period : "\(window.label) · \(period)"
- }
- 
- func quotaDate(_ date: Date, locale: Locale) -> String {
-@@ -143,17 +152,17 @@ func quotaDate(_ date: Date, locale: Locale) -> String {
- }
- 
- func quotaPercent(_ fraction: Double, locale: Locale) -> String {
--    fraction.formatted(.percent.precision(.fractionLength(0)).locale(locale))
-+    fraction.formatted(.percent.precision(.fractionLength(0...6)).locale(locale))
- }
- 
--@MainActor func quotaStatus(_ account: CodexQuotaSnapshot, _ l10n: Localizer) -> String {
-+@MainActor func quotaStatus(_ account: QuotaSnapshot, _ l10n: Localizer) -> String {
-     if account.waitingForRefresh { return l10n("mac.quota.status.waiting") }
-     return switch account.status {
-     case .ok: l10n("mac.quota.status.ok")
+ @MainActor func quotaEnabledSources(_ quota: QuotaController) -> [QuotaSourceDefinition] {
+     quotaSources.filter { quota.allSourcesEnabled || quota.enabledProviderIDs.contains($0.id) }
+@@ -224,7 +224,7 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
      case .stale: l10n("mac.quota.status.stale")
--    case .needsAuth: l10n("mac.quota.status.needsAuth")
-+    case .needsAuth: l10n("mac.quota.status.needsAuth", account.displayName)
+     case .needsAuth: l10n("mac.quota.status.needsAuth")
      case .accessDenied: l10n("mac.quota.status.accessDenied")
 -    case .unsupported: l10n("mac.quota.status.unsupported")
-+    case .unsupported: account.id == "opencode-go" ? l10n("mac.quota.noAllowance", account.displayName) : l10n("mac.quota.status.unsupported")
++    case .unsupported: account.id == "opencode-go" ? l10n("mac.quota.noGoSubscription") : l10n("mac.quota.status.unsupported")
      case .error: l10n("mac.quota.status.error")
      }
  }
-diff --git a/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
-index 720b8578..4f6cf4b1 100644
---- a/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
-+++ b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
-@@ -1,5 +1,9 @@
- import Foundation
-+#if canImport(CryptoKit)
- import CryptoKit
-+#else
-+import Crypto
-+#endif
- 
- #if canImport(FoundationNetworking)
- import FoundationNetworking
-@@ -7,78 +11,6 @@ import FoundationNetworking
- 
- // Protocol and parsing informed by Codenotch, Copyright (c) 2026 Vinz,
- // https://github.com/vinzdg/codenotch (MIT License). No credentials are modified.
--public enum CodexQuotaStatus: String, Sendable, Codable {
--    case ok, stale, needsAuth, accessDenied, unsupported, error
--}
--
--public struct CodexQuotaWindow: Sendable, Equatable {
--    public let id: String
--    public let label: String
--    public let usedFraction: Double?
--    public let remaining: Double?
--    public let used: Double?
--    public let resetAt: Date?
--    public let duration: TimeInterval?
--
--    public init(id: String, label: String, usedFraction: Double?, remaining: Double?, used: Double?,
--                resetAt: Date?, duration: TimeInterval?) {
--        self.id = id
--        self.label = label
--        self.usedFraction = usedFraction
--        self.remaining = remaining
--        self.used = used
--        self.resetAt = resetAt
--        self.duration = duration
--    }
--}
--
--public struct CodexQuotaCredits: Sendable, Equatable {
--    public let hasCredits: Bool?
--    public let unlimited: Bool?
--    public let limit: Double?
--    public let used: Double?
--    public let usedFraction: Double?
--    public let resetAt: Date?
--    public let balance: String?
--}
--
--public struct CodexQuotaSnapshot: Sendable, Equatable {
--    public let id: String
--    public let displayName: String
--    public let fidelity: String
--    public let status: CodexQuotaStatus
--    public let windows: [CodexQuotaWindow]
--    public let headlineId: String?
--    public let block: String?
--    public let account: String?
--    public let plan: String?
--    public let observedAt: Date?
--    public let source: String
--    public let credits: CodexQuotaCredits?
--    public let nextAllowedAt: Date?
--    /// No observation is available because a previously successful poll is still throttled.
--    public let waitingForRefresh: Bool
--
--    public init(id: String, displayName: String, fidelity: String, status: CodexQuotaStatus,
--                windows: [CodexQuotaWindow], headlineId: String?, block: String?, account: String?,
--                plan: String?, observedAt: Date?, source: String, credits: CodexQuotaCredits?,
--                nextAllowedAt: Date?, waitingForRefresh: Bool) {
--        self.id = id
--        self.displayName = displayName
--        self.fidelity = fidelity
--        self.status = status
--        self.windows = windows
--        self.headlineId = headlineId
--        self.block = block
--        self.account = account
--        self.plan = plan
--        self.observedAt = observedAt
--        self.source = source
--        self.credits = credits
--        self.nextAllowedAt = nextAllowedAt
--        self.waitingForRefresh = waitingForRefresh
--    }
--}
- 
- private struct QuotaCredentials: Decodable, Sendable {
-     struct Tokens: Decodable, Sendable { let access_token: String; let account_id: String }
-@@ -100,14 +32,14 @@ private final class QuotaRedirectDelegate: NSObject, URLSessionTaskDelegate, @un
-     }
- }
- 
--public actor CodexQuotaProvider {
-+public actor CodexQuotaProvider: QuotaProvider {
-     typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
-     private let credentialURL: URL
-     private let defaults: UserDefaults
-     private let now: @Sendable () -> Date
-     private let transport: Transport
--    private var inFlight: Task<CodexQuotaSnapshot, Never>?
--    private var cached: [String: CodexQuotaSnapshot] = [:]
-+    private var inFlight: Task<QuotaSnapshot, Never>?
-+    private var cached: [String: QuotaSnapshot] = [:]
- 
-     public init() {
-         let env = ProcessInfo.processInfo.environment
-@@ -127,7 +59,7 @@ public actor CodexQuotaProvider {
-         self.transport = transport
-     }
- 
--    public func refresh() async -> CodexQuotaSnapshot {
-+    public func refresh() async -> QuotaSnapshot {
-         if let inFlight { return await inFlight.value }
-         let task = Task { await self.performRefresh() }
-         inFlight = task
-@@ -141,7 +73,7 @@ public actor CodexQuotaProvider {
-         inFlight?.cancel()
-     }
- 
--    private func performRefresh() async -> CodexQuotaSnapshot {
-+    private func performRefresh() async -> QuotaSnapshot {
-         guard !Task.isCancelled else { return snapshot(status: .error) }
-         let time = now()
-         guard let data = try? Data(contentsOf: credentialURL),
-@@ -234,13 +166,16 @@ public actor CodexQuotaProvider {
-         return max(60, formatter.date(from: value)?.timeIntervalSince(now) ?? 60)
-     }
- 
--    static func parse(_ data: Data, at time: Date) throws -> CodexQuotaSnapshot {
-+    static func parse(_ data: Data, at time: Date) throws -> QuotaSnapshot {
-         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw URLError(.cannotParseResponse) }
--        var windows: [CodexQuotaWindow] = []
-+        var windows: [QuotaWindow] = []
-         func add(_ limits: [String: Any]?, prefix: String, label: String) {
-             guard let limits else { return }
--            for slot in ["primary", "secondary"] {
--                guard let window = limits[slot + "_window"] as? [String: Any] else { continue }
-+            let known = ["primary_window", "secondary_window"]
-+            let keys = known + limits.keys.filter { $0.hasSuffix("_window") && !known.contains($0) }.sorted()
-+            for windowKey in keys {
-+                let slot = String(windowKey.dropLast("_window".count))
-+                guard let window = limits[windowKey] as? [String: Any] else { continue }
-                 let duration = (window["limit_window_seconds"] as? NSNumber)?.doubleValue
-                 let validDuration = duration.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
-                 let percent = (window["used_percent"] as? NSNumber)?.doubleValue
-@@ -251,12 +186,17 @@ public actor CodexQuotaProvider {
-                     ?? relative.flatMap { $0.isFinite && $0 >= 0 ? time.addingTimeInterval($0) : nil }
-                 let identity = validDuration.map { String($0) } ?? "unknown:\(slot)"
-                 let baseID = "\(prefix):\(identity)"
--                let id = windows.contains(where: { $0.id == baseID }) ? "\(baseID):\(slot)" : baseID
--                windows.append(CodexQuotaWindow(id: id, label: label, usedFraction: fraction,
-+                var id = baseID
-+                var collision = 0
-+                while windows.contains(where: { $0.id == id }) {
-+                    collision += 1
-+                    id = "\(baseID):\(slot):\(collision)"
-+                }
-+                windows.append(QuotaWindow(id: id, label: label, usedFraction: fraction,
-                                                remaining: fraction.map { 1 - $0 }, used: fraction, resetAt: reset, duration: validDuration))
-             }
-         }
--        add(root["rate_limit"] as? [String: Any], prefix: "main", label: "Codex")
-+        add(root["rate_limit"] as? [String: Any], prefix: "main", label: "")
-         if let extras = root["additional_rate_limits"] as? [Any] {
-             for (index, value) in extras.enumerated() {
-                 guard let extra = value as? [String: Any] else { continue }
-@@ -276,32 +216,32 @@ public actor CodexQuotaProvider {
-         let spend = (root["spend_control"] as? [String: Any])?["individual_limit"] as? [String: Any]
-         let creditPercent = number(spend?["used_percent"])
-         let creditReset = number(spend?["reset_at"])
--        let credits = (rawCredits != nil || spend != nil) ? CodexQuotaCredits(
-+        let credits = (rawCredits != nil || spend != nil) ? QuotaCredits(
-             hasCredits: rawCredits?["has_credits"] as? Bool, unlimited: rawCredits?["unlimited"] as? Bool,
-             limit: number(spend?["limit"]), used: number(spend?["used"]),
-             usedFraction: creditPercent.map { $0 / 100 },
-             resetAt: creditReset.map { Date(timeIntervalSince1970: $0) }, balance: balance) : nil
--        return CodexQuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: .ok,
-+        return QuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: .ok,
-                                   windows: windows, headlineId: windows.first(where: { $0.id.hasPrefix("main:") })?.id, block: nil, account: nil,
-                                   plan: root["plan_type"] as? String, observedAt: time, source: "wham/usage",
-                                   credits: credits, nextAllowedAt: nil, waitingForRefresh: false)
-     }
- 
--    private func staleOrError(_ accountKey: String, next: Date?) -> CodexQuotaSnapshot {
-+    private func staleOrError(_ accountKey: String, next: Date?) -> QuotaSnapshot {
-         guard let value = cached[accountKey], value.observedAt != nil else {
-             return snapshot(status: .error, next: next)
-         }
-         return withStatus(value, status: .stale, next: next)
-     }
- 
--    private func snapshot(status: CodexQuotaStatus, next: Date? = nil, waiting: Bool = false) -> CodexQuotaSnapshot {
--        CodexQuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: status,
-+    private func snapshot(status: QuotaStatus, next: Date? = nil, waiting: Bool = false) -> QuotaSnapshot {
-+        QuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: status,
-                            windows: [], headlineId: nil, block: nil, account: nil, plan: nil, observedAt: nil,
-                            source: "wham/usage", credits: nil, nextAllowedAt: next, waitingForRefresh: waiting)
-     }
- 
--    private func withStatus(_ value: CodexQuotaSnapshot, status: CodexQuotaStatus, next: Date?) -> CodexQuotaSnapshot {
--        CodexQuotaSnapshot(id: value.id, displayName: value.displayName, fidelity: value.fidelity, status: status,
-+    private func withStatus(_ value: QuotaSnapshot, status: QuotaStatus, next: Date?) -> QuotaSnapshot {
-+        QuotaSnapshot(id: value.id, displayName: value.displayName, fidelity: value.fidelity, status: status,
-                            windows: value.windows, headlineId: value.headlineId, block: value.block, account: value.account,
-                            plan: value.plan, observedAt: value.observedAt, source: value.source, credits: value.credits, nextAllowedAt: next,
-                            waitingForRefresh: false)
 diff --git a/macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift b/macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
 new file mode 100644
 index 00000000..31948d64
@@ -1176,10 +313,10 @@ index 00000000..31948d64
 +}
 diff --git a/macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift b/macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
 new file mode 100644
-index 00000000..b20b5b27
+index 00000000..dd82efbd
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,276 @@
 +import Foundation
 +import CoreFoundation
 +#if canImport(CryptoKit)
@@ -1195,12 +332,14 @@ index 00000000..b20b5b27
 +// 835550a342871779135b6484d6899161c5222f7c, Copyright (c) 2026 Vinz, MIT.
 +// See Resources/Codenotch-LICENSE.txt. Credentials are borrowed, never written.
 +public actor OpenCodeGoQuotaProvider: QuotaProvider {
++    public nonisolated let id = "opencode-go"
 +    typealias Transport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
 +    private struct Schedule: Codable {
 +        var next: Date?
 +        var failures = 0
 +        var rejected = false
 +        var status: QuotaStatus?
++        var observation: QuotaPersistedObservation?
 +    }
 +    private let directory: URL
 +    private let databaseURL: URL
@@ -1209,68 +348,100 @@ index 00000000..b20b5b27
 +    private let transport: Transport
 +    private var inFlight: Task<QuotaSnapshot, Never>?
 +    private var cached: [String: QuotaSnapshot] = [:]
++    private var schedules: [String: Schedule] = [:]
++    private let persistence: QuotaPersistence
++    private var generation = 0
 +
 +    public init() {
 +        directory = OpenCodeGoCredentials.dataDirectory
 +        databaseURL = OpenCodeGoCredentials.databaseURL
 +        defaults = .standard
 +        now = { Date() }
++        persistence = QuotaPersistence(directory: QuotaPersistence.directory.appendingPathComponent("opencode-go"))
 +        transport = Self.request
 +    }
 +
 +    init(directory: URL, databaseURL: URL? = nil, defaults: UserDefaults,
-+         now: @escaping @Sendable () -> Date, transport: @escaping Transport) {
++         now: @escaping @Sendable () -> Date, cacheDirectory: URL? = nil, transport: @escaping Transport) {
 +        self.directory = directory
 +        self.databaseURL = databaseURL ?? directory.appendingPathComponent("opencode.db")
 +        self.defaults = defaults
 +        self.now = now
 +        self.transport = transport
++        persistence = QuotaPersistence(directory: cacheDirectory ?? directory.appendingPathComponent(".quota-cache"))
 +    }
++
++    public func readCachedSnapshot() -> QuotaSnapshot {
++        guard let credential = OpenCodeGoCredentials.load(directory: directory, databaseURL: databaseURL) else { return snapshot(.needsAuth) }
++        let account = accountKey(credential)
++        let schedule = load(account)
++        if schedule.rejected { return snapshot(.needsAuth) }
++        if schedule.status == .unsupported { return snapshot(.unsupported, next: schedule.next) }
++        return stale(account, next: schedule.next, otherwise: schedule.status ?? .error)
++    }
++
++    public func refreshStartup() async -> QuotaSnapshot { await refresh() }
 +
 +    public func refresh() async -> QuotaSnapshot {
 +        if let inFlight { return await inFlight.value }
++        let current = generation
 +        let task = Task { await self.performRefresh() }
 +        inFlight = task
 +        let result = await task.value
-+        inFlight = nil
++        if current == generation { inFlight = nil }
 +        return result
 +    }
 +
-+    public func cancel() { inFlight?.cancel() }
++    public func cancel() {
++        generation += 1
++        inFlight?.cancel()
++        inFlight = nil
++    }
++
++    private func accountKey(_ credential: OpenCodeGoCredentials) -> String {
++        let identity = [directory.standardizedFileURL.path, databaseURL.standardizedFileURL.path, credential.token, credential.org ?? "", credential.oauth ? "oauth" : "key", credential.console.absoluteString].joined(separator: "\u{0}")
++        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
++    }
++
++    private func isCurrent(_ credential: OpenCodeGoCredentials) -> Bool {
++        guard !Task.isCancelled, let current = OpenCodeGoCredentials.load(directory: directory, databaseURL: databaseURL) else { return false }
++        return accountKey(current) == accountKey(credential) && current.expires == credential.expires
++    }
++
++    private func load(_ account: String) -> Schedule {
++        let schedule = schedules[account] ?? persistence.load(Schedule.self, key: account)
++            ?? defaults.data(forKey: "opencode-go.quota.schedule." + account).flatMap { try? JSONDecoder().decode(Schedule.self, from: $0) }
++            ?? Schedule()
++        schedules[account] = schedule
++        if cached[account] == nil, let value = schedule.observation?.validated(accountKey: account, id: id, source: "go/v1/usage") {
++            cached[account] = value.copying(status: .stale, next: schedule.next)
++        }
++        return schedule
++    }
 +
 +    private func performRefresh() async -> QuotaSnapshot {
-+        guard !Task.isCancelled else { return snapshot(.error) }
-+        guard let credential = OpenCodeGoCredentials.load(directory: directory, databaseURL: databaseURL) else {
-+            return snapshot(.needsAuth)
-+        }
-+        // Token + workspace + route isolate stale data and backoff across account
-+        // switches, including a key rotating inside the same local installation.
-+        let identity = [directory.standardizedFileURL.path, databaseURL.standardizedFileURL.path, credential.token, credential.org ?? "", credential.oauth ? "oauth" : "key", credential.console.absoluteString].joined(separator: "\u{0}")
-+        let account = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
-+        let key = "opencode-go.quota.schedule." + account
-+        var schedule = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(Schedule.self, from: $0) } ?? Schedule()
++        guard !Task.isCancelled else { return readCachedSnapshot() }
++        guard let credential = OpenCodeGoCredentials.load(directory: directory, databaseURL: databaseURL) else { return snapshot(.needsAuth) }
++        let account = accountKey(credential)
++        var schedule = load(account)
 +        if schedule.rejected { return snapshot(.needsAuth) }
 +        if let next = schedule.next, now() < next {
++            if schedule.status == .unsupported { return snapshot(.unsupported, next: next) }
 +            return cached[account] ?? snapshot(schedule.status ?? .error, next: next)
 +        }
-+        // Preserve the reference's credential-specific routes. Official OpenCode
-+        // v2.3's Console client uses zen/go for OAuth; do not probe both routes
-+        // after a 401, which also means a missing plan on the reference service.
++        // Keep credential-specific reference routes; never retry a borrowed token on another usage route.
 +        let endpoint = credential.oauth ? "https://opencode.ai/inference/go/v1/usage" : "https://opencode.ai/zen/go/v1/usage"
 +        let request = Self.authorizedRequest(URL(string: endpoint)!, credential: credential)
 +        do {
 +            let (data, response) = try await transport(request)
-+            guard !Task.isCancelled else { return stale(account, next: schedule.next) }
++            guard isCurrent(credential) else { return readCachedSnapshot() }
 +            let completed = now()
 +            switch response.statusCode {
 +            case 200...299:
-+                let parsed = try Self.parse(data, at: completed)
-+                // Go clears successful backoff, as the pinned provider does.
-+                // The app owns its 300-second automatic cadence; manual reads
-+                // are coalesced in flight but are not given a success hard floor.
-+                schedule = Schedule()
-+                save(schedule, key: key)
-+                let result = copying(parsed, status: .ok, next: schedule.next)
++                let result = try Self.parse(data, at: completed)
++                // Go has no successful manual-read floor; the app owns its 300s automatic cadence.
++                schedule = Schedule(observation: QuotaPersistedObservation(accountKey: account, snapshot: result))
++                save(schedule, key: account)
 +                cached[account] = result
 +                return result
 +            case 401:
@@ -1278,47 +449,47 @@ index 00000000..b20b5b27
 +                    let probe = Self.authorizedRequest(credential.console.appendingPathComponent("api/user"), credential: credential)
 +                    do {
 +                        let (_, answer) = try await transport(probe)
-+                        guard !Task.isCancelled else { return stale(account, next: nil) }
++                        guard isCurrent(credential) else { return readCachedSnapshot() }
 +                        if answer.statusCode == 200 {
 +                            schedule = Schedule(next: now().addingTimeInterval(300), status: .unsupported)
-+                            save(schedule, key: key)
++                            save(schedule, key: account)
 +                            let result = snapshot(.unsupported, next: schedule.next)
 +                            cached[account] = result
 +                            return result
 +                        }
 +                        guard answer.statusCode == 401 || answer.statusCode == 403 else {
-+                            return failure(account, schedule: &schedule, key: key)
++                            return failure(account, schedule: &schedule, key: account)
 +                        }
 +                    } catch {
-+                        guard !Task.isCancelled else { return stale(account, next: nil) }
-+                        return failure(account, schedule: &schedule, key: key)
++                        guard isCurrent(credential) else { return readCachedSnapshot() }
++                        return failure(account, schedule: &schedule, key: account)
 +                    }
 +                }
-+                // The local timestamp is only a hint. Ask the server first;
-+                // OpenCode may have renewed an access token without updating it.
++                // An expired token may be renewed by OpenCode without changing its local timestamp.
 +                if let expires = credential.expires, expires <= now() {
-+                    return failure(account, schedule: &schedule, key: key, otherwise: .needsAuth)
++                    return failure(account, schedule: &schedule, key: account, otherwise: .needsAuth)
 +                }
 +                schedule.rejected = true
 +                schedule.next = nil
-+                save(schedule, key: key)
++                schedule.observation = nil
++                save(schedule, key: account)
 +                cached.removeValue(forKey: account)
 +                return snapshot(.needsAuth)
 +            case 403:
 +                schedule = Schedule(next: completed.addingTimeInterval(300), status: .unsupported)
-+                save(schedule, key: key)
++                save(schedule, key: account)
 +                let result = snapshot(.unsupported, next: schedule.next)
 +                cached[account] = result
 +                return result
 +            case 429:
-+                return failure(account, schedule: &schedule, key: key,
++                return failure(account, schedule: &schedule, key: account,
 +                               retryAfter: Self.retryAfter(response.value(forHTTPHeaderField: "Retry-After"), now: completed))
 +            default:
-+                return failure(account, schedule: &schedule, key: key)
++                return failure(account, schedule: &schedule, key: account)
 +            }
 +        } catch {
-+            guard !Task.isCancelled else { return stale(account, next: nil) }
-+            return failure(account, schedule: &schedule, key: key)
++            guard isCurrent(credential) else { return readCachedSnapshot() }
++            return failure(account, schedule: &schedule, key: account)
 +        }
 +    }
 +
@@ -1327,7 +498,7 @@ index 00000000..b20b5b27
 +        let wait = Self.backoff(attempt: schedule.failures, retryAfter: retryAfter)
 +        schedule.failures = min(schedule.failures + 1, 5)
 +        schedule.next = now().addingTimeInterval(wait)
-+        schedule.status = otherwise
++        schedule.status = .error
 +        save(schedule, key: key)
 +        let result = stale(account, next: schedule.next, otherwise: otherwise)
 +        cached[account] = result
@@ -1346,7 +517,7 @@ index 00000000..b20b5b27
 +    }
 +
 +    static func backoff(attempt: Int, retryAfter: TimeInterval?) -> TimeInterval {
-+        min(900, max(60 * pow(2, Double(min(max(0, attempt), 4))), retryAfter ?? 0))
++        max(min(900, 60 * pow(2, Double(min(max(0, attempt), 4)))), retryAfter ?? 0)
 +    }
 +
 +    static func parse(_ data: Data, at time: Date) throws -> QuotaSnapshot {
@@ -1381,7 +552,7 @@ index 00000000..b20b5b27
 +        guard !windows.isEmpty else { throw URLError(.cannotParseResponse) }
 +        return QuotaSnapshot(id: "opencode-go", displayName: "OpenCode Go", fidelity: "official", status: .ok,
 +                             windows: windows, headlineId: "rolling", block: blocked ? "OpenCode Go allowance reached" : nil,
-+                             account: nil, plan: "Go", observedAt: time, source: "OpenCode", credits: nil,
++                             account: nil, plan: "Go", observedAt: time, source: "go/v1/usage", credits: nil,
 +                             nextAllowedAt: nil, waitingForRefresh: false)
 +    }
 +
@@ -1406,152 +577,34 @@ index 00000000..b20b5b27
 +        return (data, response)
 +    }
 +    private func save(_ schedule: Schedule, key: String) {
-+        if let data = try? JSONEncoder().encode(schedule) { defaults.set(data, forKey: key) }
++        schedules[key] = schedule
++        if persistence.save(schedule, key: key) { defaults.removeObject(forKey: "opencode-go.quota.schedule." + key) }
 +    }
 +    private func stale(_ account: String, next: Date?, otherwise: QuotaStatus = .error) -> QuotaSnapshot {
 +        guard let value = cached[account], value.observedAt != nil else { return snapshot(otherwise, next: next) }
 +        return copying(value, status: .stale, next: next)
 +    }
 +    private func copying(_ value: QuotaSnapshot, status: QuotaStatus, next: Date?) -> QuotaSnapshot {
-+        QuotaSnapshot(id: value.id, displayName: value.displayName, fidelity: value.fidelity, status: status,
-+                      windows: value.windows, headlineId: value.headlineId, block: value.block, account: value.account,
-+                      plan: value.plan, observedAt: value.observedAt, source: value.source, credits: value.credits,
-+                      nextAllowedAt: next, waitingForRefresh: false)
++        value.copying(status: status, next: next)
 +    }
 +    private func snapshot(_ status: QuotaStatus, next: Date? = nil) -> QuotaSnapshot {
 +        QuotaSnapshot(id: "opencode-go", displayName: "OpenCode Go", fidelity: "official", status: status,
 +                      windows: [], headlineId: nil, block: nil, account: nil, plan: nil, observedAt: nil,
-+                      source: "OpenCode", credits: nil, nextAllowedAt: next, waitingForRefresh: false)
++                      source: "go/v1/usage", credits: nil, nextAllowedAt: next, waitingForRefresh: false)
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeedCore/Quota.swift b/macos/Sources/AgentSpeedCore/Quota.swift
-new file mode 100644
-index 00000000..c7d7ff0d
---- /dev/null
+index 68383153..5cd7e03b 100644
+--- a/macos/Sources/AgentSpeedCore/Quota.swift
 +++ b/macos/Sources/AgentSpeedCore/Quota.swift
-@@ -0,0 +1,122 @@
-+import Foundation
-+
-+public enum QuotaStatus: String, Sendable, Codable {
-+    case ok, stale, needsAuth, accessDenied, unsupported, error
-+}
-+
-+public struct QuotaWindow: Sendable, Equatable, Codable {
-+    public let id: String
-+    public let label: String
-+    public let usedFraction: Double?
-+    public let remaining: Double?
-+    public let used: Double?
-+    public let resetAt: Date?
-+    public let duration: TimeInterval?
-+
-+    public init(id: String, label: String, usedFraction: Double?, remaining: Double?, used: Double?,
-+                resetAt: Date?, duration: TimeInterval?) {
-+        self.id = id
-+        self.label = label
-+        self.usedFraction = usedFraction
-+        self.remaining = remaining
-+        self.used = used
-+        self.resetAt = resetAt
-+        self.duration = duration
-+    }
-+}
-+
-+public struct QuotaCredits: Sendable, Equatable, Codable {
-+    public let hasCredits: Bool?
-+    public let unlimited: Bool?
-+    public let limit: Double?
-+    public let used: Double?
-+    public let usedFraction: Double?
-+    public let resetAt: Date?
-+    public let balance: String?
-+}
-+
-+public struct QuotaSnapshot: Sendable, Equatable, Codable {
-+    public let id: String
-+    public let displayName: String
-+    public let fidelity: String
-+    public let status: QuotaStatus
-+    public let windows: [QuotaWindow]
-+    public let headlineId: String?
-+    public let block: String?
-+    public let account: String?
-+    public let plan: String?
-+    public let observedAt: Date?
-+    public let source: String
-+    public let credits: QuotaCredits?
-+    public let nextAllowedAt: Date?
-+    /// No observation is available because a previously successful poll is still throttled.
-+    public let waitingForRefresh: Bool
-+
-+    public init(id: String, displayName: String, fidelity: String, status: QuotaStatus,
-+                windows: [QuotaWindow], headlineId: String?, block: String?, account: String?,
-+                plan: String?, observedAt: Date?, source: String, credits: QuotaCredits?,
-+                nextAllowedAt: Date?, waitingForRefresh: Bool) {
-+        self.id = id
-+        self.displayName = displayName
-+        self.fidelity = fidelity
-+        self.status = status
-+        self.windows = windows
-+        self.headlineId = headlineId
-+        self.block = block
-+        self.account = account
-+        self.plan = plan
-+        self.observedAt = observedAt
-+        self.source = source
-+        self.credits = credits
-+        self.nextAllowedAt = nextAllowedAt
-+        self.waitingForRefresh = waitingForRefresh
-+    }
-+}
-+
-+/// Providers own credentials, account isolation and persisted polling schedules.
-+public protocol QuotaProvider: Sendable {
-+    func refresh() async -> QuotaSnapshot
-+    func cancel() async
-+}
-+
-+public enum QuotaPeriod: String, Sendable {
-+    case month, week, fiveHours, other
-+}
-+
-+extension QuotaWindow {
-+    public var period: QuotaPeriod {
-+        if id == "monthly" { return .month }
-+        if id == "weekly" { return .week }
-+        if id == "rolling" { return .fiveHours }
-+        guard let duration, duration.isFinite, duration > 0 else { return .other }
-+        if duration == 18_000 { return .fiveHours }
-+        if duration == 604_800 { return .week }
-+        if duration >= 2_419_200 && duration <= 2_678_400 { return .month }
-+        return .other
-+    }
-+
-+    /// Exact readings remain unclamped, including negative remaining after overuse.
-+    public var remainingFraction: Double? {
-+        if let usedFraction, usedFraction.isFinite { return 1 - usedFraction }
-+        return nil
-+    }
-+
-+    public static func ordered(_ windows: [QuotaWindow]) -> [QuotaWindow] {
-+        windows.enumerated().sorted { lhs, rhs in
-+            let a = lhs.element.duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-+            let b = rhs.element.duration.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-+            if a != b {
-+                if let a, let b { return a > b }
-+                return a != nil
-+            }
-+            if lhs.element.id != rhs.element.id { return lhs.element.id < rhs.element.id }
-+            return lhs.offset < rhs.offset
-+        }.map(\.element)
-+    }
-+}
-+
-+public enum QuotaProviderRegistry {
-+    public static func makeProviders() -> [any QuotaProvider] {
+@@ -133,6 +133,6 @@ extension QuotaWindow {
+ 
+ public enum QuotaProviderRegistry {
+     public static func makeProviders() -> [any QuotaProvider] {
+-        [CodexQuotaProvider()]
 +        [CodexQuotaProvider(), OpenCodeGoQuotaProvider()]
-+    }
-+}
+     }
+ }
 diff --git a/macos/Sources/CSQLite/module.modulemap b/macos/Sources/CSQLite/module.modulemap
 new file mode 100644
 index 00000000..0a291b5e
@@ -1570,196 +623,141 @@ index 00000000..f52e1f09
 +++ b/macos/Sources/CSQLite/shim.h
 @@ -0,0 +1 @@
 +#include <sqlite3.h>
+diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
+index db1d05c4..e01deb4e 100644
+--- a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
+@@ -58,7 +58,7 @@ struct QuotaControllerTests {
+         let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+         defer { defaults.removePersistentDomain(forName: suite) }
+         defaults.set(false, forKey: "quota.autoRefreshEnabled")
+-        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("test-source")
++        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("opencode-go")
+         let controller = QuotaController(defaults: defaults, providers: [codex, go], refreshInterval: 0.01)
+         #expect(!controller.keepExpanded)
+         try await waitUntil { controller.snapshots.count == 2 }
+@@ -73,7 +73,7 @@ struct QuotaControllerTests {
+         controller.setNetworkEnabled(false)
+         controller.setNetworkEnabled(true)
+         controller.enabledProviderIDs = ["codex"]
+-        controller.enabledProviderIDs = ["codex", "test-source"]
++        controller.enabledProviderIDs = ["codex", "opencode-go"]
+         try await waitUntil { controller.snapshots.count == 2 && !controller.isRefreshing }
+         #expect(await codex.counts().startup == 1)
+         #expect(await go.counts().startup == 1)
+@@ -89,7 +89,7 @@ struct QuotaControllerTests {
+         let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+         defer { defaults.removePersistentDomain(forName: suite) }
+         defaults.set(false, forKey: "quota.autoRefreshEnabled")
+-        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("test-source")
++        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("opencode-go")
+         await codex.setHeld(true)
+         await go.setHeld(true)
+         let controller = QuotaController(defaults: defaults, providers: [codex, go])
+@@ -100,12 +100,12 @@ struct QuotaControllerTests {
+             return codexPending == 1 && goPending == 1
+         }
+         let goCancellations = await go.counts().cancellations
+-        controller.enabledProviderIDs = ["test-source"]
+-        #expect(controller.snapshots.map(\.id) == ["test-source"])
++        controller.enabledProviderIDs = ["opencode-go"]
++        #expect(controller.snapshots.map(\.id) == ["opencode-go"])
+         await codex.release()
+         await go.release()
+         try await waitUntil { !controller.isRefreshing }
+-        #expect(controller.snapshots.map(\.id) == ["test-source"])
++        #expect(controller.snapshots.map(\.id) == ["opencode-go"])
+         #expect(controller.snapshots.first?.status == .ok)
+         #expect(await go.counts().cancellations == goCancellations)
+         controller.setNetworkEnabled(false)
+@@ -132,13 +132,13 @@ struct QuotaControllerTests {
+     @Test func allAndIndividualSelectionAndIndependentExpansionPersist() async throws {
+         let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+         defer { defaults.removePersistentDomain(forName: suite) }
+-        let providers = [ControllerQuotaProvider("codex"), ControllerQuotaProvider("test-source")]
++        let providers = [ControllerQuotaProvider("codex"), ControllerQuotaProvider("opencode-go")]
+         let controller = QuotaController(defaults: defaults, providers: providers)
+         controller.allSourcesEnabled = false
+-        #expect(controller.enabledProviderIDs == ["codex", "test-source"])
+-        controller.enabledProviderIDs = ["test-source", "unavailable"]
++        #expect(controller.enabledProviderIDs == ["codex", "opencode-go"])
++        controller.enabledProviderIDs = ["opencode-go", "unavailable"]
+         #expect(!controller.allSourcesEnabled)
+-        #expect(controller.enabledProviderIDs == ["test-source"])
++        #expect(controller.enabledProviderIDs == ["opencode-go"])
+         controller.keepExpanded = true
+         controller.floatingVisible = false
+         controller.autoRefreshEnabled = false
+@@ -146,10 +146,10 @@ struct QuotaControllerTests {
+         #expect(restored.keepExpanded)
+         #expect(!restored.floatingVisible)
+         #expect(!restored.autoRefreshEnabled)
+-        #expect(restored.enabledProviderIDs == ["test-source"])
+-        try await waitUntil { restored.snapshots.map(\.id) == ["test-source"] }
++        #expect(restored.enabledProviderIDs == ["opencode-go"])
++        try await waitUntil { restored.snapshots.map(\.id) == ["opencode-go"] }
+         restored.allSourcesEnabled = true
+-        #expect(restored.enabledProviderIDs == ["codex", "test-source"])
++        #expect(restored.enabledProviderIDs == ["codex", "opencode-go"])
+         restored.enabledProviderIDs = []
+         #expect(restored.snapshots.isEmpty)
+     }
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-index 1820acea..3bd065ef 100644
+index 931bcd1e..b46f0026 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -9,22 +9,22 @@ import Testing
- struct QuotaNotchTests {
-     private let now = Date(timeIntervalSince1970: 1_800_000_000)
- 
--    private func snapshot(_ fraction: Double? = 0.21, status: CodexQuotaStatus = .ok,
--                          headlineID: String? = "main:18000") -> CodexQuotaSnapshot {
-+    private func snapshot(_ fraction: Double? = 0.21, status: QuotaStatus = .ok,
-+                          headlineID: String? = "main:18000") -> QuotaSnapshot {
-         let windows = [
--            CodexQuotaWindow(id: "main:18000", label: "Codex", usedFraction: fraction,
-+            QuotaWindow(id: "main:18000", label: "", usedFraction: fraction,
-                              remaining: fraction.map { 1 - $0 }, used: fraction,
-                              resetAt: now.addingTimeInterval(3_060), duration: 18_000),
--            CodexQuotaWindow(id: "main:604800", label: "Codex", usedFraction: 0.52,
-+            QuotaWindow(id: "main:604800", label: "", usedFraction: 0.52,
-                              remaining: 0.48, used: 0.52, resetAt: now.addingTimeInterval(100_000), duration: 604_800),
+@@ -15,7 +15,7 @@ struct QuotaNotchTests {
+             QuotaWindow(id: "weekly", label: "", usedFraction: 0.52, remaining: nil, used: nil, resetAt: now.addingTimeInterval(100_000), duration: 604_800),
+             QuotaWindow(id: "monthly", label: "", usedFraction: 1.2, remaining: nil, used: nil, resetAt: nil, duration: nil),
          ]
--        return CodexQuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: status,
-+        return QuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: status,
-                                   windows: windows, headlineId: headlineID, block: nil, account: nil,
-                                   plan: "Plus", observedAt: now.addingTimeInterval(-300), source: "local",
-                                   credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
+-        return QuotaSnapshot(id: id, displayName: id == "codex" ? "Codex" : "Test source", fidelity: "official", status: status,
++        return QuotaSnapshot(id: id, displayName: id == "codex" ? "Codex" : "OpenCode Go", fidelity: "official", status: status,
+                              windows: windows, headlineId: "rolling", block: nil, account: "account", plan: "Plus",
+                              observedAt: now.addingTimeInterval(-300), source: "local", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
+     }
+@@ -40,8 +40,8 @@ struct QuotaNotchTests {
      }
  
--    private func reading(_ snapshot: CodexQuotaSnapshot? = nil, enabled: Bool = true) -> QuotaNotchReading {
-+    private func reading(_ snapshot: QuotaSnapshot? = nil, enabled: Bool = true) -> QuotaNotchReading {
-         QuotaNotchReading(snapshot: snapshot, networkEnabled: enabled, l10n: Localizer(preference: .en))
-     }
- 
-@@ -76,17 +76,20 @@ struct QuotaNotchTests {
-     }
- 
-     @Test func snapshotIdentityUnknownAndStaleRemainTruthful() {
--        let weekly = reading(snapshot(headlineID: "main:604800"))
--        #expect(weekly.fraction == 0.52)
--        #expect(weekly.percentage == "52%")
-+        let value = reading(snapshot(headlineID: "main:18000"))
-+        #expect(value.windows.map(\.duration) == [604_800, 18_000])
-+        #expect(value.fraction == 0.48)
-+        #expect(value.percentage == "48%")
-+        #expect(value.windows.last?.remainingFraction == 0.79)
-         let unknown = reading()
-         #expect(unknown.fraction == nil)
-         #expect(unknown.percentage == "—")
-         #expect(unknown.stale)
-         #expect(unknown.status == unknown.l10n("mac.quota.empty"))
-         let stale = reading(snapshot(0.73, status: .stale))
--        #expect(stale.fraction == 0.73)
--        #expect(stale.percentage == "73%")
-+        #expect(stale.fraction == 0.48)
-+        #expect(stale.percentage == "48%")
-+        #expect(stale.windows.last?.remainingFraction == 0.27)
-         #expect(stale.stale)
-         #expect(stale.status == stale.l10n("mac.quota.status.stale"))
-         let offline = reading(snapshot(), enabled: false)
-@@ -95,9 +98,8 @@ struct QuotaNotchTests {
-         #expect(offline.observationDate == now.addingTimeInterval(-300))
-         #expect(stale.observationDate == now.addingTimeInterval(-300))
-         #expect(reading(snapshot()).observationDate == nil)
--        // Offline is not manufactured zero usage, nor a fabricated activity.
--        #expect(offline.fraction == 0.21)
--        #expect(reading(snapshot(nil)).fraction == nil)
-+        #expect(reading(snapshot(nil)).windows.last?.remainingFraction == nil)
-+        #expect(!reading(snapshot(nil)).stale)
-     }
- 
-     @Test func resetCopyUsesTheMacReferenceRoundingAndWeekBoundary() throws {
-@@ -339,4 +341,36 @@ struct QuotaNotchTests {
-         hover.reset()
-     }
- 
-+    @Test func multipleRingsExpandBodyCanvasAndInputWithoutShrinkingCenterOnEveryEdge() {
-+        for count in [1, 2, 3, 5] {
-+            let windows = (0..<count).map { index in
-+                QuotaWindow(id: "period-\(index)", label: "Scope \(index)", usedFraction: index == 0 ? nil : 1.25,
-+                            remaining: nil, used: nil, resetAt: nil, duration: Double(index + 1) * 18_000)
-+            }
-+            let value = QuotaSnapshot(id: "opencode-go", displayName: "OpenCode Go", fidelity: "official", status: .ok,
-+                                      windows: windows, headlineId: windows.last?.id, block: nil, account: nil, plan: nil,
-+                                      observedAt: now, source: "OpenCode", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
-+            let reading = reading(value)
-+            #expect(reading.windows.count == count)
-+            #expect(reading.outerDiameter == 44 + CGFloat(count - 1) * 12)
-+            #expect(NotchLayout.glyphSize == NotchLayout.px(46))
-+            let monitor = CGRect(x: -1_920, y: -1_080, width: 1_920, height: 1_080)
-+            for edge in NotchEdge.allCases {
-+                let geometry = QuotaNotchGeometry(edge: edge, expanded: true, tooltip: true, settingsHovered: false,
-+                                                 cardHeight: reading.cardHeight, available: monitor.size,
-+                                                 ringCount: count, contentSize: reading.contentSize)
-+                #expect(monitor.contains(geometry.panelFrame(on: monitor)))
-+                #expect(geometry.bodyRect.contains(geometry.contentRect))
-+                let content = geometry.contentRect.insetBy(dx: 0.5, dy: 0.5)
-+                for point in [CGPoint(x: content.minX, y: content.minY), CGPoint(x: content.maxX, y: content.minY),
-+                              CGPoint(x: content.minX, y: content.maxY), CGPoint(x: content.maxX, y: content.maxY)] {
-+                    #expect(geometry.bodyPath.contains(point))
-+                    #expect(geometry.hits(point))
-+                    #expect(geometry.region(at: point) == .cell)
-+                }
-+                #expect(geometry.outerDiameter == reading.outerDiameter)
-+            }
-+        }
-+    }
-+
- }
+     @Test func everyProviderRetainsAllPeriodsWithoutFollowingHeadline() {
+-        let accounts = [reading(snapshot()), reading(snapshot("test-source"))]
+-        #expect(accounts.map(\.providerID) == ["codex", "test-source"])
++        let accounts = [reading(snapshot()), reading(snapshot("opencode-go"))]
++        #expect(accounts.map(\.providerID) == ["codex", "opencode-go"])
+         for value in accounts {
+             #expect(value.windows.map(\.id) == ["monthly", "weekly", "rolling"])
+             #expect(value.readings.count == 3)
+@@ -194,8 +194,8 @@ struct QuotaNotchTests {
+     @Test func sourceSwitchAndKeepExpandedNeverFreezeTheOldTooltip() async throws {
+         let hover = QuotaNotchHover()
+         hover.keepExpanded = true
+-        hover.move(to: .cell("codex")); hover.move(to: .cell("test-source"))
+-        #expect(hover.activeSource == "test-source")
++        hover.move(to: .cell("codex")); hover.move(to: .cell("opencode-go"))
++        #expect(hover.activeSource == "opencode-go")
+         hover.move(to: .outside)
+         try await Task.sleep(for: .milliseconds(300))
+         #expect(hover.expanded && hover.activeSource == nil)
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-index d384dd7c..1e340eee 100644
+index 465ec22d..a0f5fdf2 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-@@ -6,14 +6,14 @@ import Testing
- @Suite("Quota presentation")
- @MainActor
- struct QuotaPresentationTests {
--    private func window(_ used: Double?, duration: TimeInterval? = 18_000, label: String = "Codex") -> CodexQuotaWindow {
--        CodexQuotaWindow(id: "window", label: label, usedFraction: used, remaining: used.map { 1 - $0 },
-+    private func window(_ used: Double?, duration: TimeInterval? = 18_000, label: String = "") -> QuotaWindow {
-+        QuotaWindow(id: "window", label: label, usedFraction: used, remaining: used.map { 1 - $0 },
-                          used: used, resetAt: nil, duration: duration)
-     }
- 
--    private func account(_ id: String, status: CodexQuotaStatus = .ok, windows: [CodexQuotaWindow] = [],
--                         block: String? = nil) -> CodexQuotaSnapshot {
--        CodexQuotaSnapshot(id: id, displayName: id, fidelity: "official", status: status, windows: windows,
-+    private func account(_ id: String, status: QuotaStatus = .ok, windows: [QuotaWindow] = [],
-+                         block: String? = nil) -> QuotaSnapshot {
-+        QuotaSnapshot(id: id, displayName: id, fidelity: "official", status: status, windows: windows,
-                            headlineId: windows.first?.id, block: block, account: nil, plan: nil,
-                            observedAt: nil, source: "local", credits: nil, nextAllowedAt: nil,
-                            waitingForRefresh: false)
-@@ -62,7 +62,7 @@ struct QuotaPresentationTests {
-         let weekly = quotaWindowLabel(window(0.5, duration: 604_800), english)
-         #expect(fiveHours.contains("5"))
-         #expect(!fiveHours.contains("18000"))
--        #expect(weekly.contains("7"))
-+        #expect(weekly == "Week")
-         #expect(!weekly.contains("604800"))
-         #expect(quotaWindowLabel(window(nil, duration: nil, label: "Spark"), english) == "Spark")
-         #expect(quotaWindowLabel(window(nil, duration: 18_000, label: "Spark"), english).hasPrefix("Spark · "))
-@@ -70,10 +70,12 @@ struct QuotaPresentationTests {
- 
-     @Test func statusAndUnknownReadingsRemainDistinct() {
-         let english = Localizer(preference: .en)
--        #expect(quotaStatus(account("signed-out", status: .needsAuth), english) == english("mac.quota.status.needsAuth"))
-+        #expect(quotaStatus(account("signed-out", status: .needsAuth), english) == english("mac.quota.status.needsAuth", "signed-out"))
-         #expect(quotaStatus(account("stale", status: .stale, windows: [window(0.2)]), english) == english("mac.quota.status.stale"))
-         #expect(window(nil).usedFraction == nil)
-         #expect(quotaPercent(0, locale: english.locale) != english("mac.quota.unknown"))
-+        #expect(quotaPercent(-0.25, locale: english.locale) == "-25%")
-+        #expect(quotaPercent(0.6267, locale: english.locale) == "62.67%")
-     }
- 
-     @Test func floatingVisibilitySurvivesControllerRecreation() throws {
-@@ -87,5 +89,7 @@ struct QuotaPresentationTests {
-         #expect(!restored.floatingVisible)
-         restored.floatingVisible = true
-         #expect(QuotaController(defaults: defaults).floatingVisible)
-+        restored.selectedProviderID = "opencode-go"
-+        #expect(QuotaController(defaults: defaults).selectedProviderID == "opencode-go")
-     }
- }
-diff --git a/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
-index ab8cba6b..0a28509b 100644
---- a/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
-+++ b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
-@@ -1,4 +1,7 @@
- import Foundation
-+#if canImport(FoundationNetworking)
-+import FoundationNetworking
-+#endif
- import Testing
- @testable import AgentSpeedCore
- 
-@@ -162,7 +165,7 @@ struct CodexQuotaProviderTests {
-         let fixture = QuotaFixture()
-         let (provider, url) = try makeProvider(fixture)
-         defer { try? FileManager.default.removeItem(at: url) }
--        await withTaskGroup(of: CodexQuotaStatus.self) { group in
-+        await withTaskGroup(of: QuotaStatus.self) { group in
-             for _ in 0..<12 { group.addTask { await provider.refresh().status } }
-             for await status in group { #expect(status == .ok) }
+@@ -140,8 +140,8 @@ struct QuotaPresentationTests {
+         let l10n = Localizer(preference: .en)
+         let expiry = Date(timeIntervalSince1970: 1_800_000_000)
+         func snapshot(_ count: Int?) -> QuotaSnapshot {
+-            QuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: .ok, windows: [], headlineId: nil,
+-                          block: nil, account: nil, plan: nil, observedAt: nil, source: "local", credits: nil, nextAllowedAt: nil,
++            QuotaSnapshot(id: "opencode-go", displayName: "OpenCode Go", fidelity: "official", status: .ok, windows: [], headlineId: nil,
++                          block: nil, account: nil, plan: nil, observedAt: nil, source: "OpenCode", credits: nil, nextAllowedAt: nil,
+                           waitingForRefresh: false, resetCreditsAvailable: count, resetCreditsNextExpiry: expiry)
          }
+         #expect(quotaResetCards(snapshot(nil), l10n)?.contains("Earliest known expiry") == true)
 diff --git a/macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift
 new file mode 100644
-index 00000000..0996531f
+index 00000000..023211fc
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift
-@@ -0,0 +1,211 @@
+@@ -0,0 +1,213 @@
 +import Foundation
 +import Testing
 +import CSQLite
@@ -1893,7 +891,9 @@ index 00000000..0996531f
 +        fixture.advance(300)
 +        #expect(await reader.refresh().status == .stale)
 +        let restarted = await provider(directory, suite: suite, fixture: fixture).refresh()
-+        #expect(restarted.windows.isEmpty)
++        #expect(!restarted.windows.isEmpty)
++        #expect(restarted.status == .stale)
++        #expect(restarted.observedAt == fixture.now().addingTimeInterval(-300))
 +        #expect(!restarted.waitingForRefresh)
 +        #expect(fixture.captured().count == 2)
 +        try writeAuth(directory, token: "different-account")
@@ -1954,7 +954,7 @@ index 00000000..0996531f
 +        #expect(await reader.refresh().status == .ok)
 +        #expect(fixture.captured().count == 2)
 +        #expect(await reader.refresh().status == .stale)
-+        #expect(await provider(directory, suite: suite, fixture: fixture).refresh().status == .error)
++        #expect(await provider(directory, suite: suite, fixture: fixture).refresh().status == .stale)
 +        #expect(fixture.captured().count == 3)
 +        fixture.advance(60)
 +        #expect(await provider(directory, suite: suite, fixture: fixture).refresh().status == .ok)
@@ -1963,7 +963,7 @@ index 00000000..0996531f
 +
 +    @Test func backoffAndCredentialMetadataAreConstrained() {
 +        #expect(OpenCodeGoQuotaProvider.backoff(attempt: 0, retryAfter: nil) == 60)
-+        #expect(OpenCodeGoQuotaProvider.backoff(attempt: 5, retryAfter: 10_000) == 900)
++        #expect(OpenCodeGoQuotaProvider.backoff(attempt: 5, retryAfter: 10_000) == 10_000)
 +        #expect(OpenCodeGoQuotaProvider.retryAfter("Thu, 01 Jan 1970 00:03:00 GMT", now: Date(timeIntervalSince1970: 0)) == 180)
 +        #expect(OpenCodeGoCredentials.decode(["type": "external", "key": "not-owned"]) == nil)
 +        #expect(OpenCodeGoCredentials.decode(["type": "oauth", "access": "fixture", "expires": "1700000000000"])?.expires == Date(timeIntervalSince1970: 1_700_000_000))
@@ -1971,53 +971,58 @@ index 00000000..0996531f
 +        #expect(OpenCodeGoCredentials.decode(["type": "key", "key": "fixture", "metadata": ["orgID": "old"], "configuration": ["orgID": "current"]])?.org == "current")
 +    }
 +}
+diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
+index 132d342f..3db6e76c 100644
+--- a/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
++++ b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
+@@ -23,7 +23,7 @@ private final class LifecycleQuotaFixture: @unchecked Sendable {
+             requests.append(request)
+             let reset = request.url?.path.hasSuffix("rate-limit-reset-credits") == true
+             let body = reset ? #"{"available_count":2,"credits":[{"status":"available","expires_at":"2028-01-01T00:00:00Z"}]}"#
+-                : #"{"rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}}}"#
++                : #"{"rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}},"usage":{"rolling":{"percent":25}}}"#
+             return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: reset ? resetStatus : usageStatus,
+                 httpVersion: nil, headerFields: ["Retry-After": "900"])!)
+         }
+@@ -187,4 +187,30 @@ struct QuotaLifecycleTests {
+         #expect(await provider.readCachedSnapshot().observedAt == nil)
+         #expect(!FileManager.default.fileExists(atPath: auth.appendingPathExtension("quota-cache").path))
+     }
++
++    @Test func goCacheHydratesWithoutNetworkAndLateCancelledResponseCannotReplaceIt() async throws {
++        let directory = try directory(), suite = UUID().uuidString
++        let defaults = UserDefaults(suiteName: suite)!, fixture = LifecycleQuotaFixture(), gate = QuotaResponseGate()
++        defer { try? FileManager.default.removeItem(at: directory); defaults.removePersistentDomain(forName: suite) }
++        try Data(#"{"opencode-go":{"type":"api","key":"borrowed-key"}}"#.utf8).write(to: directory.appendingPathComponent("auth.json"))
++        let first = OpenCodeGoQuotaProvider(directory: directory, defaults: UserDefaults(suiteName: suite)!, now: { fixture.now() }, transport: { fixture.fetch($0) })
++        let original = await first.refresh()
++        let restarted = OpenCodeGoQuotaProvider(directory: directory, defaults: UserDefaults(suiteName: suite)!, now: { fixture.now() }) { request in
++            await gate.pause()
++            return fixture.fetch(request)
++        }
++        let cached = await restarted.readCachedSnapshot()
++        #expect(cached.status == .stale)
++        #expect(cached.windows == original.windows)
++        #expect(cached.observedAt == original.observedAt)
++        #expect(fixture.count() == 1)
++        let pending = Task { await restarted.refresh() }
++        await gate.waitForRequest()
++        await restarted.cancel()
++        await gate.release()
++        _ = await pending.value
++        let after = await restarted.readCachedSnapshot()
++        #expect(after.observedAt == original.observedAt)
++        #expect(after.status == .stale)
++    }
+ }
 diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
-new file mode 100644
-index 00000000..84c9a9a6
---- /dev/null
+index 2182d481..460bec0d 100644
+--- a/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
 +++ b/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
-@@ -0,0 +1,50 @@
-+import Foundation
-+import Testing
-+@testable import AgentSpeedCore
-+
-+@Suite("Source-neutral quota windows")
-+struct QuotaTests {
-+    private func window(_ id: String, _ duration: TimeInterval?, used: Double? = nil) -> QuotaWindow {
-+        QuotaWindow(id: id, label: id, usedFraction: used, remaining: used.map { 1 - $0 }, used: used,
-+                    resetAt: nil, duration: duration)
-+    }
-+
-+    @Test func longestDurationIsOuterRegardlessOfSlotsAndUnknownScopesAreRetained() {
-+        let windows = [window("short", 18_000), window("unknown-z", nil), window("long", 2_678_400),
-+                       window("week", 604_800), window("unknown-a", 0), window("extra", 604_800)]
-+        let expected = ["long", "extra", "week", "short", "unknown-a", "unknown-z"]
-+        #expect(QuotaWindow.ordered(windows).map(\.id) == expected)
-+        #expect(QuotaWindow.ordered(Array(windows.reversed())).map(\.id) == expected)
-+        #expect(QuotaWindow.ordered(windows).count == windows.count)
-+        #expect(window("unknown-z", nil).remainingFraction == nil)
-+    }
-+
-+    @Test func periodIdentityAndExactPercentNeverDependOnArrayPositionOrWarningState() {
-+        #expect(window("any", 2_419_200).period == .month)
-+        #expect(window("any", 604_800).period == .week)
-+        #expect(window("any", 18_000).period == .fiveHours)
-+        #expect(window("monthly", nil).period == .month)
-+        #expect(window("unknown", nil).period == .other)
-+        #expect(window("known-zero", 0).duration == 0)
-+        #expect(window("unused", 18_000, used: 0).remainingFraction == 1)
-+        #expect(window("exhausted", 18_000, used: 1).remainingFraction == 0)
-+        #expect(window("overused", 18_000, used: 1.25).remainingFraction == -0.25)
-+        #expect(window("invalid", 18_000, used: .nan).remainingFraction == nil)
-+    }
-+
-+    @Test func codexRetainsAdditionalSlotsAndRepeatedScopesWithoutDuplicateIdentifiers() throws {
-+        let data = Data(#"{"rate_limit":{"tertiary_window":{"used_percent":17,"limit_window_seconds":2592000}},"additional_rate_limits":[{"metered_feature":"spark","rate_limit":{"primary_window":{"used_percent":0,"limit_window_seconds":18000}}},{"metered_feature":"spark","rate_limit":{"primary_window":{"used_percent":20,"limit_window_seconds":18000}}},{"metered_feature":"spark","rate_limit":{"primary_window":{"used_percent":40,"limit_window_seconds":18000}}}]}"#.utf8)
-+        let value = try CodexQuotaProvider.parse(data, at: Date())
-+        #expect(value.windows.count == 4)
-+        #expect(Set(value.windows.map(\.id)).count == 4)
-+        #expect(QuotaWindow.ordered(value.windows).first?.duration == 2_592_000)
-+    }
+@@ -45,4 +45,12 @@ struct QuotaTests {
+         #expect(Set(value.windows.map(\.id)).count == 4)
+         #expect(QuotaWindow.ordered(value.windows).first?.duration == 2_592_000)
+     }
 +
 +    @Test func goRetainsAdditionalUnknownUsageScopes() throws {
 +        let data = Data(#"{"usage":{"rolling":{"percent":20},"extra-z":{"percent":50},"extra-a":{"percent":null}}}"#.utf8)
@@ -2026,9 +1031,9 @@ index 00000000..84c9a9a6
 +        #expect(value.windows.last?.remainingFraction == 0.5)
 +        #expect(value.windows.first { $0.id == "extra-a" }?.remainingFraction == nil)
 +    }
-+}
+ }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index b6aeba76..bffe90d1 100644
+index b87cdf77..5910161f 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,4 +1,4 @@
@@ -2037,42 +1042,16 @@ index b6aeba76..bffe90d1 100644
  
  This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
  
-@@ -43,15 +43,15 @@ On macOS, a persisted successful polling interval can prevent a post-restart req
+@@ -45,7 +45,7 @@ Both platforms persist the last successfully parsed, structured account snapshot
  
- ## Desktop presentation
+ Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any qualifying tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
  
--Quota is presented in the existing Settings window as a provider card with progress, following the supplied `desktop-settings.png` design. Show the headline window selected by `headlineId`, its usage and reset when known, and the other available windows and account details without treating provider response order as window identity. Identify windows by their labels and durations; do not assume a primary slot is five-hour or a secondary slot is weekly. Display used and remaining together where space permits.
-+Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any qualifying tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
- 
--On Windows, Subscription is a source-neutral account list and settings group, not a Codex-specific page. Only the real Codex adapter is currently enabled in the source registry; do not invent other accounts, providers or example readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Do not fill missing optional values with repeated unknown labels, invent a quota window when no window was returned, or draw a progress track for unknown usage. A provider without an observation gets one concise state-specific explanation (loading, not yet refreshed, waiting, sign-in required, offline, denied, unsupported or error); an unavailable window reading is labelled unavailable rather than measured zero. Known zero and retained stale readings remain visible, with the original observation timestamp and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Present status and a blocking reason without duplication. The page follows the user's existing Light, Dark or System setting, including live changes, and never overrides the Settings window's theme.
+-Subscription is a source-neutral account list and settings group, with the real Codex adapter; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
 +Subscription is a source-neutral account list and settings group, with real Codex and OpenCode Go adapters; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
  
- Windows Subscription follows the approved visual preview: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows, and source selection reproduces the existing orb source editor: a rounded group, All sources with its include-future-sources explanation, an inset divider and ordinary checkbox/source-dot/name rows. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
+ Windows and macOS Subscription follow the approved account-card layout using their native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
  
- Available reset cards may include a nearest reported expiration, `resetCreditsNextExpiry`, parsed independently of the count from valid ISO-8601 `expires_at` fields of entries whose status is exactly `available`. Used and expired cards do not supply this value. Missing or invalid dates remain unknown; count, quota-window reset and observation time never substitute for expiration. A partial list establishes only the nearest known reported expiration. Do not show a card expiration when the authoritative available count is zero.
- 
--Windows quota graphics show remaining allowance: `clamp(1 - usedFraction, 0, 1)` fills bars and rings, while labels preserve the actual remaining value and unknown stays unknown. Warning thresholds still use actual used quota. The underlying snapshot's `usedFraction` is never inverted. Persisted `quota.sources` and `quota.autoRefresh` control enabled sources and automatic versus manual refresh; manual refresh still obeys the provider's existing floor and backoff.
-+Quota graphics show remaining allowance; clamp only graphic fill, not reported numeric labels or the underlying used fraction. Unknown readings remain unknown. Window colors identify periods, not warning severity: monthly blue, weekly green, five-hour lilac; warnings use separate status text. Persisted source and automatic-refresh preferences control providers independently, and manual refresh still obeys their backoff.
- 
- The Windows floating details card's bottom successful-observation label is a short relative update age derived from the original `observedAt`, not a timeless “latest” indicator: “Updated just now”, “Updated Xm ago”, “Updated Xh ago” or “Updated Xd ago” (Simplified Chinese: “刚刚更新”, “X分钟前更新”, “X小时前更新”, “X天前更新”; Traditional Chinese and Japanese are localized too). Missing `observedAt` is unknown and future observations never produce negative ages. Offline, stale, waiting, authentication and error states keep precedence. The details card and an open tray summary refresh only their visible local labels at the next observation-relative minute boundary: opening an observation aged 59 or 119 seconds schedules one second, not another full minute. Recompute the deadline after snapshot/visibility changes, clamp sub-millisecond deadlines to one millisecond, and stop on hidden/unloaded/disposed displays. The collapsed/main quota window has no age timer. These clocks never request HTTP or alter provider polling/backoff; Subscription's approved absolute update timestamp and reset-countdown layout remain unchanged.
- 
-@@ -80,13 +80,13 @@ Pointer entry during the arc's initial emergence also retains its exact last-pai
- 
- Subscription Settings no longer exposes runtime diagnostics or a credential-storage footnote. Safe initialization/placement stage and exception type/HResult state may remain internal to the native host for tests; no page callback or hidden replacement diagnostic UI is retained. Pointer events and finite transitions drive the panel lifecycle; it has no continuous cursor, browser bridge, or bitmap polling loop. Provider refresh and backoff remain independent of this rendering lifecycle.
- 
--An optional, separate edge-attached floating quota renderer may also be enabled. Its visual appearance follows [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c), except for the deliberately omitted Windows settings shortcut and compact, moderately spaced external moving grip described above, while using this contract's actual Codex snapshot and status semantics. It presents the same local account data, not another provider, quota history, network source or polling implementation. Do not present fabricated providers or example readings as real data; only the Codex adapter is currently implemented.
-+The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
- 
- The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
- 
- Windows startup regressions use the real `QuotaSurface` → `Window.Show` → `SourceInitialized` path with ephemeral settings, networking and automatic polling disabled, and no credentials. They require a visible HWND, nonzero placement, an opaque black collapsed bar in both themes, transparent unused canvas, and a nonempty installed native region that includes only the painted bar on all four edges. Deterministic pointer/card/grace and menu/drag-state regressions exercise real paint and installed input regions with reduced motion, while finite animation runs are advanced to their terminal samples without sleeps. The body-to-grip route is sampled through the production pointer handlers, visible pixels and installed native region, with grace expiration driven between samples to represent arbitrarily slow movement. Both grip and Alt-body presses must acquire real mouse capture, remain pending below threshold, move the anchor above threshold, resample a different edge on release, persist the result and release capture; another physical monitor is used when available. An explicitly expanded injected first-render failure must be hidden and retain a safe stage/type/HResult/inner-exception diagnostic in the native runtime state. These are Windows-only regressions, not claims based on a portable geometry check.
- 
--The existing transient menu-bar popover or tray flyout may show a compact quota summary only when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers; open the existing Settings quota page for details.
-+The existing transient menu-bar popover or tray flyout may show a compact quota summary when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers, but include every available quota window within each displayed provider; open the existing Settings quota page for details.
- 
- Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
- 
-@@ -123,6 +123,18 @@ On Windows, each successful usage poll also queries `GET https://chatgpt.com/bac
+@@ -122,6 +122,18 @@ On both platforms, each successful usage poll also queries `GET https://chatgpt.
  Synthetic, credential-free examples: [`fixtures/codex-quota.json`](fixtures/codex-quota.json) shows main windows, an extra, a code-review window with unknown usage, and spend control; [`fixtures/codex-credit-quota.json`](fixtures/codex-credit-quota.json) shows missing rolling windows and a known zero balance. Their timestamps are examples, not current reset predictions. These are illustrative endpoint payloads, not captures of a real account.
  Both endpoint fixtures are raw provider responses, not snapshots; parsing either produces snapshot fidelity `official`.
  
@@ -4033,19 +3012,6 @@ index 5e1a9af2..b7b7c8b8 100644
      private static double SegmentDistance(Point p, Point a, Point b)
      {
          var delta = b - a;
-diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-index 4878b12c..35be7359 100644
---- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-+++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-@@ -45,7 +45,7 @@ public sealed class QuotaNotchWindowTests
-         // Exercise the application's real consumer, including SourceInitialized and its
-         // caught-error path. A swallowed startup exception must fail visible assertions.
-         using var quotaFiles = new IsolatedQuotaFiles();
--        using var surface = new QuotaSurface(settings, loc, dark, quotaFiles.CreateProvider);
-+        using var surface = new QuotaSurface(settings, loc, dark, _ => quotaFiles.CreateProvider());
-         PumpLayout();
- 
-         var source = Assert.Single(PresentationSource.CurrentSources.OfType<HwndSource>(),
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 index 9af2cdb1..358d6d42 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs

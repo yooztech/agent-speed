@@ -180,7 +180,7 @@
       },
       {
         "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter 'FullyQualifiedName~OrbFeedTests|FullyQualifiedName~BoardLiveFeedTests'"
+        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter 'FullyQualifiedName~OrbFeedTests|FullyQualifiedName~BoardLiveFeedTests|FullyQualifiedName~OrbSettingsTests|FullyQualifiedName~OrbDashboardContextTests'"
       }
     ],
     "related": [],
@@ -331,20 +331,20 @@
     "regression": [
       {
         "platform": "macos",
-        "run": "cd macos && swift test --filter CodexQuotaProviderTests"
+        "run": "cd macos && swift test --filter 'CodexQuotaProviderTests|QuotaLifecycleTests'"
       }
     ],
     "related": [
       {
         "platform": "macos",
-        "run": "cd macos && swift test --filter QuotaPresentationTests"
+        "run": "cd macos && swift test --filter 'QuotaPresentationTests|QuotaControllerTests'"
       },
       {
         "platform": "macos",
         "run": "cd macos && swift test --filter QuotaNotchTests"
       }
     ],
-    "reason": ""
+    "reason": "macOS base Codex quota: account-isolated structured snapshot restoration, startup-floor exception and backoff, reset credits, automatic/manual app-lifetime polling, source controls, account-card formatting, update clocks and native floating-surface interactions. Provider/lifecycle and controller tests cover account, cancellation and startup edges. Native rendering/input and SDK verification require macOS."
   },
   "0021-Add-Windows-Codex-quota-monitoring.patch": {
     "regression": [
@@ -358,7 +358,7 @@
       },
       {
         "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --filter 'FullyQualifiedName~QuotaSurfaceTests|FullyQualifiedName~QuotaSettingsPageTests|FullyQualifiedName~QuotaNotchViewTests|FullyQualifiedName~QuotaNotchWindowTests|FullyQualifiedName~QuotaDisplayClockTests'"
+        "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --filter 'FullyQualifiedName~QuotaSurfaceTests|FullyQualifiedName~QuotaSettingsPageTests|FullyQualifiedName~QuotaNotchViewTests|FullyQualifiedName~QuotaDisplayClockTests'"
       },
       {
         "platform": "linux",
@@ -393,14 +393,14 @@
     "regression": [
       {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests'"},
       {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests'"},
-      {"platform": "macos", "run": "swift test --package-path macos --filter 'OpenCodeGoQuotaProviderTests|CodexQuotaProviderTests|QuotaTests'"}
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'OpenCodeGoQuotaProviderTests|CodexQuotaProviderTests|QuotaTests|QuotaLifecycleTests'"}
     ],
     "related": [
       {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~Quota|FullyQualifiedName~SettingsSerializerTests'"},
       {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~Quota|FullyQualifiedName~SettingsSerializerTests'"},
       {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --filter 'FullyQualifiedName~QuotaSurface|FullyQualifiedName~QuotaSettingsPageTests|FullyQualifiedName~QuotaNotch'"},
-      {"platform": "macos", "run": "swift test --package-path macos --filter 'QuotaPresentationTests|QuotaNotchTests'"}
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'QuotaPresentationTests|QuotaNotchTests|QuotaControllerTests'"}
     ],
-    "reason": "Multi-window remaining-allowance rendering and real OpenCode Go adapter: credential-specific reference routes, read-only credential discovery, account isolation, persistent cache/backoff and independent provider lifecycle. Native UI verification requires the corresponding OS; Linux checks do not establish WPF/AppKit pixels or real subscription access."
+    "reason": "Cross-platform multi-window remaining-allowance rendering and the OpenCode Go increment: credential-specific reference routes, read-only credential discovery, account isolation, persistent cache/backoff and independent provider lifecycle. Base macOS Codex corrections belong to 0020 and base Windows corrections to 0021; this patch carries only the new feature and necessary integration. Native UI verification requires the corresponding OS; Linux checks do not establish WPF/AppKit pixels, desktop input or live subscription access."
   }
 }
