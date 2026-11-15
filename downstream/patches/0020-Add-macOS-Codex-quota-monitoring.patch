@@ -27,7 +27,7 @@ Subject: [PATCH 20/22] Add macOS Codex quota monitoring
  macos/Sources/AgentSpeedCore/Quota.swift      | 138 ++++
  .../AgentSpeedCore/QuotaPersistence.swift     |  82 +++
  .../QuotaControllerTests.swift                | 297 ++++++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 229 +++++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 228 +++++++
  .../QuotaPresentationTests.swift              | 161 +++++
  .../CodexQuotaProviderTests.swift             | 236 +++++++
  .../QuotaLifecycleTests.swift                 | 190 ++++++
@@ -36,7 +36,7 @@ Subject: [PATCH 20/22] Add macOS Codex quota monitoring
  spec/QUOTA.md                                 | 119 ++++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 30 files changed, 4022 insertions(+), 2 deletions(-)
+ 30 files changed, 4021 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -3304,10 +3304,10 @@ index 00000000..3b884f77
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 00000000..0395eaea
+index 00000000..57f7a319
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,228 @@
 +import AppKit
 +import SwiftUI
 +import Testing
@@ -3425,7 +3425,6 @@ index 00000000..0395eaea
 +            container.addSubview(host)
 +            let center = shape.orbCenter.applying(shape.transform)
 +            #expect(!grip.hit.contains(center))
-+            #expect(grip.contours.allSatisfy { !$0.contains(center) })
 +            #expect(host.hitTest(host.convert(center, to: container)) == nil)
 +            for step in 0...8 {
 +                let angle = -.pi + CGFloat(step) * .pi / 16

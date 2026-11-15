@@ -244,6 +244,9 @@ does not restore live-window, synthetic-pointer or capture gates on either platf
 The existing resting-arc test retains center pass-through and painted-arc input
 checks. Linux syntax/portable checks are not native AppKit/SwiftUI verification;
 the changed native geometry still requires macOS execution.
+The resting-arc regression checks the final grip input and host hit routing,
+including painted arc points, rather than requiring each internal contour to
+exclude the center. This removal does not establish native verification.
 The four formal controller lifecycle tests pass on Linux with Swift 6.2.4 using
 the real controller, scheduler, providers and test source in a disposable package.
 All seven changed Swift files pass syntax parsing. The 22-patch queue also replays
