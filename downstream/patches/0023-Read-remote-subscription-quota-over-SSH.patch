@@ -1,11 +1,8 @@
-From fe6fa05a94b161e38b29e919373f6971f348a8e7 Mon Sep 17 00:00:00 2001
+From a6ea8151012ded49682d1cffef9922d250ee0ebe Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 20:40:38 +0800
+Date: Sun, 15 Nov 2026 22:07:59 +0800
 Subject: [PATCH] Read remote subscription quota over SSH
 
-- Query Codex and OpenCode Go on the credential-owning remote host through bounded asynchronous collector commands.
-- Expose host-scoped remote sources in both native subscription lifecycles, with stale caches, cancellation and provider branding.
-- Add deterministic provider, wire, source-selection and persistence regressions; document consent and credential boundaries.
 ---
  README.md                                     |  11 +
  README.zh-CN.md                               |   1 +
@@ -18,7 +15,7 @@ Subject: [PATCH] Read remote subscription quota over SSH
  linux/tests/collector_daemon_test.cpp         |  35 +-
  linux/tests/quota_test.cpp                    | 276 +++++++++
  macos/Sources/AgentSpeed/App/AppModel.swift   |   6 +
- .../AgentSpeed/App/QuotaController.swift      |  41 +-
+ .../AgentSpeed/App/QuotaController.swift      |  42 +-
  macos/Sources/AgentSpeed/App/QuotaNotch.swift |   8 +-
  .../AgentSpeed/App/QuotaSourceLogo.swift      |   3 +-
  .../Sources/AgentSpeed/App/QuotaSources.swift |  13 +
@@ -27,6 +24,8 @@ Subject: [PATCH] Read remote subscription quota over SSH
  .../AgentSpeed/App/RemoteQuotaProvider.swift  | 185 ++++++
  .../SettingsWindow/Panes/QuotaPane.swift      |  16 +-
  .../Sources/AgentSpeedCore/RemoteQuota.swift  |  71 +++
+ .../QuotaControllerTests.swift                |  50 ++
+ .../QuotaPresentationTests.swift              |  15 +
  .../RemoteQuotaTransportTests.swift           | 264 +++++++++
  .../RemoteQuotaTests.swift                    |  49 ++
  spec/NETWORK.md                               |  36 ++
@@ -44,14 +43,15 @@ Subject: [PATCH] Read remote subscription quota over SSH
  .../src/AgentSpeed/Settings/QuotaNotchView.cs |   9 +-
  .../AgentSpeed/Settings/QuotaNotchWindow.cs   |   7 +-
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  15 +-
- .../src/AgentSpeed/Settings/QuotaSurface.cs   |  80 ++-
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   |  83 ++-
  .../RemoteQuotaPersistenceTests.cs            | 105 ++++
  .../AgentSpeed.Core.Tests/RemoteQuotaTests.cs | 126 ++++
  .../RemoteQuotaSourcesTests.cs                |  45 ++
  .../QuotaNotchViewTests.cs                    |  31 +
  .../QuotaSettingsPageTests.cs                 |  21 +
  .../QuotaSurfaceProviderCollectionTests.cs    |  85 +++
- 44 files changed, 2665 insertions(+), 94 deletions(-)
+ .../QuotaSurfaceRetryTests.cs                 | 242 ++++++++
+ 47 files changed, 2976 insertions(+), 94 deletions(-)
  create mode 100644 linux/collector/quota.LICENSE.txt
  create mode 100644 linux/collector/quota.cpp
  create mode 100644 linux/collector/quota.hpp
@@ -71,7 +71,7 @@ Subject: [PATCH] Read remote subscription quota over SSH
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteQuotaSourcesTests.cs
 
 diff --git a/README.md b/README.md
-index ad2447b9..e66127a0 100644
+index ad2447b978fd25271c914210faf5aef16c9b690b..e66127a0fa4afe2c7f675006473a7f59e28a78df 100644
 --- a/README.md
 +++ b/README.md
 @@ -134,6 +134,17 @@ share one daemon through a private Unix socket, with independent timezone views.
@@ -93,7 +93,7 @@ index ad2447b9..e66127a0 100644
  activity-scoped lease can authorize the daemon to send only minimal current metrics over verified HTTPS to
  `https://agent-speed.yooztech.com`. Confirmed authorization can survive the last SSH exit, subject to host logout policy,
 diff --git a/README.zh-CN.md b/README.zh-CN.md
-index 029c9207..86dd8f6f 100644
+index 029c92071117341bae89f123fb3785a00784d6b8..86dd8f6fa7707ccbad4c5aa7ad9c332868bc952c 100644
 --- a/README.zh-CN.md
 +++ b/README.zh-CN.md
 @@ -55,6 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.s
@@ -105,7 +105,7 @@ index 029c9207..86dd8f6f 100644
  - **称号主题**——九套速度称号：「交通工具」「动物」「蒲福风级」「宇宙」「修真境界」「武学境界」「魔法位阶」「游戏段位」「工程师生涯」，也能自定义最多 8 组。选择交通工具以外的主题时，面板圆圈会显示发光的称号徽章。
  - **用量历史**——从最早的记录开始，每天的输出与输入 token、请求数、平均速度与峰值、费用与网络流量，可按来源，以今天、昨天或任意日期区间绘成图表，并查看各模型的速度、导出 CSV。只保存每日汇总，即使工具删除了旧记录，历史也不会消失。
 diff --git a/linux/collector/CMakeLists.txt b/linux/collector/CMakeLists.txt
-index f09caaa3..873f4bef 100644
+index f09caaa30e97df28d72059871a0fb5750eabadb8..873f4bef6c2e685362680b5458837255b3173c2e 100644
 --- a/linux/collector/CMakeLists.txt
 +++ b/linux/collector/CMakeLists.txt
 @@ -5,12 +5,15 @@ add_library(agentspeed_collector_protocol STATIC protocol.cpp history_cache.cpp)
@@ -126,7 +126,7 @@ index f09caaa3..873f4bef 100644
  
  collector_runtime(agentspeed_collector_runtime)
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
-index d9f3465e..29b1caba 100644
+index d9f3465e0cc52bd375072d1c8ccac0e2edfd68c9..29b1caba88b424624ac3718bf9302aef6a0db387 100644
 --- a/linux/collector/daemon.cpp
 +++ b/linux/collector/daemon.cpp
 @@ -3,6 +3,7 @@
@@ -182,7 +182,7 @@ index d9f3465e..29b1caba 100644
              }
 diff --git a/linux/collector/quota.LICENSE.txt b/linux/collector/quota.LICENSE.txt
 new file mode 100644
-index 00000000..1db9e6d8
+index 0000000000000000000000000000000000000000..1db9e6d86a905777f8a847977499c6e876f34e66
 --- /dev/null
 +++ b/linux/collector/quota.LICENSE.txt
 @@ -0,0 +1,26 @@
@@ -214,7 +214,7 @@ index 00000000..1db9e6d8
 +SOFTWARE.
 diff --git a/linux/collector/quota.cpp b/linux/collector/quota.cpp
 new file mode 100644
-index 00000000..d8969eb2
+index 0000000000000000000000000000000000000000..d8969eb2ffb61c089ed43404524072d74bd34d2f
 --- /dev/null
 +++ b/linux/collector/quota.cpp
 @@ -0,0 +1,547 @@
@@ -767,7 +767,7 @@ index 00000000..d8969eb2
 +} // namespace collector::quota
 diff --git a/linux/collector/quota.hpp b/linux/collector/quota.hpp
 new file mode 100644
-index 00000000..72ed6fad
+index 0000000000000000000000000000000000000000..72ed6fadc49b73dd65e07819a9372077c5df0c6d
 --- /dev/null
 +++ b/linux/collector/quota.hpp
 @@ -0,0 +1,73 @@
@@ -845,7 +845,7 @@ index 00000000..72ed6fad
 +};
 +} // namespace collector::quota
 diff --git a/linux/tests/CMakeLists.txt b/linux/tests/CMakeLists.txt
-index c06bb1e9..7c5d6fa9 100644
+index c06bb1e99b65bb1ee990ac7fa11e20dc646281c6..7c5d6fa95d0d5ab3ebd7b55be15b4379eaf2c266 100644
 --- a/linux/tests/CMakeLists.txt
 +++ b/linux/tests/CMakeLists.txt
 @@ -11,6 +11,7 @@ add_executable(agentspeed_tests
@@ -857,7 +857,7 @@ index c06bb1e9..7c5d6fa9 100644
      widget_statistics_test.cpp
      sampling_test.cpp
 diff --git a/linux/tests/collector_daemon_test.cpp b/linux/tests/collector_daemon_test.cpp
-index d594f955..07147dc8 100644
+index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a74068333339b69 100644
 --- a/linux/tests/collector_daemon_test.cpp
 +++ b/linux/tests/collector_daemon_test.cpp
 @@ -85,7 +85,7 @@ public:
@@ -930,7 +930,7 @@ index d594f955..07147dc8 100644
  } // namespace
 diff --git a/linux/tests/quota_test.cpp b/linux/tests/quota_test.cpp
 new file mode 100644
-index 00000000..a33ec62e
+index 0000000000000000000000000000000000000000..a33ec62ede44f070d9cf4d12822bc87525d6258c
 --- /dev/null
 +++ b/linux/tests/quota_test.cpp
 @@ -0,0 +1,276 @@
@@ -1211,7 +1211,7 @@ index 00000000..a33ec62e
 +
 +} // namespace
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index a5af5ca5..fe3f50b8 100644
+index a5af5ca5c75f21af502db2abc13d11ee15332ff9..fe3f50b8168ce6c4ad53718d2c62723cd5a8a3a8 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -118,6 +118,12 @@ final class AppModel {
@@ -1228,10 +1228,10 @@ index a5af5ca5..fe3f50b8 100644
  
      /// `~/Library/Application Support/AgentSpeed`; debug runs may use another folder (`AGENT_SPEED_APP_DATA`), so
 diff --git a/macos/Sources/AgentSpeed/App/QuotaController.swift b/macos/Sources/AgentSpeed/App/QuotaController.swift
-index f3d016b0..6637589f 100644
+index 2bd429c8f321dfaa2165f962aee8fe436d4b5d49..ed8e603231f7e7200332a0b26b5c43e530a71db9 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaController.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaController.swift
-@@ -15,7 +15,10 @@ final class QuotaController {
+@@ -16,7 +16,10 @@ final class QuotaController {
          init(_ provider: any QuotaProvider) { self.provider = provider }
      }
  
@@ -1243,7 +1243,7 @@ index f3d016b0..6637589f 100644
      private let defaults: UserDefaults
      private var readers: [String: Reader] = [:]
      private var cancellations: [String: Task<Void, Never>] = [:]
-@@ -51,7 +54,9 @@ final class QuotaController {
+@@ -54,7 +57,9 @@ final class QuotaController {
          didSet {
              guard !updatingPreferences else { return }
              updatingPreferences = true
@@ -1254,8 +1254,8 @@ index f3d016b0..6637589f 100644
              allSourcesEnabled = false
              updatingPreferences = false
              defaults.set(false, forKey: "quota.allSourcesEnabled")
-@@ -70,6 +75,10 @@ final class QuotaController {
-          refreshInterval: TimeInterval = 300, scheduler: any QuotaRefreshScheduling = QuotaRefreshScheduler()) {
+@@ -74,6 +79,10 @@ final class QuotaController {
+          now: @escaping () -> Date = Date.init) {
          self.defaults = defaults
          self.providers = providers
 +        self.localProviders = providers
@@ -1264,8 +1264,8 @@ index f3d016b0..6637589f 100644
 +        }
          self.refreshInterval = refreshInterval
          self.scheduler = scheduler
-         floatingVisible = defaults.object(forKey: "quota.floatingVisible") as? Bool ?? true
-@@ -78,11 +87,35 @@ final class QuotaController {
+         self.now = now
+@@ -83,11 +92,36 @@ final class QuotaController {
          let allSources = defaults.object(forKey: "quota.allSourcesEnabled") as? Bool ?? true
          allSourcesEnabled = allSources
          let supported = Set(providers.map(\.id))
@@ -1277,6 +1277,7 @@ index f3d016b0..6637589f 100644
      }
  
 +    func updateRemoteSources(_ transport: RemoteQuotaTransport, changedHosts: Set<UUID>? = nil) {
++        guard !disposed else { return }
 +        remoteTransport = transport
 +        let affected = Set(providers.map(\.id).filter { id in
 +            guard id.hasPrefix("remote:") else { return false }
@@ -1301,8 +1302,8 @@ index f3d016b0..6637589f 100644
 +
      func setNetworkEnabled(_ enabled: Bool) {
          guard networkEnabled != enabled else { return }
-         networkEnabled = enabled
-@@ -118,6 +151,7 @@ final class QuotaController {
+         guard !disposed else { return }
+@@ -135,6 +169,7 @@ final class QuotaController {
          }
          for provider in providers where enabled.contains(provider.id) && readers[provider.id] == nil {
              let reader = Reader(provider)
@@ -1310,26 +1311,27 @@ index f3d016b0..6637589f 100644
              reader.cancellation = cancellations[provider.id]
              added = true
              readers[provider.id] = reader
-@@ -129,6 +163,7 @@ final class QuotaController {
-     }
- 
+@@ -148,6 +183,7 @@ final class QuotaController {
      private func stop(_ reader: Reader) {
+         scheduler.cancelRetry(for: reader.provider.id)
+         reader.retry.clear()
 +        remoteTransport?.cancel(sourceID: reader.provider.id)
          reader.generation += 1
          reader.task?.cancel()
          reader.task = nil
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index c48c01ec..2203bd55 100644
+index 10d49e4e053566ad95eb8d6e3c8c87b799d652bb..b6e06bcc52df44096b2b25618472381d17f2f4e0 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -16,15 +16,17 @@ struct QuotaNotchReading {
+@@ -16,6 +16,7 @@ struct QuotaNotchReading {
      let snapshot: QuotaSnapshot?
      let networkEnabled: Bool
      let l10n: Localizer
 +    private let sourceName: String?
      let windows: [QuotaWindow]
      let readings: [String]
-     let readingWidth: CGFloat
+     let labels: [String]
+@@ -26,9 +27,10 @@ struct QuotaNotchReading {
      let readingHeight: CGFloat
      var outerDiameter: CGFloat { NotchLayout.outerDiameter(windows.count) }
  
@@ -1340,8 +1342,8 @@ index c48c01ec..2203bd55 100644
 +        self.sourceName = sourceName
          windows = QuotaWindow.ordered(snapshot?.windows ?? [])
          let multiple = windows.count > 1
-         readings = windows.isEmpty ? ["—"] : windows.map { window in
-@@ -41,7 +43,7 @@ struct QuotaNotchReading {
+         let windowLabels = windows.map { quotaCompactWindowLabel($0, l10n, providerName: snapshot?.displayName) }
+@@ -66,7 +68,7 @@ struct QuotaNotchReading {
          !networkEnabled || snapshot?.status == .stale || snapshot?.observedAt.map { now.timeIntervalSince($0) > 900 } == true
      }
      func status(at now: Date) -> String { quotaDisplayStatus(snapshot, l10n, networkEnabled: networkEnabled, now: now) }
@@ -1350,17 +1352,17 @@ index c48c01ec..2203bd55 100644
  
      func resetText(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
          let seconds = date.timeIntervalSince(now)
-@@ -419,7 +421,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
+@@ -453,7 +455,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
          visible = state.0; reducedMotion = state.1
          dark = state.2 == .dark || (state.2 == .auto && NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
          readings = state.4.map { provider in
 -            QuotaNotchReading(providerID: provider.id, snapshot: state.3.first { $0.id == provider.id }, networkEnabled: state.6, l10n: model.l10n)
 +            QuotaNotchReading(providerID: provider.id, snapshot: state.3.first { $0.id == provider.id }, networkEnabled: state.6, l10n: model.l10n, sourceName: provider.name)
          }
-         ringSize = readings.map(\.outerDiameter).max() ?? 56
-         cellSize = CGSize(width: max(ringSize, readings.map(\.readingWidth).max() ?? 56), height: max(80, ringSize + 4 + (readings.map(\.readingHeight).max() ?? 20)))
+         ringSize = readings.map(\.outerDiameter).max() ?? 52
+         cellSize = CGSize(width: max(ringSize, readings.map(\.readingWidth).max() ?? 52), height: max(80, ringSize + 4 + (readings.map(\.readingHeight).max() ?? 20)))
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
-index 621a9b30..1e07a20b 100644
+index 621a9b30254dba40ed5a8591577c5b7ef86271fa..1e07a20b9b60bf3113367f032ef1ece3e979d43f 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 @@ -1,3 +1,4 @@
@@ -1379,7 +1381,7 @@ index 621a9b30..1e07a20b 100644
              case "opencode-go":
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSources.swift b/macos/Sources/AgentSpeed/App/QuotaSources.swift
 new file mode 100644
-index 00000000..ec66c5a0
+index 0000000000000000000000000000000000000000..ec66c5a06fea8d0f2ca52df810cfc1a28e882e25
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaSources.swift
 @@ -0,0 +1,13 @@
@@ -1398,7 +1400,7 @@ index 00000000..ec66c5a0
 +}
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHost.swift b/macos/Sources/AgentSpeed/App/RemoteHost.swift
 new file mode 100644
-index 00000000..f14a2449
+index 0000000000000000000000000000000000000000..f14a244945a2bf4933026f30009621557f040f67
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/RemoteHost.swift
 @@ -0,0 +1,25 @@
@@ -1428,7 +1430,7 @@ index 00000000..f14a2449
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index 1484778c..ca1eada6 100644
+index 1484778c342911376a4faeac68f3ddb6b518e71c..ca1eada69cdb605bb98b045981c89e34b6eb858a 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 @@ -3,29 +3,6 @@ import CryptoKit
@@ -1593,7 +1595,7 @@ index 1484778c..ca1eada6 100644
              }
 diff --git a/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift b/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
 new file mode 100644
-index 00000000..84f0010a
+index 0000000000000000000000000000000000000000..84f0010a82a90f2926774e6dedf69a0b60a3f4b0
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
 @@ -0,0 +1,185 @@
@@ -1783,7 +1785,7 @@ index 00000000..84f0010a
 +    func cancel() async { transport.cancel(hostID: hostID, providerID: providerID) }
 +}
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-index 17dbe0ef..acbd5c32 100644
+index f35df7a4dd9eb105a0319cfcf0364c67d3a053a2..0398cf2715c3b655ecd79a04f7fbed3958bd9910 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 @@ -46,13 +46,13 @@ struct QuotaPane: View {
@@ -1819,7 +1821,7 @@ index 17dbe0ef..acbd5c32 100644
  
  struct QuotaAccountCard: View {
      let account: QuotaSnapshot
-@@ -224,7 +214,7 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
+@@ -230,7 +220,7 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
      case .stale: l10n("mac.quota.status.stale")
      case .needsAuth: l10n("mac.quota.status.needsAuth")
      case .accessDenied: l10n("mac.quota.status.accessDenied")
@@ -1830,7 +1832,7 @@ index 17dbe0ef..acbd5c32 100644
  }
 diff --git a/macos/Sources/AgentSpeedCore/RemoteQuota.swift b/macos/Sources/AgentSpeedCore/RemoteQuota.swift
 new file mode 100644
-index 00000000..ac08cf37
+index 0000000000000000000000000000000000000000..ac08cf374784cde0218e126e3faa6630f79c6849
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/RemoteQuota.swift
 @@ -0,0 +1,71 @@
@@ -1905,9 +1907,96 @@ index 00000000..ac08cf37
 +                      resetCreditsNextExpiry: resetCreditsNextExpiry)
 +    }
 +}
+diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
+index 34e612c077d8efde034038aa7b147a355d8f82ce..1639d787a07fe6d2efe39cf4065f2324e93a91ee 100644
+--- a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
+@@ -500,6 +500,56 @@ struct QuotaControllerTests {
+         #expect(transport.count() == 2)
+         #expect(scheduler.retries.isEmpty)
+     }
++    @Test func remoteTransportTimeoutRetriesOnlySelectedSourceAndHonorsReturnedDeadline() async throws {
++        let suite = UUID().uuidString
++        let defaults = UserDefaults(suiteName: suite)!
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let host = RemoteHost(id: UUID(), label: "build", destination: "build", enabled: true)
++        let connection = UUID()
++        let id = QuotaSourceIdentity.remote(hostID: host.id, providerID: "codex")
++        defaults.set(false, forKey: "quota.allSourcesEnabled")
++        defaults.set([id], forKey: "quota.enabledProviderIDs")
++        let scheduler = ControlledQuotaScheduler(), clock = QuotaTestClock()
++        let controller = QuotaController(defaults: defaults, providers: [], scheduler: scheduler, now: { clock.now })
++        let transport = RemoteQuotaTransport(defaults: defaults, timeoutSeconds: 3_600)
++        defer { controller.dispose() }
++        let stream = AsyncStream<String>.makeStream()
++        defer { stream.continuation.finish() }
++        transport.send = { _, data in
++            guard let command = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
++                  let requestID = command["requestId"] as? String,
++                  let providers = command["providers"] as? [String], providers == ["codex"] else { return false }
++            stream.continuation.yield(requestID)
++            return true
++        }
++        transport.configure(hosts: [host], connections: [host.id: connection])
++        controller.updateRemoteSources(transport)
++        controller.setNetworkEnabled(true)
++        var requests = stream.stream.makeAsyncIterator()
++        let startup = try #require(await requests.next())
++        let startupCompletion = controller.operationBarrier()
++        transport.expire(startup)
++        await startupCompletion.value
++        #expect(scheduler.retries[id]?.delay == 60)
++        clock.now.addTimeInterval(60)
++        scheduler.fireRetry(id)
++        let retry = try #require(await requests.next())
++        let reading = QuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: .error,
++            windows: [], headlineId: nil, block: nil, account: nil, plan: nil, observedAt: nil, source: "official",
++            credits: nil, nextAllowedAt: clock.now.addingTimeInterval(75), waitingForRefresh: false)
++        let encoder = JSONEncoder()
++        encoder.dateEncodingStrategy = .iso8601
++        let snapshots = String(decoding: try encoder.encode([reading]), as: UTF8.self)
++        let response = try #require(RemoteQuotaResponse.decode(Data("{\"type\":\"quota\",\"requestId\":\"\(retry)\",\"snapshots\":\(snapshots)}".utf8)))
++        let retryCompletion = controller.operationBarrier()
++        transport.receive(response, hostID: host.id, connection: connection)
++        await retryCompletion.value
++        #expect(scheduler.retries[id]?.delay == 75)
++        #expect(Set(scheduler.retries.keys) == [id])
++        controller.enabledProviderIDs = []
++        #expect(scheduler.retries.isEmpty)
++        await controller.operationBarrier().value
++    }
+     @Test(arguments: ["network", "source", "dispose", "manual"])
+     func cancellingPendingRetryRemovesWakeupAndRejectsQueuedCallback(_ transition: String) async throws {
+         let id = "remote:11111111-1111-1111-1111-111111111111:codex"
+diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
+index af7e2dfa12f9ae80f368001b4fc088bda0848dae..368f9c520e2c08d9c9ddcdbbf5226db1d5ae135c 100644
+--- a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
+@@ -81,6 +81,21 @@ struct QuotaPresentationTests {
+         }
+     }
+ 
++    @Test func remoteProviderNamesDoNotRepeatInWindowRows() {
++        let windows = [30 * 86_400.0, 604_800, 18_000].enumerated().map { index, duration in
++            QuotaWindow(id: "window-\(index)", label: "OpenCode Go", usedFraction: 0.5,
++                        remaining: nil, used: nil, resetAt: nil, duration: duration)
++        }
++        let remote = QuotaSnapshot(id: "remote:go", displayName: "OpenCode Go · Code", fidelity: "official", status: .ok,
++                                   windows: windows, headlineId: nil, block: nil, account: nil, plan: nil,
++                                   observedAt: nil, source: "remote", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
++        let chinese = Localizer(preference: .zhHans)
++        let reading = QuotaNotchReading(snapshot: remote, networkEnabled: true, l10n: chinese)
++        #expect(reading.labels == ["月", "周", "5h"])
++        #expect(quotaWindowLabel(windows[2], chinese, providerName: remote.displayName) == "5小时额度")
++        #expect(quotaWindowLabel(window(0.5, label: "Code review"), chinese, providerName: remote.displayName).hasPrefix("Code review · "))
++    }
++
+     @Test func statusAndUnknownReadingsRemainDistinct() {
+         let english = Localizer(preference: .en)
+         #expect(quotaStatus(account("signed-out", status: .needsAuth), english) == english("mac.quota.status.needsAuth", "signed-out"))
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift
 new file mode 100644
-index 00000000..aa156b70
+index 0000000000000000000000000000000000000000..aa156b70070720e1a789988635d56ae2a5b296ce
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift
 @@ -0,0 +1,264 @@
@@ -2177,7 +2266,7 @@ index 00000000..aa156b70
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift b/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift
 new file mode 100644
-index 00000000..717b1b6d
+index 0000000000000000000000000000000000000000..717b1b6d86a32596231f58b87309c8d73c1db588
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift
 @@ -0,0 +1,49 @@
@@ -2231,7 +2320,7 @@ index 00000000..717b1b6d
 +    }
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index b7ceeb7c..e5c11991 100644
+index b7ceeb7c51764959dd8d4a4960353ad3b95144a2..e5c11991c6a7212f6889f0096f571018e10ae77e 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -7,6 +7,9 @@ remote monitoring additionally uses SSH to a user-configured Linux host (section
@@ -2282,7 +2371,7 @@ index b7ceeb7c..e5c11991 100644
 +See [`QUOTA.md`](QUOTA.md) for provider parsing, cache isolation and wire details.
 +
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 5910161f..f309700a 100644
+index ef546f1370a59e27daf2ea30ba6379677621ab85..978683840c4b58305eea3b2f94d2cf449893e3bb 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,20 @@
@@ -2309,7 +2398,7 @@ index 5910161f..f309700a 100644
  ## Snapshot
  
 diff --git a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
-index 3be921eb..080e8986 100644
+index 3be921ebca29447323dc0bc73e0f26f1eaefc310..080e8986032e7668008f2ce0b3374a2025f286c7 100644
 --- a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 +++ b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 @@ -19,6 +19,26 @@ public static class QuotaProviders
@@ -2341,7 +2430,7 @@ index 3be921eb..080e8986 100644
          "codex" => new CodexQuotaProvider(),
 diff --git a/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs b/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
 new file mode 100644
-index 00000000..cc4edf54
+index 0000000000000000000000000000000000000000..cc4edf542720ca273d37c068dbd692e2da968e40
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
 @@ -0,0 +1,101 @@
@@ -2448,7 +2537,7 @@ index 00000000..cc4edf54
 +}
 diff --git a/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs b/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs
 new file mode 100644
-index 00000000..02f7acc0
+index 0000000000000000000000000000000000000000..02f7acc0f75b8835f88852a3809a57d405bee6d7
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs
 @@ -0,0 +1,142 @@
@@ -2596,7 +2685,7 @@ index 00000000..02f7acc0
 +}
 diff --git a/windows/src/AgentSpeed.Core/RemoteQuotaStore.cs b/windows/src/AgentSpeed.Core/RemoteQuotaStore.cs
 new file mode 100644
-index 00000000..1cbd9e6d
+index 0000000000000000000000000000000000000000..1cbd9e6d48f8df2ba1c5574e10a6f20eeacf148c
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/RemoteQuotaStore.cs
 @@ -0,0 +1,105 @@
@@ -2706,7 +2795,7 @@ index 00000000..1cbd9e6d
 +    }
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
-index 704ba04a..3ff75756 100644
+index 704ba04ac9d99ae54e7d241b8c6377bc120a84d7..3ff75756eada87c38ffe0c091c537a48ea869731 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
 @@ -478,9 +478,10 @@ public sealed record AppSettings
@@ -2723,7 +2812,7 @@ index 704ba04a..3ff75756 100644
          return selected.SequenceEqual(sources, StringComparer.Ordinal) ? sources : selected;
      }
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
-index d25c8fa3..3c752924 100644
+index 81069553fe2a9e7b5ca548db20f2885de5ad66b3..af2b7bf09d56f0b5412af0f0c42ad83102ec4673 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 @@ -69,7 +69,7 @@ public static class QuotaFormat
@@ -2737,7 +2826,7 @@ index d25c8fa3..3c752924 100644
          if (snapshot.ObservedAt is not { } observedAt) return loc["win.quota.unknown"];
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaSources.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaSources.cs
 new file mode 100644
-index 00000000..8c4d8b1d
+index 0000000000000000000000000000000000000000..8c4d8b1d4c810fc43f74ff1bfb2192b4e3fb7133
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaSources.cs
 @@ -0,0 +1,20 @@
@@ -2762,7 +2851,7 @@ index 00000000..8c4d8b1d
 +        .Select(provider => provider.Id).ToArray();
 +}
 diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
-index a6495cf0..a6cdb77b 100644
+index a6495cf0f76736417741b7c78eec1ad83e204fe5..a6cdb77b69efaadc225fbfd2b0e09906ce355c30 100644
 --- a/windows/src/AgentSpeed/App/AppController.cs
 +++ b/windows/src/AgentSpeed/App/AppController.cs
 @@ -192,7 +192,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
@@ -2775,7 +2864,7 @@ index a6495cf0..a6cdb77b 100644
          _quota.FlyoutChanged += summary => _dashboard?.SetQuotaSummary(summary);
          _quota.OpenSettingsRequested += () => OpenSettings("quota");
 diff --git a/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
-index 44739ce9..d776f817 100644
+index 44739ce97bb7bf86dc3f0e31dead447390a23650..d776f8179656ca87f78983c4393c961f74df2f91 100644
 --- a/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
 +++ b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
 @@ -17,6 +17,16 @@ internal sealed class RemoteConnectionManager : IDisposable
@@ -2826,7 +2915,7 @@ index 44739ce9..d776f817 100644
  
      private void Publish(Connection connection) =>
 diff --git a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
-index a2585fcd..5b468fd9 100644
+index a2585fcd0d93fbf00c09d4bb4fee6df5fca16188..5b468fd9686566fd9740fff69d0ad8f2a66cb555 100644
 --- a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
 +++ b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
 @@ -3,6 +3,7 @@ using System.Security.Cryptography;
@@ -2925,7 +3014,7 @@ index a2585fcd..5b468fd9 100644
      }
  
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index cf6b37f7..9ecf08e3 100644
+index bd5cd7648c2d890742b73c1019ce462d3ff50465..bc2afce624a54a54efc3a1b22e75e096dc011e54 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -108,7 +108,7 @@ internal sealed class QuotaNotchView : FrameworkElement
@@ -2937,7 +3026,7 @@ index cf6b37f7..9ecf08e3 100644
          {
              var snapshot = _state.Snapshots.FirstOrDefault(item => item.Id == id);
              var windows = QuotaFormat.OrderedWindows(snapshot);
-@@ -317,10 +317,10 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -323,10 +323,10 @@ internal sealed class QuotaNotchView : FrameworkElement
      private void BuildCard(DrawingContext dc)
      {
          _source = _state.ActiveSource;
@@ -2950,7 +3039,7 @@ index cf6b37f7..9ecf08e3 100644
          var ink = Brush(_state.Dark ? "#e8e8ea" : "#1d1d1f");
          var muted = Brush(_state.Dark ? "#808080" : "#6b6b6b");
          var fill = Brush(_state.Dark ? "#0a0a0a" : "#ffffff");
-@@ -330,7 +330,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -336,7 +336,7 @@ internal sealed class QuotaNotchView : FrameworkElement
          using (var c = content.Open())
          {
              DrawSourceGlyph(c, provider.Id, new Point(24, y + 8), 16, _state.Dark ? Brushes.White : ink);
@@ -2959,7 +3048,7 @@ index cf6b37f7..9ecf08e3 100644
              c.DrawText(title, new Point(40, y)); y += Math.Max(18, title.Height) + 4;
              if (!string.IsNullOrWhiteSpace(snapshot?.Account)) { var t = Text(snapshot.Account, 11, Regular, muted, inner); c.DrawText(t, new Point(16, y)); y += t.Height + 4; }
              if (snapshot?.ObservedAt is { } at && (!_state.Network || snapshot.Status == QuotaStatus.Stale || (_state.DisplayNow ?? DateTimeOffset.UtcNow) - at > TimeSpan.FromMinutes(15)))
-@@ -462,6 +462,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -468,6 +468,7 @@ internal sealed class QuotaNotchView : FrameworkElement
  
      private static void DrawSourceGlyph(DrawingContext dc, string source, Point center, double size, Brush color)
      {
@@ -2968,7 +3057,7 @@ index cf6b37f7..9ecf08e3 100644
          if (source != "opencode-go") throw new InvalidOperationException("Missing registered quota source vector.");
          dc.PushTransform(new MatrixTransform(size / 20, 0, 0, size / 20, center.X - size * .4, center.Y - size / 2));
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
-index 87db0a22..93811d6b 100644
+index 87db0a2250122d3454c8ae10ce20a4304ceee498..93811d6b1e5c224db558263fa033d68e7f8177dc 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
 @@ -39,7 +39,6 @@ internal sealed class QuotaNotchWindow : Window
@@ -2994,7 +3083,7 @@ index 87db0a22..93811d6b 100644
              }
              RenderAndPlace();
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
-index e5d2a673..5dc74db3 100644
+index e5d2a67373522dcc132c202d836951394202b4b4..5dc74db37ce75efd94317290ac8387731b4c01b4 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 @@ -11,7 +11,8 @@ using AgentSpeed.Presentation.Settings;
@@ -3045,7 +3134,7 @@ index e5d2a673..5dc74db3 100644
              if (!string.IsNullOrWhiteSpace(snapshot?.Block) && !string.Equals(snapshot.Block, message, StringComparison.Ordinal))
                  message += " · " + snapshot.Block;
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-index d3e0b57c..903ebca5 100644
+index 627b416a3d2003b429e02e5d8c91156a225e3271..623f3214d13c20aa1ba94cb8dfe47611ddc2be48 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 @@ -9,7 +9,7 @@ using AgentSpeed.Services;
@@ -3057,7 +3146,7 @@ index d3e0b57c..903ebca5 100644
  internal sealed class QuotaSurface : IDisposable
  {
  
-@@ -20,6 +20,10 @@ internal sealed class QuotaSurface : IDisposable
+@@ -21,6 +21,10 @@ internal sealed class QuotaSurface : IDisposable
      private readonly DispatcherTimer _flyoutClock;
      private readonly Func<DateTimeOffset> _now;
      private readonly Func<string, IQuotaProvider> _providerFactory;
@@ -3068,17 +3157,19 @@ index d3e0b57c..903ebca5 100644
      private readonly Dictionary<string, Reader> _readers = new(StringComparer.Ordinal);
      private readonly HashSet<string> _startupAttempted = new(StringComparer.Ordinal);
      private IReadOnlyList<QuotaSnapshot> _snapshots = [];
-@@ -46,13 +50,16 @@ internal sealed class QuotaSurface : IDisposable
+@@ -48,14 +52,18 @@ internal sealed class QuotaSurface : IDisposable
  
      public QuotaSurface(SettingsService settings, Localizer loc, bool dark,
          Func<string, IQuotaProvider>? providerFactory = null, TimeSpan? refreshInterval = null,
--        Func<DateTimeOffset>? now = null)
-+        Func<DateTimeOffset>? now = null, RemoteConnectionManager? remote = null, RemoteQuotaStore? remoteStore = null)
+-        Func<DateTimeOffset>? now = null, IQuotaRetryScheduler? retryScheduler = null)
++        Func<DateTimeOffset>? now = null, RemoteConnectionManager? remote = null, RemoteQuotaStore? remoteStore = null,
++        IQuotaRetryScheduler? retryScheduler = null)
      {
          _settings = settings;
          _loc = loc;
          _dispatcher = Dispatcher.CurrentDispatcher;
          _dark = dark;
+         _retryScheduler = retryScheduler ?? new QuotaRetryScheduler(_dispatcher);
 -        _providerFactory = providerFactory ?? QuotaProviders.Create;
 +        _remote = remote;
 +        _remoteStore = remoteStore ?? (providerFactory is null ? new RemoteQuotaStore() : null);
@@ -3087,7 +3178,7 @@ index d3e0b57c..903ebca5 100644
          _now = now ?? (() => DateTimeOffset.UtcNow);
          _flyoutClock = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
          {
-@@ -67,6 +74,34 @@ internal sealed class QuotaSurface : IDisposable
+@@ -70,6 +78,36 @@ internal sealed class QuotaSurface : IDisposable
          ApplySettings();
      }
  
@@ -3107,6 +3198,8 @@ index d3e0b57c..903ebca5 100644
 +        {
 +            if (!QuotaProviders.TryRemoteSource(id, out var sourceHost, out _) || sourceHost != hostId) continue;
 +            reader.Generation++;
++            _retryScheduler.Cancel(id);
++            reader.Retry.Clear();
 +            reader.Busy = false;
 +            if (reader.Provider is RemoteQuotaProvider provider)
 +            {
@@ -3122,7 +3215,7 @@ index d3e0b57c..903ebca5 100644
      public UIElement CreatePage()
      {
          _page?.Dispose();
-@@ -84,12 +119,12 @@ internal sealed class QuotaSurface : IDisposable
+@@ -87,12 +125,12 @@ internal sealed class QuotaSurface : IDisposable
  
      private void SetSource(string id, bool enabled)
      {
@@ -3138,7 +3231,7 @@ index d3e0b57c..903ebca5 100644
          });
      }
  
-@@ -98,7 +133,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -101,7 +139,7 @@ internal sealed class QuotaSurface : IDisposable
          QuotaAllSources = enabled,
          // Turning off “all” keeps today's supported readers explicitly selected, like OrbPage.
          QuotaSources = enabled || s.QuotaAllSources
@@ -3147,7 +3240,7 @@ index d3e0b57c..903ebca5 100644
      });
  
      public void SetPageActive(bool active)
-@@ -125,11 +160,18 @@ internal sealed class QuotaSurface : IDisposable
+@@ -128,11 +166,18 @@ internal sealed class QuotaSurface : IDisposable
      public void ApplySettings()
      {
          if (_disposed) return;
@@ -3168,7 +3261,7 @@ index d3e0b57c..903ebca5 100644
          {
              var reader = _readers[id];
              reader.Generation++;
-@@ -137,17 +179,26 @@ internal sealed class QuotaSurface : IDisposable
+@@ -142,19 +187,28 @@ internal sealed class QuotaSurface : IDisposable
              reader.Provider.Dispose();
              _readers.Remove(id);
          }
@@ -3191,14 +3284,16 @@ index d3e0b57c..903ebca5 100644
              if (networkChanged && !_networkEnabled)
              {
                  reader.Generation++;
+                 _retryScheduler.Cancel(definition.Id);
+                 reader.Retry.Clear();
 -                reader.Provider.Cancel();
 +                if (reader.Provider is RemoteQuotaProvider revokedRemote) revokedRemote.Disconnected("Network access disabled");
 +                else reader.Provider.Cancel();
                  reader.Busy = false;
              }
              // Hydrate every enabled account before the first render, even without network consent.
-@@ -265,7 +316,7 @@ internal sealed class QuotaSurface : IDisposable
-         }
+@@ -300,7 +354,7 @@ internal sealed class QuotaSurface : IDisposable
+         });
      }
  
 -    private void CollectSnapshots() => _snapshots = QuotaProviders.Supported
@@ -3206,7 +3301,7 @@ index d3e0b57c..903ebca5 100644
          .Where(definition => _readers.ContainsKey(definition.Id)).Select(definition => _readers[definition.Id].Snapshot).ToArray();
  
      private string Text(string key) => _loc["win.quota." + key];
-@@ -315,10 +366,10 @@ internal sealed class QuotaSurface : IDisposable
+@@ -350,10 +404,10 @@ internal sealed class QuotaSurface : IDisposable
          _notch?.Update(snapshots, _settings.Current.NetworkEnabled);
          if (_flyoutOpen) FlyoutChanged?.Invoke(CreateFlyoutSummary(snapshots));
          UpdateFlyoutClock();
@@ -3219,17 +3314,17 @@ index d3e0b57c..903ebca5 100644
      }
  
      private UIElement? CreateFlyoutSummary(IReadOnlyList<QuotaSnapshot> snapshots)
-@@ -363,6 +414,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -398,6 +452,7 @@ internal sealed class QuotaSurface : IDisposable
      {
          if (_disposed) return;
          _disposed = true;
 +        if (_remote is not null) _remote.QuotaConnectionChanged -= OnRemoteConnectionChanged;
          _timer.Stop();
+         _retryScheduler.Clear();
          _flyoutClock.Stop();
-         _flyoutClock.Tick -= OnFlyoutClockTick;
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaPersistenceTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaPersistenceTests.cs
 new file mode 100644
-index 00000000..f2c771d4
+index 0000000000000000000000000000000000000000..f2c771d4a2fe10e513261ad88e112f7d60932603
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaPersistenceTests.cs
 @@ -0,0 +1,105 @@
@@ -3340,7 +3435,7 @@ index 00000000..f2c771d4
 +}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
 new file mode 100644
-index 00000000..a452dcc5
+index 0000000000000000000000000000000000000000..a452dcc5ebd87237b75d4e8f7d89880e3674d1b8
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
 @@ -0,0 +1,126 @@
@@ -3472,7 +3567,7 @@ index 00000000..a452dcc5
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteQuotaSourcesTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteQuotaSourcesTests.cs
 new file mode 100644
-index 00000000..b0f99956
+index 0000000000000000000000000000000000000000..b0f99956a3e7735e92e9d3ca015bc9f3ce935afd
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/RemoteQuotaSourcesTests.cs
 @@ -0,0 +1,45 @@
@@ -3522,7 +3617,7 @@ index 00000000..b0f99956
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index b7b7c8b8..76a926a2 100644
+index dee58e091faefcf405810a82c1e1cd2d162264d1..d4362ad676e9929f7483b0bb84a9a0481b4747d8 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 @@ -12,6 +12,37 @@ namespace AgentSpeed.Windows.Tests;
@@ -3564,7 +3659,7 @@ index b7b7c8b8..76a926a2 100644
      [InlineData("left")]
      [InlineData("right")]
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-index 358d6d42..5cfcb92f 100644
+index 358d6d4243c0670845a4e7ab4d62fcf7066cd02d..5cfcb92f0c54066cb9d531e54d4a90b977a1197e 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 @@ -274,6 +274,27 @@ public class QuotaSettingsPageTests
@@ -3596,7 +3691,7 @@ index 358d6d42..5cfcb92f 100644
      [InlineData(0, false)]
      [InlineData(3, true)]
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
-index b759efe5..d84b9fe4 100644
+index b759efe5430be9176e2539dcff7235bfafdf2092..d84b9fe4c83064b91cbe834a45986d5d56c65fff 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
 @@ -15,6 +15,91 @@ namespace AgentSpeed.Windows.Tests;
@@ -3691,6 +3786,263 @@ index b759efe5..d84b9fe4 100644
      [Fact]
      public void ProvidersHydrateBeforePaintStartIndependentlyAndDisplayEveryQualifyingWindow()
      {
--- 
-2.41.0
-
+diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
+index d9be5502a1fba8257f1fe01f9dd9947a5fe7f112..731a4c87c79f2a49f8d24c6b4ed056c96225232d 100644
+--- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
++++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
+@@ -14,6 +14,195 @@ namespace AgentSpeed.Windows.Tests;
+ 
+ public sealed class QuotaSurfaceRetryTests
+ {
++    [Fact]
++    public void LocalAndRemoteDeadlinesAreIndependentAndSuccessResumesOrdinaryRefresh()
++    {
++        RunSta(() =>
++        {
++            using var fixture = new Fixture();
++            Assert.Empty(fixture.Scheduler.Pending); // Offline/cache hydration cannot arm retries.
++            fixture.Enable();
++            fixture.Local.Complete(QuotaStatus.Error, fixture.Now.AddSeconds(90)); // e.g. provider 429 Retry-After
++            fixture.Remote.Complete(QuotaStatus.Stale, fixture.Now.AddSeconds(700));
++            Drain();
++            Assert.Equal(TimeSpan.FromSeconds(90), fixture.Scheduler.Pending["codex"].Delay);
++            Assert.Equal(TimeSpan.FromSeconds(700), fixture.Scheduler.Pending[fixture.RemoteId].Delay);
++            fixture.Scheduler.Fire("codex"); // A spurious early timer must only reschedule.
++            Assert.Equal(1, fixture.Local.Requests);
++            Assert.Equal(TimeSpan.FromSeconds(90), fixture.Scheduler.Pending["codex"].Delay);
++            fixture.Now = fixture.Now.AddSeconds(90);
++            fixture.Scheduler.Fire("codex");
++            Assert.Equal(2, fixture.Local.Requests);
++            Assert.Equal(1, fixture.Remote.Requests);
++            fixture.Scheduler.Fire("codex");
++            Assert.Equal(2, fixture.Local.Requests); // No overlap while busy.
++            fixture.Local.Complete(QuotaStatus.Ok);
++            Drain();
++            Assert.False(fixture.Scheduler.Pending.ContainsKey("codex"));
++            fixture.Surface.SetPageActive(true); // The ordinary automatic-refresh path.
++            Assert.Equal(3, fixture.Local.Requests);
++            Assert.Equal(1, fixture.Remote.Requests); // Normal cadence cannot bypass the remote failure deadline.
++            fixture.Local.Complete(QuotaStatus.Ok);
++            Drain();
++            fixture.Now = fixture.Now.AddSeconds(610);
++            fixture.Scheduler.Fire(fixture.RemoteId);
++            Assert.Equal(2, fixture.Remote.Requests);
++            fixture.Remote.Complete(QuotaStatus.Ok);
++            Drain();
++            Assert.Empty(fixture.Scheduler.Pending);
++        });
++    }
++
++    [Theory]
++    [InlineData(false)]
++    [InlineData(true)]
++    public void MissingTransportDeadlineUsesBoundedFallbackAndSuccessResets(bool remote)
++    {
++        RunSta(() =>
++        {
++            using var fixture = new Fixture();
++            fixture.Enable();
++            var provider = remote ? fixture.Remote : fixture.Local;
++            var other = remote ? fixture.Local : fixture.Remote;
++            var id = remote ? fixture.RemoteId : "codex";
++            other.Complete(QuotaStatus.Ok);
++            foreach (var seconds in new[] { 60, 120, 240, 480, 900, 900 })
++            {
++                provider.Complete(QuotaStatus.Error);
++                Drain();
++                Assert.Equal(TimeSpan.FromSeconds(seconds), fixture.Scheduler.Pending[id].Delay);
++                fixture.Now = fixture.Now.AddSeconds(seconds);
++                fixture.Scheduler.Fire(id);
++            }
++            provider.Complete(QuotaStatus.Ok);
++            Drain();
++            Assert.Empty(fixture.Scheduler.Pending);
++            fixture.Surface.SetPageActive(true);
++            provider.Complete(QuotaStatus.Stale);
++            other.Complete(QuotaStatus.Ok);
++            Drain();
++            Assert.Equal(TimeSpan.FromSeconds(60), fixture.Scheduler.Pending[id].Delay);
++        });
++    }
++
++    [Theory]
++    [InlineData("network", false)]
++    [InlineData("source", false)]
++    [InlineData("dispose", false)]
++    [InlineData("manual", false)]
++    [InlineData("network", true)]
++    [InlineData("source", true)]
++    [InlineData("host", true)]
++    [InlineData("destination", true)]
++    [InlineData("dispose", true)]
++    [InlineData("manual", true)]
++    public void LifecycleCancellationRejectsQueuedRetryAndLateFailure(string transition, bool remote)
++    {
++        RunSta(() =>
++        {
++            using var fixture = new Fixture();
++            fixture.Enable();
++            var provider = remote ? fixture.Remote : fixture.Local;
++            var other = remote ? fixture.Local : fixture.Remote;
++            var id = remote ? fixture.RemoteId : "codex";
++            other.Complete(QuotaStatus.Ok);
++            provider.Complete(QuotaStatus.Error);
++            Drain();
++            var queued = fixture.Scheduler.Pending[id].Retry;
++            fixture.Now = fixture.Now.AddSeconds(60);
++            fixture.Scheduler.Fire(id);
++            Assert.Equal(2, provider.Requests);
++            switch (transition)
++            {
++                case "network": fixture.Settings.Update(s => s with { NetworkEnabled = false }); break;
++                case "source": fixture.Settings.Update(s => s with { QuotaSources = [remote ? "codex" : fixture.RemoteId] }); break;
++                case "host": fixture.Settings.Update(s => s with { RemoteHosts = [] }); break;
++                case "destination":
++                    // The replacement reader may start immediately, but the old reader's response and callback stay invalid.
++                    fixture.Settings.Update(s => s with { RemoteHosts = [fixture.Host with { Destination = "replacement" }] });
++                    break;
++                case "dispose": fixture.Surface.Dispose(); break;
++                default: fixture.Settings.Update(s => s with { AutoRefreshQuota = false }); break;
++            }
++            Assert.Empty(fixture.Scheduler.Pending);
++            var requests = provider.Requests;
++            queued();
++            Assert.Equal(requests, provider.Requests);
++            provider.Complete(QuotaStatus.Error); // Deliberately return after cancellation/removal/disposal.
++            Drain();
++            Assert.Empty(fixture.Scheduler.Pending);
++            Assert.Equal(requests, provider.Requests);
++        });
++    }
++
++    [Theory]
++    [InlineData(QuotaStatus.Ok, false)]
++    [InlineData(QuotaStatus.NeedsAuth, false)]
++    [InlineData(QuotaStatus.AccessDenied, false)]
++    [InlineData(QuotaStatus.Unsupported, false)]
++    [InlineData(QuotaStatus.Error, true)]
++    public void SuccessfulFloorsAndPermanentFailuresNeverArmEarlyRetry(QuotaStatus status, bool waiting)
++    {
++        RunSta(() =>
++        {
++            using var fixture = new Fixture();
++            fixture.Enable();
++            fixture.Local.Complete(status, fixture.Now.AddSeconds(30), waiting);
++            fixture.Remote.Complete(status, fixture.Now.AddSeconds(30), waiting);
++            Drain();
++            Assert.Empty(fixture.Scheduler.Pending);
++        });
++    }
++
++    [Fact]
++    public void ManualModeStartupFailureNeverSchedulesHiddenRequests()
++    {
++        RunSta(() =>
++        {
++            using var fixture = new Fixture(automatic: false);
++            fixture.Enable();
++            fixture.Local.Complete(QuotaStatus.Error, fixture.Now.AddSeconds(30));
++            fixture.Remote.Complete(QuotaStatus.Error);
++            Drain();
++            fixture.Surface.SetPageActive(true);
++            Assert.Empty(fixture.Scheduler.Pending);
++            Assert.Equal(1, fixture.Local.Requests);
++            Assert.Equal(1, fixture.Remote.Requests);
++        });
++    }
++
++    [Theory]
++    [InlineData("network")]
++    [InlineData("source")]
++    [InlineData("host")]
++    [InlineData("dispose")]
++    [InlineData("manual")]
++    public void CancellingPendingRetryRemovesItsWakeupWithoutRefreshingOtherSources(string transition)
++    {
++        RunSta(() =>
++        {
++            using var fixture = new Fixture();
++            fixture.Enable();
++            fixture.Local.Complete(QuotaStatus.Ok);
++            fixture.Remote.Complete(QuotaStatus.Error);
++            Drain();
++            var queued = fixture.Scheduler.Pending[fixture.RemoteId].Retry;
++            switch (transition)
++            {
++                case "network": fixture.Settings.Update(s => s with { NetworkEnabled = false }); break;
++                case "source": fixture.Settings.Update(s => s with { QuotaSources = ["codex"] }); break;
++                case "host": fixture.Settings.Update(s => s with { RemoteHosts = [] }); break;
++                case "dispose": fixture.Surface.Dispose(); break;
++                default: fixture.Settings.Update(s => s with { AutoRefreshQuota = false }); break;
++            }
++            Assert.Empty(fixture.Scheduler.Pending);
++            fixture.Now = fixture.Now.AddMinutes(2);
++            queued();
++            Assert.Equal(1, fixture.Local.Requests);
++            Assert.Equal(1, fixture.Remote.Requests);
++        });
++    }
++
+     [Fact]
+     public void FirstProvider429WakesAtRetryAfterRatherThanFiveMinuteTick()
+     {
+@@ -71,6 +260,59 @@ public sealed class QuotaSurfaceRetryTests
+         }
+     }
+ 
++    private sealed class Fixture : IDisposable
++    {
++        public DateTimeOffset Now = new(2026, 11, 15, 12, 0, 0, TimeSpan.Zero);
++        public readonly RemoteHost Host = new(Guid.NewGuid(), "Build", "build", true);
++        public readonly SettingsService Settings = new(Dispatcher.CurrentDispatcher);
++        public readonly ControlledScheduler Scheduler = new();
++        public readonly ControlledProvider Local = new("codex");
++        public readonly ControlledProvider Remote = new("opencode-go");
++        public readonly QuotaSurface Surface;
++        public string RemoteId => QuotaProviders.RemoteSourceId(Host.Id, "opencode-go");
++
++        public Fixture(bool automatic = true)
++        {
++            Settings.MakeEphemeral();
++            Settings.Update(s => s with { ShowQuotaNotch = false, NetworkEnabled = false, AutoRefreshQuota = automatic,
++                QuotaAllSources = false, QuotaSources = ["codex", RemoteId], RemoteHosts = [Host] });
++            var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
++            Surface = new QuotaSurface(Settings, loc, false, id => id == "codex" ? Local :
++                new RemoteQuotaProvider(QuotaSources.Available(Settings.Current).Single(source => source.Id == id),
++                    (_, _) => Remote.RefreshAsync()), refreshInterval: TimeSpan.FromHours(1), now: () => Now,
++                retryScheduler: Scheduler);
++            Settings.Changed += (_, _) => Surface.ApplySettings();
++        }
++
++        public void Enable() => Settings.Update(s => s with { NetworkEnabled = true });
++        public void Dispose() { Surface.Dispose(); Settings.Dispose(); }
++    }
++
++    private sealed class ControlledProvider(string id) : IQuotaProvider
++    {
++        private readonly Queue<TaskCompletionSource<QuotaSnapshot>> _pending = new();
++        private QuotaSnapshot _cached = new(id, id, "official", QuotaStatus.Stale, [], null, null, null, null,
++            null, "fixture", null, null, false);
++        public int Requests { get; private set; }
++        public QuotaSnapshot ReadCachedSnapshot() => _cached;
++        public Task<QuotaSnapshot> RefreshStartupAsync() => RefreshAsync();
++        public Task<QuotaSnapshot> RefreshAsync()
++        {
++            Requests++;
++            // Inline continuations plus an explicit dispatcher drain make lifecycle ordering deterministic.
++            var completion = new TaskCompletionSource<QuotaSnapshot>();
++            _pending.Enqueue(completion);
++            return completion.Task;
++        }
++        public void Complete(QuotaStatus status, DateTimeOffset? deadline = null, bool waiting = false)
++        {
++            _cached = _cached with { Status = status, NextAllowedAt = deadline, WaitingForRefresh = waiting };
++            _pending.Dequeue().SetResult(_cached);
++        }
++        public void Cancel() { } // Intentionally permits late results.
++        public void Dispose() { }
++    }
++
+     private sealed class ControlledScheduler : IQuotaRetryScheduler
+     {
+         public readonly Dictionary<string, (TimeSpan Delay, Action Retry)> Pending = new();

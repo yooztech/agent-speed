@@ -317,13 +317,19 @@ quota windows. Portable geometry/state checks, isolated WPF control tests,
 provider and refresh-lifecycle regressions remain; none establishes desktop
 click-through, mixed-DPI behavior or native input acceptance.
 
-The approved multi-window design retains the supplier logo and matte center disk,
-round progress caps and native concave flares. Rings run from longest period outside
-to shortest inside: month, week, five hours. Adding rings grows the actual content
-area rather than shrinking the logo or clipping the outer ring into a flare. Every
-existing quota surface includes all available windows for each displayed account;
-there is no aggregate allowance and no headline-only substitute. Source-specific
-credential stores, account isolation and persisted backoff remain independent.
+The approved compact multi-window design retains the real supplier marks, matte
+center disks, round progress caps and native concave flares. Rings run longest
+outside to shortest inside: month, week, five hours. Center disks now shrink to
+36/30/24 logical pixels and marks to 22/19/16 for one/two/three-or-more windows.
+Four-pixel strokes with six-pixel radial pitch give 52/58/64-pixel outer diameters
+for one/two/three rings, instead of increasing a fixed large center by 16 per ring.
+Each account has aligned compact reading rows beneath its ring group, not a long
+horizontal legend repeating the supplier/host on every period. Ordinary periods
+use short labels and percentages; five hours is `5h` in the body and `5小时额度`
+in Simplified Chinese details. Distinct feature scopes and arbitrary supplier
+durations remain identifiable, and no windows or over-limit numeric values are
+hidden. Painted bounds, placement and input geometry share the same four-edge
+metrics. Source-specific credentials, account isolation and backoff stay separate.
 
 The multi-window/OpenCode Go feature is carried by
 `0022-Add-multi-window-quota-and-OpenCode-Go-provider.patch`. Focused Linux-hosted
@@ -350,6 +356,35 @@ reset-card count/expiry and the same one-shot startup-floor exception, while
 authentication rejection, legacy schedules, failures and usage/reset-endpoint
 429 deadlines remain binding. Source selection and automatic/manual polling now
 belong to the application lifecycle rather than a visible subscription surface.
+Automatic refresh also wakes a failed source at its provider retry deadline,
+instead of waiting for the next five-minute poll. A transient refresh result with
+no deadline uses a 60-second exponential client delay capped at 15 minutes;
+persisted Retry-After remains authoritative. Retries are per source, never an
+all-account refresh loop. Cache hydration alone does not arm them; success,
+automatic-off, network revocation, source removal and disposal cancel applicable
+wakeups. Manual mode retains its existing explicit/startup behavior, and unknown
+observations are never converted to a default zero. These controller fixes belong
+to the base platform patches, with only necessary multi-provider/remote integration
+in the later feature patches.
+Focused checks for this repair passed 155 formatting/geometry cases, the four
+replacement edge-containment cases and nine deadline/backoff policy cases.
+Windows application/native tests cross-compile with zero warnings/errors.
+The real Swift controller and remote-lifecycle regressions pass under Swift
+6.2.4, including a provider 429 deadline, independent source wakeups and queued
+cancellation; extracted production geometry/label proofs also pass. Five changed
+native Swift source/test surfaces pass syntax parsing. A browser-inspected
+preview uses the production Windows geometry, formatting and real logo paths for
+all four edges and one through four rings; browser text shaping is approximate,
+not native WPF or AppKit rendering/input acceptance. No package or Release was
+created for these checks.
+The corrections remain in their owning patches: base Mac lifecycle/single-ring
+and wording in 0020, base Windows lifecycle/single-ring and wording in 0021,
+multi-window rows/adaptive geometry in 0022, and remote integration in 0023;
+Kimi stays in 0024. The final 24-patch queue replays successfully, and all 3,136
+source files match the checked final tree byte-for-byte. At the 0020 boundary,
+all twelve real controller tests pass in the portable Swift package without Go,
+remote transport or Kimi dependencies. The 0021 single-Codex Windows application
+also cross-compiles with zero warnings/errors before its Reader migration.
 macOS now exposes automatic refresh, All sources/individual source selection and
 the independent default-off Keep expanded switch. Native account cards include
 all remaining-allowance windows, reset countdowns, balances/reset cards and the

@@ -1,44 +1,65 @@
-From 874b4862ccd84051687e7a6393f48bd058037c48 Mon Sep 17 00:00:00 2001
+From 85fc1ebd70ef6c86ce91fa2d2c1ea1572a194d97 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 15:52:19 +0800
+Date: Sun, 15 Nov 2026 22:07:56 +0800
 Subject: [PATCH] Add macOS Codex quota monitoring
 
 ---
- macos/Resources/Codenotch-LICENSE.txt              |  28 +
- macos/Resources/strings.macos.json                 |  36 ++
- macos/Sources/AgentSpeed/App/AppDelegate.swift     |   7 +
- macos/Sources/AgentSpeed/App/AppModel.swift        |   7 +-
- macos/Sources/AgentSpeed/App/LaunchOptions.swift   |   6 +
- macos/Sources/AgentSpeed/App/QuotaController.swift | 212 +++++++
- .../Sources/AgentSpeed/App/QuotaGlyphOutline.swift | 102 ++++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift      | 646 +++++++++++++++++++++
- macos/Sources/AgentSpeed/App/QuotaNotchShape.swift | 449 ++++++++++++++
- .../AgentSpeed/App/QuotaNotchVisualHarness.swift   | 150 +++++
- .../AgentSpeed/App/QuotaRefreshScheduler.swift     |  32 +
- macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift |  19 +
- .../AgentSpeed/Dashboard/DashboardView.swift       |  72 +++
- .../AgentSpeed/Localization/StringTable.swift      |  90 +++
- .../SettingsWindow/Panes/QuotaPane.swift           | 288 +++++++++
- .../SettingsWindow/SettingsPaneView.swift          |   2 +-
- macos/Sources/AgentSpeed/Support/MenuFactory.swift |   1 +
- .../AgentSpeedCore/CodexQuotaProvider.swift        | 346 +++++++++++
- macos/Sources/AgentSpeedCore/Quota.swift           | 138 +++++
- .../Sources/AgentSpeedCore/QuotaPersistence.swift  |  82 +++
- .../AgentSpeedAppTests/QuotaControllerTests.swift  | 297 ++++++++++
- .../Tests/AgentSpeedAppTests/QuotaNotchTests.swift | 285 +++++++++
- .../QuotaPresentationTests.swift                   | 161 +++++
- .../CodexQuotaProviderTests.swift                  | 236 ++++++++
- .../AgentSpeedCoreTests/QuotaLifecycleTests.swift  | 190 ++++++
- macos/Tests/AgentSpeedCoreTests/QuotaTests.swift   |  48 ++
- macos/scripts/build-app.sh                         |   1 +
- spec/QUOTA.md                                      | 119 ++++
- spec/fixtures/codex-credit-quota.json              |   8 +
- spec/fixtures/codex-quota.json                     |  26 +
- 30 files changed, 4082 insertions(+), 2 deletions(-)
+ macos/Resources/Codenotch-LICENSE.txt         |  28 +
+ macos/Resources/strings.macos.json            |  37 +
+ .../Sources/AgentSpeed/App/AppDelegate.swift  |   7 +
+ macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
+ .../AgentSpeed/App/LaunchOptions.swift        |   6 +
+ .../AgentSpeed/App/QuotaController.swift      | 253 +++++++
+ .../AgentSpeed/App/QuotaGlyphOutline.swift    | 102 +++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 647 ++++++++++++++++++
+ .../AgentSpeed/App/QuotaNotchShape.swift      | 451 ++++++++++++
+ .../App/QuotaNotchVisualHarness.swift         | 150 ++++
+ .../App/QuotaRefreshScheduler.swift           |  88 +++
+ .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
+ .../AgentSpeed/Dashboard/DashboardView.swift  |  72 ++
+ .../AgentSpeed/Localization/StringTable.swift |  91 +++
+ .../SettingsWindow/Panes/QuotaPane.swift      | 294 ++++++++
+ .../SettingsWindow/SettingsPaneView.swift     |   2 +-
+ .../AgentSpeed/Support/MenuFactory.swift      |   1 +
+ .../AgentSpeedCore/CodexQuotaProvider.swift   | 346 ++++++++++
+ macos/Sources/AgentSpeedCore/Quota.swift      | 138 ++++
+ .../AgentSpeedCore/QuotaPersistence.swift     |  82 +++
+ .../QuotaControllerTests.swift                | 527 ++++++++++++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 285 ++++++++
+ .../QuotaPresentationTests.swift              | 172 +++++
+ .../CodexQuotaProviderTests.swift             | 236 +++++++
+ .../QuotaLifecycleTests.swift                 | 190 +++++
+ .../AgentSpeedCoreTests/QuotaTests.swift      |  48 ++
+ macos/scripts/build-app.sh                    |   1 +
+ spec/QUOTA.md                                 | 121 ++++
+ spec/fixtures/codex-credit-quota.json         |   8 +
+ spec/fixtures/codex-quota.json                |  26 +
+ 30 files changed, 4433 insertions(+), 2 deletions(-)
+ create mode 100644 macos/Resources/Codenotch-LICENSE.txt
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotch.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
+ create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
+ create mode 100644 macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
+ create mode 100644 macos/Sources/AgentSpeedCore/Quota.swift
+ create mode 100644 macos/Sources/AgentSpeedCore/QuotaPersistence.swift
+ create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
+ create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
+ create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
+ create mode 100644 spec/QUOTA.md
+ create mode 100644 spec/fixtures/codex-credit-quota.json
+ create mode 100644 spec/fixtures/codex-quota.json
 
 diff --git a/macos/Resources/Codenotch-LICENSE.txt b/macos/Resources/Codenotch-LICENSE.txt
 new file mode 100644
-index 00000000..495b4aee
+index 0000000000000000000000000000000000000000..495b4aee4594fe59ee0c92eb89f18c21c27b6d0f
 --- /dev/null
 +++ b/macos/Resources/Codenotch-LICENSE.txt
 @@ -0,0 +1,28 @@
@@ -71,13 +92,14 @@ index 00000000..495b4aee
 +OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 +SOFTWARE.
 diff --git a/macos/Resources/strings.macos.json b/macos/Resources/strings.macos.json
-index 0d19457d..883c5b16 100644
+index 0d19457d1edbd386fd6c5487297c77b6dc7366dd..4cf47a4b4cf3b99be25b7052fc500c892ff15761 100644
 --- a/macos/Resources/strings.macos.json
 +++ b/macos/Resources/strings.macos.json
-@@ -1,5 +1,41 @@
+@@ -1,5 +1,42 @@
  {
    "_comment": "macOS-only UI strings. Every key needs zh-Hant, zh-Hans, en and ja. Run macos/scripts/sync-strings.py after editing.",
 +  "mac.quota.title": {"zh-Hant":"用量額度","zh-Hans":"用量额度","en":"Quota","ja":"使用枠"},
++  "mac.quota.fiveHoursLimit": {"zh-Hant":"5小時額度","zh-Hans":"5小时额度","en":"5h limit","ja":"5時間の上限"},
 +  "mac.quota.refresh": {"zh-Hant":"重新整理","zh-Hans":"刷新","en":"Refresh","ja":"更新"},
 +  "mac.quota.empty": {"zh-Hant":"尚無額度資料。","zh-Hans":"尚无额度数据。","en":"No quota data yet.","ja":"使用枠データはまだありません。"},
 +  "mac.quota.diagnostics": {"zh-Hant":"詳細資料","zh-Hans":"详细信息","en":"Details","ja":"詳細"},
@@ -110,14 +132,14 @@ index 0d19457d..883c5b16 100644
 +  "mac.quota.status.waiting": {"zh-Hant":"等待下次更新","zh-Hans":"等待下次更新","en":"Waiting for next refresh","ja":"次の更新を待機中"},
 +  "mac.quota.period.month": {"zh-Hant":"月","zh-Hans":"月","en":"Month","ja":"月"},
 +  "mac.quota.period.week": {"zh-Hant":"週","zh-Hans":"周","en":"Week","ja":"週"},
-+  "mac.quota.period.fiveHours": {"zh-Hant":"5 小時","zh-Hans":"5 小时","en":"5h","ja":"5時間"},
++  "mac.quota.period.fiveHours": {"zh-Hant":"5h","zh-Hans":"5h","en":"5h","ja":"5h"},
 +  "mac.quota.noAllowance": {"zh-Hant":"此帳戶沒有可用的 %@ 訂閱額度","zh-Hans":"此账户没有可用的 %@ 订阅额度","en":"No %@ subscription allowance on this account","ja":"このアカウントに %@ の利用枠はありません"},
 +  "mac.quota.limitReached": {"zh-Hant":"已達額度限制","zh-Hans":"已达额度限制","en":"Allowance reached","ja":"利用枠の上限に達しました"},
    "mac.launchAtLogin.requiresApproval": {
      "zh-Hant": "請在「系統設定」›「一般」›「登入項目」中允許 Agent Speed。",
      "zh-Hans": "请在“系统设置”›“通用”›“登录项”中允许 Agent Speed。",
 diff --git a/macos/Sources/AgentSpeed/App/AppDelegate.swift b/macos/Sources/AgentSpeed/App/AppDelegate.swift
-index b6b512f8..80e44162 100644
+index b6b512f880795edaf2976613edd4075e85a89e0a..80e441620089cbe27b18fbae2be91b4da4292d2d 100644
 --- a/macos/Sources/AgentSpeed/App/AppDelegate.swift
 +++ b/macos/Sources/AgentSpeed/App/AppDelegate.swift
 @@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
@@ -156,7 +178,7 @@ index b6b512f8..80e44162 100644
          orbs?.shutdown()
          model?.shutdown()
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index c7e59b49..a5af5ca5 100644
+index c7e59b49d8c469e60120899958a83fbe47d34c83..a5af5ca5c75f21af502db2abc13d11ee15332ff9 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -63,6 +63,7 @@ final class AppModel {
@@ -209,7 +231,7 @@ index c7e59b49..a5af5ca5 100644
          case .sources: "folder"
          case .about: "info.circle"
 diff --git a/macos/Sources/AgentSpeed/App/LaunchOptions.swift b/macos/Sources/AgentSpeed/App/LaunchOptions.swift
-index 740fad3c..443a880e 100644
+index 740fad3c12ef09512a09e32486be4dfeeabc2eb5..443a880e5d04ca7b558a8294ea60777f0803c471 100644
 --- a/macos/Sources/AgentSpeed/App/LaunchOptions.swift
 +++ b/macos/Sources/AgentSpeed/App/LaunchOptions.swift
 @@ -25,6 +25,8 @@ struct LaunchOptions: Sendable {
@@ -234,10 +256,10 @@ index 740fad3c..443a880e 100644
                      options.screenshotsDirectory = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
 diff --git a/macos/Sources/AgentSpeed/App/QuotaController.swift b/macos/Sources/AgentSpeed/App/QuotaController.swift
 new file mode 100644
-index 00000000..f3d016b0
+index 0000000000000000000000000000000000000000..2bd429c8f321dfaa2165f962aee8fe436d4b5d49
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaController.swift
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,253 @@
 +import AgentSpeedCore
 +import Foundation
 +import Observation
@@ -252,6 +274,7 @@ index 00000000..f3d016b0
 +        var cancellation: Task<Void, Never>?
 +        var generation = 0
 +        var busy = false
++        var retry = QuotaFailureRetry()
 +        init(_ provider: any QuotaProvider) { self.provider = provider }
 +    }
 +
@@ -263,6 +286,8 @@ index 00000000..f3d016b0
 +    private let scheduler: any QuotaRefreshScheduling
 +    private var updatingPreferences = false
 +    private let refreshInterval: TimeInterval
++    private let now: () -> Date
++    private var disposed = false
 +    private(set) var snapshots: [QuotaSnapshot] = []
 +    private(set) var isRefreshing = false
 +    private(set) var networkEnabled = false
@@ -307,11 +332,13 @@ index 00000000..f3d016b0
 +    }
 +
 +    init(defaults: UserDefaults = .standard, providers: [any QuotaProvider] = QuotaProviderRegistry.makeProviders(),
-+         refreshInterval: TimeInterval = 300, scheduler: any QuotaRefreshScheduling = QuotaRefreshScheduler()) {
++         refreshInterval: TimeInterval = 300, scheduler: any QuotaRefreshScheduling = QuotaRefreshScheduler(),
++         now: @escaping () -> Date = Date.init) {
 +        self.defaults = defaults
 +        self.providers = providers
 +        self.refreshInterval = refreshInterval
 +        self.scheduler = scheduler
++        self.now = now
 +        floatingVisible = defaults.object(forKey: "quota.floatingVisible") as? Bool ?? true
 +        keepExpanded = defaults.object(forKey: "quota.keepExpanded") as? Bool ?? false
 +        autoRefreshEnabled = defaults.object(forKey: "quota.autoRefreshEnabled") as? Bool ?? true
@@ -325,6 +352,7 @@ index 00000000..f3d016b0
 +
 +    func setNetworkEnabled(_ enabled: Bool) {
 +        guard networkEnabled != enabled else { return }
++        guard !disposed else { return }
 +        networkEnabled = enabled
 +        for reader in readers.values {
 +            stop(reader)
@@ -337,7 +365,7 @@ index 00000000..f3d016b0
 +
 +    /// A user action, independent of the automatic-refresh preference.
 +    func refresh() {
-+        guard networkEnabled else { return }
++        guard !disposed, networkEnabled else { return }
 +        for reader in readers.values { start(reader, startup: false) }
 +    }
 +
@@ -350,8 +378,19 @@ index 00000000..f3d016b0
 +        }
 +    }
 +
++    func dispose() {
++        guard !disposed else { return }
++        disposed = true
++        scheduler.stop()
++        scheduler.stopRetries()
++        for reader in readers.values { stop(reader) }
++        readers.removeAll()
++        collectSnapshots()
++    }
++
 +    private func reconcileSources() {
 +        let enabled = allSourcesEnabled ? Set(providers.map(\.id)) : enabledProviderIDs
++        guard !disposed else { return }
 +        var added = false
 +        for id in Array(readers.keys) where !enabled.contains(id) {
 +            if let reader = readers.removeValue(forKey: id) { stop(reader) }
@@ -369,6 +408,8 @@ index 00000000..f3d016b0
 +    }
 +
 +    private func stop(_ reader: Reader) {
++        scheduler.cancelRetry(for: reader.provider.id)
++        reader.retry.clear()
 +        reader.generation += 1
 +        reader.task?.cancel()
 +        reader.task = nil
@@ -396,19 +437,21 @@ index 00000000..f3d016b0
 +    }
 +
 +    private func refreshStartupOrAutomatically() {
-+        guard networkEnabled else { return }
++        guard !disposed, networkEnabled else { return }
 +        for reader in readers.values {
 +            if !startupAttempted.contains(reader.provider.id) { start(reader, startup: true) }
-+            else if autoRefreshEnabled { start(reader, startup: false) }
++            else if autoRefreshEnabled && reader.retry.dueAt == nil { start(reader, startup: false) }
 +        }
 +    }
 +
 +    private func refreshAutomatically() {
-+        if autoRefreshEnabled { refresh() }
++        guard !disposed, networkEnabled, autoRefreshEnabled else { return }
++        for reader in readers.values where reader.retry.dueAt == nil { start(reader, startup: false) }
 +    }
 +
 +    private func start(_ reader: Reader, startup: Bool) {
-+        guard networkEnabled, !reader.busy else { return }
++        guard !disposed, networkEnabled, !reader.busy else { return }
++        scheduler.cancelRetry(for: reader.provider.id)
 +        if startup { startupAttempted.insert(reader.provider.id) }
 +        // Supersede a cache-only load without allowing its late result to overwrite a live read.
 +        reader.generation += 1
@@ -423,13 +466,29 @@ index 00000000..f3d016b0
 +            let cached = await reader.provider.readCachedSnapshot()
 +            guard let self, self.isCurrent(reader, generation: generation), self.networkEnabled, !Task.isCancelled else { return }
 +            reader.snapshot = cached
++            let startedAt = self.now()
 +            self.collectSnapshots()
 +            let result = await (startup ? reader.provider.refreshStartup() : reader.provider.refresh())
 +            guard self.isCurrent(reader, generation: generation), self.networkEnabled, !Task.isCancelled else { return }
 +            reader.snapshot = result
++            if self.autoRefreshEnabled {
++                reader.retry.complete(before: cached, result: result, startedAt: startedAt, now: self.now())
++                self.scheduleRetry(reader)
++            }
 +            reader.busy = false
 +            reader.task = nil
 +            self.collectSnapshots()
++        }
++    }
++
++    private func scheduleRetry(_ reader: Reader) {
++        guard !disposed, networkEnabled, autoRefreshEnabled, let due = reader.retry.dueAt else { return }
++        let generation = reader.generation
++        scheduler.scheduleRetry(for: reader.provider.id, after: max(1, due.timeIntervalSince(now()))) { [weak self, weak reader] in
++            guard let self, let reader, !self.disposed, self.networkEnabled, self.autoRefreshEnabled,
++                  self.isCurrent(reader, generation: generation), !reader.busy else { return }
++            if let due = reader.retry.dueAt, due > self.now() { self.scheduleRetry(reader); return }
++            self.start(reader, startup: false)
 +        }
 +    }
 +
@@ -444,7 +503,11 @@ index 00000000..f3d016b0
 +
 +    private func updateTimer() {
 +        scheduler.stop()
-+        guard networkEnabled, autoRefreshEnabled, !readers.isEmpty else { return }
++        if !networkEnabled || !autoRefreshEnabled || disposed {
++            scheduler.stopRetries()
++            for reader in readers.values { reader.retry.clear() }
++        }
++        guard !disposed, networkEnabled, autoRefreshEnabled, !readers.isEmpty else { return }
 +        scheduler.start(every: refreshInterval) { [weak self] in
 +            self?.refreshAutomatically()
 +        }
@@ -452,7 +515,7 @@ index 00000000..f3d016b0
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift b/macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
 new file mode 100644
-index 00000000..b1a81438
+index 0000000000000000000000000000000000000000..b1a81438ef6eaf22f55adac0355ea9aae5b60118
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
 @@ -0,0 +1,102 @@
@@ -560,10 +623,10 @@ index 00000000..b1a81438
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 00000000..c48c01ec
+index 0000000000000000000000000000000000000000..a7de64fc6ee898aa6f77d3dc00550f768b46978c
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,646 @@
+@@ -0,0 +1,647 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -643,7 +706,8 @@ index 00000000..c48c01ec
 +                : l10n("mac.quota.days", quotaNumber(duration / 86_400, l10n))
 +        } else { label = l10n("mac.quota.window") }
 +    }
-+    return window.label.isEmpty || window.label == providerName ? label : window.label + " · " + label
++    if quotaIsProviderLabel(window.label, providerName: providerName) { return label }
++    return window.label + " · " + label
 +}
 +
 +@MainActor @Observable
@@ -766,24 +830,24 @@ index 00000000..c48c01ec
 +            ZStack {
 +                Circle().fill(dark ? Color(white: 42 / 255) : .white)
 +                    .overlay(Circle().stroke(dark ? Color(white: 57 / 255) : Color(white: 214 / 255), lineWidth: 0.5))
-+                    .frame(width: 44, height: 44)
++                    .frame(width: 36, height: 36)
 +                if reading.windows.isEmpty {
-+                    Circle().stroke(Color(white: 164 / 255).opacity(0.38), style: StrokeStyle(lineWidth: 5, dash: [1, 4]))
-+                        .frame(width: 50, height: 50)
++                    Circle().stroke(Color(white: 164 / 255).opacity(0.38), style: StrokeStyle(lineWidth: NotchLayout.ringStroke, dash: [1, 4]))
++                        .frame(width: 48, height: 48)
 +                }
 +                ForEach(Array(reading.windows.enumerated()), id: \.element.id) { index, window in
-+                    let diameter = reading.outerDiameter - 6 - CGFloat(index) * 16
++                    let diameter = reading.outerDiameter - NotchLayout.ringStroke - CGFloat(index) * 16
 +                    let unknown = window.usedFraction == nil || reading.snapshot?.status == .needsAuth
 +                    let color = NotchLayout.periodColor(window)
-+                    Circle().stroke(color.opacity(unknown ? 0.38 : 0.22), style: StrokeStyle(lineWidth: 5, dash: unknown ? [1, 4] : []))
++                    Circle().stroke(color.opacity(unknown ? 0.38 : 0.22), style: StrokeStyle(lineWidth: NotchLayout.ringStroke, dash: unknown ? [1, 4] : []))
 +                        .frame(width: diameter, height: diameter)
 +                    if !unknown, let remaining = window.remainingFraction {
 +                        Circle().trim(from: 0, to: min(max(remaining, 0), 1))
-+                            .stroke(color, style: StrokeStyle(lineWidth: 5, lineCap: .round)).rotationEffect(.degrees(-90))
++                            .stroke(color, style: StrokeStyle(lineWidth: NotchLayout.ringStroke, lineCap: .round)).rotationEffect(.degrees(-90))
 +                            .frame(width: diameter, height: diameter)
 +                    }
 +                }
-+                QuotaSourceLogo(providerID: reading.providerID, ink: dark ? .white : Color(white: 0.12)).frame(width: 26, height: 26)
++                QuotaSourceLogo(providerID: reading.providerID, ink: dark ? .white : Color(white: 0.12)).frame(width: 22, height: 22)
 +                if reading.windows.contains(where: { ($0.usedFraction ?? 0) >= 0.9 }) {
 +                    Circle().fill(Color(red: 229 / 255, green: 104 / 255, blue: 104 / 255)).frame(width: 5, height: 5).offset(x: 15, y: 15)
 +                }
@@ -987,8 +1051,8 @@ index 00000000..c48c01ec
 +        readings = state.4.map { provider in
 +            QuotaNotchReading(providerID: provider.id, snapshot: state.3.first { $0.id == provider.id }, networkEnabled: state.6, l10n: model.l10n)
 +        }
-+        ringSize = readings.map(\.outerDiameter).max() ?? 56
-+        cellSize = CGSize(width: max(ringSize, readings.map(\.readingWidth).max() ?? 56), height: max(80, ringSize + 4 + (readings.map(\.readingHeight).max() ?? 20)))
++        ringSize = readings.map(\.outerDiameter).max() ?? 52
++        cellSize = CGSize(width: max(ringSize, readings.map(\.readingWidth).max() ?? 52), height: max(80, ringSize + 4 + (readings.map(\.readingHeight).max() ?? 20)))
 +        hover.keepExpanded = state.5
 +        cardMeasureDirty = true
 +        if let active = hover.activeSource, !readings.contains(where: { $0.providerID == active }) { hover.dismissCard() }
@@ -1212,10 +1276,10 @@ index 00000000..c48c01ec
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
 new file mode 100644
-index 00000000..02424a34
+index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a71888dcc5b26
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
-@@ -0,0 +1,449 @@
+@@ -0,0 +1,451 @@
 +import AgentSpeedCore
 +import AppKit
 +import SwiftUI
@@ -1229,7 +1293,9 @@ index 00000000..02424a34
 +    static let discRadius: CGFloat = 23.3 * 0.9
 +    static let gripPitch: CGFloat = 12.5
 +
-+    static func outerDiameter(_ count: Int) -> CGFloat { 56 + CGFloat(max(0, count - 1)) * 16 }
++    static let ringStroke: CGFloat = 4
++
++    static func outerDiameter(_ count: Int) -> CGFloat { 52 + CGFloat(max(0, count - 1)) * 16 }
 +    static func periodColor(_ window: QuotaWindow) -> Color {
 +        switch window.period {
 +        case .month: Color(red: 67 / 255, green: 143 / 255, blue: 229 / 255)
@@ -1667,7 +1733,7 @@ index 00000000..02424a34
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 new file mode 100644
-index 00000000..e4ae6321
+index 0000000000000000000000000000000000000000..e4ae63214ed2e45d6e80065436e21e1bab6702dc
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 @@ -0,0 +1,150 @@
@@ -1823,22 +1889,27 @@ index 00000000..e4ae6321
 +#endif
 diff --git a/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift b/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
 new file mode 100644
-index 00000000..6488fe5a
+index 0000000000000000000000000000000000000000..7faa4eb7a703525bb1f21079349e0ef90b843179
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,88 @@
++import AgentSpeedCore
 +import Foundation
 +
 +@MainActor
 +protocol QuotaRefreshScheduling: AnyObject {
 +    func start(every interval: TimeInterval, tick: @escaping @MainActor () -> Void)
 +    func stop()
++    func scheduleRetry(for sourceID: String, after delay: TimeInterval, tick: @escaping @MainActor () -> Void)
++    func cancelRetry(for sourceID: String)
++    func stopRetries()
 +}
 +
 +/// The controller owns the polling policy; this only schedules its ticks.
 +@MainActor
 +final class QuotaRefreshScheduler: QuotaRefreshScheduling {
 +    private var task: Task<Void, Never>?
++    private var retries: [String: Task<Void, Never>] = [:]
 +
 +    func start(every interval: TimeInterval, tick: @escaping @MainActor () -> Void) {
 +        stop()
@@ -1857,11 +1928,62 @@ index 00000000..6488fe5a
 +        task = nil
 +    }
 +
-+    deinit { task?.cancel() }
++    func scheduleRetry(for sourceID: String, after delay: TimeInterval, tick: @escaping @MainActor () -> Void) {
++        cancelRetry(for: sourceID)
++        retries[sourceID] = Task { [weak self] in
++            do { try await Task.sleep(for: .seconds(delay)) }
++            catch { return }
++            guard !Task.isCancelled, let self else { return }
++            self.retries.removeValue(forKey: sourceID)
++            tick()
++        }
++    }
++
++    func cancelRetry(for sourceID: String) {
++        retries.removeValue(forKey: sourceID)?.cancel()
++    }
++
++    func stopRetries() {
++        for task in retries.values { task.cancel() }
++        retries.removeAll()
++    }
++
++    deinit {
++        task?.cancel()
++        for task in retries.values { task.cancel() }
++    }
++}
++
++/// Per-reader failure policy. Providers remain the authority for persisted request pacing.
++struct QuotaFailureRetry {
++    private(set) var dueAt: Date?
++    private var failures = 0
++
++    mutating func clear() {
++        dueAt = nil
++        failures = 0
++    }
++
++    mutating func complete(before: QuotaSnapshot, result: QuotaSnapshot, startedAt: Date, now: Date) {
++        guard (result.status == .error || result.status == .stale), !result.waitingForRefresh else {
++            clear()
++            return
++        }
++        // Returning behind an existing provider floor warrants a freshness wake, not
++        // another failure count. Cache-only hydration never calls this method.
++        if !(before.nextAllowedAt.map { $0 > startedAt && result.nextAllowedAt == $0 } ?? false) {
++            failures = min(failures + 1, 5)
++        }
++        if let deadline = result.nextAllowedAt {
++            dueAt = deadline > now ? deadline : now.addingTimeInterval(1)
++        } else {
++            dueAt = now.addingTimeInterval(min(60 * Double(1 << (failures - 1)), 900))
++        }
++    }
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 new file mode 100644
-index 00000000..c1200063
+index 0000000000000000000000000000000000000000..c120006303960a7b4e117772dd8484e2b183ddfc
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 @@ -0,0 +1,19 @@
@@ -1885,7 +2007,7 @@ index 00000000..c1200063
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-index dacd9698..2ac92d9d 100644
+index dacd9698981e9ff4f2ef4e88c6b00e9eb3d655ec..2ac92d9d1d33ef1903b2b2784cdc841ae314a023 100644
 --- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
 +++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
 @@ -145,8 +145,80 @@ private struct DashboardDetails: View {
@@ -1970,10 +2092,18 @@ index dacd9698..2ac92d9d 100644
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index f9eb994d..484da0a8 100644
+index f9eb994dce0c386468a227a3727804ff1caeed0c..dcdc61d492bbde604cd9338a67ca1c29163745c8 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-@@ -343,6 +343,96 @@ enum StringTable {
+@@ -17,6 +17,7 @@ enum StringTable {
+     }
+ 
+     static let entries: [String: Entry] = [
++        "mac.quota.fiveHoursLimit": Entry("5小時額度", "5小时额度", "5h limit", "5時間の上限"),
+         "a11y.agent.intel": Entry("性能 %@", "性能 %@", "performance %@", "性能 %@"),
+         "a11y.bar.money": Entry("每秒 %@，今日 %@", "每秒 %@，今日 %@", "%@ per second, %@ today", "毎秒 %@、今日 %@"),
+         "a11y.board": Entry("排行看板，%@：每秒 %@ 個 token，%@", "排行看板，%@：每秒 %@ 个 token，%@", "Leaderboard, %@: %@ tokens per second, %@", "ランキングボード、%@：毎秒 %@ トークン、%@"),
+@@ -343,6 +344,96 @@ enum StringTable {
          "mac.launchAtLogin.openSettings": Entry("打開系統設定", "打开系统设置", "Open System Settings", "システム設定を開く"),
          "mac.launchAtLogin.requiresApproval": Entry("請在「系統設定」›「一般」›「登入項目」中允許 Agent Speed。", "请在“系统设置”›“通用”›“登录项”中允许 Agent Speed。", "Allow Agent Speed in System Settings › General › Login Items.", "「システム設定」›「一般」›「ログイン項目」で Agent Speed を許可してください。"),
          "mac.launchAtLogin.unavailable": Entry("將 Agent Speed 移到「應用程式」資料夾後即可使用。", "将 Agent Speed 移到“应用程序”文件夹后即可使用。", "Available once Agent Speed is in the Applications folder.", "Agent Speed を「アプリケーション」フォルダに移動すると使用できます。"),
@@ -2072,10 +2202,10 @@ index f9eb994d..484da0a8 100644
          "mac.settings.about.license": Entry("以 MIT 授權開放原始碼", "以 MIT 许可证开源", "Open source under the MIT License", "MIT ライセンスのオープンソース"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 new file mode 100644
-index 00000000..15c9243f
+index 0000000000000000000000000000000000000000..36ca0e785e56d4a916660fd6cb08f44c70337111
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,294 @@
 +import Observation
 +import AgentSpeedCore
 +import SwiftUI
@@ -2272,19 +2402,25 @@ index 00000000..15c9243f
 +    dates.map { QuotaDisplayClock.delay(observedAt: $0, now: now) }.min() ?? 60
 +}
 +
++func quotaIsProviderLabel(_ label: String, providerName: String?) -> Bool {
++    guard !label.isEmpty, let providerName else { return label.isEmpty }
++    if label == providerName { return true }
++    return quotaSources.contains { $0.name == label } && providerName.hasPrefix(label + " · ")
++}
++
 +@MainActor func quotaWindowLabel(_ window: QuotaWindow, _ l10n: Localizer, providerName: String? = nil) -> String {
 +    let period: String
 +    switch window.period {
 +    case .month: period = l10n("mac.quota.monthly")
 +    case .week: period = l10n("mac.quota.weekly")
-+    case .fiveHours: period = l10n("mac.quota.session") + " · " + l10n("mac.quota.hours", "5")
++    case .fiveHours: period = l10n("mac.quota.fiveHoursLimit")
 +    case .other:
 +        if let duration = window.periodDuration {
 +            period = duration <= 86_400 ? l10n("mac.quota.session") + (duration < 86_400 ? " · " + l10n("mac.quota.hours", quotaNumber(duration / 3_600, l10n)) : "")
 +                : l10n("mac.quota.window") + " · " + l10n("mac.quota.days", quotaNumber(duration / 86_400, l10n))
 +        } else { period = l10n("mac.quota.window") }
 +    }
-+    return window.label.isEmpty || window.label == providerName ? period : "\(window.label) · \(period)"
++    return quotaIsProviderLabel(window.label, providerName: providerName) ? period : "\(window.label) · \(period)"
 +}
 +
 +func quotaDate(_ date: Date, locale: Locale) -> String {
@@ -2365,7 +2501,7 @@ index 00000000..15c9243f
 +    deinit { task?.cancel() }
 +}
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift b/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift
-index c494783c..5aac36f0 100644
+index c494783c10a5db88278f5ca7b4b6b8e1309d085d..5aac36f0fea1cf88a9bde6b8a606cae8d1cd14b5 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift
 @@ -5,7 +5,6 @@ struct SettingsPaneView: View {
@@ -2385,7 +2521,7 @@ index c494783c..5aac36f0 100644
          case .sources: SourcesPane(model: model)
          case .about: AboutPane(model: model)
 diff --git a/macos/Sources/AgentSpeed/Support/MenuFactory.swift b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
-index 7d20173c..7075c36d 100644
+index 7d20173cd90bd12b4db5ac390df17747ec398078..7075c36d4db6a796b84410546ef2b7f0c575f460 100644
 --- a/macos/Sources/AgentSpeed/Support/MenuFactory.swift
 +++ b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
 @@ -45,6 +45,7 @@ enum MenuFactory {
@@ -2398,7 +2534,7 @@ index 7d20173c..7075c36d 100644
              menu.addItem(report)
 diff --git a/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
 new file mode 100644
-index 00000000..25152a26
+index 0000000000000000000000000000000000000000..25152a26c6352d2df3a35f578691e9be6e71a442
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
 @@ -0,0 +1,346 @@
@@ -2750,7 +2886,7 @@ index 00000000..25152a26
 +}
 diff --git a/macos/Sources/AgentSpeedCore/Quota.swift b/macos/Sources/AgentSpeedCore/Quota.swift
 new file mode 100644
-index 00000000..68383153
+index 0000000000000000000000000000000000000000..683831532b163369810041e5be4e68c67a586040
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/Quota.swift
 @@ -0,0 +1,138 @@
@@ -2894,7 +3030,7 @@ index 00000000..68383153
 +}
 diff --git a/macos/Sources/AgentSpeedCore/QuotaPersistence.swift b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
 new file mode 100644
-index 00000000..25c2bf28
+index 0000000000000000000000000000000000000000..25c2bf286ad2a10d815de699a2589dde2208a99a
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
 @@ -0,0 +1,82 @@
@@ -2982,14 +3118,37 @@ index 00000000..25c2bf28
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 new file mode 100644
-index 00000000..3b884f77
+index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b6f0242da
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -0,0 +1,297 @@
+@@ -0,0 +1,527 @@
 +import Foundation
++#if canImport(FoundationNetworking)
++import FoundationNetworking
++#endif
 +import Testing
 +@testable import AgentSpeed
 +@testable import AgentSpeedCore
++
++private final class RetryProviderTransport: @unchecked Sendable {
++    private let lock = NSLock()
++    private var now = Date(timeIntervalSince1970: 1_800_000_000)
++    private var usageCalls = 0
++    func time() -> Date { lock.lock(); defer { lock.unlock() }; return now }
++    func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; now.addTimeInterval(seconds) }
++    func count() -> Int { lock.lock(); defer { lock.unlock() }; return usageCalls }
++    func fetch(_ request: URLRequest) -> (Data, HTTPURLResponse) {
++        lock.lock(); defer { lock.unlock() }
++        let usage = request.url!.path.hasSuffix("/usage")
++        if usage { usageCalls += 1 }
++        let limited = usage && usageCalls == 1
++        let body = usage
++            ? #"{"rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}}}"#
++            : #"{"available_count":2}"#
++        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: limited ? 429 : 200,
++            httpVersion: nil, headerFields: limited ? ["Retry-After": "75"] : [:])!)
++    }
++}
 +
 +private actor ControllerQuotaProvider: QuotaProvider {
 +    struct Request: Sendable, Equatable {
@@ -3030,9 +3189,9 @@ index 00000000..3b884f77
 +    func counts() -> (manual: Int, startup: Int, cancellations: Int) {
 +        (manualRequests, startupRequests, cancellations)
 +    }
-+    func complete(_ request: Request, status: QuotaStatus = .ok) -> Bool {
++    func complete(_ request: Request, status: QuotaStatus = .ok, nextAllowedAt: Date? = nil, waiting: Bool = false) -> Bool {
 +        guard let continuation = pending.removeValue(forKey: request.number) else { return false }
-+        continuation.resume(returning: snapshot(status))
++        continuation.resume(returning: snapshot(status, nextAllowedAt: nextAllowedAt, waiting: waiting))
 +        return true
 +    }
 +    func finish() {
@@ -3050,12 +3209,12 @@ index 00000000..3b884f77
 +            events.yield(request)
 +        }
 +    }
-+    private func snapshot(_ status: QuotaStatus) -> QuotaSnapshot {
++    private func snapshot(_ status: QuotaStatus, nextAllowedAt: Date? = nil, waiting: Bool = false) -> QuotaSnapshot {
 +        QuotaSnapshot(id: id, displayName: id, fidelity: "official", status: status,
 +            windows: [QuotaWindow(id: "rolling", label: "", usedFraction: 0.25, remaining: 0.75,
 +                used: 0.25, resetAt: nil, duration: 18_000)], headlineId: "rolling", block: nil,
 +            account: nil, plan: nil, observedAt: observed, source: "fixture", credits: nil,
-+            nextAllowedAt: nil, waitingForRefresh: false)
++            nextAllowedAt: nextAllowedAt, waitingForRefresh: waiting)
 +    }
 +}
 +
@@ -3063,9 +3222,21 @@ index 00000000..3b884f77
 +private final class ControlledQuotaScheduler: QuotaRefreshScheduling {
 +    private var tick: (@MainActor () -> Void)?
 +    var isRunning: Bool { tick != nil }
++    private(set) var retries: [String: (delay: TimeInterval, tick: @MainActor () -> Void)] = [:]
 +    func start(every interval: TimeInterval, tick: @escaping @MainActor () -> Void) { self.tick = tick }
 +    func stop() { tick = nil }
 +    func fire() { tick?() }
++    func scheduleRetry(for sourceID: String, after delay: TimeInterval, tick: @escaping @MainActor () -> Void) {
++        retries[sourceID] = (delay, tick)
++    }
++    func cancelRetry(for sourceID: String) { retries.removeValue(forKey: sourceID) }
++    func stopRetries() { retries.removeAll() }
++    func fireRetry(_ sourceID: String) { retries.removeValue(forKey: sourceID)?.tick() }
++}
++
++@MainActor
++private final class QuotaTestClock {
++    var now = Date(timeIntervalSince1970: 1_800_000_000)
 +}
 +
 +@MainActor
@@ -3074,6 +3245,7 @@ index 00000000..3b884f77
 +    let defaults: UserDefaults
 +    let providers: [ControllerQuotaProvider]
 +    let scheduler = ControlledQuotaScheduler()
++    let clock: QuotaTestClock
 +    let controller: QuotaController
 +    private var controllers: [QuotaController]
 +    private var barriers: [Task<Void, Never>] = []
@@ -3083,7 +3255,9 @@ index 00000000..3b884f77
 +        defaults = UserDefaults(suiteName: suite)!
 +        defaults.set(automatic, forKey: "quota.autoRefreshEnabled")
 +        providers = ids.map { ControllerQuotaProvider($0) }
-+        controller = QuotaController(defaults: defaults, providers: providers, scheduler: scheduler)
++        let clock = QuotaTestClock()
++        self.clock = clock
++        controller = QuotaController(defaults: defaults, providers: providers, scheduler: scheduler, now: { clock.now })
 +        controllers = [controller]
 +    }
 +
@@ -3282,10 +3456,202 @@ index 00000000..3b884f77
 +            #expect(restored.snapshots.isEmpty)
 +        }
 +    }
++    @Test func providerDeadlinesRetryLocalAndRemoteIndependentlyAndSuccessClears() async throws {
++        let remoteID = "remote:11111111-1111-1111-1111-111111111111:kimi"
++        try await withFixture(ids: ["codex", remoteID], automatic: true) { fixture in
++            let controller = fixture.controller, local = fixture.providers[0], remote = fixture.providers[1]
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries.isEmpty, "Cache-only stale hydration must not arm retries")
++            controller.setNetworkEnabled(true)
++            let first = try await fixture.request(local, .startup)
++            let second = try await fixture.request(remote, .startup)
++            let now = fixture.clock.now
++            #expect(await local.complete(first, status: .error, nextAllowedAt: now.addingTimeInterval(90)))
++            #expect(await remote.complete(second, status: .stale, nextAllowedAt: now.addingTimeInterval(700)))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries["codex"]?.delay == 90)
++            #expect(fixture.scheduler.retries[remoteID]?.delay == 700, "Retry-After must not be capped to the normal poll interval")
++            fixture.scheduler.fireRetry("codex")
++            #expect(fixture.scheduler.retries["codex"]?.delay == 90, "An early timer must not make an early request")
++            #expect(await local.counts().manual == 0)
++            fixture.clock.now = now.addingTimeInterval(90)
++            fixture.scheduler.fireRetry("codex")
++            let retry = try await fixture.request(local, .refresh)
++            #expect(await remote.counts().manual == 0, "A retry must never coalesce all sources")
++            fixture.scheduler.fireRetry("codex")
++            #expect(await local.counts().manual == 1, "A pending read must not overlap another retry")
++            #expect(await local.complete(retry))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries["codex"] == nil)
++            fixture.scheduler.fire()
++            let ordinary = try await fixture.request(local, .refresh)
++            #expect(await remote.counts().manual == 0, "Normal polling must not bypass a source's failure deadline")
++            #expect(await local.complete(ordinary))
++            await fixture.barrier().value
++            fixture.clock.now = now.addingTimeInterval(700)
++            fixture.scheduler.fireRetry(remoteID)
++            let remoteRetry = try await fixture.request(remote, .refresh)
++            #expect(await remote.complete(remoteRetry))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries.isEmpty)
++        }
++    }
++
++    @Test func transportFallbackIsExponentialBoundedAndResetsAfterSuccess() async throws {
++        try await withFixture(ids: ["kimi"], automatic: true) { fixture in
++            fixture.controller.setNetworkEnabled(true)
++            var request = try await fixture.request(fixture.providers[0], .startup)
++            for delay in [TimeInterval(60), 120, 240, 480, 900, 900] {
++                #expect(await fixture.providers[0].complete(request, status: .error))
++                await fixture.barrier().value
++                #expect(fixture.scheduler.retries["kimi"]?.delay == delay)
++                fixture.clock.now.addTimeInterval(delay)
++                fixture.scheduler.fireRetry("kimi")
++                request = try await fixture.request(fixture.providers[0], .refresh)
++            }
++            #expect(await fixture.providers[0].complete(request))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries.isEmpty)
++            fixture.controller.refresh()
++            request = try await fixture.request(fixture.providers[0], .refresh)
++            #expect(await fixture.providers[0].complete(request, status: .stale))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries["kimi"]?.delay == 60)
++        }
++    }
++
++    @Test(arguments: ["network", "source", "dispose", "manual"])
++    func retryCancellationRejectsQueuedCallbacksAndLateResults(_ transition: String) async throws {
++        try await withFixture(ids: ["codex"], automatic: true) { fixture in
++            let controller = fixture.controller, provider = fixture.providers[0]
++            controller.setNetworkEnabled(true)
++            let startup = try await fixture.request(provider, .startup)
++            #expect(await provider.complete(startup, status: .error))
++            await fixture.barrier().value
++            let queued = try #require(fixture.scheduler.retries["codex"]?.tick)
++            fixture.clock.now.addTimeInterval(60)
++            fixture.scheduler.fireRetry("codex")
++            let late = try await fixture.request(provider, .refresh)
++            let pending = fixture.barrier()
++            switch transition {
++            case "network": controller.setNetworkEnabled(false)
++            case "source": controller.enabledProviderIDs = []
++            case "dispose": controller.dispose()
++            default: controller.autoRefreshEnabled = false
++            }
++            #expect(fixture.scheduler.retries.isEmpty)
++            queued()
++            #expect(await provider.complete(late, status: .error))
++            await pending.value
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries.isEmpty, "A revoked late failure must not resurrect a retry")
++            #expect(await provider.counts().manual == 1)
++            if transition == "source" || transition == "dispose" { #expect(controller.snapshots.isEmpty) }
++        }
++    }
++
++    @Test(arguments: [QuotaStatus.ok, .needsAuth, .accessDenied, .unsupported])
++    func successfulOrPermanentStatusesNeverArmRetry(_ status: QuotaStatus) async throws {
++        try await withFixture(ids: ["codex"], automatic: true) { fixture in
++            fixture.controller.setNetworkEnabled(true)
++            let startup = try await fixture.request(fixture.providers[0], .startup)
++            #expect(await fixture.providers[0].complete(startup, status: status,
++                nextAllowedAt: fixture.clock.now.addingTimeInterval(20)))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries.isEmpty)
++        }
++    }
++
++    @Test func manualStartupFailureAndSuccessfulFloorDoNotArmAutomaticRetries() async throws {
++        try await withFixture(ids: ["codex"]) { fixture in
++            fixture.controller.setNetworkEnabled(true)
++            let startup = try await fixture.request(fixture.providers[0], .startup)
++            #expect(await fixture.providers[0].complete(startup, status: .error))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries.isEmpty)
++            fixture.controller.autoRefreshEnabled = true
++            let automatic = try await fixture.request(fixture.providers[0], .refresh)
++            #expect(await fixture.providers[0].complete(automatic, status: .error,
++                nextAllowedAt: fixture.clock.now.addingTimeInterval(300), waiting: true))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries.isEmpty)
++        }
++    }
++
++    @Test func persistedDeadlineAndExpiredDeadlineHaveSafeDeterministicWakes() {
++        let now = Date(timeIntervalSince1970: 1_800_000_000)
++        func snapshot(_ deadline: Date) -> QuotaSnapshot {
++            QuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: .error,
++                windows: [], headlineId: nil, block: nil, account: nil, plan: nil, observedAt: nil,
++                source: "fixture", credits: nil, nextAllowedAt: deadline, waitingForRefresh: false)
++        }
++        var retry = QuotaFailureRetry()
++        let cached = snapshot(now.addingTimeInterval(42))
++        retry.complete(before: cached, result: cached, startedAt: now, now: now)
++        #expect(retry.dueAt == now.addingTimeInterval(42))
++        let expired = snapshot(now.addingTimeInterval(-1))
++        retry.complete(before: cached, result: expired, startedAt: now, now: now)
++        #expect(retry.dueAt == now.addingTimeInterval(1))
++    }
++    @Test func firstProvider429RetriesAtProviderDeadlineInsteadOfNormalTick() async throws {
++        let suite = UUID().uuidString
++        let defaults = UserDefaults(suiteName: suite)!
++        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
++        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++        defer {
++            defaults.removePersistentDomain(forName: suite)
++            try? FileManager.default.removeItem(at: directory)
++        }
++        let auth = directory.appendingPathComponent("auth.json")
++        try Data(#"{"tokens":{"access_token":"fixture","account_id":"fixture-account"}}"#.utf8).write(to: auth)
++        let transport = RetryProviderTransport()
++        let provider = CodexQuotaProvider(credentialURL: auth, defaults: UserDefaults(suiteName: suite)!, now: { transport.time() },
++            cacheDirectory: directory.appendingPathComponent("schedule"), transport: { transport.fetch($0) })
++        let scheduler = ControlledQuotaScheduler()
++        let controller = QuotaController(defaults: defaults, providers: [provider], scheduler: scheduler, now: { transport.time() })
++        defer { controller.dispose() }
++        controller.setNetworkEnabled(true)
++        await controller.operationBarrier().value
++        #expect(transport.count() == 1)
++        #expect(scheduler.retries["codex"]?.delay == 75)
++        transport.advance(74)
++        scheduler.fireRetry("codex")
++        #expect(transport.count() == 1)
++        #expect(scheduler.retries["codex"]?.delay == 1)
++        transport.advance(1)
++        scheduler.fireRetry("codex")
++        await controller.operationBarrier().value
++        #expect(transport.count() == 2)
++        #expect(scheduler.retries.isEmpty)
++    }
++    @Test(arguments: ["network", "source", "dispose", "manual"])
++    func cancellingPendingRetryRemovesWakeupAndRejectsQueuedCallback(_ transition: String) async throws {
++        let id = "remote:11111111-1111-1111-1111-111111111111:codex"
++        try await withFixture(ids: [id], automatic: true) { fixture in
++            let controller = fixture.controller, provider = fixture.providers[0]
++            controller.setNetworkEnabled(true)
++            let startup = try await fixture.request(provider, .startup)
++            #expect(await provider.complete(startup, status: .error))
++            await fixture.barrier().value
++            let queued = try #require(fixture.scheduler.retries[id]?.tick)
++            switch transition {
++            case "network": controller.setNetworkEnabled(false)
++            case "source": controller.enabledProviderIDs = []
++            case "dispose": controller.dispose()
++            default: controller.autoRefreshEnabled = false
++            }
++            #expect(fixture.scheduler.retries.isEmpty)
++            fixture.clock.now.addTimeInterval(120)
++            queued()
++            await fixture.barrier().value
++            #expect(await provider.counts().manual == 0)
++            #expect(fixture.scheduler.retries.isEmpty)
++        }
++    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 00000000..fc24c4bf
+index 0000000000000000000000000000000000000000..f1a32c5973ba8fef8ceb2620f8feb3b19c8e5556
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 @@ -0,0 +1,285 @@
@@ -3355,7 +3721,7 @@ index 00000000..fc24c4bf
 +            #expect(value.readings.count == 3)
 +            #expect(value.readings.first?.contains("-20%") == true)
 +            #expect(value.readings.last?.contains("79%") == true)
-+            #expect(value.outerDiameter == 88)
++            #expect(value.outerDiameter == 84)
 +        }
 +        let unknown = reading(snapshot(used: nil))
 +        #expect(unknown.readings.last?.contains("Unknown") == true)
@@ -3576,10 +3942,10 @@ index 00000000..fc24c4bf
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 new file mode 100644
-index 00000000..465ec22d
+index 0000000000000000000000000000000000000000..665ae9ee61b6ce976e42dc4afcbe30f03354d7b1
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-@@ -0,0 +1,161 @@
+@@ -0,0 +1,172 @@
 +import Foundation
 +import Testing
 +@testable import AgentSpeed
@@ -3650,6 +4016,17 @@ index 00000000..465ec22d
 +        #expect(!weekly.contains("604800"))
 +        #expect(quotaWindowLabel(window(nil, duration: nil, label: "Spark"), english) == "Spark · Window")
 +        #expect(quotaWindowLabel(window(nil, duration: 18_000, label: "Spark"), english).hasPrefix("Spark · "))
++    }
++
++    @Test func compactAndDetailFiveHourLabelsAcrossLanguages() {
++        for (language, detail) in [(LanguagePreference.zhHans, "5小时额度"), (.zhHant, "5小時額度"), (.en, "5h limit"), (.ja, "5時間の上限")] {
++            let l10n = Localizer(preference: language)
++            let ordinary = window(0.5, label: "Codex")
++            #expect(quotaCompactWindowLabel(ordinary, l10n, providerName: "Codex") == "5h")
++            #expect(quotaWindowLabel(ordinary, l10n, providerName: "Codex") == detail)
++            #expect(quotaCompactWindowLabel(window(0.5, label: "Code review"), l10n, providerName: "Codex").contains("Code review"))
++            #expect(quotaCompactWindowLabel(window(0.5, duration: 36_000), l10n, providerName: nil).contains("10"))
++        }
 +    }
 +
 +    @Test func statusAndUnknownReadingsRemainDistinct() {
@@ -3743,7 +4120,7 @@ index 00000000..465ec22d
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
 new file mode 100644
-index 00000000..2ed5f6c6
+index 0000000000000000000000000000000000000000..2ed5f6c6971c71d96c137f87b9a17968dcc441b6
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
 @@ -0,0 +1,236 @@
@@ -3985,7 +4362,7 @@ index 00000000..2ed5f6c6
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
 new file mode 100644
-index 00000000..132d342f
+index 0000000000000000000000000000000000000000..132d342f7b47035be8a1aca31a591b2e627c1473
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
 @@ -0,0 +1,190 @@
@@ -4181,7 +4558,7 @@ index 00000000..132d342f
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
 new file mode 100644
-index 00000000..2182d481
+index 0000000000000000000000000000000000000000..2182d48108eb65631dfe4b49019442274de81689
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
 @@ -0,0 +1,48 @@
@@ -4234,7 +4611,7 @@ index 00000000..2182d481
 +    }
 +}
 diff --git a/macos/scripts/build-app.sh b/macos/scripts/build-app.sh
-index 300ed6d2..5ee4c047 100755
+index 300ed6d282427f140ca0021e3bcebb8221ec7efb..5ee4c0474e1c1884e3fe8e371dc6edccf4196c30 100755
 --- a/macos/scripts/build-app.sh
 +++ b/macos/scripts/build-app.sh
 @@ -180,6 +180,7 @@ plutil -lint -s "$APP_DIR/Contents/Info.plist" || die "The generated Info.plist
@@ -4247,10 +4624,10 @@ index 300ed6d2..5ee4c047 100755
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 00000000..4add9bc2
+index 0000000000000000000000000000000000000000..ada7e11a65cfc94a2f3197112dddfe6ef9012593
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,121 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -4309,6 +4686,8 @@ index 00000000..4add9bc2
 +On macOS the floating details card's bottom successful-observation label is a short relative update age derived from the original `observedAt`, not a timeless “latest” indicator: “Updated just now”, “Updated Xm ago”, “Updated Xh ago” or “Updated Xd ago” (Simplified Chinese: “刚刚更新”, “X分钟前更新”, “X小时前更新”, “X天前更新”; Traditional Chinese and Japanese are localized too). Missing `observedAt` is unknown and future observations never produce negative ages. Offline, stale, waiting, authentication and error states keep precedence. The details card and an open tray/menu summary refresh only their visible local labels at the next observation-relative minute boundary: opening an observation aged 59 or 119 seconds schedules one second, not another full minute. Recompute the deadline after snapshot/visibility changes, clamp sub-millisecond deadlines to one millisecond, and stop on hidden/unloaded/disposed displays. The collapsed/main quota window has no age timer. These clocks never request HTTP or alter provider polling/backoff; Subscription's absolute update timestamp and reset-countdown layout remain unchanged.
 +
 +Quota startup on macOS belongs to the application, not any visible surface. With a supported source enabled, hydrate the current account's last successful observation, including when network access is disabled. Independently attempt one startup refresh as soon as networking is permitted, even in manual periodic-refresh mode and without opening Settings or the floating panel. This one-shot startup request may bypass only the ordinary five-minute floor following a successful observation; persisted 429 Retry-After, failure backoff and unchanged-token authentication rejection still apply. Source and network toggles within the same application lifetime do not repeatedly grant this exception. Automatic mode then continues the normal five-minute cadence while all surfaces are closed; manual mode stops periodic requests. Explicit non-startup refreshes still obey the ordinary floor and backoff. Network errors retain the last good snapshot with its original observation time. Cancellation, disposal and account/token changes must prevent obsolete in-flight results from replacing the currently displayed account or its persisted snapshot.
++
++Automatic polling also schedules a per-source retry when a refresh returns a transiently unavailable observation (`error` or `stale`), instead of waiting for the next ordinary five-minute tick. A future provider `nextAllowedAt` is authoritative, including persisted Retry-After; waiting behind an existing deadline does not count as another failed network attempt. A stale cached reading returned by a refresh may schedule a wake at its existing floor, but an `ok` snapshot, authentication/unsupported state or cache-only hydration alone does not arm a failure retry. Transport failures without a supplier deadline use a client delay starting at 60 seconds, doubling to at most 15 minutes. An expired deadline never creates a zero-delay loop. Retry wakes only its affected source, coalesces with already-running work, and clears on success. Turning automatic refresh off, revoking network access, removing a source or disposing the application cancels the applicable retry work; late results cannot re-arm it. These rules apply to local and SSH-host readers identically and never invent a default zero observation.
 +For migration, a legacy schedule without a validated version-1 account snapshot cannot distinguish a normal successful floor from an optional reset-credit 429 extension. Preserve its future `nextAllowedAt` rather than granting the startup bypass. After that deadline, a successful request upgrades the structured snapshot and independent retry deadline; subsequent application starts may bypass only the ordinary successful floor.
 +
 +By default, without pointer attention, the macOS panel start and rest as a collapsed strip: 10 by 79 logical pixels on vertical edges or 79 by 10 on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
@@ -4372,7 +4751,7 @@ index 00000000..4add9bc2
 +Endpoint and response research consulted [Codenotch](https://github.com/vinzdg/codenotch), particularly `Sources/Providers/CodexLocalProvider.swift` and `Sources/Providers/CodexUsage.swift`. Codenotch is MIT licensed, copyright (c) 2026 Vinz. This specification and its synthetic examples describe observed facts and do not reproduce Codenotch source code. If source code or a substantial portion is copied into the implementation, retain its full MIT copyright and permission notice with that code.
 diff --git a/spec/fixtures/codex-credit-quota.json b/spec/fixtures/codex-credit-quota.json
 new file mode 100644
-index 00000000..ab972428
+index 0000000000000000000000000000000000000000..ab97242823f64ab0011219a6197c3200421ceb10
 --- /dev/null
 +++ b/spec/fixtures/codex-credit-quota.json
 @@ -0,0 +1,8 @@
@@ -4386,7 +4765,7 @@ index 00000000..ab972428
 +}
 diff --git a/spec/fixtures/codex-quota.json b/spec/fixtures/codex-quota.json
 new file mode 100644
-index 00000000..ba85a8b2
+index 0000000000000000000000000000000000000000..ba85a8b2982a806b3e4949d1cc55d14b7c7ad448
 --- /dev/null
 +++ b/spec/fixtures/codex-quota.json
 @@ -0,0 +1,26 @@
