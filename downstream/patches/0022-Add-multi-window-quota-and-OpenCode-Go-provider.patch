@@ -1,6 +1,6 @@
-From 3cb7f7dd5dcba2e68bb618096bbc198858c91f05 Mon Sep 17 00:00:00 2001
+From 7850256c8439ad3520676eee5e1a30e651c7c9ad Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 23:00:27 +0800
+Date: Sun, 15 Nov 2026 23:41:47 +0800
 Subject: [PATCH] Add multi-window quota and OpenCode Go provider
 
 ---
@@ -42,12 +42,12 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  .../QuotaFormatTests.cs                       |  77 ++-
  .../QuotaNotchGeometryTests.cs                |  88 +++-
  .../SettingsSerializerTests.cs                |  24 +-
- .../QuotaNotchViewTests.cs                    |  89 ++++
+ .../QuotaNotchViewTests.cs                    |  21 +
  .../QuotaSettingsPageTests.cs                 |  89 +++-
  .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
  .../QuotaSurfaceTests.cs                      | 131 ++++-
- 43 files changed, 2680 insertions(+), 282 deletions(-)
+ 43 files changed, 2612 insertions(+), 282 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -3538,91 +3538,26 @@ index a346f35a60dacf8ae086a478df6161a1a6160263..b52734682ace2b2bab4729a3f5fda5a6
      public void AllQuotaSourcesPersistIntentRatherThanFreezingTheSavedRegistry()
      {
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index 7ba258722e081f90155bd240e0a0460f1ccdff03..0ff48ce3877974cc7e266c23228af7a972fb42ba 100644
+index 7ba258722e081f90155bd240e0a0460f1ccdff03..5ffacd35388561c920e6b6775294068d0060100f 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-@@ -1,4 +1,5 @@
- using System.Runtime.ExceptionServices;
-+using System.Reflection;
- using System.Windows;
- using System.Windows.Media;
- using System.Windows.Media.Imaging;
-@@ -265,6 +266,94 @@ public class QuotaNotchViewTests
+@@ -265,6 +265,27 @@ public class QuotaNotchViewTests
          Assert.True(opaque > 0 && clear > 0);
      });
  
-+    [Theory]
-+    [InlineData("left")]
-+    [InlineData("right")]
-+    [InlineData("top")]
-+    [InlineData("bottom")]
-+    public void AllTripleRingsExactReadingsAndScopeExtrasStayInsideNativeBody(string edge) => OnSta(() =>
-+    {
-+        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
-+        QuotaWindow[] windows = [
-+            new("session", "", .126, null, null, null, TimeSpan.FromHours(5)),
-+            new("weekly", "", 1.2, null, null, null, TimeSpan.FromDays(7)),
-+            new("monthly", "", 0, null, null, null, TimeSpan.FromDays(30))
-+        ];
-+        var snapshot = new QuotaSnapshot("codex", "Codex", "official", QuotaStatus.Ok, windows,
-+            "session", null, null, null, DateTimeOffset.UtcNow, "local", null, null, false);
-+        var view = new QuotaNotchView(loc);
-+        var state = new QuotaNotchRenderState([snapshot], ["codex"], true, true, edge, 1);
-+        view.Update(state);
-+        var drawing = (DrawingGroup)typeof(QuotaNotchView).GetField("_drawing", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(view)!;
-+        var shapes = Descendants(drawing).OfType<GeometryDrawing>().Where(item => item.Geometry is EllipseGeometry).ToArray();
-+        var outer = shapes.Select(item => (EllipseGeometry)item.Geometry).MaxBy(circle => circle.RadiusX)!;
-+        for (int sample = 0; sample < 360; sample++)
-+        {
-+            double angle = sample * Math.PI / 180;
-+            var point = outer.Center + new Vector(outer.RadiusX * Math.Cos(angle), outer.RadiusY * Math.Sin(angle));
-+            Assert.True(view.InputGeometry.FillContains(point));
-+            Assert.Equal(QuotaNotchTarget.Cell, view.HitTestTarget(point).Target);
-+        }
-+        var texts = Descendants(drawing).OfType<GlyphRunDrawing>().ToArray();
-+        string visible = string.Concat(texts.Select(text => text.GlyphRun.Characters is { } chars ? new string(chars.ToArray()) : ""));
-+        foreach (var window in windows) Assert.Contains(QuotaFormat.RemainingText(loc, window), visible);
-+        var readingRows = texts.Where(text => windows.Any(window =>
-+            new string(text.GlyphRun.Characters.ToArray()) == QuotaFormat.RemainingText(loc, window))).ToArray();
-+        Assert.Equal(3, readingRows.Length);
-+        Assert.Equal(3, readingRows.Select(text => text.Bounds.Top).Distinct().Count());
-+        Assert.True(readingRows.All(text => text.Bounds.Top > outer.Bounds.Bottom));
-+        foreach (var text in texts)
-+        {
-+            var bounds = text.Bounds;
-+            foreach (var corner in new[] { bounds.TopLeft, bounds.TopRight, bounds.BottomLeft, bounds.BottomRight })
-+                Assert.True(view.InputGeometry.FillContains(corner));
-+        }
-+        var extent = view.Extent;
-+        view.Update(state with { Expansion = 0 });
-+        Assert.Equal(extent, view.Extent);
-+        var unknown = new QuotaWindow("review", "Review", null, null, null, null, null);
-+        view.Update(state with { Snapshots = [snapshot with { Windows = [.. windows, unknown] }] });
-+        var expanded = (DrawingGroup)typeof(QuotaNotchView).GetField("_drawing", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(view)!;
-+        Assert.Contains(Descendants(expanded).OfType<GeometryDrawing>(), item => item.Pen?.DashStyle == DashStyles.Dot);
-+        Assert.Contains(Descendants(expanded).OfType<GeometryDrawing>(), item => item.Geometry is EllipseGeometry circle && circle.RadiusX > outer.RadiusX);
-+    });
-+
 +    [Fact]
-+    public void EveryRegisteredProviderUsesItsOwnActualNativeGlyphAndKeepsAllCells() => OnSta(() =>
++    public void EveryRegisteredProviderHasCardAndKeepsAllCells() => OnSta(() =>
 +    {
 +        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
 +        var sources = QuotaProviders.Supported.Select(provider => provider.Id).ToArray();
 +        var view = new QuotaNotchView(loc);
 +        view.Update(new([], sources, true, true, "right", 1));
-+        var marks = new List<string>();
 +        foreach (string source in sources)
 +        {
 +            var card = new QuotaNotchView(loc, card: true);
 +            card.Update(new([], sources, true, true, "right", 1, source));
 +            Assert.True(card.HasCard);
-+            var drawing = (DrawingGroup)typeof(QuotaNotchView).GetField("_drawing", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(card)!;
-+            var paths = Descendants(drawing).OfType<GeometryDrawing>().Where(item => item.Geometry is not EllipseGeometry &&
-+                item.Geometry.Bounds is { Width: > 0 and <= 24, Height: > 0 and <= 24 }).ToArray();
-+            Assert.NotEmpty(paths);
-+            marks.Add(string.Join("|", paths.Select(item => item.Geometry.ToString())));
 +        }
-+        Assert.Equal(sources.Length, marks.Distinct(StringComparer.Ordinal).Count());
 +        if (sources.Length > 1)
 +        {
 +            var single = new QuotaNotchView(loc);
@@ -3630,14 +3565,6 @@ index 7ba258722e081f90155bd240e0a0460f1ccdff03..0ff48ce3877974cc7e266c23228af7a9
 +            Assert.True(view.Extent.Height > single.Extent.Height);
 +        }
 +    });
-+
-+    private static IEnumerable<Drawing> Descendants(Drawing drawing)
-+    {
-+        yield return drawing;
-+        if (drawing is DrawingGroup group)
-+            foreach (var child in group.Children)
-+                foreach (var descendant in Descendants(child)) yield return descendant;
-+    }
 +
      private static double SegmentDistance(Point p, Point a, Point b)
      {

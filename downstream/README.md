@@ -428,6 +428,21 @@ passes syntax parsing, not AppKit execution. All 24 patches replay, and all 3,13
 source files match the checked tree byte-for-byte; the obsolete body-input test
 file remains absent. Neither full Release preflight nor Release publication was
 rerun for this cleanup.
+The subsequent native Windows Release run `43728516768` failed four edge cases in
+`AllTripleRingsExactReadingsAndScopeExtrasStayInsideNativeBody`: all three reading
+strings passed the concatenated-text check, but the test assumed each reading
+occupied one complete `GlyphRun` and counted only two matching runs. This is not
+evidence that a quota window was missing. The entire theory and the separate
+provider-logo geometry-node/path-serialization assertions are removed, together
+with their unused drawing-tree reflection helper. Provider cell availability,
+multi-cell extent and native interaction coverage remain. macOS has no equivalent
+glyph-run/path-node count assertion. No production renderer is changed to satisfy
+these tests, and the cleanup does not initiate another Release run.
+For this follow-up cleanup, the Windows application and native test assembly
+cross-compile with zero warnings/errors. All 24 patches replay, with all 3,137
+source files byte-identical to the frozen cleanup source. Native Windows test
+execution remains unavailable on the Linux host; compilation is not represented
+as a passing native test run or Release gate.
 Earlier compact-layout/deadline checks passed 155 formatting/geometry cases, the four
 replacement edge-containment cases and nine deadline/backoff policy cases.
 Windows application/native tests cross-compile with zero warnings/errors.

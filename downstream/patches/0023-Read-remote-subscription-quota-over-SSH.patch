@@ -1,6 +1,6 @@
-From 2ccb79b6c00e591801ee2cce963b4d0fcf89f381 Mon Sep 17 00:00:00 2001
+From b716bd407d8eb7f634921445e1e3fb4315502600 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 23:00:28 +0800
+Date: Sun, 15 Nov 2026 23:41:48 +0800
 Subject: [PATCH] Read remote subscription quota over SSH
 
 ---
@@ -3842,10 +3842,10 @@ index 0000000000000000000000000000000000000000..b0f99956a3e7735e92e9d3ca015bc9f3
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index 0ff48ce3877974cc7e266c23228af7a972fb42ba..de44dda2cfa9e30d4816cfbb36a04fe17f107edb 100644
+index 5ffacd35388561c920e6b6775294068d0060100f..3de207a0e2a9c3a2f04eb1bb7b7baf20007335c6 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-@@ -12,6 +12,37 @@ namespace AgentSpeed.Windows.Tests;
+@@ -11,6 +11,37 @@ namespace AgentSpeed.Windows.Tests;
  
  public class QuotaNotchViewTests
  {

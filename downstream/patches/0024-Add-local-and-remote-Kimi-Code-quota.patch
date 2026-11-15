@@ -1,6 +1,6 @@
-From a00dd6360eef8989e1a8ad52522c2d861c3d59ea Mon Sep 17 00:00:00 2001
+From d594be00959629d1708a3b5726cb121865fe731b Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 23:00:30 +0800
+Date: Sun, 15 Nov 2026 23:41:49 +0800
 Subject: [PATCH] Add local and remote Kimi Code quota
 
 ---
@@ -2870,10 +2870,10 @@ index b52734682ace2b2bab4729a3f5fda5a6708fed8c..984adecb9762b3e06fab245aaba90bf9
          Assert.True(legacy.QuotaAllSources);
          Assert.Same(AppSettings.Default.QuotaSources, legacy.QuotaSources);
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index de44dda2cfa9e30d4816cfbb36a04fe17f107edb..68121de9e286c360b00412f8c3c01f4591eb3c46 100644
+index 3de207a0e2a9c3a2f04eb1bb7b7baf20007335c6..b205fbcef7227381195b8d1547f6d517638a8937 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-@@ -15,6 +15,7 @@ public class QuotaNotchViewTests
+@@ -14,6 +14,7 @@ public class QuotaNotchViewTests
      [Theory]
      [InlineData("codex")]
      [InlineData("opencode-go")]
