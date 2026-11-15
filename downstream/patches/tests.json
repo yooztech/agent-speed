@@ -416,5 +416,19 @@
       {"platform": "macos", "run": "swift test --package-path macos --filter 'RemoteHostsTests|QuotaPresentationTests'"}
     ],
     "reason": "Cross-platform remote subscription quota increment: opt-in asynchronous per-subscriber collector queries, remote-only credentials, provider/account-isolated cache and persisted backoff, correlated bounded replies, dynamic host/provider selections, stale disconnects and late-result invalidation. Existing Subscription cards, floating panels and summaries consume scoped remote sources; native SDK/desktop and real-account acceptance require their corresponding environments. Base local quota ownership remains in 0020/0021 and the Go increment in 0022."
+  },
+  "0024-Add-local-and-remote-Kimi-Code-quota.patch": {
+    "regression": [
+      {"platform": "linux", "run": "cmake -S linux -B build-quota -DAGENTSPEED_BUILD_APP=OFF && cmake --build build-quota --target agentspeed_tests agentspeed-collector -j2 && build-quota/tests/agentspeed_tests --gtest_filter='CollectorQuota*:DaemonProcessTest.QuotaCacheOnly*:DaemonProcessTest.ExpiredKimi*'"},
+      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~KimiQuotaProviderTests|FullyQualifiedName~RemoteQuotaTests|FullyQualifiedName~QuotaColdStartTests'"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~KimiQuotaProviderTests|FullyQualifiedName~RemoteQuotaTests|FullyQualifiedName~QuotaColdStartTests'"},
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'KimiQuotaProviderTests|RemoteQuotaTests|RemoteQuotaTransportTests|QuotaColdStartTests'"}
+    ],
+    "related": [
+      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~RemoteQuotaSourcesTests|FullyQualifiedName~QuotaFormatTests'"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --filter 'FullyQualifiedName~QuotaSurfaceProviderCollectionTests|FullyQualifiedName~QuotaSettingsPageTests|FullyQualifiedName~QuotaNotchViewTests'"},
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'QuotaPresentationTests|QuotaControllerTests'"}
+    ],
+    "reason": "Kimi Code local Windows/macOS and remote SSH Linux supplier: managed read-only OAuth session, CLI-owned renewal, legacy/precise quota parsing, account-isolated cache and persisted retry deadlines, third-provider wire/source selection and native branding. Synthetic focused checks do not establish real-account access or native desktop/SDK acceptance. Existing base quota patch ownership is unchanged."
   }
 }

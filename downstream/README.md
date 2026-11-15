@@ -167,7 +167,7 @@ supplied account-card/progress-bar design. The existing transient dashboard
 flyout shows at most two summaries near a limit, when blocked, or when sign-in
 is required; clicking one opens Settings. Status-item bodies, taskbar widgets,
 orbs and History do not carry quota data.
-Local and enabled SSH-host Codex/OpenCode Go accounts share the Subscription
+Local and enabled SSH-host Codex/OpenCode Go/Kimi Code accounts share the Subscription
 source selector, cards, floating quota panel and qualifying summaries. Remote
 sources are identified by host UUID plus provider, not host label; All sources
 includes enabled remote hosts, while explicit selections remain host-scoped.
@@ -221,6 +221,33 @@ the same route, or that the local machine has a signed-in account. Newer officia
 OpenCode sources may differ; document the selected credential/route contract and
 its evidence instead of silently mixing versions. Preserve the MIT notice when
 porting reference code and distinguish synthetic checks from live-account proof.
+
+Kimi Code is added for local Windows/macOS accounts and enabled SSH Linux hosts
+by `0024-Add-local-and-remote-Kimi-Code-quota.patch`. It follows the pinned
+Codenotch `KimiCredentials.swift`, `KimiProvider.swift` and `KimiUsage.swift`:
+read-only `credentials/kimi-code.json` under `KIMI_CODE_HOME` or the current
+user's `~/.kimi-code`, then bearer-authenticated
+`GET https://api.kimi.com/coding/v1/usages` on the credential-owning host.
+The managed OAuth session is distinct from a Moonshot Platform API key.
+Kimi Code CLI owns login and token renewal; expired sessions require CLI renewal
+and are not refreshed or modified by Agent Speed. Remote credentials never cross SSH.
+The adapter preserves five-hour, weekly, monthly-total and monthly-code windows
+when reported, preferring precise `used_ratio` values over legacy rounded counts.
+Unknown readings remain unknown; an absent plan is not zero allowance.
+Automatic polling uses the existing five-minute cadence, while successful Kimi
+requests impose no hard manual-refresh floor. Persisted retry/backoff and
+account-isolated structured caches remain binding. See `spec/QUOTA.md` in the
+prepared tree for the wire, credential, parser and status contract.
+
+Focused Linux-hosted Kimi checks passed: 26 collector/provider/real-stdio
+regressions (including cache-only three-provider replies, expiry and continued
+metrics), 44 Windows Core provider/wire tests, 177 selected Presentation tests,
+and 26 Swift provider/wire/remote-lifecycle tests using the real sources in a
+disposable Swift 6.2.4 package. The Windows application/native test assembly
+cross-compiles; five changed macOS presentation files pass syntax parsing.
+These are not native macOS SDK or Windows/macOS desktop checks, and no live
+authenticated Kimi account was queried. All 24 patches replay successfully from
+the pinned upstream baseline. No package, Actions or Release was made.
 
 The quota persistence regression gives each provider actor its own `UserDefaults`
 instance for the same suite, avoiding non-Sendable instance sharing under Swift 6.
