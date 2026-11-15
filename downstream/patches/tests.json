@@ -388,5 +388,19 @@
       }
     ],
     "reason": "Native-dev.10 adds independent quotaNotch.keepExpanded default false, preserving missing/invalid legacy JSON, Show and placement. New Presentation cases: QuotaKeepExpandedRoundTripsIndependentlyOfVisibilityAndPlacement, QuotaKeepExpandedMissingOrInvalidKeepsHoverDefault, FloatingPanelDefaultsToVisibleHoverCollapsedAtTheRightEdge. New Windows cases: KeepExpandedIsLocalizedAccessibleAndIndependentOfVisibilityOrNetwork; KeepExpandedPageSwitchPersistsReloadsWithoutPageAndNeverRefreshesOrRebuildsProvider (real page, service disk reload, HTTP/factory counters beyond successful polling floor); KeepExpandedFirstNativeRegionAndVisibleFrameHaveExpandedBodyAndOnlyRestingArc (all edges/themes); DisablingKeepExpandedPreservesRealBodyCardAndGraceAttention; DisablingKeepExpandedHonorsPendingAndActiveCaptureThroughReleaseOrLoss; DisablingKeepExpandedWaitsForMenuCloseAndItsGrace; KeepExpandedToggleAndReshowSettleAndUnsubscribeWithoutHiddenAnimation. Pin changes only body expansion, not attention, six-dot reveal, cards or provider requests. Retain existing dev9 enlarged8-DIP dots/12.5-DIP pitch, exact arc/carry/18-route and alpha/hit/native-region regression commands, all-direction capture, source/cache/startup/auth/account-isolation/failure/old-and-new-429, real relative-age boundary and display-clock contracts. Existing Windows explicit-source selections (all=false) remain without all=true fallback. QuotaFormat successful-observation boundary/projection assertions and Windows flyout-clock expectations now include Updated wording; the redundant locale-wording-only case was removed. External wording commit2d9e63b43df755ebddadf6e47069228eb2cf9400 has agent-reported QuotaFormatTests52passed, not rerun locally. Dev10 checks only new serializer/default-layout cases and Windows Release cross-compile; unchanged Core/Geometry/Motion are not rerun. Windows interaction tests require native execution; Linux only cross-compiles them."
+  },
+  "0022-Add-multi-window-quota-and-OpenCode-Go-provider.patch": {
+    "regression": [
+      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests'"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests'"},
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'OpenCodeGoQuotaProviderTests|CodexQuotaProviderTests'"}
+    ],
+    "related": [
+      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~Quota|FullyQualifiedName~SettingsSerializerTests'"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~Quota|FullyQualifiedName~SettingsSerializerTests'"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --filter 'FullyQualifiedName~QuotaSurface|FullyQualifiedName~QuotaSettingsPageTests|FullyQualifiedName~QuotaNotch'"},
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'QuotaPresentationTests|QuotaNotchTests'"}
+    ],
+    "reason": "Multi-window remaining-allowance rendering and real OpenCode Go adapter: credential-specific reference routes, read-only credential discovery, account isolation, persistent cache/backoff and independent provider lifecycle. Native UI verification requires the corresponding OS; Linux checks do not establish WPF/AppKit pixels or real subscription access."
   }
 }

@@ -131,8 +131,13 @@ class ReleaseDriverTests(unittest.TestCase):
         (self.root / "downstream/config.json").write_text(json.dumps({
             "upstream_version": "1.2.3", "upstream_commit": self.baseline}))
         (self.root / "downstream/manage.py").write_text(textwrap.dedent('''\
-            import os, pathlib, sys
+            import json, os, pathlib, sys
             assert sys.argv[1] == "prepare"
+            root = pathlib.Path(__file__).resolve().parent.parent
+            config = json.loads((root / "downstream/config.json").read_text())
+            assert config == {"upstream_version": "1.2.3", "upstream_commit": "a" * 40}
+            assert (root / "downstream/patches/fixture.patch").read_text() == "committed patch\\n"
+            assert not (root / "snapshot-untracked").exists()
             tree = pathlib.Path(sys.argv[2])
             assert not tree.exists()
             with open(os.environ["PREFLIGHT_LOG"], "a") as log:
@@ -143,6 +148,8 @@ class ReleaseDriverTests(unittest.TestCase):
                 (tree / directory).mkdir(parents=True)
             (tree / "windows/AgentSpeed.slnx").write_text("fixture")
         '''))
+        (self.root / "downstream/patches").mkdir()
+        (self.root / "downstream/patches/fixture.patch").write_text("committed patch\n")
         self.sdk = Path(self.tmp.name) / "sdk"
         self.sdk.mkdir()
         dotnet = self.sdk / "dotnet"
@@ -207,7 +214,8 @@ class ReleaseDriverTests(unittest.TestCase):
     def remote_sha(self, tag):
         return git(self.remote, "rev-parse", "refs/tags/" + tag)
 
-    def launch(self, api, plan=False, fail=None, missing_sdk=False, host="Linux"):
+    def launch(self, api, plan=False, fail=None, missing_sdk=False, host="Linux",
+               during_preflight=None, before_discovery=None):
         observed = []
         head = git(self.root, "rev-parse", "HEAD")
         status = git(self.root, "status", "--porcelain", "--untracked-files=all")
@@ -216,9 +224,28 @@ class ReleaseDriverTests(unittest.TestCase):
         env = {"DOTNET_ROOT": str(self.sdk if not missing_sdk else self.sdk / "missing"),
                "PATH": str(self.sdk) + os.pathsep + os.environ.get("PATH", ""),
                "PREFLIGHT_LOG": str(self.preflight_log), "PREFLIGHT_FAIL": fail or ""}
+        remote = git(self.root, "ls-remote", "--refs", "origin", "refs/heads/" + driver.BRANCH)
+        real_preflight = driver.preflight
+
+        def change_checkout(callback, *args):
+            nonlocal head, status, files, remote
+            if callback is not None:
+                callback(*args)
+                head = git(self.root, "rev-parse", "HEAD")
+                status = git(self.root, "status", "--porcelain", "--untracked-files=all")
+                files = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*")
+                         if p.is_file() and ".git" not in p.relative_to(self.root).parts}
+                remote = git(self.root, "ls-remote", "--refs", "origin", "refs/heads/" + driver.BRANCH)
+
+        def preflight(snapshot):
+            change_checkout(during_preflight, snapshot)
+            return real_preflight(snapshot)
+
         try:
             with patch.dict(os.environ, env), patch.object(driver, "ROOT", self.root), patch.object(driver, "api", api), \
-                 patch.object(driver, "verify_origin"), patch.object(driver.platform, "system", return_value=host), \
+                 patch.object(driver, "verify_origin", side_effect=lambda: change_checkout(before_discovery)), \
+                 (patch.object(driver, "preflight", side_effect=preflight) if during_preflight else nullcontext()), \
+                 patch.object(driver.platform, "system", return_value=host), \
                  (patch.object(driver, 'find_dotnet_sdk', side_effect=RuntimeError('.NET 10 SDK is required')) if missing_sdk else nullcontext()):
                 with patch.object(driver, "watch", side_effect=lambda *args: observed.append(args)), \
                      patch.object(sys, "argv", ["release.py"] + (["--plan"] if plan else [])):
@@ -228,7 +255,7 @@ class ReleaseDriverTests(unittest.TestCase):
             self.assertEqual(git(self.root, "status", "--porcelain", "--untracked-files=all"), status)
             self.assertEqual({p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*")
                               if p.is_file() and ".git" not in p.relative_to(self.root).parts}, files)
-            self.assertEqual(git(self.remote, "rev-parse", "refs/heads/downstream/patch-build"), self.latest)
+            self.assertEqual(git(self.root, "ls-remote", "--refs", "origin", "refs/heads/" + driver.BRANCH), remote)
         return observed
 
     def test_newer_upstream_warns_and_releases_pinned_candidate(self):
@@ -300,7 +327,7 @@ class ReleaseDriverTests(unittest.TestCase):
                 self.launch(api)
         self.assertEqual(len(attempted), 1)
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), self.latest)
-        self.assertEqual(git(self.root, "tag", "-l", tag), "")
+        self.assertEqual(git(self.root, "rev-parse", "refs/tags/" + tag), self.old)
         remote_tag = git(self.root, "ls-remote", "--refs", "origin", ref)
         self.assertEqual(remote_tag, f"{self.latest}\t{ref}" if accepted else "")
 
@@ -316,7 +343,7 @@ class ReleaseDriverTests(unittest.TestCase):
                          ([":" + ref] if accepted else []) + [self.latest + ":" + ref])
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), self.latest)
         self.assertEqual(self.remote_sha(tag), self.latest)
-        self.assertEqual(git(self.root, "tag", "-l", tag), "")
+        self.assertEqual(git(self.root, "rev-parse", "refs/tags/" + tag), self.old)
         self.assertEqual(observed[0][:2], (tag, self.latest))
 
     def test_tag_push_failure_before_remote_acceptance_retries(self):
@@ -335,6 +362,125 @@ class ReleaseDriverTests(unittest.TestCase):
         self.assertEqual(observed[0][:2], ("v1.2.3-fork.2", self.latest))
         self.assertTrue(any(method == "POST" and path.endswith("/42/cancel") for method, path in api.calls))
         self.assertTrue(any(method == "DELETE" and path.endswith("/releases/2") for method, path in api.calls))
+        self.assertEqual(git(self.root, "rev-parse", "refs/tags/v1.2.3-fork.2"), self.old)
+
+    def mutate_workspace(self):
+        (self.root / "downstream/config.json").write_text("not the selected configuration\n")
+        (self.root / "downstream/patches/fixture.patch").write_text("not the selected patch\n")
+        (self.root / "downstream/manage.py").write_text("raise AssertionError('live manage.py was executed')\n")
+        git(self.root, "commit", "-am", "Concurrent local maintenance")
+        git(self.root, "switch", "-c", "unrelated-work")
+        (self.root / "snapshot-untracked").write_text("must not enter release\n")
+        (self.root / "file").write_text("concurrent uncommitted edit\n")
+
+    def test_snapshot_survives_workspace_changes_and_remote_fast_forward(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+
+        def change(snapshot):
+            self.assertNotEqual(snapshot, self.root)
+            self.mutate_workspace()
+            git(self.root, "push", "origin", "HEAD:refs/heads/" + driver.BRANCH)
+            # The caller is free to replace even its local candidate tag meanwhile.
+            git(self.root, "tag", "-f", "v1.2.3-fork.2", "HEAD")
+            self.concurrent_head = git(self.root, "rev-parse", "HEAD")
+
+        observed = self.launch(api, during_preflight=change)
+        self.assertEqual(observed[0][:2], ("v1.2.3-fork.2", self.latest))
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
+        self.assertEqual(git(self.root, "rev-parse", "refs/tags/v1.2.3-fork.2"), self.concurrent_head)
+        self.assertEqual(git(self.root, "branch", "--show-current"), "unrelated-work")
+        self.assertTrue(any(line.startswith("prepare ") for line in self.preflight_log.read_text().splitlines()))
+
+    def test_commit_is_selected_before_remote_discovery(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        observed = self.launch(api, before_discovery=self.mutate_workspace)
+        self.assertEqual(observed[0][:2], ("v1.2.3-fork.2", self.latest))
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
+
+    def test_remote_rewrite_excluding_selected_commit_preserves_candidate(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        def rewrite(snapshot):
+            git(self.root, "push", "--force", "origin", self.old + ":refs/heads/" + driver.BRANCH)
+        with self.assertRaisesRegex(RuntimeError, "no longer contains selected commit"):
+            self.launch(api, during_preflight=rewrite)
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.old)
+        self.assertTrue(all(method == "GET" for method, _ in api.calls))
+
+    def test_remote_branch_removal_preserves_candidate(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        def remove(snapshot):
+            git(self.root, "push", "origin", ":refs/heads/" + driver.BRANCH)
+        with self.assertRaisesRegex(RuntimeError, "no longer contains selected commit"):
+            self.launch(api, during_preflight=remove)
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.old)
+        self.assertTrue(all(method == "GET" for method, _ in api.calls))
+
+    def test_accepted_push_is_reconciled_after_remote_fast_forward(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        ref = "refs/tags/v1.2.3-fork.2"
+        real_git = driver.git
+        pushes = []
+        def advance(snapshot):
+            git(self.root, "commit", "--allow-empty", "-m", "Concurrent branch advance")
+            git(self.root, "push", "origin", "HEAD:refs/heads/" + driver.BRANCH)
+        def accepted(*args, **kwargs):
+            result = real_git(*args, **kwargs)
+            if args[0] == "push" and args[-1] == self.latest + ":" + ref:
+                pushes.append(args)
+                raise subprocess.CalledProcessError(1, args, stderr="connection reset by peer")
+            return result
+        with patch.object(driver, "git", side_effect=accepted), patch.object(driver.release_network.time, "sleep"):
+            observed = self.launch(api, during_preflight=advance)
+        self.assertEqual(len(pushes), 1)
+        self.assertEqual(observed[0][:2], ("v1.2.3-fork.2", self.latest))
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
+        self.assertFalse((self.root / ".git/FETCH_HEAD").exists())
+
+    def test_starting_unpushed_commit_is_rejected(self):
+        git(self.root, "commit", "--allow-empty", "-m", "Not pushed")
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        with self.assertRaisesRegex(RuntimeError, "not latest origin"):
+            self.launch(api)
+        self.assertFalse(self.preflight_log.exists())
+        self.assertEqual(api.calls, [])
+
+    def test_starting_dirty_checkout_is_rejected(self):
+        (self.root / "untracked").write_text("not committed\n")
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        with self.assertRaisesRegex(RuntimeError, "working tree must be clean"):
+            self.launch(api)
+        self.assertFalse(self.preflight_log.exists())
+        self.assertEqual(api.calls, [])
+
+    def test_concurrent_tag_change_is_not_overwritten(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        real_git = driver.git
+        ref = "refs/tags/v1.2.3-fork.2"
+        def race(*args, **kwargs):
+            if args[0] == "push" and args[-1] == ":" + ref:
+                git(self.remote, "update-ref", ref, self.latest)
+            return real_git(*args, **kwargs)
+        with patch.object(driver, "git", side_effect=race):
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.launch(api)
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
+        self.assertEqual(git(self.root, "rev-parse", ref), self.old)
+
+    def test_remote_tag_change_during_preflight_preserves_conflict(self):
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        def conflict(snapshot):
+            git(self.remote, "update-ref", "refs/tags/v1.2.3-fork.2", self.latest)
+        with self.assertRaisesRegex(RuntimeError, "candidate tag changed"):
+            self.launch(api, during_preflight=conflict)
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
+        self.assertTrue(all(method == "GET" for method, _ in api.calls))
+
+    def test_local_candidate_tag_is_irrelevant_and_preserved(self):
+        git(self.root, "tag", "-f", "v1.2.3-fork.2", self.latest)
+        api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
+        self.launch(api)
+        self.assertEqual(git(self.root, "rev-parse", "refs/tags/v1.2.3-fork.2"), self.latest)
+        self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
 
     def test_publication_after_draft_deletion_preserves_tag(self):
         api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()],
@@ -382,7 +528,8 @@ class ReleaseDriverTests(unittest.TestCase):
                        "PREFLIGHT_LOG": str(self.preflight_log), "PREFLIGHT_FAIL": ""}
                 with patch.dict(os.environ, env), patch.object(driver, "ROOT", self.root), \
                      patch.object(driver.platform, "system", return_value=host):
-                    driver.preflight()
+                    with driver.committed_snapshot(self.latest) as snapshot:
+                        driver.preflight(snapshot)
                 lines = self.preflight_log.read_text().splitlines()
                 prepares = [line for line in lines if line.startswith("prepare ")]
                 self.assertEqual(len(prepares), 1)
@@ -566,10 +713,10 @@ class ActionsProgressTests(unittest.TestCase):
                             return ''
                         driver.git = fake_git
                         driver.verify_origin = lambda: None
-                        driver.check_baseline = lambda: '1.2.3'
+                        driver.committed_snapshot = lambda sha: __import__('contextlib').nullcontext(driver.ROOT)
+                        driver.check_baseline = lambda root: '1.2.3'
                         driver.releases = lambda **kwargs: [{'tag_name': 'v1.2.3-fork.1', 'draft': False}]
-                        driver.preflight = lambda: None
-                        driver.check_checkout = lambda sha: None
+                        driver.preflight = lambda root: None
                         driver.ensure_unpublished = lambda tag, **kwargs: None
                         driver.remote_ref = lambda ref, **kwargs: 'abc' if ref.startswith('refs/heads/') or pushed[0] else None
                         sys.argv = ['release.py']

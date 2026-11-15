@@ -31,8 +31,9 @@ Application development still happens in disposable prepared trees. Export
 its commits as mail patches and commit the queue and maintenance changes on
 `downstream/patch-build`; never copy the patched application tree over this
 maintenance checkout. `main` is not an additional required staging branch.
-Release tags are created from the latest already-committed
-`downstream/patch-build` revision. Published tags and assets remain immutable.
+Release tags are created from the already-committed `downstream/patch-build`
+revision selected at invocation, not a later workspace revision. Published tags
+and assets remain immutable.
 
 
 ## Remote sources
@@ -108,7 +109,7 @@ speed uses measured output and time, with each machine/source counted once; miss
 Duplicate connections prefer current online history over stale history. An unavailable traffic sample has an unknown
 rate, distinct from the zero live rate of a disconnected host; last known totals remain visible when available.
 
-### Codex quota on macOS and Windows (unreleased)
+### Subscription quota on macOS and Windows (unreleased)
 
 The quota patches add an optional Codenotch-style edge-attached floating surface
 and a Subscription page inside the existing Settings window. The floating
@@ -209,9 +210,18 @@ or mixed-DPI behavior. Do not claim pixel identity without matching native
 screenshots. Claude quota and Linux quota interfaces are future phases.
 
 The Windows native replacement retains the source-neutral Subscription page and
-Light, Dark or System appearance; Codex remains the only live adapter. Quota bars,
-rings and flyout summaries show remaining allowance, with warning colors based on
-actual usage. Dashboard and quota-window visibility controls remain independent.
+Light, Dark or System appearance. The multi-window feature adds a real OpenCode Go
+adapter beside Codex. Quota bars, rings and flyout summaries show remaining allowance;
+period colors are stable and warnings are separate. Dashboard and quota-window
+visibility controls remain independent.
+
+The approved multi-window design retains the supplier logo and matte center disk,
+round progress caps and native concave flares. Rings run from longest period outside
+to shortest inside: month, week, five hours. Adding rings grows the actual content
+area rather than shrinking the logo or clipping the outer ring into a flare. Every
+existing quota surface includes all available windows for each displayed account;
+there is no aggregate allowance and no headline-only substitute. Source-specific
+credential stores, account isolation and persisted backoff remain independent.
 
 The floating surface is drawn directly with cached WPF paths, glyphs and text.
 The main surface uses a bounded, stable animation canvas and the details card
@@ -373,7 +383,7 @@ Unknown count/expiry remain unknown, never a quota reset or monetary balance.
 Preferences use aligned switches and the existing orb-style source editor.
 All sources defaults on, includes future supported readers, persists separately
 and disables individual choices; legacy explicit JSON lists migrate to all off.
-Codex is still the only real adapter. The diagnostics disclosure/callback and
+Codex and OpenCode Go are the implemented adapters. The diagnostics disclosure/callback and
 credential-storage footer are removed, while initialization failures remain
 visible. Cards retain updated time, not source/precision/next-available metadata,
 and Subscription has its own icon. Internal safe native diagnostics remain for
@@ -589,14 +599,19 @@ that every internal request or persistent outage can recover. Exhausted or perma
 The wrapper requires Git, network access, push access to `origin`, and an
 authenticated `gh` session with access to the upstream repository and fork
 releases, drafts, and Actions, including permission to write releases and
-Actions. The wrapper verifies that the configured upstream tag resolves to the
-commit in `downstream/config.json` and stops if it does not. It also queries the
+Actions. Before remote discovery, the wrapper captures the starting committed
+SHA and exports its tracked tree into an isolated temporary directory. The
+starting checkout must be clean and its SHA must match `origin/downstream/patch-build`.
+The wrapper verifies that the upstream tag configured in that snapshot resolves
+to the commit in its `downstream/config.json` and stops if it does not. It also queries the
 latest upstream release; a different tag produces a warning, while the release
 continues using the configured pin. Only when choosing to upgrade, manually
 migrate and commit the pin and patch queue before releasing against the new baseline.
-Before any cancellation, draft deletion or tag mutation, the wrapper prepares
-the complete patch queue once in a temporary tree and runs a local preflight
-against that tree. On Linux and macOS it requires the .NET 10 SDK. It probes
+Before any cancellation, draft deletion or tag mutation, the wrapper runs the
+snapshot's `downstream/manage.py` against its committed configuration and complete
+patch queue, preparing the application once in a second temporary tree. The local
+preflight uses only that prepared tree, never live workspace inputs. Both temporary
+trees are removed afterward, including on failure. On Linux and macOS it requires the .NET 10 SDK. It probes
 `DOTNET_ROOT`, then each `dotnet` on `PATH`, then `~/.dotnet/dotnet`, selecting
 the first installation whose `--list-sdks` reports a 10.x SDK. The selected
 installation is used for all .NET build and test subprocesses; the wrapper does
@@ -628,9 +643,20 @@ bypass. `--plan` does not prepare a tree or require these toolchains.
 The local preflight is not the full release gate: native UI validation, tests
 on other platforms, and release packaging remain the responsibility of
 `Release`.
-The wrapper tags the latest already-committed `downstream/patch-build`; it
-does not stamp versions, create commits, or modify the patch queue or docs.
-Make and commit any needed queue or documentation changes before launching it.
+The selected SHA remains fixed throughout the invocation. Later edits (including
+untracked files), local commits, branch switches and local tag changes do not
+change the snapshot, preflight inputs or final release tag target, and are not
+rejected by a later checkout-cleanliness check. The wrapper does not stamp
+versions, create commits, or modify the caller's patch queue, docs or local tags;
+local candidate tags are not used to push the release. Make and commit all changes
+intended for this release before launching it.
+Remote branch advances are allowed when they still contain the selected SHA.
+Before remote tag mutations and ambiguous-push reconciliation, the wrapper checks
+that ancestry in isolated Git storage without changing the caller's refs or
+`FETCH_HEAD`. Remote branch deletion or a history rewrite excluding the selected
+SHA blocks release, matching the workflow's tag-ancestor requirement. Remote tag
+conflicts still stop release and tag pushes retain explicit force-with-lease
+guards; later branch work is never silently substituted for the selected SHA.
 The wrapper selects the next fork number after the highest published release.
 An unpublished candidate of that number is retried by cancelling its old runs
 and cleaning up the old draft and tag before recreating it. The wrapper checks
@@ -653,8 +679,11 @@ python3 downstream/test-publish-release.py
 python3 downstream/test-manage.py
 ```
 
-They cover release selection and safety, transient query failures, ambiguous write reconciliation, read-only resume,
-published asset immutability, and failed-clone cleanup that preserves pre-existing user directories.
+They cover release selection and safety, committed snapshot isolation during
+workspace edits/commits/branch switches and remote advances, exclusion of the
+selected commit, remote tag races, untouched local tags, transient query failures,
+ambiguous write reconciliation, read-only resume, published asset immutability,
+and failed-clone cleanup that preserves pre-existing user directories.
 
 To check a macOS bundle locally against its tested Linux collector, run
 `python3 downstream/verify-collector-zip.py <zip> <collector>` from the

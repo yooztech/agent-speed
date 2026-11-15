@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Safely prepare, trigger, and observe the downstream Release workflow."""
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 import argparse
 import fcntl
@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import unicodedata
@@ -67,7 +68,22 @@ def find_dotnet_sdk():
     raise RuntimeError('.NET 10 SDK is required for release preflight; install it and set DOTNET_ROOT or PATH, or install it in ~/.dotnet')
 
 
-def preflight():
+@contextmanager
+def committed_snapshot(commit):
+    """Export the selected commit without consulting the mutable checkout."""
+    with tempfile.TemporaryDirectory(prefix='agent-speed-release-snapshot-') as temp:
+        root = Path(temp) / 'checkout'
+        root.mkdir()
+        archive = Path(temp) / 'commit.tar'
+        git('archive', '--format=tar', '--output=' + str(archive), commit)
+        with tarfile.open(archive) as source:
+            # This archive is produced by Git from our trusted commit, not external input.
+            # Python 3.10 installations do not all support extraction filters.
+            source.extractall(root)
+        yield root
+
+
+def preflight(root):
     host = platform.system()
     if host not in ('Linux', 'Darwin'):
         raise RuntimeError(f'release preflight does not support host platform {host}')
@@ -87,8 +103,8 @@ def preflight():
     try:
         with tempfile.TemporaryDirectory(prefix='agent-speed-release-') as temp:
             tree = Path(temp) / 'source'
-            subprocess.run([sys.executable, str(ROOT / 'downstream/manage.py'), 'prepare', str(tree)],
-                           cwd=ROOT, check=True)
+            subprocess.run([sys.executable, str(root / 'downstream/manage.py'), 'prepare', str(tree)],
+                           cwd=root, check=True)
             release_network.run([dotnet, 'restore', 'windows/AgentSpeed.slnx',
                                  '-p:EnableWindowsTargeting=true'], cwd=tree,
                                 capture=False, timeout=1800, env=dotnet_env)
@@ -114,12 +130,6 @@ def preflight():
                 subprocess.run(['swift', 'test'], cwd=tree / 'macos', check=True)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise RuntimeError(f'release preflight failed: {exc}') from exc
-
-
-def check_checkout(commit):
-    if (git('branch', '--show-current') != BRANCH or git('rev-parse', 'HEAD') != commit
-            or git('status', '--porcelain', '--untracked-files=all')):
-        raise RuntimeError('local branch, HEAD or working tree changed during release')
 
 
 def api(path, method='GET', *, deadline=None):
@@ -162,8 +172,8 @@ def verify_origin():
         raise RuntimeError(f'origin fetch and all push URLs must refer to github.com/{REPO}')
 
 
-def check_baseline():
-    config = json.loads((ROOT / 'downstream/config.json').read_text())
+def check_baseline(root):
+    config = json.loads((root / 'downstream/config.json').read_text())
     tag = f"v{config['upstream_version']}"
     obj = api(f'repos/{UPSTREAM}/git/ref/tags/{quote(tag, safe="")}')['object']
     for _ in range(8):
@@ -192,6 +202,27 @@ def remote_ref(ref, *, deadline=None):
     if len(rows) > 1 or (rows and rows[0][1] != ref):
         raise RuntimeError(f'ambiguous remote ref {ref}')
     return rows[0][0] if rows else None
+
+
+def check_remote_contains(commit):
+    """The workflow requires the selected commit to remain on the release branch."""
+    ref = 'refs/heads/' + BRANCH
+    tip = remote_ref(ref)
+    if tip == commit:
+        return
+    if tip is not None:
+        # Fetch only into disposable storage: never move caller refs or FETCH_HEAD.
+        with tempfile.TemporaryDirectory(prefix='agent-speed-release-ancestry-') as temp:
+            subprocess.run(['git', 'init', '--bare', '--quiet', temp], check=True)
+            release_network.run(['git', 'fetch', '--quiet', '--no-tags',
+                                 git('remote', 'get-url', 'origin'), ref], cwd=temp)
+            result = subprocess.run(['git', 'merge-base', '--is-ancestor', commit, 'FETCH_HEAD'],
+                                    cwd=temp, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                return
+            if result.returncode not in (1, 128):
+                result.check_returncode()
+    raise RuntimeError(f'remote {BRANCH} no longer contains selected commit {commit}')
 
 
 def runs(tag, *, deadline=None):
@@ -258,17 +289,18 @@ def delete_draft(tag, draft_id, old_tag, version):
             raise
 
 
-def push_tag(tag, expected, desired, branch_sha):
+def push_tag(tag, expected, desired, commit):
     ref = 'refs/tags/' + tag
     attempted = False
     def push():
         nonlocal attempted
         ensure_unpublished(tag)
         actual = remote_ref(ref)
-        if attempted and actual == desired and remote_ref('refs/heads/' + BRANCH) == branch_sha:
+        check_remote_contains(commit)
+        if attempted and actual == desired:
             return
-        if actual != expected or remote_ref('refs/heads/' + BRANCH) != branch_sha:
-            raise RuntimeError('branch or candidate tag changed before tag push')
+        if actual != expected:
+            raise RuntimeError('candidate tag changed before tag push')
         attempted = True
         git('push', f'--force-with-lease={ref}:{expected or ""}', 'origin', f'{desired or ""}:{ref}')
     try:
@@ -277,7 +309,8 @@ def push_tag(tag, expected, desired, branch_sha):
         if not release_network.is_transient(exc):
             raise
         ensure_unpublished(tag)
-        if remote_ref(ref) != desired or remote_ref('refs/heads/' + BRANCH) != branch_sha:
+        check_remote_contains(commit)
+        if remote_ref(ref) != desired:
             raise
 
 
@@ -488,47 +521,39 @@ def main():
             raise RuntimeError(f'checkout {BRANCH} before releasing')
         if git('status', '--porcelain', '--untracked-files=all'):
             raise RuntimeError('working tree must be clean, including untracked files')
-        verify_origin()
-        version = check_baseline()
-        rels = releases()
-        tag = select(rels, version)
         current = git('rev-parse', 'HEAD')
-        branch_ref = 'refs/heads/' + BRANCH
-        remote = remote_ref(branch_ref)
-        if remote != current:
-            raise RuntimeError(f'local HEAD {current} is not latest origin/{BRANCH} ({remote}); synchronize safely first')
-        old_tag = remote_ref('refs/tags/' + tag)
-        local_tag = git('tag', '-l', tag)
-        if local_tag and (old_tag is None or git('rev-parse', f'refs/tags/{tag}') != old_tag):
-            raise RuntimeError('local candidate tag differs from remote tag; resolve it manually')
-        print(f'Candidate {tag}, branch {current}, existing tag {old_tag or "none"}', flush=True)
-        if args.plan:
-            return
-        preflight()
+        with committed_snapshot(current) as snapshot:
+            verify_origin()
+            branch_ref = 'refs/heads/' + BRANCH
+            remote = remote_ref(branch_ref)
+            if remote != current:
+                raise RuntimeError(f'local HEAD {current} is not latest origin/{BRANCH} ({remote}); synchronize safely first')
+            version = check_baseline(snapshot)
+            rels = releases()
+            tag = select(rels, version)
+            old_tag = remote_ref('refs/tags/' + tag)
+            print(f'Candidate {tag}, branch {current}, existing tag {old_tag or "none"}', flush=True)
+            if args.plan:
+                return
+            preflight(snapshot)
         cancel_and_wait(tag)
-        check_checkout(current)
         draft = ensure_unpublished(tag)
         if select(releases(), version) != tag:
             raise RuntimeError('published release history changed; retry planning')
-        if remote_ref(branch_ref) != current or remote_ref('refs/tags/' + tag) != old_tag:
-            raise RuntimeError('branch or candidate tag changed during planning')
+        check_remote_contains(current)
+        if remote_ref('refs/tags/' + tag) != old_tag:
+            raise RuntimeError('candidate tag changed during planning')
         if draft:
             delete_draft(tag, draft['id'], old_tag, version)
         # Recheck after cancellation and draft deletion, before the destructive tag operation.
         ensure_unpublished(tag)
         if old_tag:
             push_tag(tag, old_tag, None, current)
-        if local_tag:
-            git('tag', '-d', tag)
-        if remote_ref(branch_ref) != current:
-            raise RuntimeError('remote branch changed before tagging')
+        check_remote_contains(current)
         ensure_unpublished(tag)
         if remote_ref('refs/tags/' + tag) is not None:
             raise RuntimeError('candidate tag appeared concurrently')
         old_ids = {r['id'] for r in runs(tag)}
-        check_checkout(current)
-        if remote_ref(branch_ref) != current:
-            raise RuntimeError('remote branch changed before tagging')
         push_tag(tag, None, current, current)
         watch(tag, current, old_ids)
 
