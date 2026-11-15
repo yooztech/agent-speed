@@ -137,6 +137,28 @@ polling is independent of the speed monitor. The contract, polling rules and
 synthetic fixtures are in the prepared tree's `spec/QUOTA.md`. Unknown readings
 remain unknown, not zero.
 
+#### Provider implementation reference: Codenotch first
+
+Codenotch is the quota implementation reference as well as the visual reference.
+Before adding a supplier, inspect its existing adapter at the pinned commit
+`835550a342871779135b6484d6899161c5222f7c`: credentials, endpoint selection,
+response parsing, authentication/entitlement states and persisted backoff.
+Verify differences against official supplier sources rather than independently
+rediscovering an already implemented integration. This does not authorize
+enabling every supplier or upgrading the reference pin.
+
+OpenCode Go is already covered by Codenotch's
+[`OpenCodeProvider.swift`](https://github.com/vinzdg/codenotch/blob/835550a342871779135b6484d6899161c5222f7c/Sources/Providers/OpenCodeProvider.swift),
+`OpenCodeCredentials.swift`, `OpenCodeUsage.swift` and `OpenCodeSchema.swift`.
+The pinned implementation distinguishes Go API keys (`/zen/go/v1/usage`) from
+OAuth credentials (`/inference/go/v1/usage`, with the actual organization header).
+Its OAuth 401 handling checks Console authentication before concluding that a
+missing Go plan means sign-out. Do not assume API keys and OAuth tokens can use
+the same route, or that the local machine has a signed-in account. Newer official
+OpenCode sources may differ; document the selected credential/route contract and
+its evidence instead of silently mixing versions. Preserve the MIT notice when
+porting reference code and distinguish synthetic checks from live-account proof.
+
 The quota persistence regression gives each provider actor its own `UserDefaults`
 instance for the same suite, avoiding non-Sendable instance sharing under Swift 6.
 The provider and all ten quota tests compile and pass under Swift 6.2 on Linux in
