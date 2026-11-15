@@ -402,5 +402,19 @@
       {"platform": "macos", "run": "swift test --package-path macos --filter 'QuotaPresentationTests|QuotaNotchTests|QuotaControllerTests'"}
     ],
     "reason": "Cross-platform multi-window remaining-allowance rendering and the OpenCode Go increment: credential-specific reference routes, read-only credential discovery, account isolation, persistent cache/backoff and independent provider lifecycle. Base macOS Codex corrections belong to 0020 and base Windows corrections to 0021; this patch carries only the new feature and necessary integration. Native UI verification requires the corresponding OS; Linux checks do not establish WPF/AppKit pixels, desktop input or live subscription access."
+  },
+  "0023-Read-remote-subscription-quota-over-SSH.patch": {
+    "regression": [
+      {"platform": "linux", "run": "cmake -S linux -B build-quota -DAGENTSPEED_BUILD_APP=OFF && cmake --build build-quota --target agentspeed_tests agentspeed-collector -j2 && build-quota/tests/agentspeed_tests --gtest_filter='CollectorQuota*.*'"},
+      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~RemoteQuotaTests|FullyQualifiedName~RemoteQuotaPersistenceTests' && dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter FullyQualifiedName~RemoteQuotaSourcesTests"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~RemoteQuotaTests|FullyQualifiedName~RemoteQuotaPersistenceTests' && dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter FullyQualifiedName~RemoteQuotaSourcesTests && dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --filter 'FullyQualifiedName~QuotaSurfaceProviderCollectionTests|FullyQualifiedName~QuotaSettingsPageTests|FullyQualifiedName~QuotaNotchViewTests'"},
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'RemoteQuotaTests|RemoteQuotaTransportTests|QuotaControllerTests'"}
+    ],
+    "related": [
+      {"platform": "linux", "run": "build-quota/tests/agentspeed_tests --gtest_filter='DaemonProcessTest.*:CollectorIntegration.*'"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~SettingsSerializerTests|FullyQualifiedName~QuotaFormatTests'"},
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'RemoteHostsTests|QuotaPresentationTests'"}
+    ],
+    "reason": "Cross-platform remote subscription quota increment: opt-in asynchronous per-subscriber collector queries, remote-only credentials, provider/account-isolated cache and persisted backoff, correlated bounded replies, dynamic host/provider selections, stale disconnects and late-result invalidation. Existing Subscription cards, floating panels and summaries consume scoped remote sources; native SDK/desktop and real-account acceptance require their corresponding environments. Base local quota ownership remains in 0020/0021 and the Go increment in 0022."
   }
 }

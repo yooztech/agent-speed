@@ -167,10 +167,38 @@ supplied account-card/progress-bar design. The existing transient dashboard
 flyout shows at most two summaries near a limit, when blocked, or when sign-in
 is required; clicking one opens Settings. Status-item bodies, taskbar widgets,
 orbs and History do not carry quota data.
-The local Codex login is read without modifying credentials, and account usage
-polling is independent of the speed monitor. The contract, polling rules and
-synthetic fixtures are in the prepared tree's `spec/QUOTA.md`. Unknown readings
-remain unknown, not zero.
+Local and enabled SSH-host Codex/OpenCode Go accounts share the Subscription
+source selector, cards, floating quota panel and qualifying summaries. Remote
+sources are identified by host UUID plus provider, not host label; All sources
+includes enabled remote hosts, while explicit selections remain host-scoped.
+The remote collector reads its own host's credentials without modifying them,
+queries the supplier there and returns only structured quota observations over
+the existing SSH connection. Authentication secrets never travel to the desktop.
+Quota polling is independent of speed sampling and obeys the existing network
+consent, automatic/manual selection and persisted provider retry deadlines.
+Disconnects retain successful observations as stale with their original time;
+unknown or unauthenticated readings are not zero allowance. Older collectors
+without the quota command produce a bounded unavailable state rather than a
+permanent refresh. This cross-platform remote increment belongs to feature patch
+`0023-Read-remote-subscription-quota-over-SSH.patch`; it does not move unrelated
+base quota fixes out of 0020/0021 or the Go increment out of 0022. The wire,
+polling and credential-isolation contract is in the prepared tree's
+`spec/QUOTA.md`. Native desktop and real-account acceptance must be reported
+separately from portable checks; this feature does not authorize packaging,
+Actions or Release publication.
+
+Focused remote-quota checks passed on Linux: 16 collector/provider/real-stdio
+regressions, 10 Windows Core wire/persistence tests, 173 selected Presentation
+tests, and 14 Swift wire/controller/remote-lifecycle tests using the real portable
+sources under Swift 6.2.4. The Windows application and native test assembly
+cross-compile with zero warnings/errors; five changed macOS native integration
+surfaces pass syntax parsing, not SDK type checking. A throwaway real-collector
+stdio scenario passed its cache-only replies through the production Windows
+consumer and Swift decoder while metrics continued; the synthetic credential
+was not transmitted and missing observations remained unknown. All 23 patches
+replay from the pin, and all 3,126 replayed source files match the checked prepared
+tree byte-for-byte. Real supplier accounts, native macOS SDK/desktop and Windows
+desktop interactions remain unverified. No package, Actions or Release was made.
 
 #### Provider implementation reference: Codenotch first
 

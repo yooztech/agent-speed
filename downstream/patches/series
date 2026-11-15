@@ -20,3 +20,4 @@
 0020-Add-macOS-Codex-quota-monitoring.patch
 0021-Add-Windows-Codex-quota-monitoring.patch
 0022-Add-multi-window-quota-and-OpenCode-Go-provider.patch
+0023-Read-remote-subscription-quota-over-SSH.patch
