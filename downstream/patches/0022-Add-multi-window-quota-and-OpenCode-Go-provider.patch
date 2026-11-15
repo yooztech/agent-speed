@@ -1,4 +1,4 @@
-From d5d3884b09b9f28ee22435df932407a707482276 Mon Sep 17 00:00:00 2001
+From 6e2dcf23d76498ca842f16f585bc867211b1834e Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Sun, 15 Nov 2026 13:17:10 +0800
 Subject: [PATCH] Add multi-window quota and OpenCode Go provider
@@ -45,8 +45,8 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  .../QuotaNotchWindowTests.cs                       |   2 +-
  .../QuotaSettingsPageTests.cs                      |  89 ++++-
  .../QuotaSurfaceProviderCollectionTests.cs         | 171 +++++++++
- .../AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs  | 130 ++++++-
- 42 files changed, 2795 insertions(+), 419 deletions(-)
+ .../AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs  | 131 ++++++-
+ 42 files changed, 2796 insertions(+), 419 deletions(-)
 
 diff --git a/macos/Package.swift b/macos/Package.swift
 index c7b998e5..0500f99e 100644
@@ -4034,7 +4034,7 @@ index 5e1a9af2..b7b7c8b8 100644
      {
          var delta = b - a;
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-index 555d0f78..22b3b2fb 100644
+index 4878b12c..35be7359 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
 @@ -45,7 +45,7 @@ public sealed class QuotaNotchWindowTests
@@ -4356,7 +4356,7 @@ index 00000000..b759efe5
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
-index f0cd97a4..495efb86 100644
+index f0cd97a4..97bc8943 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 @@ -36,7 +36,7 @@ public sealed class QuotaSurfaceTests
@@ -4441,7 +4441,7 @@ index f0cd97a4..495efb86 100644
                      now: () => now);
                  settings.Changed += (_, _) => surface.ApplySettings();
                  UIElement? summary = null;
-@@ -445,6 +446,109 @@ public sealed class QuotaSurfaceTests
+@@ -445,6 +446,110 @@ public sealed class QuotaSurfaceTests
          });
      }
  
@@ -4533,7 +4533,8 @@ index f0cd97a4..495efb86 100644
 +                    Assert.NotNull(summary);
 +                    Assert.Same(dispatcher, summary.Dispatcher);
 +                    Assert.Contains(Descendants(summary).OfType<TextBlock>(), text => text.Text == loc["win.quota.plan"] + ": " + handler.Plan);
-+                    Assert.Equal(.95, Assert.Single(Descendants(summary).OfType<ProgressBar>()).Value);
++                    // The flyout displays remaining allowance: 95% used leaves 5%.
++                    Assert.Equal(.05, Assert.Single(Descendants(summary).OfType<ProgressBar>()).Value, 12);
 +                    Assert.True(updates > previousUpdates);
 +                }
 +                else
@@ -4551,7 +4552,7 @@ index f0cd97a4..495efb86 100644
      private static void RunSta(Action action)
      {
          Exception? failure = null;
-@@ -488,12 +592,14 @@ public sealed class QuotaSurfaceTests
+@@ -488,12 +593,14 @@ public sealed class QuotaSurfaceTests
          public string Plan = "plus";
          public int UsedPercent = 13;
          public TaskCompletionSource? Block;

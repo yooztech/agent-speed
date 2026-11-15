@@ -231,6 +231,21 @@ queue replays successfully; its Windows test project cross-compiles on Linux and
 all 124 focused Presentation `QuotaNotch` tests pass. Native Windows execution
 remains unverified; these checks are not WPF runtime validation.
 
+Release run `43683803058` completed the native suite without the former STA
+crash but still failed interaction cases and one new allowance assertion. WPF
+synchronously resamples the physical cursor during capture, so synthetic press
+tests now isolate desktop mouse-coordinate events while retaining real capture
+and loss notifications. Each case runs and shuts down its own Dispatcher;
+capture loss goes through native `ReleaseCapture`. Alt-body points are selected
+outside actual upright cell bounds rather than assuming a cell is bare body.
+An eight-case portable regression checks that painted body strip across all
+edges and representative layouts. The dispatcher regression now correctly
+expects 5% remaining for 95% used, not 95% remaining. Local cross-compilation
+succeeds and all 190 focused `QuotaNotch`/`QuotaFormatTests` cases pass.
+These are not native Windows execution results. The reported right-edge
+`GetWindowRgn` disappearance has not been reproduced or established fixed on
+Windows; its assertions remain strict, with no retry or region-reapply fallback.
+
 The approved multi-window design retains the supplier logo and matte center disk,
 round progress caps and native concave flares. Rings run from longest period outside
 to shortest inside: month, week, five hours. Adding rings grows the actual content

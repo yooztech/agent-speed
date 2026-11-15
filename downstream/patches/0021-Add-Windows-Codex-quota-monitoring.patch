@@ -1,4 +1,4 @@
-From 08482ad002769b682876d4bd6aa71d9949fdf510 Mon Sep 17 00:00:00 2001
+From 4fe6139cec67ba1211ed7f6b44db6b8e8b531bec Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 20:09:33 +0800
 Subject: [PATCH] Add Windows Codex quota monitoring
@@ -14,11 +14,11 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../Menus/QuickMenuModel.cs                        |   15 +-
  .../Settings/AppSettings.cs                        |   30 +
  .../Settings/QuotaFormat.cs                        |  112 ++
- .../Settings/QuotaNotchGeometry.cs                 |  292 +++++
+ .../Settings/QuotaNotchGeometry.cs                 |  292 ++++
  .../Settings/QuotaNotchGeometryFilter.cs           |  190 +++
  .../Settings/QuotaNotchGeometryOrb.cs              |   99 ++
  .../Settings/QuotaNotchGeometryRaster.cs           |   69 +
- .../Settings/QuotaNotchGripMotion.cs               |  141 +++
+ .../Settings/QuotaNotchGripMotion.cs               |  141 ++
  .../Settings/QuotaNotchLayout.cs                   |   79 ++
  .../Settings/SettingsSerializer.cs                 |   38 +
  windows/src/AgentSpeed/AgentSpeed.csproj           |    6 +
@@ -34,29 +34,30 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  windows/src/AgentSpeed/Settings/QuotaNotchView.cs  |  421 ++++++
  .../src/AgentSpeed/Settings/QuotaNotchWindow.cs    |  759 +++++++++++
  .../src/AgentSpeed/Settings/QuotaSettingsPage.cs   |  315 +++++
- windows/src/AgentSpeed/Settings/QuotaSurface.cs    |  355 ++++++
+ windows/src/AgentSpeed/Settings/QuotaSurface.cs    |  355 +++++
  .../src/AgentSpeed/Settings/SettingsViewModel.cs   |    1 +
  .../src/AgentSpeed/Settings/SettingsWindow.xaml    |   12 +-
  .../src/AgentSpeed/Settings/SettingsWindow.xaml.cs |   27 +-
  windows/src/AgentSpeed/Theme/Styles.xaml           |    4 +-
- .../CodexQuotaProviderTests.cs                     |  727 +++++++++++
+ .../CodexQuotaProviderTests.cs                     |  727 ++++++++++
  .../OrbMenuModelTests.cs                           |   43 +-
  .../QuotaFormatTests.cs                            |  251 ++++
+ .../QuotaNotchBodyInputTests.cs                    |   67 +
  .../QuotaNotchFilterParityTests.cs                 |  209 +++
  .../QuotaNotchGeometryFilterTests.cs               |   35 +
  .../QuotaNotchGeometryOrbTests.cs                  |  139 ++
  .../QuotaNotchGeometryRasterTests.cs               |   29 +
- .../QuotaNotchGeometryTests.cs                     |  215 ++++
+ .../QuotaNotchGeometryTests.cs                     |  215 +++
  .../QuotaNotchGripMotionTests.cs                   |  137 ++
  .../QuotaNotchLayoutTests.cs                       |  241 ++++
  .../Reporting/ReportMenuTests.cs                   |   11 +-
  .../SettingsSerializerTests.cs                     |  109 ++
  .../QuotaDisplayClockTests.cs                      |   63 +
  .../QuotaNotchViewTests.cs                         |  302 +++++
- .../QuotaNotchWindowTests.cs                       | 1335 ++++++++++++++++++++
+ .../QuotaNotchWindowTests.cs                       | 1394 ++++++++++++++++++++
  .../QuotaSettingsPageTests.cs                      |  386 ++++++
- .../AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs  |  505 ++++++++
- 52 files changed, 8577 insertions(+), 45 deletions(-)
+ .../AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs  |  505 +++++++
+ 53 files changed, 8703 insertions(+), 45 deletions(-)
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 index e0a41411..b6aeba76 100644
@@ -5521,6 +5522,79 @@ index 00000000..a4380803
 +    }
 +
 +}
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchBodyInputTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchBodyInputTests.cs
+new file mode 100644
+index 00000000..d6a4f16e
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchBodyInputTests.cs
+@@ -0,0 +1,67 @@
++using AgentSpeed.Presentation.Settings;
++
++namespace AgentSpeed.Presentation.Tests;
++
++public sealed class QuotaNotchBodyInputTests
++{
++    [Theory]
++    [InlineData("left")]
++    [InlineData("right")]
++    [InlineData("top")]
++    [InlineData("bottom")]
++    public void OldAltDragPointsAreCellContentRatherThanDraggableBody(string edge)
++    {
++        bool horizontal = edge is "top" or "bottom";
++        var main = QuotaNotchGeometry.CreateMain(1, 1, horizontal, edge == "bottom");
++        var envelope = QuotaNotchGeometry.CreateEnvelope(1, horizontal);
++        var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(main));
++        var content = QuotaNotchGeometry.GetCellContentBounds(main, transform, default, 0, 56, 20);
++        // These were the two actual press coordinates in the native regressions.
++        // The renderer gives the upright ring AND reading precedence over Body.
++        foreach (double fromEnd in new[] { 30d, 40d })
++        {
++            var oldPress = transform.Apply(new(12, main.BodyEnd - fromEnd));
++            Assert.True(Contains(content, oldPress), $"edge={edge}; fromEnd={fromEnd}; point={oldPress}; cell={content}");
++        }
++    }
++
++    [Theory]
++    [InlineData("left")]
++    [InlineData("right")]
++    [InlineData("top")]
++    [InlineData("bottom")]
++    public void EdgeSideBodyPointHasPaintAndCellClearanceAcrossMeasuredLayouts(string edge)
++    {
++        bool horizontal = edge is "top" or "bottom";
++        foreach (int count in new[] { 1, 3 })
++            foreach (var cell in new[] { new QuotaNotchGeometry.Cell(56, 80, 56), new(154, 112, 88) })
++            {
++                var main = QuotaNotchGeometry.CreateMain(1, count, horizontal, edge == "bottom", cell);
++                var envelope = QuotaNotchGeometry.CreateEnvelope(count, horizontal, cell);
++                var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(main));
++                // This is the same edge-local point used by the WPF harness with
++                // its live, font-measured Main and matrix, not a fabricated hit.
++                var press = new QuotaNotchGeometry.Point(3, (main.BodyStart + main.BodyEnd) / 2);
++                foreach (var local in new[] { press, new(press.X - 2, press.Y), new(press.X + 2, press.Y),
++                    new(press.X, press.Y - 2), new(press.X, press.Y + 2) })
++                {
++                    // The straight-sided central body lies wholly inside the
++                    // actual rounded/filleted path; no arc approximation is needed.
++                    Assert.InRange(local.X, .5, main.BodyDepth - QuotaNotchGeometry.Corner);
++                    Assert.InRange(local.Y, main.BodyStart + QuotaNotchGeometry.Corner, main.BodyEnd - QuotaNotchGeometry.Corner);
++                    var screen = transform.Apply(local);
++                    for (int index = 0; index < count; index++)
++                    {
++                        var content = QuotaNotchGeometry.GetCellContentBounds(main, transform, cell, index,
++                            cell.Diameter, cell.ContentHeight - cell.Diameter - 4);
++                        Assert.False(Contains(content, screen), $"edge={edge}; count={count}; point={screen}; cell={content}");
++                    }
++                    Assert.InRange(screen.X, 0, horizontal ? envelope.Length : envelope.Depth);
++                    Assert.InRange(screen.Y, 0, horizontal ? envelope.Depth : envelope.Length);
++                }
++            }
++    }
++
++    private static bool Contains(QuotaNotchGeometry.Box box, QuotaNotchGeometry.Point point) =>
++        point.X >= box.X && point.X <= box.X + box.Width && point.Y >= box.Y && point.Y <= box.Y + box.Height;
++}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchFilterParityTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchFilterParityTests.cs
 new file mode 100644
 index 00000000..3f909c50
@@ -7096,10 +7170,10 @@ index 00000000..5e1a9af2
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
 new file mode 100644
-index 00000000..555d0f78
+index 00000000..4878b12c
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-@@ -0,0 +1,1335 @@
+@@ -0,0 +1,1394 @@
 +using System.IO;
 +using System.Net.Http;
 +using System.Collections;
@@ -7274,8 +7348,7 @@ index 00000000..555d0f78
 +            var model = QuotaNotchGeometry.CreateMain(1, 1);
 +            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
 +            var transform = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model));
-+            var body = transform.Apply(new(12, model.BodyEnd - 40));
-+            Invoke(window, "PointerEnter", new Point(body.X, body.Y));
++            Invoke(window, "PointerEnter", BodyPoint(view));
 +            var card = Assert.Single(window.OwnedWindows.Cast<Window>());
 +            if (hold == "card")
 +            {
@@ -7324,14 +7397,12 @@ index 00000000..555d0f78
 +        {
 +            window.Show(); PumpLayout();
 +            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var model = QuotaNotchGeometry.CreateMain(1, 1);
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
-+            var p = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model)).Apply(new(12, model.BodyEnd - 40));
-+            var local = new Point(p.X, p.Y);
++            var local = BodyPoint(view);
 +            var screen = view.PointToScreen(local);
 +            Invoke(window, "PointerEnter", local);
 +            Invoke(window, "PointerPress", local, ModifierKeys.Alt, screen);
-+            Assert.True(window.IsMouseCaptured);
++            AssertCaptured(window);
++            Assert.True(Field<bool>(window, "_pendingDrag"));
 +            if (activeDrag)
 +            {
 +                var moved = new Point(screen.X, screen.Y + Field<double>(window, "_pressScale") * 8);
@@ -7342,7 +7413,7 @@ index 00000000..555d0f78
 +            ExpireGrace(window);
 +            AssertBodyState(window, "right", expanded: true);
 +            Assert.True(window.IsMouseCaptured);
-+            if (loseCapture) window.ReleaseMouseCapture();
++            if (loseCapture) LoseNativeCapture();
 +            else Invoke(window, "PointerRelease", new Point(-100, -100), view.PointToScreen(new Point(-100, -100)));
 +            Assert.False(window.IsMouseCaptured);
 +            Leave(window);
@@ -7519,14 +7590,12 @@ index 00000000..555d0f78
 +            AssertClearInput(window, new Point(view.Extent.Width - 1, view.Extent.Height - 1));
 +            var unusedPocket = transform.Apply(new(center.X + 20, center.Y - 12));
 +            AssertClearInput(window, new Point(unusedPocket.X, unusedPocket.Y));
-+            var pressPoint = altBodyDrag
-+                ? transform.Apply(new(12, expanded.BodyEnd - 40)) : dot;
-+            var localPress = new Point(pressPoint.X, pressPoint.Y);
++            var localPress = altBodyDrag ? BodyPoint(view) : new Point(dot.X, dot.Y);
 +            Assert.Equal(altBodyDrag ? QuotaNotchTarget.Body : QuotaNotchTarget.Grip,
 +                view.HitTestTarget(localPress).Target);
 +            var pressScreen = view.PointToScreen(localPress);
 +            Invoke(window, "PointerPress", localPress, altBodyDrag ? ModifierKeys.Alt : ModifierKeys.None, pressScreen);
-+            Assert.True(window.IsMouseCaptured);
++            AssertCaptured(window);
 +            Assert.True(Field<bool>(window, "_pendingDrag"));
 +            var monitor = Monitors.FromWindow(new WindowInteropHelper(window).Handle)!;
 +            var smallMove = new Point(pressScreen.X + monitor.Scale * 2, pressScreen.Y);
@@ -7668,16 +7737,15 @@ index 00000000..555d0f78
 +            var transform = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model));
 +            RevealGrip(window, "right");
 +            // Start between the dots, using production hit-testing, not a fabricated target.
-+            var p = transform.Apply(altBody ? new(12, model.BodyEnd - 30) : model.Grip);
-+            var press = new Point(p.X, p.Y);
++            var p = transform.Apply(model.Grip);
++            var press = altBody ? BodyPoint(view) : new Point(p.X, p.Y);
 +            Assert.Equal(altBody ? QuotaNotchTarget.Body : QuotaNotchTarget.Grip, view.HitTestTarget(press).Target);
 +            var screen = view.PointToScreen(press);
 +            var before = Field<QuotaNotchBounds?>(window, "_bounds");
 +            var refreshes = 0;
 +            window.RefreshRequested += () => refreshes++;
 +            Invoke(window, "PointerPress", press, altBody ? ModifierKeys.Alt : ModifierKeys.None, screen);
-+            Assert.True(window.IsMouseCaptured);
-+            Assert.Equal(new WindowInteropHelper(window).Handle, GetCapture());
++            AssertCaptured(window);
 +            Assert.True(Field<bool>(window, "_pendingDrag"));
 +            Assert.False(Field<bool>(window, "_dragging"));
 +            Assert.Equal(before, Field<QuotaNotchBounds?>(window, "_bounds"));
@@ -7753,13 +7821,12 @@ index 00000000..555d0f78
 +            window.RefreshRequested += () => refreshes++;
 +            var before = settings.Current;
 +            Invoke(window, "PointerPress", press, ModifierKeys.None, screen);
-+            Assert.True(window.IsMouseCaptured);
-+            Assert.Equal(new WindowInteropHelper(window).Handle, GetCapture());
++            AssertCaptured(window);
 +            Assert.True(Field<bool>(window, "_pendingDrag"));
 +            Leave(window);
 +            ExpireGrace(window);
 +            AssertBodyState(window, "right", expanded: true);
-+            if (loseCapture) window.ReleaseMouseCapture();
++            if (loseCapture) LoseNativeCapture();
 +            else Invoke(window, "PointerRelease", press, screen);
 +            Assert.False(window.IsMouseCaptured);
 +            Assert.False(Field<bool>(window, "_pendingDrag"));
@@ -7812,8 +7879,9 @@ index 00000000..555d0f78
 +            var move = new Point(screen.X, screen.Y + Field<double>(window, "_pressScale") * 8);
 +            Invoke(window, "PointerMove", view.PointFromScreen(move), move);
 +            Assert.True(Field<bool>(window, "_dragging"));
-+            // EndDrag samples the current physical cursor on capture loss; no test moves it.
-+            window.ReleaseMouseCapture();
++            // Steal/release at the OS boundary: the real WM_CAPTURECHANGED must
++            // reach WPF and the application's LostMouseCapture handler.
++            LoseNativeCapture();
 +            Assert.False(window.IsMouseCaptured);
 +            Assert.False(Field<bool>(window, "_dragging"));
 +            Assert.False(Field<bool>(window, "_pendingDrag"));
@@ -8061,8 +8129,7 @@ index 00000000..555d0f78
 +            }
 +            motion.Sample(4000);
 +            Invoke(window, "RenderAndPlace");
-+            var body = transform.Apply(new(main.BodyDepth / 2, (main.BodyStart + main.BodyEnd) / 2));
-+            var bodyPoint = new Point(body.X, body.Y);
++            var bodyPoint = BodyPoint(view);
 +            Invoke(window, "PointerMove", bodyPoint, view.PointToScreen(bodyPoint));
 +            window.SetReduceMotion(true);
 +            Assert.False(motion.Active);
@@ -8247,7 +8314,42 @@ index 00000000..555d0f78
 +        return settings;
 +    }
 +
-+    private static void Enter(Window window) => window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseEnterEvent });
++    private static Point BodyPoint(QuotaNotchView view)
++    {
++        // Use the renderer's actual measured geometry, not default cell dimensions:
++        // its upright reading area can cover the old depth=12/end-40 guesses.
++        var model = (QuotaNotchGeometry.Main)typeof(QuotaNotchView)
++            .GetField("_main", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view)!;
++        var matrix = (Matrix)typeof(QuotaNotchView)
++            .GetField("_matrix", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(view)!;
++        var point = matrix.Transform(new Point(3, (model.BodyStart + model.BodyEnd) / 2));
++        foreach (var sample in new[] { point, new Point(point.X - 2, point.Y), new Point(point.X + 2, point.Y),
++            new Point(point.X, point.Y - 2), new Point(point.X, point.Y + 2) })
++            Assert.Equal(QuotaNotchTarget.Body, view.HitTestTarget(sample).Target);
++        return point;
++    }
++
++    private static void AssertCaptured(QuotaNotchWindow window)
++    {
++        Assert.True(window.IsMouseCaptured, window.RuntimeDiagnostic);
++        Assert.Equal(new WindowInteropHelper(window).Handle, GetCapture());
++    }
++
++    private static void LoseNativeCapture()
++    {
++        Assert.True(ReleaseCapture());
++        PumpLayout();
++    }
++
++    private static void Enter(Window window)
++    {
++        if (window is QuotaNotchWindow notch)
++        {
++            var view = Assert.IsType<QuotaNotchView>(notch.Content);
++            Invoke(notch, "PointerEnter", BodyPoint(view));
++        }
++        else window.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, 0) { RoutedEvent = Mouse.MouseEnterEvent });
++    }
 +    private static void Leave(Window window)
 +    {
 +        if (window is QuotaNotchWindow notch) Invoke(notch, "PointerLeave", new Point(-100, -100));
@@ -8388,11 +8490,39 @@ index 00000000..555d0f78
 +    private static void OnSta(Action action)
 +    {
 +        Exception? failure = null;
-+        var thread = new Thread(() => { try { action(); } catch (Exception e) { failure = e; } });
++        var thread = new Thread(() =>
++        {
++            var dispatcher = Dispatcher.CurrentDispatcher;
++            var input = InputManager.Current;
++            // MouseDevice.ChangeMouseCapture synchronously calls Synchronize(),
++            // which invents a move at the physical desktop cursor before capture
++            // returns. It must not interleave with our explicit coordinate path.
++            // Filter only test input at the dispatcher boundary; keep OS capture,
++            // WPF Got/LostMouseCapture and production handlers entirely intact.
++            input.PreProcessInput += IgnoreDesktopPointer;
++            dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
++            {
++                try { action(); }
++                catch (Exception e) { failure = e; }
++                finally
++                {
++                    input.PreProcessInput -= IgnoreDesktopPointer;
++                    dispatcher.InvokeShutdown();
++                }
++            });
++            Dispatcher.Run();
++        });
 +        thread.SetApartmentState(ApartmentState.STA);
 +        thread.Start();
 +        thread.Join();
 +        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
++    }
++
++    private static void IgnoreDesktopPointer(object sender, PreProcessInputEventArgs e)
++    {
++        if (e.StagingItem.Input is MouseEventArgs mouse &&
++            mouse.RoutedEvent != Mouse.GotMouseCaptureEvent && mouse.RoutedEvent != Mouse.LostMouseCaptureEvent)
++            e.Cancel();
 +    }
 +
 +    private sealed class UnreadableSnapshots(Exception failure) : IReadOnlyList<QuotaSnapshot>
@@ -8418,6 +8548,9 @@ index 00000000..555d0f78
 +    private static extern bool IsWindowVisible(nint hwnd);
 +    [DllImport("user32.dll")]
 +    private static extern nint GetCapture();
++    [DllImport("user32.dll")]
++    [return: MarshalAs(UnmanagedType.Bool)]
++    private static extern bool ReleaseCapture();
 +
 +    private sealed class IsolatedQuotaFiles : IDisposable
 +    {
