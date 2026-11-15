@@ -172,7 +172,7 @@
       },
       {
         "platform": "macos",
-        "run": "cd macos && swift test --filter LiveChartAvailabilityTests"
+        "run": "cd macos && swift test --filter 'LiveChartAvailabilityTests|OrbInstanceProjectionTests|OrbDashboardContextTests|OrbHostRuntimeTests|RemoteTrafficTests'"
       },
       {
         "platform": "windows",

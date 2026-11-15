@@ -5,33 +5,33 @@ Subject: [PATCH 14/19] Connect remote performance and history metrics
 
 ---
  README.md                                     |  40 +-
- docs/shared-collector.md                      |    2 +
+ docs/shared-collector.md                      |   2 +
  linux/collector/CMakeLists.txt                |  30 +-
- linux/collector/main.cpp                      | 234 +-------
- linux/collector/protocol.cpp                  |  66 ++-
+ linux/collector/main.cpp                      | 234 +-----
+ linux/collector/protocol.cpp                  |  66 +-
  linux/collector/protocol.hpp                  |   4 +-
  linux/collector/sampling.cpp                  |  61 +-
  linux/core/CMakeLists.txt                     |   1 +
  linux/core/include/agentspeed/engine.hpp      |   5 +
  .../include/agentspeed/history_analyzer.hpp   |  23 +
- .../include/agentspeed/history_canonical.hpp  |  33 ++
+ .../include/agentspeed/history_canonical.hpp  |  33 +
  .../core/include/agentspeed/history_store.hpp |   6 +
- linux/core/include/agentspeed/snapshot.hpp    |    3 +
+ linux/core/include/agentspeed/snapshot.hpp    |   3 +
  linux/core/src/engine.cpp                     |   7 +-
- linux/core/src/history_analyzer.cpp           | 201 ++++++-
- linux/core/src/history_canonical.cpp          | 172 ++++++
+ linux/core/src/history_analyzer.cpp           | 201 ++++-
+ linux/core/src/history_canonical.cpp          | 172 ++++
  linux/core/src/history_store.cpp              |  49 +-
- linux/core/src/monitor_snapshot.cpp           |   11 +
+ linux/core/src/monitor_snapshot.cpp           |  11 +
  linux/tests/CMakeLists.txt                    |  10 +-
- linux/tests/collector_daemon_test.cpp         | 375 ++++++++++++
- linux/tests/collector_integration_test.cpp    | 123 ++++
- linux/tests/collector_publisher_test.cpp      |  755 +
+ linux/tests/collector_daemon_test.cpp         | 375 +++++++++
+ linux/tests/collector_integration_test.cpp    | 123 +++
+ linux/tests/collector_publisher_test.cpp      | 755 ++++++++++++++++++
  linux/tests/collector_test.cpp                |  60 ++
  linux/tests/engine_fixture_test.cpp           |  21 +
- linux/tests/sampling_test.cpp                 |  272 +
- linux/tests/shared_history_test.cpp           | 463 +++++++++++++++
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 +++
- .../AgentSpeed/App/RemoteSnapshot.swift       |  77 ++-
+ linux/tests/sampling_test.cpp                 | 272 +++++++
+ linux/tests/shared_history_test.cpp           | 463 +++++++++++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  72 ++
+ .../AgentSpeed/App/RemoteSnapshot.swift       |  77 +-
  .../AgentSpeed/History/HistoryViewModel.swift |  20 +-
  .../AgentSpeed/Localization/StringTable.swift |   1 +
  .../Perf/History/PerfHistoryContent.swift     |  37 +-
@@ -42,14 +42,15 @@ Subject: [PATCH 14/19] Connect remote performance and history metrics
  .../AgentSpeed/Perf/Model/PerfCardText.swift  |   3 +-
  .../AgentSpeedCore/Engine/DayLedger.swift     |   5 +
  .../AgentSpeedCore/Engine/EngineTypes.swift   |   1 +
+ .../AgentSpeedCore/Engine/OrbSubset.swift     |  11 +-
  .../AgentSpeedCore/Engine/SpeedEngine.swift   |   1 +
  macos/Sources/AgentSpeedCore/Models.swift     |   3 +
  .../Monitor/SnapshotBuilder.swift             |   5 +-
  .../AgentSpeedAppTests/PerfHistoryTests.swift |  23 +
- .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 +++++
+ .../AgentSpeedAppTests/RemoteHostsTests.swift | 130 +++
  .../EngineBehaviorTests.swift                 |   4 +
  spec/METRICS.md                               |  26 +-
- spec/NETWORK.md                               |   75 +-
+ spec/NETWORK.md                               |  75 +-
  spec/strings.json                             |   6 +
  .../src/AgentSpeed.Core/Engine/EngineFrame.cs |   1 +
  .../src/AgentSpeed.Core/Engine/SpeedEngine.cs |   3 +
@@ -70,12 +71,12 @@ Subject: [PATCH 14/19] Connect remote performance and history metrics
  .../History/Perf/PerfHistoryViewModel.cs      |  24 +-
  .../History/Perf/PerfPerformanceSection.xaml  |   4 +
  .../AgentSpeed/History/Perf/PerfRowView.cs    |   6 +-
- .../RemoteConsumerTests.cs                    |  79 ++-
- .../RemotePerformanceTests.cs                 |  78 +++
+ .../RemoteConsumerTests.cs                    |  79 +-
+ .../RemotePerformanceTests.cs                 |  78 ++
  .../RemoteProtocolLifecycleTests.cs           |   2 +-
  .../Perf/PerfHistoryTests.cs                  |  55 ++
  .../PerfPerformanceSectionTests.cs            |  28 +
- 71 files changed, 3716 insertions(+), 320 deletions(-)
+ 72 files changed, 3726 insertions(+), 320 deletions(-)
  create mode 100644 linux/core/include/agentspeed/history_canonical.hpp
  create mode 100644 linux/core/src/history_canonical.cpp
  create mode 100644 linux/tests/collector_daemon_test.cpp
@@ -4286,6 +4287,31 @@ index b2f7391d..a0e37ad6 100644
      var averageToday: Double?
      /// Today's responses whose final usage was never written.
      var unfinalizedToday: Int
+diff --git a/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift b/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
+index b1b6b035..185634a4 100644
+--- a/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
++++ b/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
+@@ -224,10 +224,19 @@ public enum OrbSubset {
+         result.subsetPeaks = [:]
+         result.lastResponse = nil
+         result.liveCost = .zero
++        var measuredOutput = 0
++        var measuredMs: Int64 = 0
++        var averageAvailable = result.todayAvailable
+         for instance in selected where !isUnavailable(instance.status) {
+             result.liveCost.add(instance.status.liveCost)
++            guard let output = instance.status.measuredOutput, let duration = instance.status.measuredMs else {
++                averageAvailable = false
++                continue
++            }
++            measuredOutput += output
++            measuredMs += duration
+         }
+-        result.averageToday = nil
++        result.averageToday = averageAvailable && measuredMs > 0 ? Double(measuredOutput) * 1000 / Double(measuredMs) : nil
+         return result
+     }
+ 
 diff --git a/macos/Sources/AgentSpeedCore/Engine/SpeedEngine.swift b/macos/Sources/AgentSpeedCore/Engine/SpeedEngine.swift
 index 8da17299..4149880b 100644
 --- a/macos/Sources/AgentSpeedCore/Engine/SpeedEngine.swift
@@ -5755,6 +5781,7 @@ index d2b5b774..122f20e3 100644
      [Fact]
      public void TheWidthPicksTheLayout()
      {
+
 -- 
 2.41.0
 

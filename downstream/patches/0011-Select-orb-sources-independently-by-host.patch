@@ -4,64 +4,95 @@ Date: Fri, 6 Nov 2026 13:50:08 +0800
 Subject: [PATCH 11/19] Select orb sources independently by host
 
 ---
- README.md                                     |   7 +-
- README.zh-CN.md                               |   2 +-
- macos/Sources/AgentSpeed/App/AppModel.swift   |   4 +-
- .../AgentSpeed/App/Orbs/OrbRuntime.swift      |  45 ++++--
- .../AgentSpeed/App/Orbs/OrbsController.swift  |  24 ++-
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  19 ++-
- .../AgentSpeed/App/RemoteSnapshot.swift       |  31 +++-
+ README.md                                     |  13 +-
+ README.zh-CN.md                               |   3 +-
+ .../Sources/AgentSpeed/App/AppDelegate.swift  |   8 +-
+ macos/Sources/AgentSpeed/App/AppModel.swift   |  19 ++-
+ .../AgentSpeed/App/Orbs/OrbRuntime.swift      |  52 ++++--
+ .../AgentSpeed/App/Orbs/OrbsController.swift  |  28 ++-
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  30 +++-
+ .../AgentSpeed/App/RemoteSnapshot.swift       |  71 +++++++-
+ .../AgentSpeed/Dashboard/AgentsSection.swift  |   3 +-
+ .../Dashboard/DashboardContext.swift          |  52 ++++++
+ .../Dashboard/DashboardController.swift       |  28 ++-
+ .../Dashboard/DashboardScoreCards.swift       |   8 +-
+ .../AgentSpeed/Dashboard/DashboardView.swift  |   8 +-
+ .../AgentSpeed/Dashboard/HeroSection.swift    |  16 +-
+ .../Dashboard/LiveChartSection.swift          |   3 +-
+ .../AgentSpeed/Dashboard/SourcesSection.swift |  26 ++-
+ .../AgentSpeed/Dashboard/TodayCostRow.swift   |  12 +-
+ .../AgentSpeed/Dashboard/TodaySection.swift   |   3 +-
+ .../Dashboard/Traffic/TrafficSection.swift    |   1 +
  .../AgentSpeed/Localization/StringTable.swift |   1 +
- .../OrbPane/OrbSourcesSection.swift           |  41 +++++
- .../AgentSpeedCore/Engine/OrbSubset.swift     |  65 ++++++++
+ .../AgentSpeed/Orb/OrbWindowController.swift  |   9 +-
+ .../OrbPane/OrbSourcesSection.swift           |  39 +++++
+ .../AgentSpeed/Support/BoardMenus.swift       |   2 +-
+ .../AgentSpeed/Support/MenuFactory.swift      |   2 +-
+ .../Sources/AgentSpeed/Support/OrbMenus.swift |   2 +-
+ .../AgentSpeedCore/CombinedLiveHistory.swift  |   2 +-
+ .../Engine/OrbInstanceHistory.swift           |  43 +++++
+ .../AgentSpeedCore/Engine/OrbSubset.swift     | 159 +++++++++++++++++
+ macos/Sources/AgentSpeedCore/Models.swift     |  11 +-
  .../AgentSpeedOrbModel/OrbConfig.swift        |   7 +
  .../AgentSpeedOrbModel/OrbEditing.swift       |   4 +
- .../OrbHostRuntimeTests.swift                 |  85 ++++++++++
+ .../OrbDashboardContextTests.swift            | 125 ++++++++++++++
+ .../OrbHostRuntimeTests.swift                 |  85 +++++++++
  .../RemoteCompletionOwnershipTests.swift      |  60 +++++++
  .../OrbHostSelectionTests.swift               |  58 +++++++
+ .../OrbInstanceProjectionTests.swift          | 127 ++++++++++++++
  .../OrbHostSourceCodingTests.swift            |  19 +++
  windows/src/AgentSpeed.Core/DemoDriver.cs     |  14 +-
  .../src/AgentSpeed.Core/Engine/EngineFrame.cs |   2 +
  .../src/AgentSpeed.Core/Engine/SpeedEngine.cs |  14 +-
  windows/src/AgentSpeed.Core/Models.cs         |  13 ++
  .../AgentSpeed.Core/Monitoring/MonitorCore.cs |   1 +
- windows/src/AgentSpeed.Core/OrbSubset.cs      | 148 +++++++++++++++++-
+ windows/src/AgentSpeed.Core/OrbSubset.cs      | 149 +++++++++++++++-
  .../src/AgentSpeed.Core/RemoteAggregation.cs  |  16 +-
- windows/src/AgentSpeed.Core/SpeedHub.cs       | 128 ++++++++++-----
+ windows/src/AgentSpeed.Core/SpeedHub.cs       | 128 +++++++++-----
  .../Boards/BoardFeed.cs                       |   7 +-
  .../Boards/Live/BoardLiveFeed.cs              |  15 +-
  .../Boards/Scene/BoardHeroNumber.cs           |   2 +-
  .../Boards/Scene/BoardTick.cs                 |   3 +
  .../History/HistoryAggregator.cs              |   4 +-
+ .../Orb/OrbDashboardContext.cs                |  40 +++++
  .../AgentSpeed.Presentation/Orb/OrbFeed.cs    |  43 +++--
  .../Settings/Orbs/OrbDefinition.cs            |   4 +
- .../Settings/Orbs/OrbSources.cs               |  15 ++
+ .../Settings/Orbs/OrbSources.cs               |  17 ++
  .../Settings/Orbs/OrbsJson.cs                 |  31 ++++
- windows/src/AgentSpeed/App/AppController.cs   |  48 +++---
+ .../Settings/RemoteHost.cs                    |  15 ++
+ windows/src/AgentSpeed/App/AppController.cs   |  82 ++++++---
  .../Boards/Layers/NeonBoardPainter.cs         |   4 +-
  .../Dashboard/DashboardViewModel.cs           |  10 +-
  .../AgentSpeed/Dashboard/DashboardWindow.xaml |   2 +-
- windows/src/AgentSpeed/Dashboard/LiveChart.cs |  18 +++
- windows/src/AgentSpeed/Orb/OrbManager.cs      |  22 ++-
+ .../Dashboard/DashboardWindow.xaml.cs         |   6 +-
+ windows/src/AgentSpeed/Dashboard/LiveChart.cs |  18 ++
+ windows/src/AgentSpeed/Orb/OrbManager.cs      |  30 ++--
  .../src/AgentSpeed/Services/HeroTourDriver.cs |  13 +-
  .../AgentSpeed/Services/PinnedSpeedDriver.cs  |  13 +-
  .../Settings/OrbsPane/OrbsPaneViewModel.cs    |  33 ++++
- .../AgentSpeed/Settings/Pages/OrbPage.xaml    |   9 ++
+ .../AgentSpeed/Settings/Pages/OrbPage.xaml    |   9 +
  .../AgentSpeed/Settings/Pages/OrbPage.xaml.cs |   5 +
- .../AgentSpeed.Core.Tests/OrbSubsetTests.cs   |  89 +++++++++++
- .../RemoteConsumerTests.cs                    |  75 +++++++++
+ .../AgentSpeed.Core.Tests/OrbSubsetTests.cs   |  89 ++++++++++
+ .../RemoteConsumerTests.cs                    |  75 ++++++++
  .../Boards/BoardLiveFeedTests.cs              |  31 ++++
- .../OrbFeedTests.cs                           | 101 +++++++++++-
- .../OrbSettingsTests.cs                       |  40 +++++
- .../RemoteHistoryCsvTests.cs                  |  37 +++++
- 50 files changed, 1325 insertions(+), 157 deletions(-)
+ .../OrbDashboardContextTests.cs               | 161 ++++++++++++++++++
+ .../OrbFeedTests.cs                           | 101 ++++++++++-
+ .../OrbSettingsTests.cs                       |  76 +++++++++
+ .../RemoteHistoryCsvTests.cs                  |  37 ++++
+ 75 files changed, 2234 insertions(+), 218 deletions(-)
+ create mode 100644 macos/Sources/AgentSpeed/Dashboard/DashboardContext.swift
+ create mode 100644 macos/Sources/AgentSpeedCore/Engine/OrbInstanceHistory.swift
+ create mode 100644 macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/OrbHostRuntimeTests.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteCompletionOwnershipTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/OrbHostSelectionTests.swift
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/OrbInstanceProjectionTests.swift
  create mode 100644 macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift
+ create mode 100644 windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
+ create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
 
 diff --git a/README.md b/README.md
-index ebfb6035..35193b81 100644
+index ebfb6035..1881c911 100644
 --- a/README.md
 +++ b/README.md
 @@ -54,7 +54,7 @@ Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uni
@@ -73,16 +104,22 @@ index ebfb6035..35193b81 100644
  - **Menu bar / taskbar** — a compact gauge and number that never jitters, right where you look: tok/s, money, or tok/s with the live money rate over today's total, plus optional network speed. On Windows it lives inside the taskbar, next to the clock.
  - **Dashboard** — a glowing line drawing of your current speed title's vehicle moves inside its orb — a walker, a bicycle pushing off, all the way to a rocket at the redline — plus a live chart, per-source speed, every active agent (including sub-agents) with its phase, and today's totals. Click a source to open its history.
  - **Performance score** — a benchmark-style number for every agent's live setup, where 1000 is the reference and there is no upper limit: higher is faster. It combines output throughput, time to first content, thinking speed, tool pace, tool time, tool success and cache hits, and compares it with the same model's usual on your computer (the 14 days before today). It shows on the orbs, the leaderboard boards, the menu bar / taskbar and the dashboard (hover for the breakdown), and the usage history charts each model's daily trend.
-@@ -115,6 +115,8 @@ and use noninteractive key or SSH agent authentication. Enable each host in Sett
+@@ -115,6 +115,14 @@ and use noninteractive key or SSH agent authentication. Enable each host in Sett
  enabled remote sources appear together in the native dashboard; source identity includes the host and source kind.
  On Windows, local source switches do not filter remote sources. Orb host/source exclusions are independent, so
  excluding a source on one host does not exclude the same source on another host.
++The orb source editor includes alternate connections to the same machine, so every connection that can
++contribute data can be selected independently. Duplicate host names are disambiguated by their connection.
++A dashboard opened from an orb follows that orb's current selection immediately, including its sources,
++agents and associated readings; changing the selection does not wait for another sample. Global dashboard
++entries remain global. Removing or hiding the associated orb closes its dashboard instead of silently
++switching to all sources.
 +Orb and leaderboard live and daily values use missing placeholders when the selected remote data is incomplete,
 +rather than displaying a partial sum as a complete value.
  Settings → Sources shows each host's online, offline or disabled status and its last connection error until a successful
  snapshot arrives.
  Duplicate SSH destinations are rejected when saving; an existing host can keep its own destination while editing.
-@@ -131,7 +133,8 @@ Disabling a host stops its connection and excludes it from displayed totals whil
+@@ -131,7 +139,8 @@ Disabling a host stops its connection and excludes it from displayed totals whil
  Re-enabling can show that retained history as stale until refreshed; deleting the host or changing its destination clears it.
  When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
  Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
@@ -93,10 +130,10 @@ index ebfb6035..35193b81 100644
  the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
  
 diff --git a/README.zh-CN.md b/README.zh-CN.md
-index 430f9dac..c7edd2e8 100644
+index 430f9dac..029c9207 100644
 --- a/README.zh-CN.md
 +++ b/README.zh-CN.md
-@@ -49,7 +49,7 @@ curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.s
+@@ -49,9 +49,10 @@ curl -fsSL https://raw.githubusercontent.com/yooztech/agent-speed/main/install.s
  ## 功能
  
  - **悬浮窗**——烟熏玻璃质感的仪表，36 格 LED 表盘。速度一路攀升时，称号也跟着升级——从「步行」「自行车」到「高铁」「战斗机」，冲到红线就是「火箭」；表盘沿着热度光谱点亮、彗星绕圈疾驰、火花四溅、余烬升腾，每完成一次回应就释放一道冲击波；打破今日纪录还会庆祝。
@@ -104,12 +141,84 @@ index 430f9dac..c7edd2e8 100644
 +- **五种悬浮窗样式，想开几个就开几个**——「LED 仪表」「指针转速表」「能量液球」「反应堆」「极简圆环」。每个悬浮窗都能自由组合来源类型，并分别开关本机和各 SSH 主机上的来源；新来源默认启用，主机断线后仍保留选择。排除主机时，峰值基于已选来源的实际观测，不借用不相符的历史峰值。下方的玻璃名牌在任何壁纸上都清晰易读。
  - **菜单栏／任务栏**——精简的仪表与数字，宽度固定不跳动；可显示 tok/s、金额，或 tok/s 加上实时花费与今日总额，也能加上网络速度。Windows 版直接嵌在任务栏里、时钟旁边。
  - **面板**——圆形仪表里有一台跟着速度称号变化的发光线条载具：从步行、蹬着自行车出发，一路换到红线时的火箭；另有实时曲线、各来源速度、所有正在工作的 agent（含子 agent）及其状态、今日统计。点一下来源就能打开它的用量历史。
++  从悬浮窗打开的面板会立即跟随该悬浮窗的来源选择，来源、Agent 和相关读数一起更新，不必等待新采样；全局入口仍显示全部来源。隐藏或删除关联悬浮窗时会关闭面板，不会悄悄切回全部来源。同机备用连接也可独立选择，同名主机通过连接信息区分。
  - **性能分数**——为每个 agent 当下的组合跑分：1000 是参考水平，没有上限，越高越快。综合输出吞吐、首段延迟、思考速度、工具节奏、工具耗时、工具成功率和缓存命中，并和同一个模型在你电脑上前 14 天的表现相比，告诉你现在比平常快还是慢。悬浮窗、排行看板、菜单栏／任务栏和面板都能看到（鼠标移上去就有完整分析），用量历史还有每个模型的每日趋势。
+ - **费用**——按各模型官方 API 标价估算 agent 的工作值多少钱：tok/s 旁的每秒实时花费、面板上的今日费用，以及用量历史里每天的费用。默认美元，也能选 38 种货币中的任意一种（每天更新汇率）；包月订阅的来源可以排除。价格表每天从本项目自动更新。
+ - **网络流量**——各 agent 或整台电脑的上传／下载速度，以两行小字显示在悬浮窗上，菜单栏／任务栏与面板也能看到，用量历史记录每天的流量。Windows 若要看各 agent 的流量，需要安装一次可选的小型辅助服务（需管理员同意）。
+diff --git a/macos/Sources/AgentSpeed/App/AppDelegate.swift b/macos/Sources/AgentSpeed/App/AppDelegate.swift
+index bb27bede..739be582 100644
+--- a/macos/Sources/AgentSpeed/App/AppDelegate.swift
++++ b/macos/Sources/AgentSpeed/App/AppDelegate.swift
+@@ -113,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
+     private func scheduleDevelopmentActions() {
+         let environment = ProcessInfo.processInfo.environment
+         if let delay = environment["AGENT_SPEED_OPEN_DASHBOARD"].flatMap(Double.init) {
+-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.showDashboard() }
++            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.showDashboard(orbID: nil) }
+         }
+         if let delay = environment["AGENT_SPEED_QUIT_AFTER"].flatMap(Double.init) {
+             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { NSApp.terminate(nil) }
+@@ -168,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
+             checkForUpdates()
+         }
+         if updates.justUpdatedTo != nil {
+-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.showDashboard() }
++            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in self?.showDashboard(orbID: nil) }
+         }
+     }
+ 
+@@ -213,9 +213,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
+         dashboard?.toggle(relativeTo: anchor)
+     }
+ 
+-    func showDashboard() {
++    func showDashboard(orbID: String?) {
+         guard let anchor = statusItem?.anchorView else { return }
+-        dashboard?.show(relativeTo: anchor)
++        dashboard?.show(relativeTo: anchor, orbID: orbID)
+     }
+ 
+     func closeDashboard() {
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index 7d9201a1..a3ee4ecf 100644
+index 7d9201a1..bb068991 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
-@@ -136,10 +136,10 @@ final class AppModel {
+@@ -6,7 +6,7 @@ import Observation
+ @MainActor
+ protocol AppCommands: AnyObject {
+     func toggleDashboard()
+-    func showDashboard()
++    func showDashboard(orbID: String?)
+     func closeDashboard()
+     func showSettings(_ pane: SettingsPane?)
+     /// Opens the Usage History window filtered to `source` (all sources when nil).
+@@ -80,6 +80,7 @@ final class AppModel {
+     @ObservationIgnored private var demo: DemoDriver?
+     @ObservationIgnored private var demoLoops = false
+     @ObservationIgnored private var loops: [ObservationLoop] = []
++    @ObservationIgnored private var orbHistory = OrbInstanceHistory()
+     @ObservationIgnored private var appliedConfiguration: MonitorConfiguration?
+     @ObservationIgnored private var combinedHistory = CombinedLiveHistory()
+     @ObservationIgnored private var orbSubsets: Set<SourceSet> = []
+@@ -129,6 +130,17 @@ final class AppModel {
+ 
+     var snapshot: SpeedSnapshot { store.snapshot }
+ 
++
++    /// Orb-only candidates and grouped chart samples; never replace the global dashboard snapshot.
++    var orbSnapshot: SpeedSnapshot {
++        _ = store.snapshot
++        if store.isPreviewing { return store.snapshot }
++        return orbHistory.attaching(to: remoteHosts.orbCandidateSnapshot(store.liveSnapshot))
++    }
++
++    var unknownOrbHosts: [UUID] {
++        remoteHosts.hosts.filter { $0.enabled && remoteHosts.states[$0.id]?.snapshot?.sources == nil }.map(\.id)
++    }
+     /// Effects level after Reduce Motion.
+     var effectsLevel: EffectsLevel { accessibility.effectiveLevel(settings.effects) }
+ 
+@@ -136,14 +148,15 @@ final class AppModel {
  
      /// Starts reacting to settings and data. `live` starts reading transcripts.
      func activate(live: Bool) {
@@ -122,8 +231,13 @@ index 7d9201a1..a3ee4ecf 100644
          }
          store.displaySnapshot = { [weak self] local in
              guard let self else { return local }
+             var combined = self.remoteHosts.combinedSnapshot(local)
++            self.orbHistory.record(self.remoteHosts.orbCandidateSnapshot(local))
+             if self.remoteHosts.hosts.contains(where: \.enabled) {
+                 combined.history = self.combinedHistory.record(snapshot: combined)
+             } else {
 diff --git a/macos/Sources/AgentSpeed/App/Orbs/OrbRuntime.swift b/macos/Sources/AgentSpeed/App/Orbs/OrbRuntime.swift
-index 3068eda3..f4987d1a 100644
+index 3068eda3..6314b287 100644
 --- a/macos/Sources/AgentSpeed/App/Orbs/OrbRuntime.swift
 +++ b/macos/Sources/AgentSpeed/App/Orbs/OrbRuntime.swift
 @@ -3,8 +3,7 @@ import AgentSpeedOrbModel
@@ -172,7 +286,21 @@ index 3068eda3..f4987d1a 100644
          feed.todayAvailable = isPreviewing || reading.todayAvailable
          updateMoney(snapshot, reading: reading, cost: cost, isPreviewing: isPreviewing)
          let redline = redline(for: metric, settings: settings)
-@@ -109,7 +114,7 @@ final class OrbRuntime {
+@@ -95,6 +100,13 @@ final class OrbRuntime {
+         publishLines(enabled ? .traffic(bits: bits) : nil)
+     }
+ 
++    func ingestSourceTraffic(_ rate: TrafficRate?, settings: AppSettings, now: TimeInterval) {
++        let bits = settings.trafficUnit == .bits
++        let enabled = settings.trafficEnabled && rate != nil
++        lineQuiet.apply(enabled ? rate : nil, bits: bits, at: now)
++        publishLines(enabled ? .traffic(bits: bits) : nil)
++    }
++
+     /// The intelligence readout (DESIGN 10) follows every engine tick in `ingest`; it needs no traffic measuring.
+     private func publishLines(_ format: OrbLineFormat?) {
+         let lines = format.map { OrbLines(format: $0, reading: lineQuiet.reading) }
+@@ -109,7 +121,7 @@ final class OrbRuntime {
              if feed.money != nil { feed.money = nil }
              return
          }
@@ -181,7 +309,7 @@ index 3068eda3..f4987d1a 100644
          if isPreviewing {
              costReading = CostReading(microUsdPerSecond: reading.live.output * Self.previewMicroUsdPerToken,
                                        liveOutput: reading.live.output)
-@@ -130,26 +135,40 @@ final class OrbRuntime {
+@@ -130,26 +142,40 @@ final class OrbRuntime {
      /// Delivers an engine event if it concerns this orb (METRICS 6.8, Events).
      func handle(_ event: SpeedEvent, isPreviewing: Bool) {
          guard OrbSubset.accepts(event, sources: isPreviewing ? nil : sourceSet) else { return }
@@ -217,20 +345,40 @@ index 3068eda3..f4987d1a 100644
 -        let fired = tracker.update(liveOutput: reading.live.output, measuredPeakOutput: snapshot.subsetPeaks[set],
 +        let measuredPeak: Double? = if !reading.liveRateAvailable {
 +            nil
-+        } else if config.excludedSources.isEmpty && snapshot.peakTodayAvailable {
++        } else if config.excludedSources.isEmpty && snapshot.peakTodayAvailable && snapshot.sourceInstances.allSatisfy({ $0.hostID == nil }) {
 +            OrbSubset.reading(snapshot, sources: set).measuredPeakOutput
 +        } else {
-+            0
++            nil
 +        }
 +        let fired = tracker.update(liveOutput: reading.live.output, measuredPeakOutput: measuredPeak,
                                     dayStartMs: dayStartMs, nowMs: nowMs)
          if fired { feed.emit(.newPeak) }
      }
 diff --git a/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift b/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
-index caace5c7..70de1127 100644
+index caace5c7..314d935e 100644
 --- a/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
 +++ b/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
-@@ -120,10 +120,10 @@ final class OrbsController {
+@@ -96,7 +96,7 @@ final class OrbsController {
+         }
+         loops.append(ObservationLoop { [weak self] in
+             guard let self, let model = self.model else { return }
+-            let snapshot = model.snapshot
++            let snapshot = model.orbSnapshot
+             _ = (model.settings.metric, model.settings.redlineOutput, model.settings.redlineTotal)
+             // The money unit follows the currency, language, rates and subscription marks (DESIGN 9).
+             _ = (model.cost.currency, model.cost.rate, model.l10n.language, model.settings.billableSources)
+@@ -112,7 +112,9 @@ final class OrbsController {
+             let settings = model.settings
+             _ = (settings.trafficEnabled, settings.trafficIncludeTools, settings.trafficUnit, self.document.orbs)
+             let now = Clock.now
+-            for runtime in self.runtimes.values { runtime.ingestTraffic(snapshot, settings: settings, now: now) }
++            for runtime in self.runtimes.values {
++                runtime.ingestTraffic(snapshot, settings: settings, now: now)
++            }
+         })
+         listener = model.store.addEventListener { [weak self] event in
+             guard let self, let model = self.model else { return }
+@@ -120,10 +122,10 @@ final class OrbsController {
          }
      }
  
@@ -243,20 +391,16 @@ index caace5c7..70de1127 100644
          }
      }
  
-@@ -164,6 +164,12 @@ final class OrbsController {
+@@ -164,6 +166,8 @@ final class OrbsController {
      static var arrangementKey: String { OrbsDocument.arrangementKey(connectedDisplays) }
  
      // MARK: Data
-+    private func unknownHosts(_ model: AppModel) -> [UUID] {
-+        model.remoteHosts.hosts.filter { host in
-+            host.enabled && model.remoteHosts.states[host.id]?.snapshot?.sources == nil
-+        }.map(\.id)
-+    }
++    private func unknownHosts(_ model: AppModel) -> [UUID] { model.unknownOrbHosts }
 +
  
      private func ingest(_ snapshot: SpeedSnapshot, model: AppModel) {
          let detected = snapshot.sources.filter { $0.enabled && !OrbSubset.isUnavailable($0) }.map(\.kind)
-@@ -172,7 +178,7 @@ final class OrbsController {
+@@ -172,7 +176,7 @@ final class OrbsController {
          let previewing = model.store.isPreviewing
          let now = Clock.now
          for orb in document.orbs {
@@ -265,7 +409,7 @@ index caace5c7..70de1127 100644
          }
      }
  
-@@ -314,6 +320,16 @@ final class OrbsController {
+@@ -314,6 +318,16 @@ final class OrbsController {
          setDocument(OrbEditing.setSources(selection, of: id, in: document))
          onChange?(.sourcesChanged(id: id))
      }
@@ -282,8 +426,12 @@ index caace5c7..70de1127 100644
  
      /// The context-menu rule: all ↔ one source, toggling within an explicit set, never the last known source.
      func toggleSource(_ kind: SourceKind, of id: String) {
-@@ -501,7 +517,7 @@ final class OrbsController {
-             let snapshot = model.store.snapshot
+@@ -498,10 +512,10 @@ final class OrbsController {
+             }
+         }
+         if let model {
+-            let snapshot = model.store.snapshot
++            let snapshot = model.orbSnapshot
              for orb in document.orbs {
                  runtimes[orb.id]?.ingest(snapshot, settings: model.settings, cost: model.cost, isPreviewing: model.store.isPreviewing,
 -                                         now: Clock.now)
@@ -292,10 +440,28 @@ index caace5c7..70de1127 100644
          }
      }
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index b7e6cd93..a7502800 100644
+index b7e6cd93..679ab899 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-@@ -197,7 +197,7 @@ final class RemoteHosts {
+@@ -16,6 +16,17 @@ struct RemoteHost: Codable, Identifiable, Equatable {
+     }
+ }
+ 
++extension RemoteHost {
++    /// Labels need not be unique. Add the connection target, then the stable ID only when still ambiguous.
++    func displayName(in hosts: [RemoteHost]) -> String {
++        let name = label.isEmpty ? destination : label
++        guard hosts.filter({ ($0.label.isEmpty ? $0.destination : $0.label) == name }).count > 1 else { return name }
++        let targetName = label.isEmpty ? destination : "\(label) · \(destination)"
++        let ambiguous = hosts.filter { ($0.label.isEmpty ? $0.destination : "\($0.label) · \($0.destination)") == targetName }.count > 1
++        return ambiguous ? "\(targetName) · \(id.uuidString)" : targetName
++    }
++}
++
+ struct RemoteAgent: Decodable, Identifiable, Sendable {
+     let id: String
+     let source: String
+@@ -197,7 +208,7 @@ final class RemoteHosts {
      @ObservationIgnored private var workers: [UUID: RemoteSSHWorker] = [:]
      @ObservationIgnored private var timezoneObserver: NSObjectProtocol?
      @ObservationIgnored private var reconnects: [UUID: Task<Void, Never>] = [:]
@@ -304,7 +470,7 @@ index b7e6cd93..a7502800 100644
      @ObservationIgnored private var emittedCompletions: Set<String> = []
      private static let key = "remoteHosts.v1"
  
-@@ -266,12 +266,7 @@ final class RemoteHosts {
+@@ -266,12 +277,7 @@ final class RemoteHosts {
          guard let worker = workers[host.id], worker.token == event.token else { return }
          switch event.payload {
          case .message(let message):
@@ -318,7 +484,7 @@ index b7e6cd93..a7502800 100644
          case .ended(let reason):
              workers.removeValue(forKey: host.id)
              states[host.id, default: RemoteHostState()].disconnected()
-@@ -284,6 +279,16 @@ final class RemoteHosts {
+@@ -284,6 +290,16 @@ final class RemoteHosts {
              }
          }
      }
@@ -336,10 +502,10 @@ index b7e6cd93..a7502800 100644
  
  /// All commands are fixed strings. Authentication and host-key policy belong to the user's ssh configuration.
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-index 45e278d0..5396abe7 100644
+index 45e278d0..9a14a664 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-@@ -18,6 +18,29 @@ struct RemoteCapabilities {
+@@ -18,6 +18,69 @@ struct RemoteCapabilities {
  
  @MainActor
  extension RemoteHosts {
@@ -349,8 +515,48 @@ index 45e278d0..5396abe7 100644
 +            let left = states[$0.id]
 +            let right = states[$1.id]
 +            if left?.online != right?.online { return left?.online == true }
-+            return (left?.snapshot?.nowMs ?? 0) > (right?.snapshot?.nowMs ?? 0)
++            let leftTime = left?.snapshot?.nowMs ?? 0, rightTime = right?.snapshot?.nowMs ?? 0
++            if leftTime != rightTime { return leftTime > rightTime }
++            return $0.id.uuidString < $1.id.uuidString
 +        }
++    }
++
++    /// All connections remain candidates for an orb. Global merging still chooses its own owners unchanged.
++    func orbCandidateSnapshot(_ local: SpeedSnapshot) -> SpeedSnapshot {
++        var result = local
++        result.sourceInstances = local.sources.map { SourceInstance(hostID: nil, status: $0) }
++        for host in mergeOrderedHosts {
++            guard let state = states[host.id], let remote = state.dashboardSnapshot else { continue }
++            let machine = state.snapshot?.machineId ?? "destination:\(host.destination)"
++            for var status in remote.sources where status.enabled {
++                if !state.online {
++                    status.liveRateAvailable = false
++                    status.liveCostRateAvailable = false
++                    status.todayAvailable = false
++                    status.intelligence = .zero
++                }
++                result.sourceInstances.append(SourceInstance(hostID: host.id, status: status, machineID: machine))
++            }
++            guard state.online else { continue }
++            let prefix = "remote:\(host.id.uuidString):\(state.connectionID.uuidString):"
++            result.agents += remote.agents.map { agent in
++                var agent = agent
++                agent.hostID = host.id
++                agent.id = prefix + agent.id
++                if agent.intelligence.score.agentId != nil { agent.intelligence.score.agentId = agent.id }
++                if let parent = agent.parentId { agent.parentId = prefix + parent }
++                return agent
++            }
++            for agent in result.agents where agent.hostID == host.id {
++                guard let index = result.sourceInstances.firstIndex(where: { $0.hostID == host.id && $0.status.kind == agent.source }) else { continue }
++                var score = IntelligenceSums()
++                score.score = agent.intelligence.score
++                result.sourceInstances[index].status.intelligence.add(score)
++            }
++            if case .noSources = result.state { result.state = .running }
++            if remote.timestamp > result.timestamp { result.timestamp = remote.timestamp }
++        }
++        return result
 +    }
 +
 +    func sourceOwner(machine: String, source: SourceKind) -> UUID? {
@@ -369,7 +575,7 @@ index 45e278d0..5396abe7 100644
      /// Merge each connected host once while leaving the monitor's local accounting untouched.
      func combinedSnapshot(_ local: SpeedSnapshot) -> SpeedSnapshot {
          var result = local
-@@ -25,13 +48,7 @@ extension RemoteHosts {
+@@ -25,13 +88,7 @@ extension RemoteHosts {
          var sourceKeys = Set<String>()
          var destinations = Set<String>()
          var estimated = local.live.output * local.liveEstimatedShare
@@ -384,6 +590,461 @@ index 45e278d0..5396abe7 100644
              guard destinations.insert(host.destination).inserted else { continue }
              guard let state = states[host.id], state.online,
                    let remote = state.dashboardSnapshot, let message = state.snapshot, message.sources != nil else {
+diff --git a/macos/Sources/AgentSpeed/Dashboard/AgentsSection.swift b/macos/Sources/AgentSpeed/Dashboard/AgentsSection.swift
+index 9187d8da..8e8f2199 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/AgentsSection.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/AgentsSection.swift
+@@ -5,6 +5,7 @@ import SwiftUI
+ /// shows the first rows and a disclosure for the rest; expanded it shows everyone, scrolling past a dozen rows.
+ struct AgentsSection: View {
+     let model: AppModel
++    @Environment(\.dashboardContext) private var context
+     /// Width of the agent rows: the panel minus its padding.
+     var rowWidth = DashboardController.width - 2 * DashboardLayout.padding
+ 
+@@ -16,7 +17,7 @@ struct AgentsSection: View {
+ 
+     var body: some View {
+         let l10n = model.l10n
+-        let snapshot = model.snapshot
++        let snapshot = context?.snapshot ?? model.snapshot
+         let expanded = model.settings.agentsExpanded
+         let limit = DashboardLayout.maxAgents
+         let rows = order.arrange(snapshot.agents, limit: expanded || isCollapsing ? nil : limit) { model.value(of: $0.live) }
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardContext.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardContext.swift
+new file mode 100644
+index 00000000..70a47af9
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardContext.swift
+@@ -0,0 +1,52 @@
++import AgentSpeedCore
++import AgentSpeedOrbModel
++import SwiftUI
++
++/// The popover's origin is immutable. Its projection reads the current orb configuration, not a copy captured
++/// when the popover opened, so changing sources immediately updates every section without another sample.
++@MainActor
++final class DashboardContext {
++    let model: AppModel
++    let orbID: String?
++    private let missingFeed = OrbFeed()
++
++    init(model: AppModel, orbID: String? = nil) {
++        self.model = model
++        self.orbID = orbID
++    }
++
++    var isAvailable: Bool {
++        guard let orbID else { return true }
++        return model.orbs.shownOrbs.contains { $0.id == orbID }
++    }
++
++    var snapshot: SpeedSnapshot {
++        guard let orbID else { return model.snapshot }
++        guard let orb = model.orbs.orb(orbID) else {
++            var missing = SpeedSnapshot.empty
++            missing.liveRateAvailable = false
++            missing.liveCostRateAvailable = false
++            missing.todayAvailable = false
++            missing.peakTodayAvailable = false
++            return missing
++        }
++        return OrbSubset.instanceSnapshot(model.orbSnapshot, sources: orb.sources.sourceSet,
++                                           excluded: orb.excludedSources, unknownHosts: model.unknownOrbHosts)
++    }
++
++    var feed: OrbFeed {
++        guard let orbID else { return model.mainFeed }
++        guard let runtime = model.orbs.runtime(orbID) else { return missingFeed }
++        return runtime.feed
++    }
++
++    func hostName(_ hostID: UUID?) -> String {
++        guard let hostID else { return model.l10n("orbs.sources.local") }
++        return model.remoteHosts.hosts.first { $0.id == hostID }?.displayName(in: model.remoteHosts.hosts) ?? hostID.uuidString
++    }
++
++}
++
++extension EnvironmentValues {
++    @Entry var dashboardContext: DashboardContext?
++}
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardController.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardController.swift
+index fc3560f6..b2ad65f2 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/DashboardController.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardController.swift
+@@ -15,6 +15,8 @@ final class DashboardController: NSObject, NSPopoverDelegate {
+     private var scoreCards: DashboardScoreCards?
+     private var closedAt: TimeInterval = 0
+     private var appearanceObservation: NSKeyValueObservation?
++    private(set) var context: DashboardContext?
++    private var contextLoop: ObservationLoop?
+     var onVisibilityChange: ((Bool) -> Void)?
+ 
+     init(model: AppModel) {
+@@ -28,28 +30,37 @@ final class DashboardController: NSObject, NSPopoverDelegate {
+     #endif
+ 
+     func toggle(relativeTo view: NSView) {
+-        if isShown {
++        if isShown, context?.orbID != nil {
++            show(relativeTo: view)
++        } else if isShown {
+             close()
+         } else if Clock.now - closedAt > 0.15 {
+             show(relativeTo: view)
+         }
+     }
+ 
+-    func show(relativeTo view: NSView) {
+-        guard !isShown else { return }
++    func show(relativeTo view: NSView, orbID: String? = nil) {
++        let context = DashboardContext(model: model, orbID: orbID)
++        guard context.isAvailable else { return }
++        if isShown {
++            guard self.context?.orbID != orbID else { return }
++            close()
++        }
++        self.context = context
+         let popover = NSPopover()
+         popover.behavior = .transient
+         popover.animates = !model.accessibility.reduceMotion
+         popover.delegate = self
+         // The content keeps its ideal height, which the popover follows frame by frame through the preferred content
+         // size, and stays pinned to the top, so a window a point off never squeezes, shifts or re-centres it.
+-        let cards = DashboardScoreCards(model: model)
++        let cards = DashboardScoreCards(model: model, context: context)
+         scoreCards = cards
+         let root = DashboardView(model: model, maxHeight: Self.maxHeight(below: view))
+             .fixedSize(horizontal: false, vertical: true)
+             .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
+             .environment(\.dashboardScoreCards, cards)
+             .appEnvironment(model)
++            .environment(\.dashboardContext, context)
+         let host = NSHostingController(rootView: root)
+         host.sizingOptions = [.preferredContentSize]
+         popover.contentViewController = host
+@@ -62,6 +73,10 @@ final class DashboardController: NSObject, NSPopoverDelegate {
+         popover.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+         popover.contentViewController?.view.window?.makeKey()
+         onVisibilityChange?(true)
++        contextLoop = ObservationLoop { [weak self] in
++            guard let self, let context = self.context else { return }
++            if !context.isAvailable { self.close() }
++        }
+     }
+ 
+     func close() {
+@@ -69,10 +84,15 @@ final class DashboardController: NSObject, NSPopoverDelegate {
+     }
+ 
+     func popoverWillClose(_ notification: Notification) {
++        guard notification.object as? NSPopover === popover else { return }
+         scoreCards?.close()
+     }
+ 
+     func popoverDidClose(_ notification: Notification) {
++        guard notification.object as? NSPopover === popover else { return }
++        contextLoop?.cancel()
++        contextLoop = nil
++        context = nil
+         scoreCards?.close()
+         scoreCards = nil
+         appearanceObservation = nil
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardScoreCards.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardScoreCards.swift
+index 39e86abd..1dc5a180 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/DashboardScoreCards.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardScoreCards.swift
+@@ -9,10 +9,12 @@ final class DashboardScoreCards {
+     let presenter: PerfCardPresenter
+     private let panel: PerfCardPanel
+     private let model: AppModel
++    private let context: DashboardContext?
+     private var loop: ObservationLoop?
+ 
+-    init(model: AppModel) {
++    init(model: AppModel, context: DashboardContext? = nil) {
+         self.model = model
++        self.context = context
+         let panel = PerfCardPanel(l10n: model.l10n)
+         self.panel = panel
+         presenter = PerfCardPresenter(display: panel, delay: PerfCardPresenter.dashboardDelay) { [weak model] in
+@@ -20,7 +22,7 @@ final class DashboardScoreCards {
+         }
+         loop = ObservationLoop { [weak self] in
+             guard let self else { return }
+-            _ = self.model.store.snapshot
++            _ = self.context?.snapshot ?? self.model.snapshot
+             self.presenter.refresh()
+         }
+     }
+@@ -36,7 +38,7 @@ final class DashboardScoreCards {
+     /// The card of the agent `id` beside the window holding `row`, its top level with the row's top.
+     func request(agentId id: String, row: NSView?) -> PerfCardRequest? {
+         guard let row, let window = row.window,
+-              let agent = model.store.snapshot.agents.first(where: { $0.id == id }) else { return nil }
++              let agent = (context?.snapshot ?? model.snapshot).agents.first(where: { $0.id == id }) else { return nil }
+         let frame = window.convertToScreen(row.convert(row.bounds, to: nil))
+         let visible = (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
+         let card = PerfCardModel(agent: agent, facts: AgentRow.facts(of: agent, model: model))
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+index 10c867dd..dacd9698 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+@@ -57,10 +57,11 @@ struct DashboardView: View {
+ /// Switches between startup, missing-sources and live layouts.
+ private struct DashboardContent: View {
+     let model: AppModel
++    @Environment(\.dashboardContext) private var context
+ 
+     var body: some View {
+         Group {
+-            switch model.snapshot.state {
++            switch (context?.snapshot ?? model.snapshot).state {
+             case .starting(let progress):
+                 LoadingState(model: model, progress: progress).transition(.opacity)
+             case .noSources:
+@@ -69,7 +70,7 @@ private struct DashboardContent: View {
+                 DashboardSections(model: model).transition(.opacity)
+             }
+         }
+-        .animation(Motion.fade, value: StateKind(model.snapshot.state))
++        .animation(Motion.fade, value: StateKind((context?.snapshot ?? model.snapshot).state))
+     }
+ 
+     private enum StateKind: Equatable {
+@@ -122,9 +123,10 @@ private struct DashboardSections: View {
+ /// Everything under the hero; the part that scrolls on short screens.
+ private struct DashboardDetails: View {
+     let model: AppModel
++    @Environment(\.dashboardContext) private var context
+ 
+     var body: some View {
+-        let warnings = model.snapshot.warnings
++        let warnings = (context?.snapshot ?? model.snapshot).warnings
+         VStack(alignment: .leading, spacing: 0) {
+             LiveChartSection(model: model)
+             SectionDivider()
+diff --git a/macos/Sources/AgentSpeed/Dashboard/HeroSection.swift b/macos/Sources/AgentSpeed/Dashboard/HeroSection.swift
+index 44b082ef..059d1701 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/HeroSection.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/HeroSection.swift
+@@ -4,20 +4,22 @@ import SwiftUI
+ /// The embedded orb with the big live readout, speed title and agent context (DESIGN section 4.1).
+ struct HeroSection: View {
+     let model: AppModel
++    @Environment(\.dashboardContext) private var context
+ 
+     /// The orb's aura reaches 0.25 × diameter past its frame; this keeps it inside the popover.
+     private static let auraRoom: CGFloat = 8
+ 
+     var body: some View {
+         let l10n = model.l10n
+-        let gauge = model.gauge
+-        let value = gauge.readoutValue
++        let feed = context?.feed ?? model.mainFeed
++        let gauge = feed.gauge
++        let snapshot = context?.snapshot ?? model.snapshot
++        let value = context?.orbID == nil ? gauge.readoutValue : model.value(of: snapshot.live)
+         let tier = gauge.tier
+         let title = gauge.title
+-        let snapshot = model.snapshot
+         let speed = snapshot.liveRateAvailable ? SpeedFormat.speed(value) : "–"
+         let titleName = model.titles.text(title, in: model.titles.general, l10n: l10n)
+-        let context = l10n("agents.context", snapshot.generatingCount, snapshot.toolsCount)
++        let agentContext = l10n("agents.context", snapshot.generatingCount, snapshot.toolsCount)
+         // The money unit (DESIGN 9): the billable live cost rate; heat and title keep following tokens.
+         let money: LiveMoney? = {
+             guard model.settings.liveUnit == .cost else { return nil }
+@@ -28,7 +30,7 @@ struct HeroSection: View {
+         let toggleUnit = { model.settings.liveUnit = model.settings.liveUnit == .cost ? .tokens : .cost }
+ 
+         HStack(spacing: Spacing.l) {
+-            OrbView(model: model, diameter: DashboardLayout.orbDiameter, surface: .embedded)
++            OrbView(model: model, feed: feed, diameter: DashboardLayout.orbDiameter, surface: .embedded)
+                 .accessibilityHidden(true)
+             VStack(alignment: .leading, spacing: Spacing.xxs) {
+                 HeroReadout(
+@@ -52,7 +54,7 @@ struct HeroSection: View {
+                         reduceMotion: model.accessibility.reduceMotion
+                     )
+                 }
+-                Text(context)
++                Text(agentContext)
+                     .font(DashboardFont.context)
+                     .foregroundStyle(.dashboardSecondary)
+                     .lineLimit(1)
+@@ -66,7 +68,7 @@ struct HeroSection: View {
+         .animation(model.accessibility.reduceMotion ? .easeOut(duration: 0.15) : .easeOut(duration: 0.3), value: money == nil)
+         .accessibilityElement(children: .ignore)
+         .accessibilityLabel(heroLabel(money: money, speed: speed, title: titleName))
+-        .accessibilityValue(context)
++        .accessibilityValue(agentContext)
+         .accessibilityAction(named: l10n("a11y.orb.toggleUnit"), toggleUnit)
+     }
+ 
+diff --git a/macos/Sources/AgentSpeed/Dashboard/LiveChartSection.swift b/macos/Sources/AgentSpeed/Dashboard/LiveChartSection.swift
+index ea2792a4..84d2f68b 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/LiveChartSection.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/LiveChartSection.swift
+@@ -4,6 +4,7 @@ import SwiftUI
+ /// Live chart with its range picker (DESIGN section 4.2).
+ struct LiveChartSection: View {
+     let model: AppModel
++    @Environment(\.dashboardContext) private var context
+ 
+     @AppStorage(ChartRange.storageKey) private var rangeValue = ChartRange.twoMinutes.rawValue
+     @State private var domain: Double?
+@@ -12,7 +13,7 @@ struct LiveChartSection: View {
+ 
+     var body: some View {
+         let l10n = model.l10n
+-        let snapshot = model.snapshot
++        let snapshot = context?.snapshot ?? model.snapshot
+         let range = ChartRange(rawValue: rangeValue) ?? .twoMinutes
+         let series = ChartSeries(snapshot: snapshot, range: range, metric: model.settings.metric)
+         let peak = snapshot.peakTodayAvailable ? model.value(of: snapshot.peakToday) : 0
+diff --git a/macos/Sources/AgentSpeed/Dashboard/SourcesSection.swift b/macos/Sources/AgentSpeed/Dashboard/SourcesSection.swift
+index 4cb86689..2c7aadfd 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/SourcesSection.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/SourcesSection.swift
+@@ -5,12 +5,15 @@ import SwiftUI
+ /// row opens the Usage History window filtered to its source. The other sources are left to Settings → Data Sources.
+ struct SourcesSection: View {
+     let model: AppModel
++    @Environment(\.dashboardContext) private var context
+ 
+     var body: some View {
+         let l10n = model.l10n
+-        let sources = SourceKind.allCases.compactMap { kind in
+-            model.snapshot.sources.first { $0.kind == kind && $0.producedToday }
+-        }
++        let snapshot = context?.snapshot ?? model.snapshot
++        let instances = context?.orbID == nil ? SourceKind.allCases.compactMap { kind in
++            snapshot.sources.first { $0.kind == kind }.map { SourceInstance(hostID: nil, status: $0) }
++        } : snapshot.sourceInstances
++        let sources = instances.filter { $0.status.producedToday || (context?.orbID != nil && (!$0.status.todayAvailable || !$0.status.liveRateAvailable)) }
+ 
+         VStack(alignment: .leading, spacing: DashboardLayout.rowSpacing) {
+             HStack(spacing: Spacing.s) {
+@@ -32,12 +35,13 @@ struct SourcesSection: View {
+                     .frame(minHeight: DashboardLayout.rowHeight, alignment: .leading)
+                     .transition(.opacity)
+             }
+-            ForEach(sources) { source in
+-                SourceRow(model: model, source: source)
++            ForEach(sources) { instance in
++                SourceRow(model: model, source: instance.status, hostID: instance.hostID,
++                          hostName: context?.orbID == nil ? nil : context?.hostName(instance.hostID))
+                     .transition(.opacity)
+             }
+         }
+-        .animation(model.dashboardMotion, value: sources.map(\.kind))
++        .animation(model.dashboardMotion, value: sources.map(\.id))
+     }
+ }
+ 
+@@ -91,6 +95,8 @@ private struct LiveCostValue: View {
+ private struct SourceRow: View {
+     let model: AppModel
+     let source: SourceStatus
++    var hostID: UUID?
++    var hostName: String?
+ 
+     @Environment(\.colorScheme) private var colorScheme
+     @Environment(\.previewHoveredSource) private var previewHovered
+@@ -99,10 +105,14 @@ private struct SourceRow: View {
+         let l10n = model.l10n
+         let live = source.enabled
+         let speed = model.value(of: source.live)
+-        let name = l10n(source.kind.titleKey)
++        let name = [l10n(source.kind.titleKey), hostName].compactMap { $0 }.joined(separator: " · ")
+ 
+         Button {
+-            model.commands?.showHistory(source: source.kind)
++            if hostName != nil {
++                model.commands?.showHistory(source: source.kind, metric: .output, hostID: hostID)
++            } else {
++                model.commands?.showHistory(source: source.kind)
++            }
+         } label: {
+             HStack(spacing: Spacing.s) {
+                 Circle()
+diff --git a/macos/Sources/AgentSpeed/Dashboard/TodayCostRow.swift b/macos/Sources/AgentSpeed/Dashboard/TodayCostRow.swift
+index 87b02524..67ce8acd 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/TodayCostRow.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/TodayCostRow.swift
+@@ -6,12 +6,13 @@ import SwiftUI
+ /// rate line.
+ struct TodayCostRow: View {
+     let model: AppModel
++    @Environment(\.dashboardContext) private var context
+ 
+     @State private var showsInfo = false
+ 
+     var body: some View {
+         let l10n = model.l10n
+-        let summary = TodayCostSummary(model: model)
++        let summary = TodayCostSummary(model: model, snapshot: context?.snapshot)
+         HStack(alignment: .firstTextBaseline, spacing: Spacing.xs) {
+             Image(systemName: "banknote")
+                 .font(.system(size: 11, weight: .medium))
+@@ -71,8 +72,9 @@ struct TodayCostSummary {
+ 
+     @MainActor
+     init(model: AppModel, snapshot: SpeedSnapshot? = nil) {
++        let snapshot = snapshot ?? model.snapshot
+         let billable = model.cost.billable
+-        for status in (snapshot ?? model.snapshot).sources where status.today.requests > 0 {
++        for status in snapshot.sources where status.today.requests > 0 {
+             guard billable.contains(status.kind) else {
+                 excluded.append(status.kind)
+                 continue
+@@ -83,9 +85,9 @@ struct TodayCostSummary {
+         }
+         parts.sort { $0.cost.costMicroUsd != $1.cost.costMicroUsd ? $0.cost.costMicroUsd > $1.cost.costMicroUsd : $0.source.rawValue < $1.source.rawValue }
+         let text = model.cost.tallyText(total, requests: requests)
+-        amountText = requests == 0 ? model.cost.amountText(microUsd: 0) : text
+-        spoken = requests == 0 ? model.cost.spoken(model.cost.amount(microUsd: 0).number)
+-            : model.cost.spokenTally(total, requests: requests)
++        amountText = !snapshot.todayAvailable ? "–" : (requests == 0 ? model.cost.amountText(microUsd: 0) : text)
++        spoken = !snapshot.todayAvailable ? model.l10n("cost.unknown") : (requests == 0
++            ? model.cost.spoken(model.cost.amount(microUsd: 0).number) : model.cost.spokenTally(total, requests: requests))
+     }
+ }
+ 
+diff --git a/macos/Sources/AgentSpeed/Dashboard/TodaySection.swift b/macos/Sources/AgentSpeed/Dashboard/TodaySection.swift
+index 833a0f1f..924e6849 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/TodaySection.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/TodaySection.swift
+@@ -4,13 +4,14 @@ import SwiftUI
+ /// Today's totals as a 2 × 2 grid plus the peak, with a History button on the title line (DESIGN section 4.5).
+ struct TodaySection: View {
+     let model: AppModel
++    @Environment(\.dashboardContext) private var context
+ 
+     @Environment(\.colorScheme) private var colorScheme
+     @Environment(\.colorSchemeContrast) private var contrast
+ 
+     var body: some View {
+         let l10n = model.l10n
+-        let snapshot = model.snapshot
++        let snapshot = context?.snapshot ?? model.snapshot
+         let today = snapshot.today
+         let unit = l10n("unit.tokS")
+ 
+diff --git a/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift b/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
+index efeaf4e3..aa3f2078 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
+@@ -6,6 +6,7 @@ import SwiftUI
+ /// why it cannot be measured.
+ struct TrafficSection: View {
+     let model: AppModel
++    @Environment(\.dashboardContext) private var context
+ 
+     @State private var expanded = false
+ 
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
 index f477e92c..51c968dd 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
@@ -396,8 +1057,41 @@ index f477e92c..51c968dd 100644
          "orbs.split": Entry("依來源拆分", "按来源拆分", "Split by Source", "ソースごとに分割"),
          "orbs.split.hint": Entry("為每個偵測到的來源各建立一個懸浮窗，排成整齊的一列。", "为每个检测到的来源各建立一个悬浮窗，排成整齐的一行。", "Creates one orb for each detected source, lined up in a tidy row.", "検出されたソースごとにオーブを 1 つずつ作り、きれいに並べます。"),
          "orbs.split.unavailable": Entry("偵測到兩個以上的來源後才能拆分。", "检测到两个以上的来源后才能拆分。", "Available once two or more sources are detected.", "2 つ以上のソースが検出されると分割できます。"),
+diff --git a/macos/Sources/AgentSpeed/Orb/OrbWindowController.swift b/macos/Sources/AgentSpeed/Orb/OrbWindowController.swift
+index 33cb1d57..0dd48e3d 100644
+--- a/macos/Sources/AgentSpeed/Orb/OrbWindowController.swift
++++ b/macos/Sources/AgentSpeed/Orb/OrbWindowController.swift
+@@ -671,7 +671,10 @@ final class OrbWindowController {
+             }
+         }
+         host.accessibilityActions = [
+-            action("menu.dashboard") { [weak self] in self?.model.commands?.showDashboard() },
++            action("menu.dashboard") { [weak self] in
++                guard let self else { return }
++                self.model.commands?.showDashboard(orbID: self.id)
++            },
+             action("a11y.orb.showMenu") { [weak self] in self?.hostShowMenu(nil) },
+             action("a11y.orb.toggleUnit") { [weak self] in
+                 guard let self else { return }
+@@ -738,7 +741,7 @@ extension OrbWindowController: OrbHostViewDelegate {
+         unitToggle.mouseDown(event, onUnit: event.window === panel && isOnUnit(local: host.convert(event.locationInWindow, from: nil)))
+         if event.clickCount >= 2 {
+             endDragging()
+-            model.commands?.showDashboard()
++            model.commands?.showDashboard(orbID: id)
+             return
+         }
+         dragInterruptedMotion = animator.isMovingCenter
+@@ -799,6 +802,6 @@ extension OrbWindowController: OrbHostViewDelegate {
+     }
+ 
+     func hostPress() {
+-        model.commands?.showDashboard()
++        model.commands?.showDashboard(orbID: id)
+     }
+ }
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/OrbPane/OrbSourcesSection.swift b/macos/Sources/AgentSpeed/SettingsWindow/OrbPane/OrbSourcesSection.swift
-index a9a1704d..7faba384 100644
+index a9a1704d..7b0d6c80 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/OrbPane/OrbSourcesSection.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/OrbPane/OrbSourcesSection.swift
 @@ -10,6 +10,11 @@ struct OrbSourcesSection<Heading: View>: View {
@@ -412,16 +1106,14 @@ index a9a1704d..7faba384 100644
      var body: some View {
          let l10n = model.l10n
          let orbs = model.orbs
-@@ -51,6 +56,33 @@ struct OrbSourcesSection<Heading: View>: View {
+@@ -51,6 +56,31 @@ struct OrbSourcesSection<Heading: View>: View {
                  .disabled(all || isLast)
                  .help(isLast ? l10n("orbs.sources.lastOne") : "")
              }
 +
-+            let instances = model.store.snapshot.sourceInstances.isEmpty
-+                ? model.store.snapshot.sources.map { SourceInstance(hostID: nil, status: $0) }
-+                : model.store.snapshot.sourceInstances
++            let instances = model.orbSnapshot.sourceInstances
 +            let hosts = [HostRow(id: nil, name: l10n("orbs.sources.local"))] + model.remoteHosts.hosts.map {
-+                HostRow(id: $0.id, name: $0.label.isEmpty ? $0.destination : $0.label)
++                HostRow(id: $0.id, name: $0.displayName(in: model.remoteHosts.hosts))
 +            }
 +            ForEach(hosts) { host in
 +                let hostID = host.id
@@ -446,7 +1138,7 @@ index a9a1704d..7faba384 100644
          } header: {
              VStack(alignment: .leading, spacing: 0) {
                  heading
-@@ -66,3 +98,12 @@ struct OrbSourcesSection<Heading: View>: View {
+@@ -66,3 +96,12 @@ struct OrbSourcesSection<Heading: View>: View {
          return model.orbs.availability.detected.contains(source) ? nil : "source.notFound"
      }
  }
@@ -456,11 +1148,112 @@ index a9a1704d..7faba384 100644
 +    let unseenRemote = hostID != nil && !instances.contains { $0.hostID == hostID }
 +    return SourceKind.allCases.filter { kind in
 +        unseenRemote || excluded.contains(OrbSourceExclusion(hostID: hostID, source: kind.rawValue)) ||
-+        instances.contains { $0.hostID == hostID && $0.status.kind == kind && ($0.status.producedToday || $0.status.today.requests > 0 || $0.status.activeAgents > 0) }
++        instances.contains { $0.hostID == hostID && $0.status.kind == kind && ($0.status.available || $0.status.producedToday || $0.status.today.requests > 0 || $0.status.activeAgents > 0) }
++    }
++}
+diff --git a/macos/Sources/AgentSpeed/Support/BoardMenus.swift b/macos/Sources/AgentSpeed/Support/BoardMenus.swift
+index 0603ec26..cff53b2f 100644
+--- a/macos/Sources/AgentSpeed/Support/BoardMenus.swift
++++ b/macos/Sources/AgentSpeed/Support/BoardMenus.swift
+@@ -92,7 +92,7 @@ enum BoardMenus {
+                 confirmRemove(id, model: model)
+             }
+         case .dashboard:
+-            return ActionMenuItem(l10n("menu.dashboard")) { [weak model] in model?.commands?.showDashboard() }
++            return ActionMenuItem(l10n("menu.dashboard")) { [weak model] in model?.commands?.showDashboard(orbID: nil) }
+         case .settings:
+             return ActionMenuItem(l10n("boards.settings"), key: ",") { [weak model] in model?.commands?.showBoardSettings(id) }
+         case .separator:
+diff --git a/macos/Sources/AgentSpeed/Support/MenuFactory.swift b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
+index ec970b2c..7d20173c 100644
+--- a/macos/Sources/AgentSpeed/Support/MenuFactory.swift
++++ b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
+@@ -43,7 +43,7 @@ enum MenuFactory {
+             menu.addItem(update)
+             menu.addItem(.separator())
+         }
+-        menu.addItem(ActionMenuItem(l10n("menu.dashboard")) { [weak model] in model?.commands?.showDashboard() })
++        menu.addItem(ActionMenuItem(l10n("menu.dashboard")) { [weak model] in model?.commands?.showDashboard(orbID: nil) })
+         menu.addItem(historyItem(model: model))
+         if let report = ReportMenu.item(model: model) {
+             menu.addItem(.separator())
+diff --git a/macos/Sources/AgentSpeed/Support/OrbMenus.swift b/macos/Sources/AgentSpeed/Support/OrbMenus.swift
+index 17736db1..6126fd80 100644
+--- a/macos/Sources/AgentSpeed/Support/OrbMenus.swift
++++ b/macos/Sources/AgentSpeed/Support/OrbMenus.swift
+@@ -71,7 +71,7 @@ enum OrbMenus {
+ 
+         menu.addItem(.separator())
+         menu.addItem(ActionMenuItem(l10n("menu.orb.settings"), key: ",") { [weak model] in model?.commands?.showOrbSettings(id) })
+-        menu.addItem(ActionMenuItem(l10n("menu.dashboard")) { [weak model] in model?.commands?.showDashboard() })
++        menu.addItem(ActionMenuItem(l10n("menu.dashboard")) { [weak model] in model?.commands?.showDashboard(orbID: id) })
+         menu.addItem(MenuFactory.quitItem(model: model))
+         return menu
+     }
+diff --git a/macos/Sources/AgentSpeedCore/CombinedLiveHistory.swift b/macos/Sources/AgentSpeedCore/CombinedLiveHistory.swift
+index fc158cad..14917522 100644
+--- a/macos/Sources/AgentSpeedCore/CombinedLiveHistory.swift
++++ b/macos/Sources/AgentSpeedCore/CombinedLiveHistory.swift
+@@ -2,7 +2,7 @@ import Foundation
+ 
+ /// Rolling samples of the displayed combined rate. Missing seconds remain absent, not zero.
+ public struct CombinedLiveHistory: Sendable {
+-    private var points: [HistoryPoint] = []
++    public private(set) var points: [HistoryPoint] = []
+ 
+     public init() {}
+ 
+diff --git a/macos/Sources/AgentSpeedCore/Engine/OrbInstanceHistory.swift b/macos/Sources/AgentSpeedCore/Engine/OrbInstanceHistory.swift
+new file mode 100644
+index 00000000..709c0910
+--- /dev/null
++++ b/macos/Sources/AgentSpeedCore/Engine/OrbInstanceHistory.swift
+@@ -0,0 +1,43 @@
++import Foundation
++
++/// Keeps the live chart's accounting separate for every connection/source, including alternates. Selection-only
++/// changes project these existing samples; they never rewrite old aggregate samples as if they belonged to a subset.
++public struct OrbInstanceHistory: Sendable {
++    private var histories: [OrbSourceExclusion: CombinedLiveHistory] = [:]
++    private var identities: [OrbSourceExclusion: String] = [:]
++
++    public init() {}
++
++    public mutating func record(_ snapshot: SpeedSnapshot) {
++        let keys = Set(snapshot.sourceInstances.map { OrbSourceExclusion(hostID: $0.hostID, source: $0.status.kind.rawValue) })
++        histories = histories.filter { keys.contains($0.key) }
++        identities = identities.filter { keys.contains($0.key) }
++        var seen = Set<OrbSourceExclusion>()
++        for instance in snapshot.sourceInstances {
++            let key = OrbSourceExclusion(hostID: instance.hostID, source: instance.status.kind.rawValue)
++            guard seen.insert(key).inserted else { continue }
++            let identity = instance.machineID ?? instance.hostID?.uuidString ?? "local"
++            if identities[key] != identity {
++                histories[key] = CombinedLiveHistory()
++                identities[key] = identity
++            }
++            var sample = SpeedSnapshot.empty
++            sample.timestamp = snapshot.timestamp
++            sample.live = instance.status.live
++            sample.liveEstimatedShare = sample.live.output > 0 ? instance.status.liveEstimated.output / sample.live.output : 0
++            sample.liveRateAvailable = instance.status.liveRateAvailable
++            _ = histories[key, default: CombinedLiveHistory()].record(snapshot: sample)
++        }
++    }
++
++    public func attaching(to snapshot: SpeedSnapshot) -> SpeedSnapshot {
++        var result = snapshot
++        for index in result.sourceInstances.indices {
++            let instance = result.sourceInstances[index]
++            let key = OrbSourceExclusion(hostID: instance.hostID, source: instance.status.kind.rawValue)
++            let identity = instance.machineID ?? instance.hostID?.uuidString ?? "local"
++            result.sourceInstances[index].history = identities[key] == identity ? histories[key]?.points : nil
++        }
++        return result
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift b/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
-index a2cb4e98..ac43fab1 100644
+index a2cb4e98..b1b6b035 100644
 --- a/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
 +++ b/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
 @@ -1,5 +1,16 @@
@@ -480,7 +1273,7 @@ index a2cb4e98..ac43fab1 100644
  /// Whether a floating orb's sources can show anything (DESIGN 2b, "Unavailable sources").
  public enum SubsetState: Equatable, Sendable {
      /// At least one source is available.
-@@ -117,6 +128,60 @@ public struct CostReading: Equatable, Sendable {
+@@ -117,6 +128,154 @@ public struct CostReading: Equatable, Sendable {
  
  /// Per-orb views of a snapshot (METRICS 6.8, DESIGN 2b).
  public enum OrbSubset {
@@ -496,12 +1289,26 @@ index a2cb4e98..ac43fab1 100644
 +    }
 +
 +    /// Select by source kind and host, retaining offline instances.
++    /// Filter connections first, then choose one owner per physical machine/source. Excluding a preferred
++    /// connection must leave its alternate selectable; duplicate facts for one host never count twice.
 +    public static func instances(_ snapshot: SpeedSnapshot, sources: SourceSet?, excluded: [OrbSourceExclusion]) -> [SourceInstance] {
-+        let instances = snapshot.sourceInstances.isEmpty ? snapshot.sources.map { SourceInstance(hostID: nil, status: $0) } : snapshot.sourceInstances
++        let candidates = snapshot.sourceInstances.isEmpty ? snapshot.sources.map { SourceInstance(hostID: nil, status: $0) } : snapshot.sourceInstances
 +        let exclusions = Set(excluded)
-+        return instances.filter { (sources?.contains($0.status.kind) ?? true) && !exclusions.contains(OrbSourceExclusion(hostID: $0.hostID, source: $0.status.kind.rawValue)) }
++        var hosts = Set<OrbSourceExclusion>()
++        var machines = Set<InstanceIdentity>()
++        return candidates.filter { instance in
++            let key = OrbSourceExclusion(hostID: instance.hostID, source: instance.status.kind.rawValue)
++            guard (sources?.contains(instance.status.kind) ?? true), !exclusions.contains(key),
++                  hosts.insert(key).inserted else { return false }
++            return machines.insert(InstanceIdentity(machine: instance.machineID ?? instance.hostID?.uuidString ?? "local",
++                                                     source: instance.status.kind)).inserted
++        }
 +    }
 +
++    private struct InstanceIdentity: Hashable {
++        let machine: String
++        let source: SourceKind
++    }
 +    public static func instanceReading(_ snapshot: SpeedSnapshot, sources: SourceSet?, excluded: [OrbSourceExclusion]) -> SubsetReading {
 +        let selected = instances(snapshot, sources: sources, excluded: excluded)
 +        let available = selected.filter { !isUnavailable($0.status) }
@@ -538,9 +1345,116 @@ index a2cb4e98..ac43fab1 100644
 +        return cost(filteredSnapshot, sources: nil, billable: billable)
 +    }
 +
++    /// One coherent dashboard projection. No historical aggregate or independent host peak can stand in for
++    /// this selection; missing per-instance samples stay unknown, including after a selection-only edit.
++    public static func instanceSnapshot(_ snapshot: SpeedSnapshot, sources: SourceSet?, excluded: [OrbSourceExclusion],
++                                        unknownHosts: [UUID] = []) -> SpeedSnapshot {
++        let selected = instances(snapshot, sources: sources, excluded: excluded)
++        let reading = instanceReading(snapshot, sources: sources, excluded: excluded)
++        let unknown = hasUnknownSources(hosts: unknownHosts, sources: sources, excluded: excluded)
++        var result = snapshot
++        result.sourceInstances = selected
++        result.sources = aggregatedSources(selected.filter { !isUnavailable($0.status) }.map(\.status))
++        result.agents = reading.agents
++        result.generatingCount = reading.agents.filter { $0.phase == .generating }.count
++        result.toolsCount = reading.agents.filter { $0.phase == .tools }.count
++        result.live = reading.live
++        result.liveEstimatedShare = reading.estimatedShare
++        result.liveRateAvailable = !unknown && reading.liveRateAvailable
++        result.liveCostRateAvailable = !unknown && selected.filter { $0.status.enabled }.allSatisfy { $0.status.liveCostRateAvailable }
++        result.today = reading.today
++        result.todayAvailable = !unknown && reading.todayAvailable
++        result.intelligence = reading.intelligence
++        result.todayCost = instanceCost(snapshot, sources: sources, excluded: excluded, billable: .everything).today
++        result.history = instanceHistory(selected, unknown: unknown)
++        result.peakToday = .zero
++        result.peakTodayAvailable = false
++        result.peakTodayAt = nil
++        result.subsetPeaks = [:]
++        result.lastResponse = nil
++        result.liveCost = .zero
++        for instance in selected where !isUnavailable(instance.status) {
++            result.liveCost.add(instance.status.liveCost)
++        }
++        result.averageToday = nil
++        return result
++    }
++
++    private static func instanceHistory(_ instances: [SourceInstance], unknown: Bool) -> [HistoryPoint] {
++        let enabled = instances.filter { $0.status.enabled }
++        var buckets: [Date: (measured: Rate, estimated: Rate, count: Int, available: Bool)] = [:]
++        for instance in enabled {
++            for point in instance.history ?? [] {
++                var bucket = buckets[point.time] ?? (.zero, .zero, 0, true)
++                bucket.measured.add(point.measured)
++                bucket.estimated.add(point.estimated)
++                bucket.count += 1
++                bucket.available = bucket.available && point.isAvailable
++                buckets[point.time] = bucket
++            }
++        }
++        return buckets.keys.sorted().map { time in
++            let bucket = buckets[time]!
++            return HistoryPoint(time: time, measured: bucket.measured, estimated: bucket.estimated,
++                                isAvailable: !unknown && bucket.available && bucket.count == enabled.count)
++        }
++    }
++
++    private static func aggregatedSources(_ statuses: [SourceStatus]) -> [SourceStatus] {
++        SourceKind.allCases.compactMap { kind in
++            let members = statuses.filter { $0.kind == kind }
++            guard var total = members.first else { return nil }
++            for member in members.dropFirst() {
++                total.enabled = total.enabled || member.enabled
++                total.available = total.available || member.available
++                total.liveRateAvailable = total.liveRateAvailable && member.liveRateAvailable
++                total.liveCostRateAvailable = total.liveCostRateAvailable && member.liveCostRateAvailable
++                total.todayAvailable = total.todayAvailable && member.todayAvailable
++                total.sessionCount += member.sessionCount
++                total.activeAgents += member.activeAgents
++                total.live.add(member.live)
++                total.liveEstimated.add(member.liveEstimated)
++                total.today.add(member.today)
++                total.todayCost.add(member.todayCost)
++                total.liveCost.microUsdPerSecond += member.liveCost.microUsdPerSecond
++                total.liveCost.knownOutput += member.liveCost.knownOutput
++                total.intelligence.add(member.intelligence)
++                total.unpricedModels += member.unpricedModels.filter { !total.unpricedModels.contains($0) }
++                total.unpricedFacts += member.unpricedFacts
++            }
++            return total
++        }
++    }
      /// The money-unit reading of `sources` (nil = every source) counting only `billable` sources (METRICS 9.4).
      public static func cost(_ snapshot: SpeedSnapshot, sources: SourceSet?, billable: SourceSet) -> CostReading {
          let members = sources ?? .everything
+diff --git a/macos/Sources/AgentSpeedCore/Models.swift b/macos/Sources/AgentSpeedCore/Models.swift
+index 2bbb390c..9fb051ef 100644
+--- a/macos/Sources/AgentSpeedCore/Models.swift
++++ b/macos/Sources/AgentSpeedCore/Models.swift
+@@ -248,13 +248,20 @@ public struct SourceStatus: Identifiable, Equatable, Sendable {
+ }
+ 
+ /// A source on one host, before source-kind aggregation.
+-public struct SourceInstance: Equatable, Sendable {
++public struct SourceInstance: Identifiable, Equatable, Sendable {
+     public var hostID: UUID?
+     public var status: SourceStatus
++    /// Physical machine identity, shared by alternate connections; nil keeps the host identity.
++    public var machineID: String?
++    /// Samples measured for this exact host/source, never the aggregate chart.
++    public var history: [HistoryPoint]?
++    public var id: OrbSourceExclusion { OrbSourceExclusion(hostID: hostID, source: status.kind.rawValue) }
+ 
+-    public init(hostID: UUID?, status: SourceStatus) {
++    public init(hostID: UUID?, status: SourceStatus, machineID: String? = nil, history: [HistoryPoint]? = nil) {
+         self.hostID = hostID
+         self.status = status
++        self.machineID = machineID
++        self.history = history
+     }
+ }
+ 
 diff --git a/macos/Sources/AgentSpeedOrbModel/OrbConfig.swift b/macos/Sources/AgentSpeedOrbModel/OrbConfig.swift
 index 3690bc91..9a919a17 100644
 --- a/macos/Sources/AgentSpeedOrbModel/OrbConfig.swift
@@ -614,9 +1528,140 @@ index ad4bc63a..9de1bd1c 100644
  
      /// Changes the style and clamps the size to its range.
      public static func setStyle(_ style: OrbStyleKind, of id: String, in doc: OrbsDocument) -> OrbsDocument {
+diff --git a/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
+new file mode 100644
+index 00000000..3f078baf
+--- /dev/null
++++ b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
+@@ -0,0 +1,125 @@
++import AgentSpeedCore
++import AgentSpeedOrbModel
++import Foundation
++import Testing
++@testable import AgentSpeed
++
++@Suite("Orb dashboard context")
++@MainActor
++struct OrbDashboardContextTests {
++    private func state(machine: String, source: String, value: Int, time: Int) throws -> RemoteHostState {
++        let json = """
++        {"version":1,"type":"snapshot","machine_id":"\(machine)","now_ms":\(time),
++         "timezone":"\(TimeZone.current.identifier)","sources":[{"source":"\(source)","enabled":true,
++         "available":true,"sessions":1,"active_agents":1,"live_output":\(value),"live_total":\(value),
++         "today_input":0,"today_output":\(value),"today_requests":1,"today_cached_input":0,
++         "today_cache_write_input":0,"today_reasoning":0,"today_cost_micro_usd":\(value),"unpriced_requests":0}],
++         "agents":[{"id":"agent","source":"\(source)","phase":"generating","subagent":false,
++         "live_output":\(value),"live_total":\(value)}],
++         "traffic":{"enabled":true,"available":true,"sources":{"\(source)":{
++         "self_rate":{"rx":\(value),"tx":1},"with_tools_rate":{"rx":\(value),"tx":1},
++         "today":{"rx_self":\(value),"tx_self":1,"rx_tools":0,"tx_tools":0}}}}}
++        """
++        var result = RemoteHostState()
++        result.apply(try #require(RemoteMessage.decode(Data(json.utf8))))
++        return result
++    }
++
++    private func local() -> SpeedSnapshot {
++        var snapshot = SpeedSnapshot.empty
++        snapshot.timestamp = Date(timeIntervalSince1970: 100)
++        snapshot.state = .running
++        snapshot.live = Rate(output: 5, total: 5)
++        snapshot.today = TokenTotals(requests: 1, output: 5)
++        snapshot.sources = [SourceStatus(kind: .codex, enabled: true, rootPath: "fixture", available: true,
++            sessionCount: 1, live: snapshot.live, today: snapshot.today, activeAgents: 1,
++            liveCost: LiveCost(microUsdPerSecond: 5, knownOutput: 5), todayCost: CostTally(costMicroUsd: 5))]
++        snapshot.agents = [AgentStatus(id: "local", source: .codex, project: "fixture", model: nil, phase: .generating,
++            isSubagent: false, live: snapshot.live, recentSpeed: nil, lastActivity: snapshot.timestamp)]
++        snapshot.history = [HistoryPoint(time: Date(timeIntervalSince1970: 99), measured: Rate(output: 999), estimated: .zero)]
++        return snapshot
++    }
++
++    @Test func existingContextsImmediatelyReprojectWithoutAnotherSnapshotAndStayIsolated() throws {
++        let suite = "OrbDashboardContextTests.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let a = RemoteHost(label: "Server", destination: "primary", enabled: true)
++        let b = RemoteHost(label: "Server", destination: "alternate", enabled: true)
++        let other = RemoteHost(label: "Other", destination: "other", enabled: true)
++        defaults.set(try JSONEncoder().encode([a, b, other]), forKey: "remoteHosts.v1")
++        defaults.set(OrbsDocument(orbs: [OrbConfig(id: "first"), OrbConfig(id: "second", sources: .explicit([.codex]),
++            excludedSources: [OrbSourceExclusion(hostID: a.id, source: "codex"), OrbSourceExclusion(hostID: b.id, source: "codex")])]).data(), forKey: OrbsController.documentKey)
++        let hosts = RemoteHosts(defaults: defaults, states: [a.id: try state(machine: "same", source: "codex", value: 10, time: 100000),
++            b.id: try state(machine: "same", source: "codex", value: 20, time: 99000),
++            other.id: try state(machine: "other", source: "omp", value: 7, time: 100000)])
++        let model = AppModel(settings: AppSettings(defaults: defaults), remoteHosts: hosts)
++        model.activate(live: false)
++        defer { model.shutdown() }
++        model.store.publishLive(local())
++        let global = DashboardContext(model: model)
++        let first = DashboardContext(model: model, orbID: "first")
++        let second = DashboardContext(model: model, orbID: "second")
++        let globalSnapshot = global.snapshot
++        #expect(first.snapshot.live.output == 22)
++        #expect(second.snapshot.live.output == 5)
++        #expect(first.snapshot.sourceInstances.count == 3)
++        #expect(model.orbSnapshot.sourceInstances.contains { $0.hostID == b.id })
++        #expect(orbSourceKinds(hostID: b.id, instances: model.orbSnapshot.sourceInstances, excluded: []).contains(.codex))
++
++        // All assertions below reuse the same published sample; no collector update is allowed to rescue the view.
++        model.orbs.setSourceEnabled(false, hostID: nil, source: .codex, of: "first")
++        model.orbs.setSourceEnabled(false, hostID: a.id, source: .codex, of: "first")
++        let changed = first.snapshot
++        #expect(changed.live.output == 27 && changed.today.output == 27)
++        #expect(Set(changed.sourceInstances.compactMap(\.hostID)) == Set([b.id, other.id]))
++        #expect(Set(changed.agents.compactMap(\.hostID)) == Set([b.id, other.id]))
++        #expect(TodayCostSummary(model: model, snapshot: changed).total.costMicroUsd == 27)
++        #expect(changed.history.first?.measured.output == 27)
++        #expect(!changed.peakTodayAvailable && changed.averageToday == nil)
++        #expect(second.snapshot.live.output == 5)
++        #expect(global.snapshot == globalSnapshot)
++        #expect(model.snapshot == globalSnapshot)
++        #expect(first.feed !== second.feed && first.feed !== global.feed)
++
++        model.orbs.setSourceEnabled(false, hostID: b.id, source: .codex, of: "first")
++        #expect(first.snapshot.live.output == 7)
++        #expect(model.orbs.orb("first")?.excludedSources.contains(OrbSourceExclusion(hostID: other.id, source: "omp")) == false)
++        model.orbs.setVisible(false, of: "first")
++        #expect(!first.isAvailable && second.isAvailable && global.isAvailable)
++        model.orbs.setVisible(true, of: "first")
++        #expect(first.isAvailable)
++        model.orbs.remove("first")
++        #expect(!first.isAvailable)
++        #expect(!first.snapshot.liveRateAvailable && !first.snapshot.todayAvailable)
++        #expect(first.snapshot.agents.isEmpty && first.feed !== global.feed)
++        model.orbs.masterVisible = false
++        #expect(!second.isAvailable && global.isAvailable)
++    }
++
++    @Test func candidateLabelsDisambiguateConnectionsAndUnknownCostStaysUnknown() throws {
++        let a = RemoteHost(label: "Same", destination: "a")
++        let b = RemoteHost(label: "Same", destination: "b")
++        let duplicate = RemoteHost(label: "Same", destination: "a")
++        let hosts = [a, b, duplicate]
++        #expect(a.displayName(in: hosts).contains(a.destination))
++        #expect(a.displayName(in: hosts) != b.displayName(in: hosts))
++        #expect(a.displayName(in: hosts) != duplicate.displayName(in: hosts))
++        #expect(a.displayName(in: hosts).contains(a.id.uuidString))
++        let suite = "OrbDashboardUnknown.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let model = AppModel(settings: AppSettings(defaults: defaults))
++        var snapshot = local()
++        snapshot.todayAvailable = false
++        #expect(TodayCostSummary(model: model, snapshot: snapshot).amountText == "–")
++        var connected = a
++        connected.enabled = true
++        let traffic = TrafficSnapshot(timestamp: snapshot.timestamp, enabled: true, processState: .standby)
++        let rows = TrafficSection.rows(traffic,
++            instances: [SourceInstance(hostID: connected.id, status: snapshot.sources[0])],
++            hosts: [connected], states: [:], enabled: SourceSet(.codex), includeTools: true, preserveUnknown: true)
++        #expect(rows.count == 2)
++        #expect(rows.allSatisfy { !$0.hasToday && $0.traffic.live(includeTools: true) == nil })
++    }
++}
 diff --git a/macos/Tests/AgentSpeedAppTests/OrbHostRuntimeTests.swift b/macos/Tests/AgentSpeedAppTests/OrbHostRuntimeTests.swift
 new file mode 100644
-index 00000000..ea7090ab
+index 00000000..3ea93956
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/OrbHostRuntimeTests.swift
 @@ -0,0 +1,85 @@
@@ -649,7 +1694,7 @@ index 00000000..ea7090ab
 +        #expect(kinds.count == 2)
 +    }
 +
-+    @Test func excludedHostsDoNotUseAggregatePeak() throws {
++    @Test func excludedHostsKeepMissingSubsetPeakUnknown() throws {
 +        let suite = "OrbHostRuntimeTests.excluded"
 +        let defaults = try #require(UserDefaults(suiteName: suite))
 +        defaults.removePersistentDomain(forName: suite)
@@ -672,7 +1717,7 @@ index 00000000..ea7090ab
 +            snapshot.sourceInstances = [SourceInstance(hostID: nil, status: status)]
 +            runtime.ingest(snapshot, settings: settings, cost: nil, isPreviewing: false, now: seconds)
 +        }
-+        #expect(events == [.newPeak])
++        #expect(events.isEmpty, "an unknown subset peak is not a measured zero baseline")
 +    }
 +
 +    @Test func measuredPeaksPreventFalseCelebrationsForAllAndSubset() throws {
@@ -833,6 +1878,139 @@ index 00000000..115ac25a
 +        #expect(OrbSubset.hasUnknownSources(hosts: [host], sources: set, excluded: [codex]))
 +        #expect(!OrbSubset.hasUnknownSources(hosts: [host], sources: set, excluded: [codex, claude]))
 +        #expect(!OrbSubset.hasUnknownSources(hosts: [], sources: nil, excluded: []))
++    }
++}
+diff --git a/macos/Tests/AgentSpeedCoreTests/OrbInstanceProjectionTests.swift b/macos/Tests/AgentSpeedCoreTests/OrbInstanceProjectionTests.swift
+new file mode 100644
+index 00000000..67928197
+--- /dev/null
++++ b/macos/Tests/AgentSpeedCoreTests/OrbInstanceProjectionTests.swift
+@@ -0,0 +1,127 @@
++import Foundation
++import Testing
++@testable import AgentSpeedCore
++
++@Suite("Orb instance dashboard projection")
++struct OrbInstanceProjectionTests {
++    private let a = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
++    private let b = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
++    private let other = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
++
++    private func source(_ kind: SourceKind = .codex, _ value: Int) -> SourceStatus {
++        SourceStatus(kind: kind, enabled: true, rootPath: "fixture", available: true, sessionCount: 1,
++                     live: Rate(output: Double(value), total: Double(value * 2)),
++                     today: TokenTotals(requests: 1, output: value), activeAgents: 1,
++                     liveCost: LiveCost(microUsdPerSecond: Double(value), knownOutput: Double(value)),
++                     todayCost: CostTally(costMicroUsd: Int64(value)))
++    }
++
++    private func agent(_ id: String, host: UUID?, source: SourceKind = .codex, parent: String? = nil) -> AgentStatus {
++        var agent = AgentStatus(id: id, source: source, project: "fixture", model: nil, phase: .generating,
++                                isSubagent: parent != nil, live: .zero, recentSpeed: nil,
++                                lastActivity: Date(timeIntervalSince1970: 100), parentId: parent)
++        agent.hostID = host
++        return agent
++    }
++
++    private var fixture: SpeedSnapshot {
++        var snapshot = SpeedSnapshot.empty
++        snapshot.state = .running
++        snapshot.timestamp = Date(timeIntervalSince1970: 100)
++        snapshot.live = Rate(output: 999, total: 999)
++        snapshot.today = TokenTotals(requests: 999, output: 999)
++        snapshot.peakToday = Rate(output: 999, total: 999)
++        snapshot.history = [HistoryPoint(time: Date(timeIntervalSince1970: 99), measured: Rate(output: 999), estimated: .zero)]
++        snapshot.sources = [source(.codex, 999)]
++        let first = SourceInstance(hostID: a, status: source(.codex, 10), machineID: "same-machine")
++        snapshot.sourceInstances = [SourceInstance(hostID: nil, status: source(.codex, 5)), first, first,
++            SourceInstance(hostID: b, status: source(.codex, 20), machineID: "same-machine"),
++            SourceInstance(hostID: other, status: source(.omp, 7), machineID: "other-machine")]
++        snapshot.agents = [agent("local", host: nil), agent("a", host: a), agent("b", host: b, parent: "a"),
++                           agent("other", host: other, source: .omp)]
++        return snapshot
++    }
++
++    @Test func selectionFiltersBeforeMachineDeduplicationAndClearsExcludedParents() {
++        let snapshot = fixture
++        let all = OrbSubset.instanceSnapshot(snapshot, sources: nil, excluded: [])
++        #expect(all.live.output == 22)
++        #expect(all.today.output == 22)
++        #expect(all.sourceInstances.map(\.hostID) == [nil, a, other])
++        #expect(all.agents.map(\.id) == ["local", "a", "other"])
++        #expect(OrbSubset.instanceCost(snapshot, sources: nil, excluded: [], billable: .everything).today.costMicroUsd == 22)
++
++        let excluded = [OrbSourceExclusion(hostID: nil, source: "codex"), OrbSourceExclusion(hostID: a, source: "codex")]
++        // Deliberately reuse exactly the same snapshot; there is no engine tick after changing the selection.
++        let changed = OrbSubset.instanceSnapshot(snapshot, sources: nil, excluded: excluded)
++        #expect(changed.live.output == 27)
++        #expect(changed.today.output == 27)
++        #expect(changed.agents.map(\.id) == ["b", "other"])
++        #expect(changed.agents.first?.parentId == nil)
++        #expect(OrbSubset.instanceCost(snapshot, sources: nil, excluded: excluded, billable: .everything).today.costMicroUsd == 27)
++        #expect(excluded.count == 2)
++        let bothOff = excluded + [OrbSourceExclusion(hostID: b, source: "codex")]
++        #expect(OrbSubset.instanceSnapshot(snapshot, sources: nil, excluded: bothOff).sourceInstances.map { $0.status.kind } == [.omp])
++        #expect(snapshot.live.output == 999)
++        #expect(snapshot.history.first?.measured.output == 999)
++    }
++
++    @Test func groupedHistoryReprojectsWithoutInventingMissingSamplesOrPeaks() {
++        var snapshot = fixture
++        let time = Date(timeIntervalSince1970: 99)
++        snapshot.sourceInstances[0].history = [HistoryPoint(time: time, measured: Rate(output: 5), estimated: .zero)]
++        snapshot.sourceInstances[1].history = [HistoryPoint(time: time, measured: Rate(output: 10), estimated: .zero)]
++        snapshot.sourceInstances[2].history = snapshot.sourceInstances[1].history
++        snapshot.sourceInstances[3].history = nil
++        snapshot.sourceInstances[4].history = [HistoryPoint(time: time, measured: Rate(output: 7), estimated: .zero)]
++        let all = OrbSubset.instanceSnapshot(snapshot, sources: nil, excluded: [])
++        #expect(all.history.first?.measured.output == 22)
++        #expect(all.history.first?.isAvailable == true)
++        #expect(!all.peakTodayAvailable && all.averageToday == nil)
++
++        let alternate = OrbSubset.instanceSnapshot(snapshot, sources: nil,
++            excluded: [OrbSourceExclusion(hostID: a, source: "codex")])
++        #expect(alternate.live.output == 32)
++        #expect(alternate.history.first?.isAvailable == false)
++        #expect(!alternate.peakTodayAvailable)
++        let localOnly = OrbSubset.instanceSnapshot(snapshot, sources: SourceSet(.codex),
++            excluded: [OrbSourceExclusion(hostID: a, source: "codex"), OrbSourceExclusion(hostID: b, source: "codex")])
++        #expect(localOnly.history.first?.measured.output == 5)
++        #expect(localOnly.history.first?.isAvailable == true)
++        #expect(localOnly.agents.map(\.id) == ["local"])
++    }
++
++    @Test func unknownCapabilitiesBelongOnlyToTheSelectedConnections() {
++        var snapshot = fixture
++        snapshot.sourceInstances[1].status.todayAvailable = false
++        snapshot.sourceInstances[1].status.liveRateAvailable = false
++        snapshot.sourceInstances[1].status.liveCostRateAvailable = false
++        let unknown = UUID()
++        let all = OrbSubset.instanceSnapshot(snapshot, sources: nil, excluded: [], unknownHosts: [unknown])
++        #expect(!all.liveRateAvailable && !all.todayAvailable && !all.liveCostRateAvailable)
++        let excluded = SourceKind.allCases.map { OrbSourceExclusion(hostID: unknown, source: $0.rawValue) }
++            + [OrbSourceExclusion(hostID: a, source: "codex")]
++        let changed = OrbSubset.instanceSnapshot(snapshot, sources: nil, excluded: excluded, unknownHosts: [unknown])
++        #expect(changed.liveRateAvailable && changed.todayAvailable && changed.liveCostRateAvailable)
++        #expect(changed.sourceInstances.contains { $0.hostID == b })
++    }
++
++    @Test func historyIsBoundedAndRemovedConnectionsAreForgotten() {
++        var recorder = OrbInstanceHistory()
++        var snapshot = fixture
++        for second in 100...450 {
++            snapshot.timestamp = Date(timeIntervalSince1970: Double(second))
++            recorder.record(snapshot)
++        }
++        let recorded = recorder.attaching(to: snapshot)
++        #expect(recorded.sourceInstances.first?.history?.count == 300)
++        snapshot.sourceInstances[0].machineID = "different-machine"
++        #expect(recorder.attaching(to: snapshot).sourceInstances.first?.history == nil)
++        recorder.record(snapshot)
++        #expect(recorder.attaching(to: snapshot).sourceInstances.first?.history?.count == 1)
++        snapshot.sourceInstances.removeAll { $0.hostID == a }
++        recorder.record(snapshot)
++        snapshot.sourceInstances.insert(SourceInstance(hostID: a, status: source(.codex, 10), machineID: "same-machine"), at: 0)
++        #expect(recorder.attaching(to: snapshot).sourceInstances.first?.history == nil)
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift b/macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift
@@ -1010,7 +2188,7 @@ index 81c01ae5..a455f2a4 100644
              DayStart = DateTimeOffset.FromUnixTimeMilliseconds(todayStartMs),
              LiveCost = frame.LiveCost,
 diff --git a/windows/src/AgentSpeed.Core/OrbSubset.cs b/windows/src/AgentSpeed.Core/OrbSubset.cs
-index a573c72c..315883dc 100644
+index a573c72c..8096f3cf 100644
 --- a/windows/src/AgentSpeed.Core/OrbSubset.cs
 +++ b/windows/src/AgentSpeed.Core/OrbSubset.cs
 @@ -1,5 +1,8 @@
@@ -1183,11 +2361,12 @@ index a573c72c..315883dc 100644
          _ => false,
      };
  
-@@ -189,11 +307,27 @@ public static class OrbSubset
+@@ -189,11 +307,28 @@ public static class OrbSubset
          return sums;
      }
  
-+    private static IEnumerable<SourceStatus> SelectedInstances(SpeedSnapshot snapshot, SourceSet members,
++    /// <summary>Selects preferred or alternate instances after host exclusions, counting each remote machine/source once.</summary>
++    public static IEnumerable<SourceStatus> SelectedInstances(SpeedSnapshot snapshot, SourceSet members,
 +        IReadOnlyCollection<OrbSourceInstance>? exclusions, bool filterLocal = true)
 +    {
 +        var machines = snapshot.RemoteHosts.ToDictionary(h => h.Id, h => h.MachineId);
@@ -1608,8 +2787,54 @@ index 4d306672..67f7853c 100644
                  : host.Days.Select(d => d.Source);
              var accepted = covered.Distinct()
                  .Where(source => seen.Add((host.MachineId ?? host.Id.ToString(), source))).ToHashSet();
+diff --git a/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs b/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
+new file mode 100644
+index 00000000..b4a2fa1e
+--- /dev/null
++++ b/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
+@@ -0,0 +1,40 @@
++using AgentSpeed.Core;
++using AgentSpeed.Core.Traffic;
++
++namespace AgentSpeed.Presentation.Orb;
++
++/// <summary>A dashboard is explicitly global or bound to one visible orb; a missing binding never becomes global.</summary>
++public sealed class OrbDashboardContext
++{
++    public string? OrbId { get; set; }
++
++    public bool TryResolve(SpeedSnapshot snapshot, Func<string, OrbFeed?> findFeed,
++        out SpeedSnapshot view, out OrbFeed? feed)
++    {
++        feed = OrbId is { } id ? findFeed(id) : null;
++        if (OrbId is not null && feed is null)
++        {
++            view = SpeedSnapshot.Empty;
++            return false;
++        }
++        view = feed is null ? snapshot : OrbSubset.Project(snapshot, feed.Sources, feed.ExcludedSources);
++        return true;
++    }
++
++    /// <summary>Filter attributed rows and agent suffixes; the machine totals and machine chart stay machine-wide.</summary>
++    public TrafficSnapshot ProjectTraffic(TrafficSnapshot traffic, SpeedSnapshot view)
++    {
++        if (OrbId is null) return traffic;
++        var sources = view.Sources.Select(s => new OrbSourceInstance(s.HostId, s.Kind)).ToHashSet();
++        var agents = view.Agents.Select(a => a.Id).ToHashSet(StringComparer.Ordinal);
++        TrafficSnapshot Filter(TrafficSnapshot snapshot, Guid? hostId) => snapshot with
++        {
++            Sources = snapshot.Sources.Where(pair => sources.Contains(new OrbSourceInstance(hostId, pair.Key)))
++                .ToDictionary(pair => pair.Key, pair => pair.Value),
++            SourceHistory = snapshot.SourceHistory.Where(pair => sources.Contains(new OrbSourceInstance(hostId, pair.Key)))
++                .ToDictionary(pair => pair.Key, pair => pair.Value),
++            Agents = snapshot.Agents.Where(pair => agents.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value),
++        };
++        return Filter(traffic, null);
++    }
++}
 diff --git a/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs b/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
-index 716848b5..dea21ec3 100644
+index 716848b5..5d7834df 100644
 --- a/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
 +++ b/windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs
 @@ -8,7 +8,7 @@ namespace AgentSpeed.Presentation.Orb;
@@ -1677,10 +2902,10 @@ index 716848b5..dea21ec3 100644
 -        Reading = OrbSubset.Reading(snapshot, Sources);
 +        Reading = OrbSubset.Reading(snapshot, Sources, ExcludedSources);
 +        _availableInstances.Clear();
-+        foreach (var status in snapshot.Sources)
++        foreach (var status in OrbSubset.SelectedInstances(snapshot, Sources ?? SourceSet.Everything, ExcludedSources))
 +        {
 +            var instance = new OrbSourceInstance(status.HostId, status.Kind);
-+            if ((Sources?.Contains(status.Kind) ?? true) && !ExcludedSources.Contains(instance) && !OrbSubset.IsUnavailable(status))
++            if (!OrbSubset.IsUnavailable(status))
 +                _availableInstances.Add(instance);
 +        }
          Money = Unit == OrbUnit.Cost && Cost is { } cost
@@ -1740,10 +2965,10 @@ index 56c1a6ee..bae46567 100644
  
      /// <summary>Diameter in DIPs within the style's range.</summary>
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbSources.cs b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbSources.cs
-index 191d2998..b5d1556c 100644
+index 191d2998..d690dc92 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbSources.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbSources.cs
-@@ -142,3 +142,18 @@ public readonly record struct OrbSources
+@@ -142,3 +142,20 @@ public readonly record struct OrbSources
      private static bool IsKeepableKey(string? key) =>
          !string.IsNullOrWhiteSpace(key) && key.Length <= MaxKeyLength && key != "all" && !key.Any(char.IsControl);
  }
@@ -1754,10 +2979,12 @@ index 191d2998..b5d1556c 100644
 +    public static IEnumerable<OrbSourceInstance> ForEditor(
 +        SpeedSnapshot snapshot, IEnumerable<Guid> hosts, IEnumerable<OrbSourceInstance> exclusions)
 +    {
-+        var active = snapshot.Sources.Where(s => !OrbSubset.IsUnavailable(s)
++        var instances = snapshot.Sources.Concat(snapshot.AlternateSources).ToArray();
++        var active = instances.Where(s => !OrbSubset.IsUnavailable(s)
 +                && (s.HostId is not null || s.SessionCount > 0 || s.Today.Requests > 0 || s.Live != Rate.Zero))
 +            .Select(s => new OrbSourceInstance(s.HostId, s.Kind));
-+        var unknown = hosts.Where(host => !snapshot.Sources.Any(s => s.HostId == host))
++        var unknown = hosts.Where(host => !instances.Any(s => s.HostId == host)
++                && !snapshot.RemoteHosts.Any(h => h.Id == host && h.SourcesKnown))
 +            .SelectMany(host => SourceSet.Everything.Select(kind => new OrbSourceInstance(host, kind)));
 +        return active.Concat(exclusions).Concat(unknown).Distinct();
 +    }
@@ -1825,19 +3052,53 @@ index ca15330f..e7fd1246 100644
      internal static OrbSources ReadSources(JsonElement element)
      {
          if (!element.TryGetProperty("sources", out var sources))
+diff --git a/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs b/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
+index 82229bf3..5eeaa961 100644
+--- a/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
++++ b/windows/src/AgentSpeed.Presentation/Settings/RemoteHost.cs
+@@ -24,6 +24,21 @@ public sealed record RemoteHost(Guid Id, string Label, string Destination, bool
+     /// <summary>Checks whether a normalized editor draft can be saved.</summary>
+     public bool CanSave(IEnumerable<RemoteHost> hosts, Guid? editingId) =>
+         ValidDestination && !DuplicatesDestination(hosts, editingId);
++
++    /// <summary>Keep unique labels short; distinguish duplicate labels by their connection target, then stable ID.</summary>
++    public string DisplayName(IReadOnlyList<RemoteHost> hosts)
++    {
++        var name = string.IsNullOrWhiteSpace(Label) ? Destination : Label;
++        var duplicates = hosts.Where(h => h.Id != Id
++            && string.Equals(string.IsNullOrWhiteSpace(h.Label) ? h.Destination : h.Label, name, StringComparison.OrdinalIgnoreCase)).ToArray();
++        if (duplicates.Length == 0) return name;
++        var target = name == Destination ? name : $"{name} ({Destination})";
++        if (!duplicates.Any(h => string.Equals(h.Destination, Destination, StringComparison.OrdinalIgnoreCase))) return target;
++        var id = Id.ToString("N");
++        var length = 8;
++        while (length < id.Length && duplicates.Any(h => h.Id.ToString("N").StartsWith(id[..length], StringComparison.OrdinalIgnoreCase))) length++;
++        return $"{target} · {id[..length]}";
++    }
+ }
+ 
+ /// <summary>Formats the connection state shown alongside an SSH host.</summary>
 diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
-index e32cba22..886f24b5 100644
+index e32cba22..b5c8887b 100644
 --- a/windows/src/AgentSpeed/App/AppController.cs
 +++ b/windows/src/AgentSpeed/App/AppController.cs
-@@ -75,6 +75,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -20,6 +20,7 @@ using AgentSpeed.Presentation.Heat;
+ using AgentSpeed.Presentation.Hero;
+ using AgentSpeed.Presentation.Localization;
+ using AgentSpeed.Presentation.Menus;
++using AgentSpeed.Presentation.Orb;
+ using AgentSpeed.Presentation.Settings.Orbs;
+ using AgentSpeed.Presentation.Motion;
+ using AgentSpeed.Presentation.Settings;
+@@ -75,6 +76,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
      private DevCapture? _capture;
      private DashboardWindow? _dashboard;
      private readonly DashboardViewModel _dashboardModel = new();
-+    private string? _dashboardOrbId;
++    private readonly OrbDashboardContext _dashboardContext = new();
      private SettingsWindow? _settingsWindow;
      private SettingsViewModel? _settingsModel;
      private UpdateService _updates = null!;
-@@ -135,6 +136,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -135,6 +137,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          phases.Mark("styles");
  
          _hub = new SpeedHub(new DispatcherSynchronizationContext(_ui));
@@ -1845,7 +3106,18 @@ index e32cba22..886f24b5 100644
          _historyHub = new HistoryHub(new DispatcherSynchronizationContext(_ui));
          _history = new HistoryController(_historyHub, _settings, _theme, _loc, _cost.Display) { Traffic = _traffic.Hub, Prices = _cost.Book, Speed = _hub };
          _hub.LivePublished += (_, snapshot) =>
-@@ -544,10 +546,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -203,6 +206,10 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             }
+         }
+         _orbs = new OrbManager(_ui, _orbClock, _settings, _theme, _speed, _loc, this) { Titles = _titles, Cost = _cost.Display };
++        _orbs.FeedsChanged += (_, _) =>
++        {
++            if (_dashboardContext.OrbId is not null) RefreshDashboard();
++        };
+         _orbs.Apply();
+         StartBoards();
+         _titles.Changed += (_, _) => OnTitlesChanged();
+@@ -544,10 +551,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
      {
          var snapshot = _speed.Snapshot;
          var value = _speed.Value;
@@ -1856,13 +3128,14 @@ index e32cba22..886f24b5 100644
  
          _orbs?.Update(snapshot);
          _boards?.Update(snapshot);
-@@ -558,9 +557,15 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -556,11 +560,15 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             _traffic.UpdateAgents(snapshot.Agents);
+         }
  
-         if (_dashboard is { IsShown: true } dashboard)
+-        if (_dashboard is { IsShown: true } dashboard)
++        if (_dashboard is { IsShown: true } dashboard && TryDashboardView(out var view, out var feed))
          {
 -            dashboard.Hero.SetData(value, tier, title, generating, accessible);
-+            var feed = _orbs?.FeedFor(_dashboardOrbId);
-+            var view = feed is null ? snapshot : OrbSubset.Project(snapshot, feed.Sources, feed.ExcludedSources);
 +            var heroValue = feed?.Value ?? value;
 +            var heroTitle = feed?.Title ?? title;
 +            dashboard.Hero.SetData(heroValue, feed?.Tier ?? _speed.Tier, heroTitle,
@@ -1874,22 +3147,61 @@ index e32cba22..886f24b5 100644
              {
                  // The title label changes in the same frame as the hero vehicle.
                  RefreshDashboard();
-@@ -642,8 +647,12 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -602,7 +610,9 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         switch (speedEvent)
+         {
+             case SpeedEvent.ResponseCompleted completed:
+-                var speed = completed.Response.Speed ?? _speed.Value;
++                var feed = _dashboardContext.OrbId is { } id ? _orbs?.FeedFor(id) : null;
++                if (_dashboardContext.OrbId is not null && (feed is null || !feed.Accepts(speedEvent))) break;
++                var speed = completed.Response.Speed ?? feed?.Value ?? _speed.Value;
+                 var tokens = _speed.Metric == SpeedMetric.Total && completed.Response.HasTotalTokens ? completed.Response.TotalTokens : completed.Response.OutputTokens;
+                 var pulseSpeed = _speed.Metric == SpeedMetric.Total && completed.Response.HasTotalTokens && completed.Response.Duration is { TotalSeconds: > 0 } d
+                     ? completed.Response.TotalTokens / d.TotalSeconds
+@@ -614,7 +624,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+ 
+                 break;
+             case SpeedEvent.NewPeak:
+-                if (_dashboard is { IsShown: true } shown)
++                if (_dashboardContext.OrbId is null && _dashboard is { IsShown: true } shown)
+                 {
+                     shown.Hero.Peak();
+                 }
+@@ -634,6 +644,15 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         RefreshDashboard();
+     }
+ 
++    private bool TryDashboardView(out SpeedSnapshot snapshot, out OrbFeed? feed)
++    {
++        if (_dashboardContext.TryResolve(_speed.Snapshot, id => _orbs?.FeedFor(id), out snapshot, out feed)) return true;
++        _dashboard?.Dismiss();
++        _dashboardTimer?.Stop();
++        _dashboardDirty = false;
++        return false;
++    }
++
+     private void RefreshDashboard()
+     {
+         if (_dashboard is not { } dashboard)
+@@ -642,8 +661,15 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          }
  
          _dashboardDirty = false;
 -        _dashboardTitle = _speed.Title;
 -        var snapshot = _speed.Snapshot;
-+        var feed = _orbs?.FeedFor(_dashboardOrbId);
-+        var snapshot = feed is null ? _speed.Snapshot : OrbSubset.Project(_speed.Snapshot, feed.Sources, feed.ExcludedSources);
++        if (!TryDashboardView(out var snapshot, out var feed)) return;
 +        var value = feed?.Value ?? _speed.Value;
 +        var title = feed?.Title ?? _speed.Title;
 +        var redline = feed?.Redline ?? _speed.Redline;
 +        _dashboardTitle = title;
++        dashboard.Hero.SetData(value, feed?.Tier ?? _speed.Tier, title,
++            snapshot.Agents.Where(a => a.Phase == AgentPhase.Generating).Select(a => a.Source).ToArray(),
++            DisplayText.Accessibility(value, _titles.Text(title, _titles.General), _loc));
++        RefreshDashboardTraffic(snapshot);
          _dashboardModel.ReduceMotion = _theme.ReduceMotion;
          _dashboardModel.AgentsExpanded = Settings.AgentsExpanded;
          _dashboardModel.TitleTheme = _titles.General;
-@@ -651,14 +660,16 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -651,14 +677,16 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          _dashboardModel.CapsuleAppearance = CapsuleAppearance;
          _dashboardModel.TransparencyEnabled = _theme.TransparencyEnabled;
          _dashboardModel.LiveUnit = Settings.Cost.LiveUnit;
@@ -1911,7 +3223,30 @@ index e32cba22..886f24b5 100644
              _loc["win.chart.peak"], _loc["unit.tokS"], summary);
      }
  
-@@ -904,12 +915,14 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -828,15 +856,20 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+     }
+ 
+     /// <summary>The dashboard's Network section and its sparkline (DESIGN 10), while the dashboard shows.</summary>
+-    private void RefreshDashboardTraffic()
++    private void RefreshDashboardTraffic(SpeedSnapshot? view = null)
+     {
+         if (_dashboard is not { IsShown: true } dashboard)
+         {
+             return;
+         }
+ 
++        if (view is null)
++        {
++            if (!TryDashboardView(out var current, out _)) return;
++            view = current;
++        }
+         var traffic = Settings.Traffic;
+-        var snapshot = _traffic.Snapshot;
++        var snapshot = _dashboardContext.ProjectTraffic(_traffic.Snapshot, view);
+         _dashboardModel.UpdateTraffic(snapshot, traffic.Enabled, traffic.IncludeTools, traffic.Bits, _loc);
+         if (!_dashboardModel.TrafficShown)
+         {
+@@ -904,12 +937,14 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          ShowDashboard(anchor);
      }
  
@@ -1922,12 +3257,21 @@ index e32cba22..886f24b5 100644
          {
              return;
          }
-+        _dashboardOrbId = orbId;
-+
++        _dashboardContext.OrbId = orbId;
++        if (!TryDashboardView(out _, out _)) return;
  
          HideTooltip();
          if (_dashboard is null)
-@@ -1101,6 +1114,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -917,7 +952,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             _dashboard = new DashboardWindow(_dashboardModel, () => _speed.Now) { Language = AppFonts.XmlLanguageFor(_loc.LanguageCode) };
+             _dashboard.SettingsRequested += (_, _) => OpenSettings();
+             _dashboard.SourcesRequested += (_, _) => OpenSettings("sources");
+-            _dashboard.HistoryRequested += (_, source) => OpenHistory(source);
++            _dashboard.HistoryRequested += (_, source) => ShowHistory(source?.Kind);
+             _dashboard.QuitRequested += (_, _) => Quit();
+             _dashboard.OrbToggled += (_, visible) => _settings.Update(s => s.WithShowOrbs(visible));
+             _dashboard.RangeChanged += (_, seconds) => _settings.Update(s => s with { ChartSeconds = seconds });
+@@ -1101,6 +1136,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
  
          if (!previous.ToMonitorConfiguration().Equals(current.ToMonitorConfiguration()))
          {
@@ -1935,7 +3279,7 @@ index e32cba22..886f24b5 100644
              try
              {
                  _monitor?.Update(current.ToMonitorConfiguration());
-@@ -1256,12 +1270,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -1256,12 +1292,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          ConfigureOrb();
          UpdateTaskbar();
          _tray?.Update(TrayState());
@@ -1949,7 +3293,7 @@ index e32cba22..886f24b5 100644
  
          _dashboardDirty = true;
          FlushDashboard();
-@@ -1430,6 +1439,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -1430,6 +1461,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
      // ---- Floating orbs (IOrbHost and the orb commands of IAppCommands) ----
  
      public void ShowDashboardAt(POINT anchor) => ShowDashboard(anchor);
@@ -2041,6 +3385,37 @@ index e829a99d..3490bf9d 100644
                                  <Line X1="0" Y1="0" X2="14" Y2="0" Stroke="{DynamicResource TextFillColorSecondaryBrush}" StrokeThickness="1.5"
                                        StrokeDashArray="1.5 1.5" VerticalAlignment="Center" Opacity="0.8" />
                                  <TextBlock Text="{loc:Loc chart.estimated}" Margin="5,0,0,0" FontSize="11" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+diff --git a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
+index 5df810b0..2ce4e868 100644
+--- a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
++++ b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
+@@ -99,7 +99,7 @@ internal sealed partial class DashboardWindow : Window
+     public event EventHandler? SourcesRequested;
+ 
+     /// <summary>A source row (that source) or the Today header's history button (null, all sources) was clicked.</summary>
+-    public event EventHandler<SourceKind?>? HistoryRequested;
++    public event EventHandler<OrbSourceInstance?>? HistoryRequested;
+ 
+     public event EventHandler? QuitRequested;
+ 
+@@ -680,7 +680,7 @@ internal sealed partial class DashboardWindow : Window
+     {
+         if (sender is FrameworkElement { DataContext: SourceRow row })
+         {
+-            RequestHistory(row.Kind);
++            RequestHistory(new OrbSourceInstance(row.HostId, row.Kind));
+         }
+     }
+ 
+@@ -703,7 +703,7 @@ internal sealed partial class DashboardWindow : Window
+         TrafficSettingsRequested?.Invoke(this, EventArgs.Empty);
+     }
+ 
+-    private void RequestHistory(SourceKind? source)
++    private void RequestHistory(OrbSourceInstance? source)
+     {
+         Dismiss();
+         HistoryRequested?.Invoke(this, source);
 diff --git a/windows/src/AgentSpeed/Dashboard/LiveChart.cs b/windows/src/AgentSpeed/Dashboard/LiveChart.cs
 index 9025a8fc..3f49f99b 100644
 --- a/windows/src/AgentSpeed/Dashboard/LiveChart.cs
@@ -2078,7 +3453,7 @@ index 9025a8fc..3f49f99b 100644
      }
  
 diff --git a/windows/src/AgentSpeed/Orb/OrbManager.cs b/windows/src/AgentSpeed/Orb/OrbManager.cs
-index 84d2b461..05a22c04 100644
+index 84d2b461..b3d18b21 100644
 --- a/windows/src/AgentSpeed/Orb/OrbManager.cs
 +++ b/windows/src/AgentSpeed/Orb/OrbManager.cs
 @@ -30,7 +30,7 @@ namespace AgentSpeed.Orb;
@@ -2090,7 +3465,28 @@ index 84d2b461..05a22c04 100644
  
      void ShowOrbMenu(string orbId);
  
-@@ -249,7 +249,7 @@ internal sealed class OrbManager : IDisposable
+@@ -52,8 +52,8 @@ internal sealed record OrbUndo(OrbUndoKind Kind, OrbsDocument Before, string Anc
+ /// <summary>
+ /// The floating orbs (DESIGN 2b): one window per visible orb, each with its own data feed (METRICS 6.8), positions per
+ /// display arrangement, magnetic placement with alignment guides, z-order, name plates, source and undo chips, and the
+-/// editing operations (add, duplicate, split, merge, remove, undo). The dashboard and the taskbar keep showing all
+-/// sources.
++/// editing operations (add, duplicate, split, merge, remove, undo). Orb-opened dashboards follow that orb; the global
++/// dashboard and the taskbar keep showing all sources.
+ /// </summary>
+ internal sealed class OrbManager : IDisposable
+ {
+@@ -163,6 +163,9 @@ internal sealed class OrbManager : IDisposable
+     /// <summary>Raised when the pending undo appears, changes or expires (the Settings banner follows it).</summary>
+     public event EventHandler? UndoChanged;
+ 
++    /// <summary>Raised after visible feeds have been synchronized and recomputed from the current snapshot.</summary>
++    public event EventHandler? FeedsChanged;
++
+     public OrbUndo? PendingUndo { get; private set; }
+ 
+     private AppSettings Settings => _settings.Current;
+@@ -249,7 +252,7 @@ internal sealed class OrbManager : IDisposable
              {
                  entry = CreateEntry(orb);
                  var isNew = _started && previous is not null && previous.Find(orb.Id) is null;
@@ -2099,7 +3495,7 @@ index 84d2b461..05a22c04 100644
                  created.Add(orb.Id);
                  if (isNew)
                  {
-@@ -258,8 +258,8 @@ internal sealed class OrbManager : IDisposable
+@@ -258,8 +261,8 @@ internal sealed class OrbManager : IDisposable
              }
              else
              {
@@ -2110,7 +3506,15 @@ index 84d2b461..05a22c04 100644
                  if (sourcesChanged)
                  {
                      resourced.Add(orb.Id);
-@@ -416,7 +416,7 @@ internal sealed class OrbManager : IDisposable
+@@ -306,6 +309,7 @@ internal sealed class OrbManager : IDisposable
+         {
+             ShowChip(id, ChipTime);
+         }
++        FeedsChanged?.Invoke(this, EventArgs.Empty);
+     }
+ 
+     /// <summary>Applies a data snapshot to every orb.</summary>
+@@ -416,7 +420,7 @@ internal sealed class OrbManager : IDisposable
                          : response.Speed ?? entry.Feed.Value;
                      entry.Window.Surface.Pulse(speed, tokens);
                      break;
@@ -2119,16 +3523,16 @@ index 84d2b461..05a22c04 100644
                      entry.Window.Surface.Peak();
                      break;
              }
-@@ -626,6 +626,8 @@ internal sealed class OrbManager : IDisposable
+@@ -626,6 +630,8 @@ internal sealed class OrbManager : IDisposable
      }
  
      // ---- Entries ----
-+    public OrbFeed? FeedFor(string? id) => id is not null && _entries.TryGetValue(id, out var entry) ? entry.Feed : null;
++    public OrbFeed? FeedFor(string id) => _entries.TryGetValue(id, out var entry) ? entry.Feed : null;
 +
  
      private Entry CreateEntry(OrbDefinition orb)
      {
-@@ -641,7 +643,7 @@ internal sealed class OrbManager : IDisposable
+@@ -641,7 +647,7 @@ internal sealed class OrbManager : IDisposable
              entry.ShowChipOnLanding = true;
          }
  
@@ -2137,7 +3541,7 @@ index 84d2b461..05a22c04 100644
          window.MenuRequested += (_, _) => _host.ShowOrbMenu(orb.Id);
          window.Interacted += (_, _) => Prefer(orb.Id);
          window.HoverChanged += (_, hovering) => OnHover(orb.Id, hovering);
-@@ -660,7 +662,7 @@ internal sealed class OrbManager : IDisposable
+@@ -660,7 +666,7 @@ internal sealed class OrbManager : IDisposable
  
      private void SetActions(IOrbWindow window, string id) => window.SetActions(
      [
@@ -2146,7 +3550,7 @@ index 84d2b461..05a22c04 100644
          (_loc["a11y.orb.showMenu"], () => _host.ShowOrbMenu(id)),
          (_loc["a11y.orb.moveCorner"], () => MoveToNextCorner(id)),
          (_loc["a11y.orb.toggleUnit"], () => ToggleUnit(id)),
-@@ -775,11 +777,15 @@ internal sealed class OrbManager : IDisposable
+@@ -775,11 +781,15 @@ internal sealed class OrbManager : IDisposable
          {
              unavailableTitle = _loc[reading.State == SubsetState.AllDisabled ? "source.disabled" : "source.notFound"];
          }
@@ -2211,7 +3615,7 @@ index ee2feb36..357ab13c 100644
  
      /// <param name="Thinking">The reasoning share of its output while it generates.</param>
 diff --git a/windows/src/AgentSpeed/Settings/OrbsPane/OrbsPaneViewModel.cs b/windows/src/AgentSpeed/Settings/OrbsPane/OrbsPaneViewModel.cs
-index afb264ea..6a4b671b 100644
+index afb264ea..c51f5235 100644
 --- a/windows/src/AgentSpeed/Settings/OrbsPane/OrbsPaneViewModel.cs
 +++ b/windows/src/AgentSpeed/Settings/OrbsPane/OrbsPaneViewModel.cs
 @@ -78,6 +78,13 @@ internal sealed class OrbSourceRowViewModel(SourceKind kind) : ObservableObject
@@ -2266,7 +3670,7 @@ index afb264ea..6a4b671b 100644
 +                {
 +                    var host = instance.HostId is null ? _loc["win.history.local"]
 +                        : S.RemoteHosts.FirstOrDefault(h => h.Id == instance.HostId) is { } remote
-+                            ? $"{_loc["win.history.host"]}: {(string.IsNullOrWhiteSpace(remote.Label) ? remote.Destination : remote.Label)}"
++                            ? $"{_loc["win.history.host"]}: {remote.DisplayName(S.RemoteHosts)}"
 +                            : null;
 +                    if (host is null) continue;
 +                    HostSourceRows.Add(new OrbHostSourceRow(instance, $"{host} · {_loc[DisplayText.SourceKey(instance.Kind)]}", !orb.ExcludedSources.Contains(instance)));
@@ -2539,6 +3943,173 @@ index eddbc706..10a86b69 100644
      [Fact]
      public void TheTickCarriesTheBoardsValueTitleCountsAndFooter()
      {
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
+new file mode 100644
+index 00000000..149d5102
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
+@@ -0,0 +1,161 @@
++using AgentSpeed.Core;
++using AgentSpeed.Core.Traffic;
++using AgentSpeed.Presentation.Orb;
++using AgentSpeed.Presentation.Settings.Orbs;
++
++namespace AgentSpeed.Presentation.Tests;
++
++public sealed class OrbDashboardContextTests
++{
++    private static readonly Guid HostA = Guid.Parse("10000000-0000-4000-8000-000000000001");
++    private static readonly Guid HostB = Guid.Parse("20000000-0000-4000-8000-000000000002");
++    private static readonly DateTimeOffset Time = new(2026, 11, 15, 12, 0, 0, TimeSpan.Zero);
++
++    private static SourceStatus Source(Guid host, double value) =>
++        new(SourceKind.Codex, true, "root", true, 1, new Rate(value, value * 2),
++            new TokenTotals(Requests: 1, Output: (long)value * 100), 1)
++        {
++            HostId = host,
++            LiveCost = new LiveCost(value, value),
++            TodayCost = new CostTally((long)value * 1000, 0),
++        };
++
++    private static AgentStatus Agent(Guid host) =>
++        new(host.ToString(), SourceKind.Codex, "p", null, AgentPhase.Generating, false,
++            Rate.Zero, null, Time) { HostId = host };
++
++    private static SpeedSnapshot Snapshot() => SpeedSnapshot.Empty with
++    {
++        Timestamp = Time,
++        State = MonitorState.Running,
++        Live = new Rate(10, 20),
++        Today = new TokenTotals(Requests: 1, Output: 1000),
++        Sources = [Source(HostA, 10)],
++        AlternateSources = [Source(HostB, 20)],
++        Agents = [Agent(HostA)],
++        AlternateAgents = [Agent(HostB)],
++        RemoteHosts =
++        [
++            new RemoteHostStatus(HostA, "server", true, null) { MachineId = "same-machine", SourcesKnown = true },
++            new RemoteHostStatus(HostB, "server", true, null) { MachineId = "same-machine", SourcesKnown = true },
++        ],
++        History = [new HistoryPoint(Time, new Rate(10, 20), Rate.Zero)],
++        InstanceHistory = new Dictionary<OrbSourceInstance, IReadOnlyList<HistoryPoint>>
++        {
++            [new(HostA, SourceKind.Codex)] = [new HistoryPoint(Time, new Rate(10, 20), Rate.Zero)],
++            [new(HostB, SourceKind.Codex)] = [new HistoryPoint(Time, new Rate(20, 40), Rate.Zero)],
++        },
++    };
++
++    private static TrafficSnapshot HostTraffic(Guid host, long bytes) => new()
++    {
++        Enabled = true,
++        ProcessState = ProcessTrafficState.Running(1),
++        MachineLive = new TrafficRate(9000, 8000),
++        Sources = new Dictionary<SourceKind, SourceTraffic>
++        {
++            [SourceKind.Codex] = new(SourceKind.Codex, new TrafficSplit(new TrafficBytes(bytes, 0), TrafficBytes.Zero),
++                TrafficBytes.Zero, new TrafficRate(bytes, 0), new TrafficRate(bytes, 0)),
++        },
++        Agents = new Dictionary<string, AgentTraffic>
++        {
++            [host.ToString()] = new(host.ToString(), new TrafficSplit(new TrafficBytes(bytes, 0), TrafficBytes.Zero),
++                new TrafficRate(bytes, 0), new TrafficRate(bytes, 0)),
++        },
++    };
++
++    [Fact]
++    public void EditorSelectionsImmediatelyReprojectSourcesAgentsValuesHistoryCostAndTrafficWithoutPublishing()
++    {
++        var snapshot = Snapshot();
++        var aTraffic = HostTraffic(HostA, 1000);
++        var bTraffic = HostTraffic(HostB, 2000);
++        var traffic = aTraffic with
++        {
++            Agents = aTraffic.Agents.Concat(bTraffic.Agents).ToDictionary(pair => pair.Key, pair => pair.Value),
++        };
++        var feed = new OrbFeed("a");
++        var context = new OrbDashboardContext { OrbId = feed.Id };
++        var choices = OrbSourceChoices.ForEditor(snapshot, [HostA, HostB], []).ToArray();
++        Assert.Contains(new OrbSourceInstance(HostB, SourceKind.Codex), choices);
++
++        void Select(OrbSourceInstance[] exclusions, Guid expectedHost, double expectedValue)
++        {
++            // OrbManager.Apply reuses this exact snapshot after each settings change, with no hub publication.
++            feed.Configure(null, SpeedMetric.Output, 400, 0, exclusions: exclusions);
++            feed.Update(snapshot, 1);
++            Assert.True(context.TryResolve(snapshot, id => id == feed.Id ? feed : null, out var view, out var bound));
++            Assert.Same(feed, bound);
++            Assert.Equal(Time, view.Timestamp);
++            Assert.Equal(expectedValue, feed.Value);
++            Assert.Equal(feed.Reading.Live, view.Live);
++            Assert.Equal(expectedHost, Assert.Single(view.Sources).HostId);
++            Assert.Equal(expectedHost, Assert.Single(view.Agents).HostId);
++            Assert.Equal(expectedHost, Assert.Single(feed.Reading.Agents).HostId);
++            Assert.Equal((long)expectedValue * 100, view.Today.Output);
++            Assert.Equal(expectedValue, Assert.Single(view.History).Measured.Output);
++            Assert.True(Assert.Single(view.History).IsAvailable);
++            Assert.Equal(expectedValue, OrbSubset.Cost(snapshot, null, SourceSet.Everything, exclusions).MicroUsdPerSecond);
++            Assert.Equal((long)expectedValue * 1000, Assert.Single(view.Sources).TodayCost.CostMicroUsd);
++            foreach (var host in new[] { HostA, HostB })
++            {
++                var response = new ResponseSummary(SourceKind.Codex, "p", null, 100, 100,
++                    TimeSpan.FromSeconds(1), 100, Time) { HostId = host };
++                Assert.Equal(host == expectedHost, feed.Accepts(new SpeedEvent.ResponseCompleted(response)));
++            }
++            var projectedTraffic = context.ProjectTraffic(traffic, view);
++            Assert.Equal(traffic.MachineLive, projectedTraffic.MachineLive);
++            Assert.Same(traffic.MachineHistory, projectedTraffic.MachineHistory);
++            Assert.Equal(expectedHost.ToString(), Assert.Single(projectedTraffic.Agents).Key);
++        }
++
++        Select([], HostA, 10);
++        Select([choices.Single(choice => choice.HostId == HostA)], HostB, 20);
++        Select([], HostA, 10);
++        Select([choices.Single(choice => choice.HostId == HostB)], HostA, 10);
++    }
++
++    [Fact]
++    public void SwitchingOrbsAndGlobalIsExplicitAndMissingVisibleFeedCannotFallBackToGlobal()
++    {
++        var snapshot = Snapshot();
++        var a = new OrbFeed("a");
++        var b = new OrbFeed("b");
++        a.Configure(null, SpeedMetric.Output, 400, 0, exclusions: [new(HostB, SourceKind.Codex)]);
++        b.Configure(null, SpeedMetric.Output, 400, 0, exclusions: [new(HostA, SourceKind.Codex)]);
++        a.Update(snapshot, 1);
++        b.Update(snapshot, 1);
++        var visible = new Dictionary<string, OrbFeed> { [a.Id] = a, [b.Id] = b };
++        OrbFeed? Find(string id) => visible.GetValueOrDefault(id);
++        var context = new OrbDashboardContext { OrbId = a.Id };
++        Assert.True(context.TryResolve(snapshot, Find, out var view, out var feed));
++        Assert.Same(a, feed);
++        Assert.Equal(HostA, Assert.Single(view.Sources).HostId);
++
++        context.OrbId = b.Id;
++        Assert.True(context.TryResolve(snapshot, Find, out view, out feed));
++        Assert.Same(b, feed);
++        Assert.Equal(HostB, Assert.Single(view.Sources).HostId);
++        Assert.Equal(10, a.Value);
++        Assert.Equal(20, b.Value);
++
++        context.OrbId = null;
++        Assert.True(context.TryResolve(snapshot, Find, out view, out feed));
++        Assert.Null(feed);
++        Assert.Same(snapshot, view);
++        Assert.Same(TrafficSnapshot.Off, context.ProjectTraffic(TrafficSnapshot.Off, view));
++
++        context.OrbId = b.Id;
++        visible.Remove(b.Id); // Hidden/deleted orbs are removed from OrbManager's visible feed set.
++        Assert.False(context.TryResolve(snapshot, Find, out view, out feed));
++        Assert.Null(feed);
++        Assert.Same(SpeedSnapshot.Empty, view);
++        Assert.Equal(b.Id, context.OrbId);
++        Assert.False(context.TryResolve(snapshot, Find, out _, out _));
++
++        context.OrbId = a.Id;
++        Assert.True(context.TryResolve(snapshot, Find, out view, out feed));
++        Assert.Same(a, feed);
++        Assert.Equal(HostA, Assert.Single(view.Sources).HostId);
++    }
++}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs
 index 1a96c198..a622d6cb 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/OrbFeedTests.cs
@@ -2669,10 +4240,10 @@ index 1a96c198..a622d6cb 100644
 +
  }
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbSettingsTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbSettingsTests.cs
-index 4a6b9698..25010355 100644
+index 4a6b9698..3c56b65c 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/OrbSettingsTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbSettingsTests.cs
-@@ -16,6 +16,34 @@ public class OrbSettingsTests
+@@ -16,6 +16,70 @@ public class OrbSettingsTests
      private const string IdB = "6F1C2A9E-0000-4000-8000-00000000000B";
      private const string IdC = "6F1C2A9E-0000-4000-8000-00000000000C";
  
@@ -2704,10 +4275,46 @@ index 4a6b9698..25010355 100644
 +        Assert.DoesNotContain(new OrbSourceInstance(host, SourceKind.Gemini), choices);
 +    }
 +
++    [Fact]
++    public void EditorMergesAlternateInstancesWithoutInventingUnknownHostSources()
++    {
++        var preferred = Guid.Parse(IdA);
++        var alternate = Guid.Parse(IdB);
++        var knownEmpty = Guid.Parse(IdC);
++        var codex = new SourceStatus(SourceKind.Codex, true, "root", true, 1, new Rate(10, 20), TokenTotals.Zero, 1);
++        var snapshot = SpeedSnapshot.Empty with
++        {
++            Sources = [codex with { HostId = preferred }],
++            AlternateSources = [codex with { HostId = alternate }, codex with { HostId = preferred }],
++            RemoteHosts = [new RemoteHostStatus(knownEmpty, "empty", true, null) { SourcesKnown = true }],
++        };
++        var choices = OrbSourceChoices.ForEditor(snapshot, [preferred, alternate, knownEmpty], []).ToArray();
++        Assert.Equal(2, choices.Length);
++        Assert.Contains(new OrbSourceInstance(preferred, SourceKind.Codex), choices);
++        Assert.Contains(new OrbSourceInstance(alternate, SourceKind.Codex), choices);
++        Assert.DoesNotContain(choices, choice => choice.HostId == knownEmpty || choice.Kind != SourceKind.Codex);
++        var excluded = new OrbSourceInstance(alternate, SourceKind.Codex);
++        Assert.Contains(excluded, OrbSourceChoices.ForEditor(snapshot, [preferred, alternate], [excluded]));
++    }
++
++    [Fact]
++    public void DuplicateHostLabelsShowConnectionTargetsAndStableIdsOnlyWhenNeeded()
++    {
++        var a = new RemoteHost(Guid.Parse(IdA), "server", "alice@host", true);
++        var b = new RemoteHost(Guid.Parse(IdB), "server", "bob@host", true);
++        Assert.Equal("server", a.DisplayName([a]));
++        Assert.Equal("server (alice@host)", a.DisplayName([a, b]));
++        Assert.Equal("server (bob@host)", b.DisplayName([a, b]));
++        var alias = b with { Destination = a.Destination };
++        Assert.NotEqual(a.DisplayName([a, alias]), alias.DisplayName([a, alias]));
++        Assert.Equal(a.DisplayName([a, alias]), a.DisplayName([alias, a]));
++        Assert.Equal("alice@host", (a with { Label = "" }).DisplayName([a with { Label = "" }]));
++    }
++
      internal static OrbsDocument SampleDocument()
      {
          var a = new OrbDefinition(IdA)
-@@ -55,6 +83,18 @@ public class OrbSettingsTests
+@@ -55,6 +119,18 @@ public class OrbSettingsTests
  
      private static string OneOrb(string fields) => "{ \"version\": 1, \"orbs\": [ { \"id\": \"" + IdA + "\"" + fields + " } ] }";
  
@@ -2774,6 +4381,7 @@ index 916b7d47..6eeba75e 100644
      [Fact]
      public void HistoryCsvAddsHostIdentityWithoutChangingLegacyExport()
      {
+
 -- 
 2.41.0
 

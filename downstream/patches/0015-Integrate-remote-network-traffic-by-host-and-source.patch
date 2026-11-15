@@ -17,14 +17,17 @@ Subject: [PATCH 15/19] Integrate remote network traffic by host and source
  linux/tests/traffic_test.cpp                  |  21 +++
  .../Sources/AgentSpeed/App/AppDelegate.swift  |   6 +
  macos/Sources/AgentSpeed/App/AppModel.swift   |   1 +
+ .../App/Orbs/OrbSourceTraffic.swift           |  31 ++++
+ .../AgentSpeed/App/Orbs/OrbsController.swift  |   6 +-
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  10 ++
  .../AgentSpeed/App/RemoteSnapshot.swift       |   3 +-
  .../AgentSpeed/App/RemoteTraffic.swift        |  72 ++++++++
- .../Dashboard/Traffic/TrafficSection.swift    |  66 ++++++--
+ .../Dashboard/Traffic/TrafficSection.swift    |  84 ++++++++--
  .../AgentSpeed/History/HistoryViewModel.swift |  44 ++++-
  .../History/HistoryWindowController.swift     |   4 +-
  .../History/Model/HistoryTraffic.swift        |   7 +-
  .../History/Views/HistoryView.swift           |   6 +
+ .../OrbDashboardContextTests.swift            |   4 +
  .../RemoteTrafficTests.swift                  | 110 +++++++++++++
  spec/NETWORK.md                               |  26 ++-
  .../src/AgentSpeed.Core/RemoteAggregation.cs  |  16 +-
@@ -34,8 +37,9 @@ Subject: [PATCH 15/19] Integrate remote network traffic by host and source
  .../Formatting/DashboardTraffic.cs            |  22 ++-
  .../History/HistoryCsv.cs                     |  22 +++
  .../History/HistoryTraffic.cs                 |  27 ++-
+ .../Orb/OrbDashboardContext.cs                |   5 +-
  .../Settings/Orbs/OrbTraffic.cs               |  28 ++++
- windows/src/AgentSpeed/App/AppController.cs   |   9 +-
+ windows/src/AgentSpeed/App/AppController.cs   |  11 +-
  .../Dashboard/DashboardViewModel.Traffic.cs   |  11 +-
  .../Dashboard/DashboardWindow.xaml.cs         |   4 +-
  .../AgentSpeed/History/HistoryController.cs   |   4 +-
@@ -45,9 +49,11 @@ Subject: [PATCH 15/19] Integrate remote network traffic by host and source
  .../src/AgentSpeed/Traffic/TrafficService.cs  |   9 +-
  .../RemoteConsumerTests.cs                    |  93 +++++++++--
  .../HistoryTrafficTests.cs                    |  33 ++++
+ .../OrbDashboardContextTests.cs               |   4 +
  .../RemoteHistoryCsvTests.cs                  |  37 +++++
  .../TrafficSurfaceTests.cs                    |  54 ++++++
- 43 files changed, 1000 insertions(+), 95 deletions(-)
+ 48 files changed, 1067 insertions(+), 98 deletions(-)
+ create mode 100644 macos/Sources/AgentSpeed/App/Orbs/OrbSourceTraffic.swift
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteTraffic.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
  create mode 100644 windows/src/AgentSpeed.Core/RemoteTraffic.cs
@@ -353,6 +359,60 @@ index a3ee4ecf..9cc19883 100644
      /// The floating orbs' master switch (DESIGN 2b).
      func setOrbsVisible(_ visible: Bool)
      func resetOrbPosition(_ id: String)
+diff --git a/macos/Sources/AgentSpeed/App/Orbs/OrbSourceTraffic.swift b/macos/Sources/AgentSpeed/App/Orbs/OrbSourceTraffic.swift
+new file mode 100644
+index 00000000..c35c2168
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/App/Orbs/OrbSourceTraffic.swift
+@@ -0,0 +1,31 @@
++import AgentSpeedCore
++import AgentSpeedOrbModel
++
++@MainActor
++extension AppModel {
++    /// The same owners as the token projection. Missing capabilities, offline sources and unsampled local
++    /// traffic stay unknown; they must not look like a measured zero-byte rate.
++    func orbSourceTraffic(_ orb: OrbConfig) -> TrafficRate? {
++        let sources = orb.sources.sourceSet
++        let excluded = orb.excludedSources
++        guard !OrbSubset.hasUnknownSources(hosts: unknownOrbHosts, sources: sources, excluded: excluded) else { return nil }
++        let selected = OrbSubset.instances(orbSnapshot, sources: sources, excluded: excluded)
++        let includeTools = settings.trafficIncludeTools
++        var total = TrafficRate.zero
++        for instance in selected where instance.status.enabled {
++            let rate: TrafficRate?
++            if let hostID = instance.hostID {
++                guard let state = remoteHosts.states[hostID], state.online,
++                      let traffic = state.snapshot?.traffic, traffic.enabled, traffic.available,
++                      let source = traffic.sources?[instance.status.kind.rawValue] else { return nil }
++                rate = source.value(source: instance.status.kind, online: true).live(includeTools: includeTools)
++            } else {
++                guard visibleTraffic.enabled, visibleTraffic.processState.unavailableReason == nil else { return nil }
++                rate = visibleTraffic.sources[instance.status.kind]?.live(includeTools: includeTools)
++            }
++            guard let rate else { return nil }
++            total = total + rate
++        }
++        return total
++    }
++}
+diff --git a/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift b/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
+index 314d935e..a7bd9238 100644
+--- a/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
++++ b/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
+@@ -113,7 +113,11 @@ final class OrbsController {
+             _ = (settings.trafficEnabled, settings.trafficIncludeTools, settings.trafficUnit, self.document.orbs)
+             let now = Clock.now
+             for runtime in self.runtimes.values {
+-                runtime.ingestTraffic(snapshot, settings: settings, now: now)
++                if runtime.config.traffic == .sources, !model.store.isPreviewing {
++                    runtime.ingestSourceTraffic(model.orbSourceTraffic(runtime.config), settings: settings, now: now)
++                } else {
++                    runtime.ingestTraffic(snapshot, settings: settings, now: now)
++                }
+             }
+         })
+         listener = model.store.addEventListener { [weak self] event in
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 index a397855e..e7733308 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
@@ -484,21 +544,25 @@ index 00000000..ed10116f
 +    let history: [RemoteTrafficHistoryRow]?
 +}
 diff --git a/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift b/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
-index efeaf4e3..cf55e452 100644
+index aa3f2078..41d921d6 100644
 --- a/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
 +++ b/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
-@@ -16,7 +16,9 @@ struct TrafficSection: View {
+@@ -17,7 +17,13 @@ struct TrafficSection: View {
          let snapshot = model.visibleTraffic
          let text = TrafficText(model: model)
          let includeTools = model.settings.trafficIncludeTools
 -        let rows = Self.rows(snapshot, includeTools: includeTools)
-+        let rows = Self.rows(snapshot, instances: model.store.snapshot.sourceInstances,
++        let selected = context?.orbID == nil ? nil : context?.snapshot.sourceInstances
++        let instances = selected ?? model.store.snapshot.sourceInstances
++        let enabled = selected.map { SourceSet($0.filter { $0.hostID == nil && $0.status.enabled }.map { $0.status.kind }) }
++            ?? SourceSet(model.settings.enabledSources)
++        let rows = Self.rows(snapshot, instances: instances,
 +                             hosts: model.remoteHosts.hosts, states: model.remoteHosts.states,
-+                             enabled: SourceSet(model.settings.enabledSources), includeTools: includeTools)
++                             enabled: enabled, includeTools: includeTools, preserveUnknown: selected != nil)
          let shown = expanded ? rows : Array(rows.prefix(Self.collapsedRows))
          let window = Array(snapshot.machineHistory.suffix(Int(TrafficSparkline.window)))
  
-@@ -38,7 +40,7 @@ struct TrafficSection: View {
+@@ -39,7 +45,7 @@ struct TrafficSection: View {
              TrafficSparkline(points: window, text: text, reduceMotion: model.accessibility.reduceMotion,
                               accessibilityLabel: chartLabel(window, text: text))
                  .padding(.vertical, 4)
@@ -507,7 +571,7 @@ index efeaf4e3..cf55e452 100644
                  Text(text.reason(reason))
                      .font(DashboardFont.note)
                      .foregroundStyle(.dashboardSecondary)
-@@ -48,8 +50,8 @@ struct TrafficSection: View {
+@@ -49,8 +55,8 @@ struct TrafficSection: View {
                      .font(DashboardFont.note)
                      .foregroundStyle(.tertiary)
              } else {
@@ -518,7 +582,7 @@ index efeaf4e3..cf55e452 100644
                          .transition(.opacity)
                  }
                  if rows.count > Self.collapsedRows {
-@@ -64,18 +66,36 @@ struct TrafficSection: View {
+@@ -65,18 +71,50 @@ struct TrafficSection: View {
                      .padding(.top, 2)
              }
          }
@@ -535,19 +599,31 @@ index efeaf4e3..cf55e452 100644
 -            return today.sum > 0 || live > 0 ? traffic : nil
 +    /// Keep each machine/source separate; the machine sparkline above remains local.
 +    static func rows(_ snapshot: TrafficSnapshot, instances: [SourceInstance], hosts: [RemoteHost],
-+                     states: [UUID: RemoteHostState], enabled: SourceSet, includeTools: Bool) -> [TrafficDisplayRow] {
++                     states: [UUID: RemoteHostState], enabled: SourceSet, includeTools: Bool, preserveUnknown: Bool = false) -> [TrafficDisplayRow] {
 +        var rows = SourceKind.allCases.compactMap { kind -> TrafficDisplayRow? in
-+            guard enabled.contains(kind), let traffic = snapshot.sources[kind] else { return nil }
++            guard enabled.contains(kind) else { return nil }
++            guard let traffic = snapshot.sources[kind] else {
++                return preserveUnknown ? TrafficDisplayRow(hostID: nil, hostName: nil, traffic: SourceTraffic(source: kind), hasToday: false) : nil
++            }
 +            return TrafficDisplayRow(hostID: nil, hostName: nil, traffic: traffic, hasToday: true)
-         }
--        .sorted { $0.today.total(includeTools: includeTools).sum > $1.today.total(includeTools: includeTools).sum }
++        }
 +        for instance in instances {
 +            guard let hostID = instance.hostID, instance.status.enabled,
-+                  let host = hosts.first(where: { $0.id == hostID && $0.enabled }),
-+                  let state = states[hostID], let remote = state.snapshot?.traffic,
-+                  remote.enabled, let source = remote.sources?[instance.status.kind.rawValue] else { continue }
-+            let name = host.label.isEmpty ? host.destination : host.label
++                  let host = hosts.first(where: { $0.id == hostID && $0.enabled }) else { continue }
++            let name = host.displayName(in: hosts)
++            guard let state = states[hostID], let remote = state.snapshot?.traffic,
++                  remote.enabled, let source = remote.sources?[instance.status.kind.rawValue] else {
++                if preserveUnknown {
++                    rows.append(TrafficDisplayRow(hostID: hostID, hostName: name,
++                        traffic: SourceTraffic(source: instance.status.kind), hasToday: false))
++                }
++                continue
++            }
 +            var value = source.value(source: instance.status.kind, online: state.online && remote.available)
++            if preserveUnknown && (!state.online || !remote.available) {
++                value.liveOwn = nil
++                value.liveWithTools = nil
++            }
 +            if source.today != nil,
 +               let day = remote.history?.filter({ $0.key == instance.status.kind.rawValue }).map(\.day).max(),
 +               let previous = state.trafficHistoryBaseline[RemoteTrafficHistoryKey(day: day, source: instance.status.kind.rawValue)] {
@@ -555,16 +631,18 @@ index efeaf4e3..cf55e452 100644
 +                value.today.tools += TrafficBytes(rx: previous.rxTools, tx: previous.txTools)
 +            }
 +            rows.append(TrafficDisplayRow(hostID: hostID, hostName: name, traffic: value,
-+                hasToday: source.today != nil))
-+        }
++                hasToday: source.today != nil && (!preserveUnknown || (state.online && state.snapshot?.timezone == TimeZone.current.identifier))))
+         }
+-        .sorted { $0.today.total(includeTools: includeTools).sum > $1.today.total(includeTools: includeTools).sum }
 +        return rows.filter { row in
++            (preserveUnknown && (!row.hasToday || row.traffic.live(includeTools: includeTools) == nil)) ||
 +            row.traffic.today.total(includeTools: includeTools).sum > 0 ||
 +            (row.traffic.live(includeTools: includeTools)?.sum ?? 0) > 0
 +        }.sorted { $0.traffic.today.total(includeTools: includeTools).sum > $1.traffic.today.total(includeTools: includeTools).sum }
      }
  
      private func chartLabel(_ window: [TrafficPoint], text: TrafficText) -> String {
-@@ -85,23 +105,33 @@ struct TrafficSection: View {
+@@ -86,23 +124,33 @@ struct TrafficSection: View {
      }
  }
  
@@ -601,7 +679,7 @@ index efeaf4e3..cf55e452 100644
          } label: {
              HStack(spacing: Spacing.s) {
                  Circle()
-@@ -112,7 +142,7 @@ private struct TrafficSourceRow: View {
+@@ -113,7 +161,7 @@ private struct TrafficSourceRow: View {
                      Text(name)
                          .font(DashboardFont.row)
                          .lineLimit(1)
@@ -610,7 +688,7 @@ index efeaf4e3..cf55e452 100644
                          .font(DashboardFont.detail)
                          .foregroundStyle(.dashboardSecondary)
                          .lineLimit(1)
-@@ -130,7 +160,7 @@ private struct TrafficSourceRow: View {
+@@ -131,7 +179,7 @@ private struct TrafficSourceRow: View {
          .help(l10n("mac.dashboard.sourceHint"))
          .accessibilityElement(children: .ignore)
          .accessibilityLabel(name)
@@ -777,6 +855,21 @@ index f2ee5a2c..2011ca72 100644
              if model.remoteHistoryStale {
                  HStack(spacing: Spacing.s) {
                      if model.remoteHistoryStale { Text(model.l10n("history.remoteStale")) }
+diff --git a/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
+index 3f078baf..cf1a4be5 100644
+--- a/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
++++ b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
+@@ -77,6 +77,10 @@ struct OrbDashboardContextTests {
+         #expect(TodayCostSummary(model: model, snapshot: changed).total.costMicroUsd == 27)
+         #expect(changed.history.first?.measured.output == 27)
+         #expect(!changed.peakTodayAvailable && changed.averageToday == nil)
++        let rows = TrafficSection.rows(model.visibleTraffic, instances: changed.sourceInstances,
++            hosts: hosts.hosts, states: hosts.states, enabled: SourceSet(rawValue: 0), includeTools: true)
++        #expect(Set(rows.compactMap(\.hostID)) == Set([b.id, other.id]))
++        #expect(model.orbSourceTraffic(try #require(model.orbs.orb("first")))?.rx == 27)
+         #expect(second.snapshot.live.output == 5)
+         #expect(global.snapshot == globalSnapshot)
+         #expect(model.snapshot == globalSnapshot)
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
 new file mode 100644
 index 00000000..fdaa60b8
@@ -1356,6 +1449,21 @@ index a313e907..abd87d2d 100644
          {
              return null;
          }
+diff --git a/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs b/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
+index b4a2fa1e..7794ab20 100644
+--- a/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
++++ b/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
+@@ -35,6 +35,9 @@ public sealed class OrbDashboardContext
+                 .ToDictionary(pair => pair.Key, pair => pair.Value),
+             Agents = snapshot.Agents.Where(pair => agents.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value),
+         };
+-        return Filter(traffic, null);
++        return Filter(traffic, null) with
++        {
++            Hosts = traffic.Hosts.Select(host => host with { Snapshot = Filter(host.Snapshot, host.HostId) }).ToArray(),
++        };
+     }
+ }
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs
 index 5f811c2d..f3cb7d1a 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs
@@ -1400,10 +1508,10 @@ index 5f811c2d..f3cb7d1a 100644
      public static OrbTraffic Parse(string? key) => key switch
      {
 diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
-index 886f24b5..a7a218f4 100644
+index b5c8887b..e3ad71c4 100644
 --- a/windows/src/AgentSpeed/App/AppController.cs
 +++ b/windows/src/AgentSpeed/App/AppController.cs
-@@ -136,6 +136,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -137,6 +137,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          phases.Mark("styles");
  
          _hub = new SpeedHub(new DispatcherSynchronizationContext(_ui));
@@ -1411,7 +1519,7 @@ index 886f24b5..a7a218f4 100644
          _hub.SetEnabledSources(Settings.ToMonitorConfiguration().EnabledSources);
          _historyHub = new HistoryHub(new DispatcherSynchronizationContext(_ui));
          _history = new HistoryController(_historyHub, _settings, _theme, _loc, _cost.Display) { Traffic = _traffic.Hub, Prices = _cost.Book, Speed = _hub };
-@@ -184,7 +185,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -185,7 +186,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          _taskbar.Start();
          phases.Mark("taskbar");
  
@@ -1420,7 +1528,15 @@ index 886f24b5..a7a218f4 100644
          _speed.EventRaised += (_, e) => OnSpeedEvent(e);
          _settings.Changed += (_, e) => OnSettingsChanged(e.Previous, e.Current);
          _theme.Changed += (_, _) => OnThemeChanged();
-@@ -937,7 +938,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -952,14 +953,14 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             _dashboard = new DashboardWindow(_dashboardModel, () => _speed.Now) { Language = AppFonts.XmlLanguageFor(_loc.LanguageCode) };
+             _dashboard.SettingsRequested += (_, _) => OpenSettings();
+             _dashboard.SourcesRequested += (_, _) => OpenSettings("sources");
+-            _dashboard.HistoryRequested += (_, source) => ShowHistory(source?.Kind);
++            _dashboard.HistoryRequested += (_, source) => ShowHistory(source?.Kind, hostId: source?.HostId);
+             _dashboard.QuitRequested += (_, _) => Quit();
+             _dashboard.OrbToggled += (_, visible) => _settings.Update(s => s.WithShowOrbs(visible));
+             _dashboard.RangeChanged += (_, seconds) => _settings.Update(s => s with { ChartSeconds = seconds });
              _dashboard.AgentsExpandedChanged += (_, expanded) => _settings.Update(s => s with { AgentsExpanded = expanded });
              _dashboard.UpdateRequested += (_, _) => OpenUpdate();
              _dashboard.UnitToggleRequested += (_, _) => ToggleLiveUnit();
@@ -1429,7 +1545,7 @@ index 886f24b5..a7a218f4 100644
              _dashboard.TrafficSettingsRequested += (_, _) => OpenSettings("traffic");
              _dashboard.BoardsMenuRequested += (_, _) => ShowDashboardBoardsMenu();
              AttachReporting(_dashboard);
-@@ -1008,7 +1009,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -1030,7 +1031,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
      // ---- Usage history ----
  
      /// <param name="traffic">Open on the traffic metric (a row of the dashboard's Network section, DESIGN 10).</param>
@@ -1438,7 +1554,7 @@ index 886f24b5..a7a218f4 100644
      {
          if (_quitting)
          {
-@@ -1017,7 +1018,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -1039,7 +1040,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
  
          _dashboard?.Dismiss();
          StartHistory();
@@ -1851,6 +1967,29 @@ index d5135123..57447251 100644
 +        Assert.NotNull(traffic.Day(new DateOnly(2026, 1, 3), null, new DateOnly(2026, 1, 3), DateTimeOffset.Now));
 +    }
  }
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
+index 149d5102..23e70285 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
+@@ -72,6 +72,7 @@ public sealed class OrbDashboardContextTests
+         var bTraffic = HostTraffic(HostB, 2000);
+         var traffic = aTraffic with
+         {
++            Hosts = [new(HostA, "server", "same-machine", aTraffic), new(HostB, "server", "same-machine", bTraffic)],
+             Agents = aTraffic.Agents.Concat(bTraffic.Agents).ToDictionary(pair => pair.Key, pair => pair.Value),
+         };
+         var feed = new OrbFeed("a");
+@@ -106,7 +107,10 @@ public sealed class OrbDashboardContextTests
+             var projectedTraffic = context.ProjectTraffic(traffic, view);
+             Assert.Equal(traffic.MachineLive, projectedTraffic.MachineLive);
+             Assert.Same(traffic.MachineHistory, projectedTraffic.MachineHistory);
++            Assert.Equal(expectedHost, Assert.Single(projectedTraffic.Hosts, h => h.Snapshot.Sources.Count > 0).HostId);
+             Assert.Equal(expectedHost.ToString(), Assert.Single(projectedTraffic.Agents).Key);
++            Assert.Equal(expectedHost == HostA ? 1000 : 2000,
++                Assert.Single(projectedTraffic.Hosts.Single(h => h.HostId == expectedHost).Snapshot.Sources).Value.Today.Self.Rx);
+         }
+ 
+         Select([], HostA, 10);
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
 index 6eeba75e..c98a9085 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/RemoteHistoryCsvTests.cs
@@ -1970,6 +2109,7 @@ index 5286eee1..fa753050 100644
      [Fact]
      public void TheTaskbarBlockFollowsTheSetting()
      {
+
 -- 
 2.41.0
 

@@ -73,6 +73,18 @@ global. Hiding or deleting the associated orb closes its dashboard rather than
 silently displaying all sources. These corrections belong to feature patch 0011;
 native desktop behavior still requires Windows/macOS acceptance, not a Linux-only
 test or syntax check.
+Focused Linux-hosted checks for this correction passed 100 orb settings/feed/context
+Presentation tests and nine OrbSubset Core tests. The Windows WPF application and
+native test assembly also cross-compile with zero warnings/errors; these checks
+do not execute a Windows desktop or prove native popup interaction.
+Four Swift Core projection/history regressions also pass in a disposable Linux
+package using the real implementation and extracted original model declarations;
+all 30 changed Swift files pass syntax parsing. Neither check type-checks AppKit
+or SwiftUI, executes the macOS App tests, or verifies native popover interaction.
+The final 22-patch queue replays successfully from the pinned baseline. Both native
+source/test trees match the checked prepared tree byte-for-byte; existing quota
+patch ownership and concurrent changes are preserved. No package or Release was
+created.
 Undetected sources do not make an otherwise valid rate incomplete; detected
 sources with unknown rates and offline intervals remain unknown and produce
 history gaps. Chart estimate indicators mean that the visible range contains

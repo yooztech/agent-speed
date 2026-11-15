@@ -2371,7 +2371,7 @@ index ec970b2c..30da978e 100644
 +++ b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
 @@ -45,6 +45,7 @@ enum MenuFactory {
          }
-         menu.addItem(ActionMenuItem(l10n("menu.dashboard")) { [weak model] in model?.commands?.showDashboard() })
+         menu.addItem(ActionMenuItem(l10n("menu.dashboard")) { [weak model] in model?.commands?.showDashboard(orbID: nil) })
          menu.addItem(historyItem(model: model))
 +        menu.addItem(ActionMenuItem(l10n("mac.quota.title")) { [weak model] in model?.commands?.showSettings(.quota) })
          if let report = ReportMenu.item(model: model) {

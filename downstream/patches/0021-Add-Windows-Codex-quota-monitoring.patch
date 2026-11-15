@@ -1988,7 +1988,7 @@ index a7a218f4..334f6cc1 100644
 --- a/windows/src/AgentSpeed/App/AppController.cs
 +++ b/windows/src/AgentSpeed/App/AppController.cs
 @@ -78,6 +78,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
-     private string? _dashboardOrbId;
+     private readonly OrbDashboardContext _dashboardContext = new();
      private SettingsWindow? _settingsWindow;
      private SettingsViewModel? _settingsModel;
 +    private QuotaSurface? _quota;
