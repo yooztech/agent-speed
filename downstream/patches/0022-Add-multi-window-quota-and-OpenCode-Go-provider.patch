@@ -1,59 +1,47 @@
-From 7d341782b36df677aa40ba63b284abec1075d180 Mon Sep 17 00:00:00 2001
+From fbabfc5de1907e62ecad19e92e3812ea1f552742 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Sun, 15 Nov 2026 15:53:04 +0800
-Subject: [PATCH 22/22] Add multi-window quota and OpenCode Go provider
+Subject: [PATCH] Add multi-window quota and OpenCode Go provider
 
-- Add the real OpenCode Go credentials/provider, SQLite access, registry/source registration, logo and entitlement copy.
-- Add Go period/provider/lifecycle coverage and integration reference; retain the original Windows multi-window/Go increment.
-- Reuse the complete source-neutral macOS Codex base without duplicating persistence, controllers or native geometry.
 ---
- macos/Package.swift                           |   5 +-
- macos/Resources/Codenotch-LICENSE.txt         |   2 +-
- .../App/QuotaNotchVisualHarness.swift         |   8 +-
- .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +-
- .../AgentSpeed/Localization/StringTable.swift |   1 +
- .../SettingsWindow/Panes/QuotaPane.swift      |   4 +-
- .../OpenCodeGoCredentials.swift               |  98 +++++
- .../OpenCodeGoQuotaProvider.swift             | 276 ++++++++++++
- macos/Sources/AgentSpeedCore/Quota.swift      |   2 +-
- macos/Sources/CSQLite/module.modulemap        |   5 +
- macos/Sources/CSQLite/shim.h                  |   1 +
- .../QuotaControllerTests.swift                |  22 +-
- .../AgentSpeedAppTests/QuotaNotchTests.swift  |  10 +-
- .../QuotaPresentationTests.swift              |   4 +-
- .../OpenCodeGoQuotaProviderTests.swift        | 213 ++++++++++
- .../QuotaLifecycleTests.swift                 |  28 +-
- .../AgentSpeedCoreTests/QuotaTests.swift      |   8 +
- spec/QUOTA.md                                 |  16 +-
- .../src/AgentSpeed.Core/CodexQuotaProvider.cs |   2 +-
- windows/src/AgentSpeed.Core/IQuotaProvider.cs |  10 +
- .../OpenCodeGoQuotaProvider.cs                | 401 ++++++++++++++++++
- windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   8 +
- .../Localization/Strings.Windows.json         |   4 +
- .../Settings/QuotaFormat.cs                   |  60 ++-
- .../Settings/QuotaNotchGeometry.cs            |  70 +--
- .../Settings/QuotaNotch.LICENSE.txt           |   3 +-
- .../src/AgentSpeed/Settings/QuotaNotchView.cs | 125 ++++--
- .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  12 +-
- .../src/AgentSpeed/Settings/QuotaSurface.cs   | 139 +++---
- .../OpenCodeGoQuotaProviderTests.cs           | 401 ++++++++++++++++++
- .../QuotaFormatTests.cs                       |  62 ++-
- .../QuotaNotchGeometryTests.cs                |  55 ++-
- .../SettingsSerializerTests.cs                |  24 +-
- .../QuotaNotchViewTests.cs                    |  87 ++++
- .../QuotaSettingsPageTests.cs                 |  89 +++-
- .../QuotaSurfaceProviderCollectionTests.cs    | 171 ++++++++
- .../QuotaSurfaceTests.cs                      | 131 +++++-
- 37 files changed, 2365 insertions(+), 211 deletions(-)
- create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
- create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
- create mode 100644 macos/Sources/CSQLite/module.modulemap
- create mode 100644 macos/Sources/CSQLite/shim.h
- create mode 100644 macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift
- create mode 100644 windows/src/AgentSpeed.Core/IQuotaProvider.cs
- create mode 100644 windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs
- create mode 100644 windows/tests/AgentSpeed.Core.Tests/OpenCodeGoQuotaProviderTests.cs
- create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
+ macos/Package.swift                                |   5 +-
+ macos/Resources/Codenotch-LICENSE.txt              |   2 +-
+ .../AgentSpeed/App/QuotaNotchVisualHarness.swift   |   8 +-
+ macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift |  19 +-
+ .../AgentSpeed/Localization/StringTable.swift      |   1 +
+ .../SettingsWindow/Panes/QuotaPane.swift           |   4 +-
+ .../AgentSpeedCore/OpenCodeGoCredentials.swift     |  98 +++++
+ .../AgentSpeedCore/OpenCodeGoQuotaProvider.swift   | 276 ++++++++++++++
+ macos/Sources/AgentSpeedCore/Quota.swift           |   2 +-
+ macos/Sources/CSQLite/module.modulemap             |   5 +
+ macos/Sources/CSQLite/shim.h                       |   1 +
+ .../AgentSpeedAppTests/QuotaControllerTests.swift  |  22 +-
+ .../Tests/AgentSpeedAppTests/QuotaNotchTests.swift |  16 +-
+ .../QuotaPresentationTests.swift                   |   4 +-
+ .../OpenCodeGoQuotaProviderTests.swift             | 213 +++++++++++
+ .../AgentSpeedCoreTests/QuotaLifecycleTests.swift  |  28 +-
+ macos/Tests/AgentSpeedCoreTests/QuotaTests.swift   |   8 +
+ spec/QUOTA.md                                      |  16 +-
+ windows/src/AgentSpeed.Core/CodexQuotaProvider.cs  |   2 +-
+ windows/src/AgentSpeed.Core/IQuotaProvider.cs      |  10 +
+ .../src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs | 401 +++++++++++++++++++++
+ windows/src/AgentSpeed.Core/QuotaSnapshot.cs       |   8 +
+ .../Localization/Strings.Windows.json              |   4 +
+ .../Settings/QuotaFormat.cs                        |  60 ++-
+ .../Settings/QuotaNotchGeometry.cs                 |  70 ++--
+ .../src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt |   3 +-
+ windows/src/AgentSpeed/Settings/QuotaNotchView.cs  | 125 +++++--
+ .../src/AgentSpeed/Settings/QuotaSettingsPage.cs   |  12 +-
+ windows/src/AgentSpeed/Settings/QuotaSurface.cs    | 139 ++++---
+ .../OpenCodeGoQuotaProviderTests.cs                | 401 +++++++++++++++++++++
+ .../QuotaFormatTests.cs                            |  62 +++-
+ .../QuotaNotchGeometryTests.cs                     |  55 ++-
+ .../SettingsSerializerTests.cs                     |  24 +-
+ .../QuotaNotchViewTests.cs                         |  87 +++++
+ .../QuotaSettingsPageTests.cs                      |  89 ++++-
+ .../QuotaSurfaceProviderCollectionTests.cs         | 171 +++++++++
+ .../AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs  | 131 ++++++-
+ 37 files changed, 2368 insertions(+), 214 deletions(-)
 
 diff --git a/macos/Package.swift b/macos/Package.swift
 index c7b998e5..0500f99e 100644
@@ -98,7 +86,7 @@ index 495b4aee..846b0b88 100644
  https://github.com/vinzdg/codenotch at 835550a342871779135b6484d6899161c5222f7c.
  The following license applies to those portions.
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
-index 60469a19..a1cb3f86 100644
+index e4ae6321..8cec9b11 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 @@ -4,7 +4,7 @@ import AppKit
@@ -693,7 +681,7 @@ index 3b884f77..61e80334 100644
              #expect(restored.snapshots.isEmpty)
          }
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-index 931bcd1e..b46f0026 100644
+index fc24c4bf..0bd05751 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 @@ -15,7 +15,7 @@ struct QuotaNotchTests {
@@ -705,7 +693,7 @@ index 931bcd1e..b46f0026 100644
                               windows: windows, headlineId: "rolling", block: nil, account: "account", plan: "Plus",
                               observedAt: now.addingTimeInterval(-300), source: "local", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
      }
-@@ -40,8 +40,8 @@ struct QuotaNotchTests {
+@@ -57,8 +57,8 @@ struct QuotaNotchTests {
      }
  
      @Test func everyProviderRetainsAllPeriodsWithoutFollowingHeadline() {
@@ -716,17 +704,34 @@ index 931bcd1e..b46f0026 100644
          for value in accounts {
              #expect(value.windows.map(\.id) == ["monthly", "weekly", "rolling"])
              #expect(value.readings.count == 3)
-@@ -194,8 +194,8 @@ struct QuotaNotchTests {
-     @Test func sourceSwitchAndKeepExpandedNeverFreezeTheOldTooltip() async throws {
-         let hover = QuotaNotchHover()
+@@ -238,12 +238,12 @@ struct QuotaNotchTests {
          hover.keepExpanded = true
--        hover.move(to: .cell("codex")); hover.move(to: .cell("test-source"))
--        #expect(hover.activeSource == "test-source")
-+        hover.move(to: .cell("codex")); hover.move(to: .cell("opencode-go"))
-+        #expect(hover.activeSource == "opencode-go")
+         hover.move(to: .cell("codex")); hover.move(to: .outside)
+         clock.advance(0.1)
+-        hover.move(to: .cell("test-source"))
++        hover.move(to: .cell("opencode-go"))
+         clock.advance(0.15)
+-        #expect(hover.activeSource == "test-source" && !hover.graceActive)
++        #expect(hover.activeSource == "opencode-go" && !hover.graceActive)
          hover.move(to: .outside)
-         try await Task.sleep(for: .milliseconds(300))
-         #expect(hover.expanded && hover.activeSource == nil)
+         clock.advance(0.249)
+-        #expect(hover.activeSource == "test-source" && hover.graceActive)
++        #expect(hover.activeSource == "opencode-go" && hover.graceActive)
+         clock.advance(0.001)
+         #expect(hover.expanded && hover.activeSource == nil && !hover.graceActive)
+         hover.reset()
+@@ -261,9 +261,9 @@ struct QuotaNotchTests {
+         #expect(!hover.expanded && hover.activeSource == nil && !hover.graceActive)
+         hover.move(to: .bar)
+         #expect(hover.expanded)
+-        hover.move(to: .cell("test-source")); hover.move(to: .outside)
++        hover.move(to: .cell("opencode-go")); hover.move(to: .outside)
+         clock.advance(0.15)
+-        #expect(hover.activeSource == "test-source" && hover.expanded && hover.graceActive,
++        #expect(hover.activeSource == "opencode-go" && hover.expanded && hover.graceActive,
+                 "The cancelled pre-hide expiry must not clear a reopened card")
+         clock.advance(0.1)
+         #expect(hover.activeSource == nil && !hover.expanded && !hover.graceActive)
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 index 465ec22d..a0f5fdf2 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
@@ -3524,4 +3529,3 @@ index f0cd97a4..97bc8943 100644
              return new HttpResponseMessage(HttpStatusCode.OK)
              {
                  Content = new StringContent(usage
-

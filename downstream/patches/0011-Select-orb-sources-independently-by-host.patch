@@ -1,95 +1,85 @@
-From 41a5b1c99a738d115ca374568bece5a94d8b5cdc Mon Sep 17 00:00:00 2001
+From 5463b69bb2a84607a5738845b0695e9e3cd93a64 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 13:50:08 +0800
-Subject: [PATCH 11/19] Select orb sources independently by host
+Subject: [PATCH] Select orb sources independently by host
 
 ---
- README.md                                     |  13 +-
- README.zh-CN.md                               |   3 +-
- .../Sources/AgentSpeed/App/AppDelegate.swift  |   8 +-
- macos/Sources/AgentSpeed/App/AppModel.swift   |  19 ++-
- .../AgentSpeed/App/Orbs/OrbRuntime.swift      |  52 ++++--
- .../AgentSpeed/App/Orbs/OrbsController.swift  |  28 ++-
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  30 +++-
- .../AgentSpeed/App/RemoteSnapshot.swift       |  71 +++++++-
- .../AgentSpeed/Dashboard/AgentsSection.swift  |   3 +-
- .../Dashboard/DashboardContext.swift          |  52 ++++++
- .../Dashboard/DashboardController.swift       |  28 ++-
- .../Dashboard/DashboardScoreCards.swift       |   8 +-
- .../AgentSpeed/Dashboard/DashboardView.swift  |   8 +-
- .../AgentSpeed/Dashboard/HeroSection.swift    |  16 +-
- .../Dashboard/LiveChartSection.swift          |   3 +-
- .../AgentSpeed/Dashboard/SourcesSection.swift |  26 ++-
- .../AgentSpeed/Dashboard/TodayCostRow.swift   |  12 +-
- .../AgentSpeed/Dashboard/TodaySection.swift   |   3 +-
- .../Dashboard/Traffic/TrafficSection.swift    |   1 +
- .../AgentSpeed/Localization/StringTable.swift |   1 +
- .../AgentSpeed/Orb/OrbWindowController.swift  |   9 +-
- .../OrbPane/OrbSourcesSection.swift           |  39 +++++
- .../AgentSpeed/Support/BoardMenus.swift       |   2 +-
- .../AgentSpeed/Support/MenuFactory.swift      |   2 +-
- .../Sources/AgentSpeed/Support/OrbMenus.swift |   2 +-
- .../AgentSpeedCore/CombinedLiveHistory.swift  |   2 +-
- .../Engine/OrbInstanceHistory.swift           |  43 +++++
- .../AgentSpeedCore/Engine/OrbSubset.swift     | 159 +++++++++++++++++
- macos/Sources/AgentSpeedCore/Models.swift     |  11 +-
- .../AgentSpeedOrbModel/OrbConfig.swift        |   7 +
- .../AgentSpeedOrbModel/OrbEditing.swift       |   4 +
- .../OrbDashboardContextTests.swift            | 125 ++++++++++++++
- .../OrbHostRuntimeTests.swift                 |  85 +++++++++
- .../RemoteCompletionOwnershipTests.swift      |  60 +++++++
- .../OrbHostSelectionTests.swift               |  58 +++++++
- .../OrbInstanceProjectionTests.swift          | 127 ++++++++++++++
- .../OrbHostSourceCodingTests.swift            |  19 +++
- windows/src/AgentSpeed.Core/DemoDriver.cs     |  14 +-
- .../src/AgentSpeed.Core/Engine/EngineFrame.cs |   2 +
- .../src/AgentSpeed.Core/Engine/SpeedEngine.cs |  14 +-
- windows/src/AgentSpeed.Core/Models.cs         |  13 ++
- .../AgentSpeed.Core/Monitoring/MonitorCore.cs |   1 +
- windows/src/AgentSpeed.Core/OrbSubset.cs      | 149 +++++++++++++++-
- .../src/AgentSpeed.Core/RemoteAggregation.cs  |  16 +-
- windows/src/AgentSpeed.Core/SpeedHub.cs       | 128 +++++++++-----
- .../Boards/BoardFeed.cs                       |   7 +-
- .../Boards/Live/BoardLiveFeed.cs              |  15 +-
- .../Boards/Scene/BoardHeroNumber.cs           |   2 +-
- .../Boards/Scene/BoardTick.cs                 |   3 +
- .../History/HistoryAggregator.cs              |   4 +-
- .../Orb/OrbDashboardContext.cs                |  40 +++++
- .../AgentSpeed.Presentation/Orb/OrbFeed.cs    |  43 +++--
- .../Settings/Orbs/OrbDefinition.cs            |   4 +
- .../Settings/Orbs/OrbSources.cs               |  17 ++
- .../Settings/Orbs/OrbsJson.cs                 |  31 ++++
- .../Settings/RemoteHost.cs                    |  15 ++
- windows/src/AgentSpeed/App/AppController.cs   |  82 ++++++---
- .../Boards/Layers/NeonBoardPainter.cs         |   4 +-
- .../Dashboard/DashboardViewModel.cs           |  10 +-
- .../AgentSpeed/Dashboard/DashboardWindow.xaml |   2 +-
- .../Dashboard/DashboardWindow.xaml.cs         |   6 +-
- windows/src/AgentSpeed/Dashboard/LiveChart.cs |  18 ++
- windows/src/AgentSpeed/Orb/OrbManager.cs      |  30 ++--
- .../src/AgentSpeed/Services/HeroTourDriver.cs |  13 +-
- .../AgentSpeed/Services/PinnedSpeedDriver.cs  |  13 +-
- .../Settings/OrbsPane/OrbsPaneViewModel.cs    |  33 ++++
- .../AgentSpeed/Settings/Pages/OrbPage.xaml    |   9 +
- .../AgentSpeed/Settings/Pages/OrbPage.xaml.cs |   5 +
- .../AgentSpeed.Core.Tests/OrbSubsetTests.cs   |  89 ++++++++++
- .../RemoteConsumerTests.cs                    |  75 ++++++++
- .../Boards/BoardLiveFeedTests.cs              |  31 ++++
- .../OrbDashboardContextTests.cs               | 161 ++++++++++++++++++
- .../OrbFeedTests.cs                           | 101 ++++++++++-
- .../OrbSettingsTests.cs                       |  76 +++++++++
- .../RemoteHistoryCsvTests.cs                  |  37 ++++
- 75 files changed, 2234 insertions(+), 218 deletions(-)
- create mode 100644 macos/Sources/AgentSpeed/Dashboard/DashboardContext.swift
- create mode 100644 macos/Sources/AgentSpeedCore/Engine/OrbInstanceHistory.swift
- create mode 100644 macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
- create mode 100644 macos/Tests/AgentSpeedAppTests/OrbHostRuntimeTests.swift
- create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteCompletionOwnershipTests.swift
- create mode 100644 macos/Tests/AgentSpeedCoreTests/OrbHostSelectionTests.swift
- create mode 100644 macos/Tests/AgentSpeedCoreTests/OrbInstanceProjectionTests.swift
- create mode 100644 macos/Tests/AgentSpeedOrbModelTests/OrbHostSourceCodingTests.swift
- create mode 100644 windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
+ README.md                                          |  13 +-
+ README.zh-CN.md                                    |   3 +-
+ macos/Sources/AgentSpeed/App/AppDelegate.swift     |   8 +-
+ macos/Sources/AgentSpeed/App/AppModel.swift        |  19 ++-
+ macos/Sources/AgentSpeed/App/Orbs/OrbRuntime.swift |  52 +++++--
+ .../AgentSpeed/App/Orbs/OrbsController.swift       |  28 +++-
+ macos/Sources/AgentSpeed/App/RemoteHosts.swift     |  30 +++-
+ macos/Sources/AgentSpeed/App/RemoteSnapshot.swift  |  71 ++++++++-
+ .../AgentSpeed/Dashboard/AgentsSection.swift       |   3 +-
+ .../AgentSpeed/Dashboard/DashboardContext.swift    |  52 +++++++
+ .../AgentSpeed/Dashboard/DashboardController.swift |  28 +++-
+ .../AgentSpeed/Dashboard/DashboardScoreCards.swift |   8 +-
+ .../AgentSpeed/Dashboard/DashboardView.swift       |   8 +-
+ .../Sources/AgentSpeed/Dashboard/HeroSection.swift |  16 +-
+ .../AgentSpeed/Dashboard/LiveChartSection.swift    |   3 +-
+ .../AgentSpeed/Dashboard/SourcesSection.swift      |  26 +++-
+ .../AgentSpeed/Dashboard/TodayCostRow.swift        |  12 +-
+ .../AgentSpeed/Dashboard/TodaySection.swift        |   3 +-
+ .../Dashboard/Traffic/TrafficSection.swift         |   1 +
+ .../AgentSpeed/Localization/StringTable.swift      |   1 +
+ .../AgentSpeed/Orb/OrbWindowController.swift       |   9 +-
+ .../SettingsWindow/OrbPane/OrbSourcesSection.swift |  39 +++++
+ macos/Sources/AgentSpeed/Support/BoardMenus.swift  |   2 +-
+ macos/Sources/AgentSpeed/Support/MenuFactory.swift |   2 +-
+ macos/Sources/AgentSpeed/Support/OrbMenus.swift    |   2 +-
+ .../AgentSpeedCore/CombinedLiveHistory.swift       |   2 +-
+ .../AgentSpeedCore/Engine/OrbInstanceHistory.swift |  43 ++++++
+ .../Sources/AgentSpeedCore/Engine/OrbSubset.swift  | 159 ++++++++++++++++++++
+ macos/Sources/AgentSpeedCore/Models.swift          |  11 +-
+ macos/Sources/AgentSpeedOrbModel/OrbConfig.swift   |   7 +
+ macos/Sources/AgentSpeedOrbModel/OrbEditing.swift  |   4 +
+ .../OrbDashboardContextTests.swift                 | 128 ++++++++++++++++
+ .../AgentSpeedAppTests/OrbHostRuntimeTests.swift   |  85 +++++++++++
+ .../RemoteCompletionOwnershipTests.swift           |  60 ++++++++
+ .../OrbHostSelectionTests.swift                    |  58 ++++++++
+ .../OrbInstanceProjectionTests.swift               | 127 ++++++++++++++++
+ .../OrbHostSourceCodingTests.swift                 |  19 +++
+ windows/src/AgentSpeed.Core/DemoDriver.cs          |  14 +-
+ windows/src/AgentSpeed.Core/Engine/EngineFrame.cs  |   2 +
+ windows/src/AgentSpeed.Core/Engine/SpeedEngine.cs  |  14 +-
+ windows/src/AgentSpeed.Core/Models.cs              |  13 ++
+ .../src/AgentSpeed.Core/Monitoring/MonitorCore.cs  |   1 +
+ windows/src/AgentSpeed.Core/OrbSubset.cs           | 149 ++++++++++++++++++-
+ windows/src/AgentSpeed.Core/RemoteAggregation.cs   |  16 +-
+ windows/src/AgentSpeed.Core/SpeedHub.cs            | 128 +++++++++++-----
+ .../AgentSpeed.Presentation/Boards/BoardFeed.cs    |   7 +-
+ .../Boards/Live/BoardLiveFeed.cs                   |  15 +-
+ .../Boards/Scene/BoardHeroNumber.cs                |   2 +-
+ .../Boards/Scene/BoardTick.cs                      |   3 +
+ .../History/HistoryAggregator.cs                   |   4 +-
+ .../Orb/OrbDashboardContext.cs                     |  40 +++++
+ windows/src/AgentSpeed.Presentation/Orb/OrbFeed.cs |  43 ++++--
+ .../Settings/Orbs/OrbDefinition.cs                 |   4 +
+ .../Settings/Orbs/OrbSources.cs                    |  17 +++
+ .../Settings/Orbs/OrbsJson.cs                      |  31 ++++
+ .../AgentSpeed.Presentation/Settings/RemoteHost.cs |  15 ++
+ windows/src/AgentSpeed/App/AppController.cs        |  82 +++++++----
+ .../AgentSpeed/Boards/Layers/NeonBoardPainter.cs   |   4 +-
+ .../src/AgentSpeed/Dashboard/DashboardViewModel.cs |  10 +-
+ .../src/AgentSpeed/Dashboard/DashboardWindow.xaml  |   2 +-
+ .../AgentSpeed/Dashboard/DashboardWindow.xaml.cs   |   6 +-
+ windows/src/AgentSpeed/Dashboard/LiveChart.cs      |  18 +++
+ windows/src/AgentSpeed/Orb/OrbManager.cs           |  30 ++--
+ windows/src/AgentSpeed/Services/HeroTourDriver.cs  |  13 +-
+ .../src/AgentSpeed/Services/PinnedSpeedDriver.cs   |  13 +-
+ .../Settings/OrbsPane/OrbsPaneViewModel.cs         |  33 +++++
+ windows/src/AgentSpeed/Settings/Pages/OrbPage.xaml |   9 ++
+ .../src/AgentSpeed/Settings/Pages/OrbPage.xaml.cs  |   5 +
+ .../tests/AgentSpeed.Core.Tests/OrbSubsetTests.cs  |  89 ++++++++++++
+ .../AgentSpeed.Core.Tests/RemoteConsumerTests.cs   |  75 ++++++++++
+ .../Boards/BoardLiveFeedTests.cs                   |  31 ++++
+ .../OrbDashboardContextTests.cs                    | 161 +++++++++++++++++++++
+ .../AgentSpeed.Presentation.Tests/OrbFeedTests.cs  | 101 ++++++++++++-
+ .../OrbSettingsTests.cs                            |  76 ++++++++++
+ .../RemoteHistoryCsvTests.cs                       |  37 +++++
+ 75 files changed, 2237 insertions(+), 218 deletions(-)
 
 diff --git a/README.md b/README.md
 index ebfb6035..1881c911 100644
@@ -1530,12 +1520,13 @@ index ad4bc63a..9de1bd1c 100644
      public static func setStyle(_ style: OrbStyleKind, of id: String, in doc: OrbsDocument) -> OrbsDocument {
 diff --git a/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
 new file mode 100644
-index 00000000..3f078baf
+index 00000000..8b52ea60
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,128 @@
 +import AgentSpeedCore
 +import AgentSpeedOrbModel
++import AppKit
 +import Foundation
 +import Testing
 +@testable import AgentSpeed
@@ -1577,6 +1568,8 @@ index 00000000..3f078baf
 +    }
 +
 +    @Test func existingContextsImmediatelyReprojectWithoutAnotherSnapshotAndStayIsolated() throws {
++        // Match main.swift: activation installs the application appearance observer synchronously.
++        _ = NSApplication.shared
 +        let suite = "OrbDashboardContextTests.\(UUID().uuidString)"
 +        let defaults = try #require(UserDefaults(suiteName: suite))
 +        defer { defaults.removePersistentDomain(forName: suite) }
@@ -4381,7 +4374,3 @@ index 916b7d47..6eeba75e 100644
      [Fact]
      public void HistoryCsvAddsHostIdentityWithoutChangingLegacyExport()
      {
-
--- 
-2.41.0
-

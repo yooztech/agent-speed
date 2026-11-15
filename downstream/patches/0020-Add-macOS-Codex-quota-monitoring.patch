@@ -1,63 +1,40 @@
-From 263751eb24b98d529e7a5c18a4b2ea8e0e1ff98b Mon Sep 17 00:00:00 2001
+From 874b4862ccd84051687e7a6393f48bd058037c48 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Sun, 15 Nov 2026 15:52:19 +0800
-Subject: [PATCH 20/22] Add macOS Codex quota monitoring
+Subject: [PATCH] Add macOS Codex quota monitoring
 
-- Include complete native Codex account cards, structured persistence, startup/backoff, reset cards and source/refresh/expansion controls.
-- Keep source-neutral quota periods, registry contract, controller and native renderer geometry in the base; register only Codex until the Go integration.
 ---
- macos/Resources/Codenotch-LICENSE.txt         |  28 +
- macos/Resources/strings.macos.json            |  36 +
- .../Sources/AgentSpeed/App/AppDelegate.swift  |   7 +
- macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
- .../AgentSpeed/App/LaunchOptions.swift        |   6 +
- .../AgentSpeed/App/QuotaController.swift      | 212 ++++++
- .../AgentSpeed/App/QuotaGlyphOutline.swift    | 102 +++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 642 ++++++++++++++++++
- .../AgentSpeed/App/QuotaNotchShape.swift      | 449 ++++++++++++
- .../App/QuotaNotchVisualHarness.swift         | 150 ++++
- .../App/QuotaRefreshScheduler.swift           |  32 +
- .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
- .../AgentSpeed/Dashboard/DashboardView.swift  |  72 ++
- .../AgentSpeed/Localization/StringTable.swift |  90 +++
- .../SettingsWindow/Panes/QuotaPane.swift      | 288 ++++++++
- .../SettingsWindow/SettingsPaneView.swift     |   2 +-
- .../AgentSpeed/Support/MenuFactory.swift      |   1 +
- .../AgentSpeedCore/CodexQuotaProvider.swift   | 346 ++++++++++
- macos/Sources/AgentSpeedCore/Quota.swift      | 138 ++++
- .../AgentSpeedCore/QuotaPersistence.swift     |  82 +++
- .../QuotaControllerTests.swift                | 297 ++++++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 228 +++++++
- .../QuotaPresentationTests.swift              | 161 +++++
- .../CodexQuotaProviderTests.swift             | 236 +++++++
- .../QuotaLifecycleTests.swift                 | 190 ++++++
- .../AgentSpeedCoreTests/QuotaTests.swift      |  48 ++
- macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 | 119 ++++
- spec/fixtures/codex-credit-quota.json         |   8 +
- spec/fixtures/codex-quota.json                |  26 +
- 30 files changed, 4021 insertions(+), 2 deletions(-)
- create mode 100644 macos/Resources/Codenotch-LICENSE.txt
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotch.swift
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
- create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
- create mode 100644 macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
- create mode 100644 macos/Sources/AgentSpeedCore/Quota.swift
- create mode 100644 macos/Sources/AgentSpeedCore/QuotaPersistence.swift
- create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
- create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
- create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
- create mode 100644 macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
- create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
- create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
- create mode 100644 spec/QUOTA.md
- create mode 100644 spec/fixtures/codex-credit-quota.json
- create mode 100644 spec/fixtures/codex-quota.json
+ macos/Resources/Codenotch-LICENSE.txt              |  28 +
+ macos/Resources/strings.macos.json                 |  36 ++
+ macos/Sources/AgentSpeed/App/AppDelegate.swift     |   7 +
+ macos/Sources/AgentSpeed/App/AppModel.swift        |   7 +-
+ macos/Sources/AgentSpeed/App/LaunchOptions.swift   |   6 +
+ macos/Sources/AgentSpeed/App/QuotaController.swift | 212 +++++++
+ .../Sources/AgentSpeed/App/QuotaGlyphOutline.swift | 102 ++++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift      | 646 +++++++++++++++++++++
+ macos/Sources/AgentSpeed/App/QuotaNotchShape.swift | 449 ++++++++++++++
+ .../AgentSpeed/App/QuotaNotchVisualHarness.swift   | 150 +++++
+ .../AgentSpeed/App/QuotaRefreshScheduler.swift     |  32 +
+ macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift |  19 +
+ .../AgentSpeed/Dashboard/DashboardView.swift       |  72 +++
+ .../AgentSpeed/Localization/StringTable.swift      |  90 +++
+ .../SettingsWindow/Panes/QuotaPane.swift           | 288 +++++++++
+ .../SettingsWindow/SettingsPaneView.swift          |   2 +-
+ macos/Sources/AgentSpeed/Support/MenuFactory.swift |   1 +
+ .../AgentSpeedCore/CodexQuotaProvider.swift        | 346 +++++++++++
+ macos/Sources/AgentSpeedCore/Quota.swift           | 138 +++++
+ .../Sources/AgentSpeedCore/QuotaPersistence.swift  |  82 +++
+ .../AgentSpeedAppTests/QuotaControllerTests.swift  | 297 ++++++++++
+ .../Tests/AgentSpeedAppTests/QuotaNotchTests.swift | 285 +++++++++
+ .../QuotaPresentationTests.swift                   | 161 +++++
+ .../CodexQuotaProviderTests.swift                  | 236 ++++++++
+ .../AgentSpeedCoreTests/QuotaLifecycleTests.swift  | 190 ++++++
+ macos/Tests/AgentSpeedCoreTests/QuotaTests.swift   |  48 ++
+ macos/scripts/build-app.sh                         |   1 +
+ spec/QUOTA.md                                      | 119 ++++
+ spec/fixtures/codex-credit-quota.json              |   8 +
+ spec/fixtures/codex-quota.json                     |  26 +
+ 30 files changed, 4082 insertions(+), 2 deletions(-)
 
 diff --git a/macos/Resources/Codenotch-LICENSE.txt b/macos/Resources/Codenotch-LICENSE.txt
 new file mode 100644
@@ -140,7 +117,7 @@ index 0d19457d..883c5b16 100644
      "zh-Hant": "請在「系統設定」›「一般」›「登入項目」中允許 Agent Speed。",
      "zh-Hans": "请在“系统设置”›“通用”›“登录项”中允许 Agent Speed。",
 diff --git a/macos/Sources/AgentSpeed/App/AppDelegate.swift b/macos/Sources/AgentSpeed/App/AppDelegate.swift
-index fa300736..572f4cb5 100644
+index b6b512f8..80e44162 100644
 --- a/macos/Sources/AgentSpeed/App/AppDelegate.swift
 +++ b/macos/Sources/AgentSpeed/App/AppDelegate.swift
 @@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
@@ -179,7 +156,7 @@ index fa300736..572f4cb5 100644
          orbs?.shutdown()
          model?.shutdown()
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index 9cc19883..cd5fe523 100644
+index c7e59b49..a5af5ca5 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -63,6 +63,7 @@ final class AppModel {
@@ -190,7 +167,7 @@ index 9cc19883..cd5fe523 100644
      let remoteHosts: RemoteHosts
      /// The menu bar intelligence block's thinking line, hidden after its rate has read 0 for 3 s (DESIGN 10).
      let barThinking = StatusItemThinkingHold()
-@@ -103,6 +104,7 @@ final class AppModel {
+@@ -104,6 +105,7 @@ final class AppModel {
          mainFeed = OrbFeed(gauge: gauge)
          orbs = OrbsController(defaults: settings.storage)
          boards = BoardsController(defaults: settings.storage)
@@ -198,7 +175,7 @@ index 9cc19883..cd5fe523 100644
          titles = TitleThemesController(defaults: settings.storage)
          accessibility = AccessibilityState()
          launchAtLogin = LaunchAtLogin()
-@@ -268,6 +270,7 @@ final class AppModel {
+@@ -281,6 +283,7 @@ final class AppModel {
              let network = self.settings.networkEnabled
              self.prices.update(networkEnabled: network, autoSync: self.settings.syncPrices)
              self.rates.update(networkEnabled: network, currency: self.settings.currency)
@@ -206,7 +183,7 @@ index 9cc19883..cd5fe523 100644
              self.updates.networkEnabled = network
          })
          prices.start()
-@@ -377,7 +380,7 @@ enum DemoDriverRatio {
+@@ -390,7 +393,7 @@ enum DemoDriverRatio {
  
  /// Settings window panes (DESIGN section 5).
  enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
@@ -215,7 +192,7 @@ index 9cc19883..cd5fe523 100644
  
      var id: String { rawValue }
  
-@@ -389,6 +392,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
+@@ -402,6 +405,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
          case .effects: "settings.effects"
          case .cost: "settings.cost"
          case .traffic: "settings.traffic"
@@ -223,7 +200,7 @@ index 9cc19883..cd5fe523 100644
          case .report: "settings.report"
          case .sources: "settings.sources"
          case .about: "settings.about"
-@@ -413,6 +417,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
+@@ -426,6 +430,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
          case .effects: "sparkles"
          case .cost: "banknote"
          case .traffic: "arrow.up.arrow.down"
@@ -583,10 +560,10 @@ index 00000000..b1a81438
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 00000000..f32e2cbc
+index 00000000..c48c01ec
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,642 @@
+@@ -0,0 +1,646 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -680,8 +657,13 @@ index 00000000..f32e2cbc
 +    var held = false
 +    var menuOpen = false
 +    var onChange: (() -> Void)?
-+    @ObservationIgnored private var grace: Task<Void, Never>?
++    @ObservationIgnored private let scheduler: any PerfCardScheduling
++    @ObservationIgnored private var grace: (any PerfCardTimer)?
 +    var expanded: Bool { keepExpanded || inside || graceActive || held || menuOpen }
++
++    init(scheduler: any PerfCardScheduling = PerfCardMainScheduler()) {
++        self.scheduler = scheduler
++    }
 +
 +    func move(to next: Region) {
 +        guard region != next else { return }
@@ -694,9 +676,9 @@ index 00000000..f32e2cbc
 +    func startGrace() {
 +        guard !graceActive && !held && !menuOpen else { return }
 +        graceActive = true
-+        grace = Task { @MainActor [weak self] in
-+            try? await Task.sleep(for: .milliseconds(250))
-+            guard !Task.isCancelled, let self else { return }
++        // Arm at departure, not when a newly enqueued main-actor task eventually starts.
++        grace = scheduler.after(0.25) { [weak self] in
++            guard let self else { return }
 +            self.graceActive = false; self.grace = nil
 +            switch self.region {
 +            case .cell, .tooltip: break
@@ -710,7 +692,6 @@ index 00000000..f32e2cbc
 +        cancelGrace(); region = .outside; inside = false; activeSource = nil; held = false; menuOpen = false
 +    }
 +    func dismissCard() { activeSource = nil }
-+    deinit { grace?.cancel() }
 +}
 +
 +
@@ -1904,10 +1885,10 @@ index 00000000..c1200063
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-index 10c867dd..c6191936 100644
+index dacd9698..2ac92d9d 100644
 --- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
 +++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-@@ -143,8 +143,80 @@ private struct DashboardDetails: View {
+@@ -145,8 +145,80 @@ private struct DashboardDetails: View {
                      .padding(.top, DashboardLayout.sectionSpacing)
                      .transition(.opacity)
              }
@@ -2404,7 +2385,7 @@ index c494783c..5aac36f0 100644
          case .sources: SourcesPane(model: model)
          case .about: AboutPane(model: model)
 diff --git a/macos/Sources/AgentSpeed/Support/MenuFactory.swift b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
-index ec970b2c..30da978e 100644
+index 7d20173c..7075c36d 100644
 --- a/macos/Sources/AgentSpeed/Support/MenuFactory.swift
 +++ b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
 @@ -45,6 +45,7 @@ enum MenuFactory {
@@ -3304,10 +3285,10 @@ index 00000000..3b884f77
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 00000000..57f7a319
+index 00000000..fc24c4bf
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,228 @@
+@@ -0,0 +1,285 @@
 +import AppKit
 +import SwiftUI
 +import Testing
@@ -3334,6 +3315,36 @@ index 00000000..57f7a319
 +    }
 +    private func geometry(_ edge: NotchEdge, expanded: Bool = true, count: Int = 2) -> QuotaNotchGeometry {
 +        QuotaNotchGeometry(edge: edge, expansion: expanded ? 1 : 0, count: count, cellSize: CGSize(width: 300, height: 108), ringSize: NotchLayout.outerDiameter(3))
++    }
++
++    private final class Clock: PerfCardScheduling {
++        final class Item: PerfCardTimer {
++            let due: TimeInterval
++            let action: @MainActor () -> Void
++            var cancelled = false
++            init(due: TimeInterval, action: @escaping @MainActor () -> Void) {
++                self.due = due
++                self.action = action
++            }
++            func cancel() { cancelled = true }
++        }
++
++        var now: TimeInterval = 0
++        var items: [Item] = []
++
++        func after(_ seconds: TimeInterval, _ action: @escaping @MainActor () -> Void) -> PerfCardTimer {
++            let item = Item(due: now + seconds, action: action)
++            items.append(item)
++            return item
++        }
++
++        func advance(_ seconds: TimeInterval) {
++            now += seconds
++            for item in items where !item.cancelled && item.due <= now + 1e-9 {
++                item.cancelled = true
++                item.action()
++            }
++        }
 +    }
 +
 +    @Test func everyProviderRetainsAllPeriodsWithoutFollowingHeadline() {
@@ -3483,43 +3494,70 @@ index 00000000..57f7a319
 +        #expect(motion.frame.arc == 0 && motion.frame.reveal == 0 && !motion.active)
 +    }
 +
-+    @Test func tooltipTraversalUsesOne250MillisecondGrace() async throws {
-+        let hover = QuotaNotchHover()
++    @Test func tooltipTraversalUsesOne250MillisecondGrace() {
++        let clock = Clock()
++        let hover = QuotaNotchHover(scheduler: clock)
++        var changes = 0
++        hover.onChange = { changes += 1 }
 +        #expect(!hover.keepExpanded && !hover.expanded)
 +        hover.move(to: .cell("codex"))
 +        hover.move(to: .outside)
-+        try await Task.sleep(for: .milliseconds(150))
++        clock.advance(0.15)
 +        #expect(hover.activeSource == "codex" && hover.expanded)
 +        hover.move(to: .tooltip)
-+        try await Task.sleep(for: .milliseconds(300))
-+        #expect(hover.activeSource == "codex" && hover.expanded)
++        clock.advance(0.3)
++        #expect(hover.activeSource == "codex" && hover.expanded && !hover.graceActive)
 +        hover.move(to: .outside)
-+        try await Task.sleep(for: .milliseconds(300))
-+        #expect(hover.activeSource == nil && !hover.expanded)
++        clock.advance(0.1)
++        hover.move(to: .bar)
++        hover.move(to: .outside)
++        #expect(clock.items.count == 2, "Crossing non-cell regions must not restart the same grace")
++        clock.advance(0.149)
++        #expect(hover.activeSource == "codex" && hover.expanded && hover.graceActive)
++        let beforeExpiry = changes
++        clock.advance(0.001)
++        #expect(hover.activeSource == nil && !hover.expanded && !hover.graceActive)
++        #expect(changes == beforeExpiry + 1, "Expiry must notify the native card/collapse consumer")
++        clock.advance(0.25)
++        #expect(changes == beforeExpiry + 1, "The grace expires only once")
 +        hover.reset()
 +    }
 +
-+    @Test func sourceSwitchAndKeepExpandedNeverFreezeTheOldTooltip() async throws {
-+        let hover = QuotaNotchHover()
++    @Test func sourceSwitchAndKeepExpandedNeverFreezeTheOldTooltip() {
++        let clock = Clock()
++        let hover = QuotaNotchHover(scheduler: clock)
 +        hover.keepExpanded = true
-+        hover.move(to: .cell("codex")); hover.move(to: .cell("test-source"))
-+        #expect(hover.activeSource == "test-source")
++        hover.move(to: .cell("codex")); hover.move(to: .outside)
++        clock.advance(0.1)
++        hover.move(to: .cell("test-source"))
++        clock.advance(0.15)
++        #expect(hover.activeSource == "test-source" && !hover.graceActive)
 +        hover.move(to: .outside)
-+        try await Task.sleep(for: .milliseconds(300))
-+        #expect(hover.expanded && hover.activeSource == nil)
++        clock.advance(0.249)
++        #expect(hover.activeSource == "test-source" && hover.graceActive)
++        clock.advance(0.001)
++        #expect(hover.expanded && hover.activeSource == nil && !hover.graceActive)
 +        hover.reset()
 +        #expect(hover.expanded)
 +        hover.keepExpanded = false
 +        #expect(!hover.expanded)
 +    }
 +
-+    @Test func hidingCancelsPendingInteractionAndCanReopen() async throws {
-+        let hover = QuotaNotchHover()
-+        hover.move(to: .cell("codex")); hover.move(to: .outside); hover.reset()
-+        try await Task.sleep(for: .milliseconds(300))
++    @Test func hidingCancelsPendingInteractionAndCanReopen() {
++        let clock = Clock()
++        let hover = QuotaNotchHover(scheduler: clock)
++        hover.move(to: .cell("codex")); hover.move(to: .outside)
++        clock.advance(0.1)
++        hover.reset()
 +        #expect(!hover.expanded && hover.activeSource == nil && !hover.graceActive)
 +        hover.move(to: .bar)
 +        #expect(hover.expanded)
++        hover.move(to: .cell("test-source")); hover.move(to: .outside)
++        clock.advance(0.15)
++        #expect(hover.activeSource == "test-source" && hover.expanded && hover.graceActive,
++                "The cancelled pre-hide expiry must not clear a reopened card")
++        clock.advance(0.1)
++        #expect(hover.activeSource == nil && !hover.expanded && !hover.graceActive)
 +        hover.reset()
 +    }
 +
@@ -4378,4 +4416,3 @@ index 00000000..ba85a8b2
 +    "individual_limit": { "limit": "100.00", "used": "0", "used_percent": 0, "reset_at": 1800400000 }
 +  }
 +}
-

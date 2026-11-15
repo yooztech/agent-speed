@@ -253,6 +253,18 @@ All seven changed Swift files pass syntax parsing. The 22-patch queue also repla
 successfully, and the replayed native source/test trees match the checked prepared
 tree byte-for-byte. These results do not establish native geometry or hosting-view
 hit-test acceptance; no new Release run was triggered.
+
+Release run `43707052770` first failed the hover-grace test, then its retry
+terminated at `NSApp.appearance` in `AppModel`. The orb-dashboard test activated
+the real appearance observer without first creating `NSApplication`, unlike
+normal startup. Its fixture now initializes AppKit before model activation;
+production appearance handling is unchanged. Quota hover grace now uses the
+existing main-queue scheduler, armed at departure rather than after an enqueued
+task begins. Its three behavior tests use controlled time for the unchanged
+250-ms interval, cancellation and one-time expiry notification. The actual model,
+scheduler and three tests pass together under Linux Swift 6.2.4; all three
+changed Swift files pass syntax parsing. These checks do not execute AppKit or
+establish that the macOS Release gate passes.
 The redesigned native surfaces and real-login behavior remain unverified on
 Windows and macOS. Portable geometry checks and SVG previews validate shared
 shape calculations, not native window placement, hit testing, font rasterization
