@@ -215,6 +215,22 @@ adapter beside Codex. Quota bars, rings and flyout summaries show remaining allo
 period colors are stable and warnings are separate. Dashboard and quota-window
 visibility controls remain independent.
 
+Release run `43681439158` exposed Windows-native failures after the Core and
+Presentation suites passed. The input repair preserves Nonzero winding when
+wrapping the grip fan in a transformed WPF geometry, so overlapping routes remain
+a union instead of becoming EvenOdd holes. Native path tests enter at explicit
+painted coordinates rather than sampling the CI runner's physical cursor; their
+route, HWND-region, capture and collapse assertions remain enabled. A fixed-frame
+native regression also covers all edges and 1x, 1.25x and 2x scales.
+Quota refresh completion now returns to the surface's owning Dispatcher even
+when startup has no synchronization context, including reader validity checks
+and rendering. Regression cases cover active rendering, disposal, source removal
+and consent revocation. The Settings composition test locates preferences after
+all account cards instead of assuming a single account. The corrected 22-patch
+queue replays successfully; its Windows test project cross-compiles on Linux and
+all 124 focused Presentation `QuotaNotch` tests pass. Native Windows execution
+remains unverified; these checks are not WPF runtime validation.
+
 The approved multi-window design retains the supplier logo and matte center disk,
 round progress caps and native concave flares. Rings run from longest period outside
 to shortest inside: month, week, five hours. Adding rings grows the actual content

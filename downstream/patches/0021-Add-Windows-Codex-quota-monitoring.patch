@@ -1,94 +1,62 @@
-From adf2dd15e48221f497772f1f2250bc752591ca64 Mon Sep 17 00:00:00 2001
+From 08482ad002769b682876d4bd6aa71d9949fdf510 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 20:09:33 +0800
 Subject: [PATCH] Add Windows Codex quota monitoring
 
 ---
- spec/QUOTA.md                                 |   52 +-
- .../AgentSpeed.Core/AgentSpeed.Core.csproj    |    1 +
- .../src/AgentSpeed.Core/CodexQuotaProvider.cs |  411 ++++++
- windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   20 +
- .../Localization/Strings.Windows.json         |   85 ++
- .../Menus/MenuAction.cs                       |    3 +
- .../Menus/OrbMenuModel.cs                     |    2 +-
- .../Menus/QuickMenuModel.cs                   |   15 +-
- .../Settings/AppSettings.cs                   |   30 +
- .../Settings/QuotaFormat.cs                   |  112 ++
- .../Settings/QuotaNotchGeometry.cs            |  292 ++++
- .../Settings/QuotaNotchGeometryFilter.cs      |  190 +++
- .../Settings/QuotaNotchGeometryOrb.cs         |   99 ++
- .../Settings/QuotaNotchGeometryRaster.cs      |   69 +
- .../Settings/QuotaNotchGripMotion.cs          |  141 ++
- .../Settings/QuotaNotchLayout.cs              |   79 ++
- .../Settings/SettingsSerializer.cs            |   38 +
- windows/src/AgentSpeed/AgentSpeed.csproj      |    6 +
- windows/src/AgentSpeed/App/AppController.cs   |   16 +
- .../AgentSpeed/Dashboard/DashboardWindow.xaml |    2 +
- .../Dashboard/DashboardWindow.xaml.cs         |    2 +
- windows/src/AgentSpeed/Menus/MenuBuilder.cs   |    3 +
- .../src/AgentSpeed/Settings/QuotaCodex.svg    |    1 +
- .../AgentSpeed/Settings/QuotaDisplayClock.cs  |   60 +
- .../Settings/QuotaNotch.LICENSE.txt           |   49 +
- .../src/AgentSpeed/Settings/QuotaNotchGoo.cs  |   95 ++
- .../AgentSpeed/Settings/QuotaNotchRegion.cs   |  118 ++
- .../src/AgentSpeed/Settings/QuotaNotchView.cs |  409 ++++++
- .../AgentSpeed/Settings/QuotaNotchWindow.cs   |  759 ++++++++++
- .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  315 +++++
- .../src/AgentSpeed/Settings/QuotaSurface.cs   |  355 +++++
- .../AgentSpeed/Settings/SettingsViewModel.cs  |    1 +
- .../AgentSpeed/Settings/SettingsWindow.xaml   |   12 +-
- .../Settings/SettingsWindow.xaml.cs           |   27 +-
- windows/src/AgentSpeed/Theme/Styles.xaml      |    4 +-
- .../CodexQuotaProviderTests.cs                |  727 ++++++++++
- .../OrbMenuModelTests.cs                      |   43 +-
- .../QuotaFormatTests.cs                       |  251 ++++
- .../QuotaNotchFilterParityTests.cs            |  209 +++
- .../QuotaNotchGeometryFilterTests.cs          |   35 +
- .../QuotaNotchGeometryOrbTests.cs             |  139 ++
- .../QuotaNotchGeometryRasterTests.cs          |   29 +
- .../QuotaNotchGeometryTests.cs                |  215 +++
- .../QuotaNotchGripMotionTests.cs              |  137 ++
- .../QuotaNotchLayoutTests.cs                  |  241 ++++
- .../Reporting/ReportMenuTests.cs              |   11 +-
- .../SettingsSerializerTests.cs                |  109 ++
- .../QuotaDisplayClockTests.cs                 |   63 +
- .../QuotaNotchViewTests.cs                    |  302 ++++
- .../QuotaNotchWindowTests.cs                  | 1255 +++++++++++++++++
- .../QuotaSettingsPageTests.cs                 |  386 +++++
- .../QuotaSurfaceTests.cs                      |  505 +++++++
- 52 files changed, 8485 insertions(+), 45 deletions(-)
- create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
- create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
- create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
- create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
- create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryFilter.cs
- create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryOrb.cs
- create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryRaster.cs
- create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGripMotion.cs
- create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaNotchLayout.cs
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaCodex.svg
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaDisplayClock.cs
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchGoo.cs
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchRegion.cs
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchView.cs
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaSurface.cs
- create mode 100644 windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchFilterParityTests.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryFilterTests.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryOrbTests.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryRasterTests.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGripMotionTests.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs
- create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaDisplayClockTests.cs
- create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
- create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
- create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
- create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
+ spec/QUOTA.md                                      |   52 +-
+ windows/src/AgentSpeed.Core/AgentSpeed.Core.csproj |    1 +
+ windows/src/AgentSpeed.Core/CodexQuotaProvider.cs  |  411 ++++++
+ windows/src/AgentSpeed.Core/QuotaSnapshot.cs       |   20 +
+ .../Localization/Strings.Windows.json              |   85 ++
+ .../AgentSpeed.Presentation/Menus/MenuAction.cs    |    3 +
+ .../AgentSpeed.Presentation/Menus/OrbMenuModel.cs  |    2 +-
+ .../Menus/QuickMenuModel.cs                        |   15 +-
+ .../Settings/AppSettings.cs                        |   30 +
+ .../Settings/QuotaFormat.cs                        |  112 ++
+ .../Settings/QuotaNotchGeometry.cs                 |  292 +++++
+ .../Settings/QuotaNotchGeometryFilter.cs           |  190 +++
+ .../Settings/QuotaNotchGeometryOrb.cs              |   99 ++
+ .../Settings/QuotaNotchGeometryRaster.cs           |   69 +
+ .../Settings/QuotaNotchGripMotion.cs               |  141 +++
+ .../Settings/QuotaNotchLayout.cs                   |   79 ++
+ .../Settings/SettingsSerializer.cs                 |   38 +
+ windows/src/AgentSpeed/AgentSpeed.csproj           |    6 +
+ windows/src/AgentSpeed/App/AppController.cs        |   16 +
+ .../src/AgentSpeed/Dashboard/DashboardWindow.xaml  |    2 +
+ .../AgentSpeed/Dashboard/DashboardWindow.xaml.cs   |    2 +
+ windows/src/AgentSpeed/Menus/MenuBuilder.cs        |    3 +
+ windows/src/AgentSpeed/Settings/QuotaCodex.svg     |    1 +
+ .../src/AgentSpeed/Settings/QuotaDisplayClock.cs   |   60 +
+ .../src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt |   49 +
+ windows/src/AgentSpeed/Settings/QuotaNotchGoo.cs   |   95 ++
+ .../src/AgentSpeed/Settings/QuotaNotchRegion.cs    |  118 ++
+ windows/src/AgentSpeed/Settings/QuotaNotchView.cs  |  421 ++++++
+ .../src/AgentSpeed/Settings/QuotaNotchWindow.cs    |  759 +++++++++++
+ .../src/AgentSpeed/Settings/QuotaSettingsPage.cs   |  315 +++++
+ windows/src/AgentSpeed/Settings/QuotaSurface.cs    |  355 ++++++
+ .../src/AgentSpeed/Settings/SettingsViewModel.cs   |    1 +
+ .../src/AgentSpeed/Settings/SettingsWindow.xaml    |   12 +-
+ .../src/AgentSpeed/Settings/SettingsWindow.xaml.cs |   27 +-
+ windows/src/AgentSpeed/Theme/Styles.xaml           |    4 +-
+ .../CodexQuotaProviderTests.cs                     |  727 +++++++++++
+ .../OrbMenuModelTests.cs                           |   43 +-
+ .../QuotaFormatTests.cs                            |  251 ++++
+ .../QuotaNotchFilterParityTests.cs                 |  209 +++
+ .../QuotaNotchGeometryFilterTests.cs               |   35 +
+ .../QuotaNotchGeometryOrbTests.cs                  |  139 ++
+ .../QuotaNotchGeometryRasterTests.cs               |   29 +
+ .../QuotaNotchGeometryTests.cs                     |  215 ++++
+ .../QuotaNotchGripMotionTests.cs                   |  137 ++
+ .../QuotaNotchLayoutTests.cs                       |  241 ++++
+ .../Reporting/ReportMenuTests.cs                   |   11 +-
+ .../SettingsSerializerTests.cs                     |  109 ++
+ .../QuotaDisplayClockTests.cs                      |   63 +
+ .../QuotaNotchViewTests.cs                         |  302 +++++
+ .../QuotaNotchWindowTests.cs                       | 1335 ++++++++++++++++++++
+ .../QuotaSettingsPageTests.cs                      |  386 ++++++
+ .../AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs  |  505 ++++++++
+ 52 files changed, 8577 insertions(+), 45 deletions(-)
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 index e0a41411..b6aeba76 100644
@@ -2464,10 +2432,10 @@ index 00000000..13d3dadf
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 new file mode 100644
-index 00000000..bd82986c
+index 00000000..5939ebd5
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-@@ -0,0 +1,409 @@
+@@ -0,0 +1,421 @@
 +using System.Globalization;
 +using System.Reflection;
 +using System.Text.RegularExpressions;
@@ -2815,7 +2783,19 @@ index 00000000..bd82986c
 +    {
 +        // Geometry.Parse returns a frozen StreamGeometry. Transform a parent instead
 +        // of mutating (or copying) that immutable path, including on first HWND setup.
-+        var transformed = new GeometryGroup { Transform = new MatrixTransform(matrix) };
++        // A group owns its figures' fill rule: its default EvenOdd would punch holes
++        // through overlapping Nonzero grip routes despite the child's F1 prefix.
++        var transformed = new GeometryGroup
++        {
++            Transform = new MatrixTransform(matrix),
++            FillRule = shape switch
++            {
++                StreamGeometry path => path.FillRule,
++                PathGeometry path => path.FillRule,
++                GeometryGroup group => group.FillRule,
++                _ => FillRule.EvenOdd
++            }
++        };
 +        transformed.Children.Add(shape);
 +        transformed.Freeze();
 +        return transformed;
@@ -7116,10 +7096,10 @@ index 00000000..5e1a9af2
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
 new file mode 100644
-index 00000000..4d3150de
+index 00000000..555d0f78
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-@@ -0,0 +1,1255 @@
+@@ -0,0 +1,1335 @@
 +using System.IO;
 +using System.Net.Http;
 +using System.Collections;
@@ -7464,8 +7444,17 @@ index 00000000..4d3150de
 +        {
 +            window.Show();
 +            PumpLayout();
++            var view = Assert.IsType<QuotaNotchView>(window.Content);
++            var folded = QuotaNotchGeometry.CreateMain(0, 1, edge is "top" or "bottom", edge == "bottom");
++            var envelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
++            var foldedTransform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(folded));
++            var bar = foldedTransform.Apply(new(5, 39.5));
++            var barPoint = new Point(bar.X, bar.Y);
 +            AssertBodyState(window, edge, expanded: false);
-+            Enter(window);
++            // Routed MouseEventArgs.GetPosition would read the runner's real cursor,
++            // not this synthetic path. Start every entry on the painted black bar.
++            AssertPaintedInput(window, barPoint);
++            Invoke(window, "PointerEnter", barPoint);
 +            AssertBodyState(window, edge, expanded: true);
 +            Invoke(window, "Hover", new QuotaNotchHit(QuotaNotchTarget.Cell, "codex"));
 +            var card = Field<Window>(window, "_card");
@@ -7487,18 +7476,14 @@ index 00000000..4d3150de
 +            ExpireGrace(window);
 +            Assert.False(card.IsVisible);
 +            AssertBodyState(window, edge, expanded: false);
-+            Enter(window);
++            AssertPaintedInput(window, barPoint);
++            Invoke(window, "PointerEnter", barPoint);
 +            AssertBodyState(window, edge, expanded: true);
 +            Leave(window);
 +            Assert.True(grace.IsEnabled);
 +            AssertBodyState(window, edge, expanded: true);
-+            var view = Assert.IsType<QuotaNotchView>(window.Content);
-+            var folded = QuotaNotchGeometry.CreateMain(0, 1, edge is "top" or "bottom", edge == "bottom");
-+            var envelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
-+            var foldedTransform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(folded));
-+            var bar = foldedTransform.Apply(new(5, 39.5));
 +            // Enter through the actual black strip, not a fabricated Grip hit.
-+            Invoke(window, "PointerEnter", new Point(bar.X, bar.Y));
++            Invoke(window, "PointerEnter", barPoint);
 +            AssertBodyState(window, edge, expanded: true);
 +            var expanded = QuotaNotchGeometry.CreateMain(1, 1, edge is "top" or "bottom", edge == "bottom");
 +            RevealGrip(window, edge);
@@ -7522,6 +7507,7 @@ index 00000000..4d3150de
 +                        var point = new Point(entry.X + (target.X - entry.X) * i / 24,
 +                            entry.Y + (target.Y - entry.Y) * i / 24);
 +                        AssertPaintedInput(window, point);
++                        Assert.Equal(QuotaNotchTarget.Grip, view.HitTestTarget(point).Target);
 +                        Invoke(window, "PointerMove", point, view.PointToScreen(point));
 +                        Invoke(window, "PointerLeave", point);
 +                        ExpireGrace(window);
@@ -7581,6 +7567,78 @@ index 00000000..4d3150de
 +            Assert.Equal(new Size(releasedEnvelope.Length, releasedEnvelope.Depth), view.Extent);
 +        }
 +        finally { window.Close(); }
++    });
++
++    [Theory]
++    [InlineData("left", 1)]
++    [InlineData("right", 1)]
++    [InlineData("top", 1)]
++    [InlineData("bottom", 1)]
++    [InlineData("left", 1.25)]
++    [InlineData("right", 1.25)]
++    [InlineData("top", 1.25)]
++    [InlineData("bottom", 1.25)]
++    [InlineData("left", 2)]
++    [InlineData("right", 2)]
++    [InlineData("top", 2)]
++    [InlineData("bottom", 2)]
++    public void FixedGripFramePreservesOverlappingRoutesInPaintHitAndNativeRegion(string edge, double scale) => OnSta(() =>
++    {
++        // Keep this renderer/region regression independent of live mouse events and
++        // grace timers. It isolates the transformed compound fan's winding rule.
++        var view = new QuotaNotchView(new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En));
++        var window = new Window { Width = 400, Height = 400, ShowInTaskbar = false, ShowActivated = false };
++        using var installed = new QuotaNotchRegion();
++        var region = CreateRectRgn(0, 0, 0, 0);
++        Assert.NotEqual(nint.Zero, region);
++        try
++        {
++            var hwnd = new WindowInteropHelper(window).EnsureHandle();
++            bool horizontal = edge is "top" or "bottom";
++            var model = QuotaNotchGeometry.CreateMain(1, 1, horizontal, edge == "bottom");
++            var envelope = QuotaNotchGeometry.CreateEnvelope(1, horizontal);
++            var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(model));
++            var device = new Matrix(scale, 0, 0, scale, 0, 0);
++            var center = QuotaNotchGeometry.GetOrbCenter(model);
++            QuotaNotchGeometry.Point[] entries = [new(center.X - QuotaNotchGeometry.ArcRadius, center.Y),
++                new(center.X - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5), center.Y - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5)),
++                new(center.X, center.Y - QuotaNotchGeometry.ArcRadius)];
++            foreach (double hover in new[] { 0d, 1d })
++            {
++                var frame = new QuotaNotchGeometry.GripFrame(1, Hover: hover, Arc: 1);
++                view.Update(new([], ["codex"], true, false, edge, 1, Grip: frame));
++                view.Measure(view.Extent); view.Arrange(new Rect(view.Extent));
++                var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width),
++                    (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
++                bitmap.Render(view);
++                installed.Apply(hwnd, view.InputGeometry, device);
++                Assert.True(GetWindowRgn(hwnd, region) > 1);
++                foreach (var anchor in entries)
++                    for (int index = 0; index < 6; index++)
++                    {
++                        var entry = transform.Apply(anchor);
++                        var target = transform.Apply(QuotaNotchGeometry.GetGripDot(model, frame, index).Center);
++                        for (int i = 0; i <= 24; i++)
++                        {
++                            var point = new Point(entry.X + (target.X - entry.X) * i / 24,
++                                entry.Y + (target.Y - entry.Y) * i / 24);
++                            string sample = $"edge={edge}; scale={scale}; hover={hover}; anchor={anchor}; dot={index}; sample={i}; point={point}";
++                            Assert.True(view.InputGeometry.FillContains(point), sample);
++                            Assert.Equal(QuotaNotchTarget.Grip, view.HitTestTarget(point).Target);
++                            Assert.True(AlphaAt(bitmap, point) > 0, sample);
++                            var pixel = device.Transform(point);
++                            Assert.True(PtInRegion(region, (int)Math.Round(pixel.X), (int)Math.Round(pixel.Y)), sample);
++                        }
++                    }
++                var pocket = transform.Apply(new(center.X + 20, center.Y - 12));
++                var clear = new Point(pocket.X, pocket.Y);
++                Assert.False(view.InputGeometry.FillContains(clear));
++                Assert.Equal(QuotaNotchTarget.None, view.HitTestTarget(clear).Target);
++                Assert.Equal(0, AlphaAt(bitmap, clear));
++                AssertInRegion(region, device.Transform(clear), false);
++            }
++        }
++        finally { DeleteObject(region); window.Close(); }
 +    });
 +
 +    [Theory]
@@ -8248,7 +8306,7 @@ index 00000000..4d3150de
 +        Assert.NotEqual(nint.Zero, region);
 +        try
 +        {
-+            Assert.True(GetWindowRgn(source.Handle, region) > 1);
++            Assert.True(GetWindowRgn(source.Handle, region) > 1, window.RuntimeDiagnostic);
 +            AssertInRegion(region, source.CompositionTarget!.TransformToDevice.Transform(point), expanded);
 +            if (!expanded)
 +            {
@@ -8270,7 +8328,7 @@ index 00000000..4d3150de
 +    private static void AssertPaintedInput(QuotaNotchWindow window, Point point)
 +    {
 +        var view = Assert.IsType<QuotaNotchView>(window.Content);
-+        Assert.True(view.InputGeometry.FillContains(point));
++        Assert.True(view.InputGeometry.FillContains(point), $"point={point}; {window.RuntimeDiagnostic}");
 +        Assert.NotEqual(QuotaNotchTarget.None, view.HitTestTarget(point).Target);
 +        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width), (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
 +        bitmap.Render(view);
@@ -8280,8 +8338,10 @@ index 00000000..4d3150de
 +        Assert.NotEqual(nint.Zero, region);
 +        try
 +        {
-+            Assert.True(GetWindowRgn(source.Handle, region) > 1);
-+            AssertInRegion(region, source.CompositionTarget!.TransformToDevice.Transform(point), true);
++            Assert.True(GetWindowRgn(source.Handle, region) > 1, window.RuntimeDiagnostic);
++            var pixel = source.CompositionTarget!.TransformToDevice.Transform(point);
++            Assert.True(PtInRegion(region, (int)Math.Round(pixel.X), (int)Math.Round(pixel.Y)),
++                $"point={point}; pixel={pixel}; {window.RuntimeDiagnostic}");
 +        }
 +        finally { DeleteObject(region); }
 +    }
@@ -9278,6 +9338,3 @@ index 00000000..f0cd97a4
 +        }
 +    }
 +}
--- 
-2.41.0
-

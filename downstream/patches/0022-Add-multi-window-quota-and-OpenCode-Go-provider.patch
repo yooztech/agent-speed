@@ -1,64 +1,52 @@
-From 31e4372a1e9b4edb8b5e6ad45ccfb0cef15c5ad2 Mon Sep 17 00:00:00 2001
+From d5d3884b09b9f28ee22435df932407a707482276 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Sun, 15 Nov 2026 13:17:10 +0800
 Subject: [PATCH] Add multi-window quota and OpenCode Go provider
 
 ---
- macos/Package.swift                           |   5 +-
- macos/Resources/Codenotch-LICENSE.txt         |   7 +
- macos/Resources/strings.macos.json            |   7 +-
- .../AgentSpeed/App/QuotaController.swift      |  31 +-
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 177 +++++---
- .../App/QuotaNotchVisualHarness.swift         |  31 +-
- .../AgentSpeed/App/QuotaSourceLogo.swift      |  36 ++
- .../AgentSpeed/Dashboard/DashboardView.swift  |  39 +-
- .../AgentSpeed/Localization/StringTable.swift |   7 +-
- .../SettingsWindow/Panes/QuotaPane.swift      |  57 +--
- .../AgentSpeedCore/CodexQuotaProvider.swift   | 122 ++----
- .../OpenCodeGoCredentials.swift               |  98 +++++
- .../OpenCodeGoQuotaProvider.swift             | 244 +++++++++++
- macos/Sources/AgentSpeedCore/Quota.swift      | 122 ++++++
- macos/Sources/CSQLite/module.modulemap        |   5 +
- macos/Sources/CSQLite/shim.h                  |   1 +
- .../AgentSpeedAppTests/QuotaNotchTests.swift  |  62 ++-
- .../QuotaPresentationTests.swift              |  18 +-
- .../CodexQuotaProviderTests.swift             |   5 +-
- .../OpenCodeGoQuotaProviderTests.swift        | 211 +++++++++
- .../AgentSpeedCoreTests/QuotaTests.swift      |  50 +++
- spec/QUOTA.md                                 |  24 +-
- .../src/AgentSpeed.Core/CodexQuotaProvider.cs |   2 +-
- windows/src/AgentSpeed.Core/IQuotaProvider.cs |  10 +
- .../OpenCodeGoQuotaProvider.cs                | 401 ++++++++++++++++++
- windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   8 +
- .../Localization/Strings.Windows.json         |   4 +
- .../Settings/QuotaFormat.cs                   |  60 ++-
- .../Settings/QuotaNotchGeometry.cs            |  70 +--
- .../Settings/QuotaNotch.LICENSE.txt           |   3 +-
- .../src/AgentSpeed/Settings/QuotaNotchView.cs | 125 ++++--
- .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  12 +-
- .../src/AgentSpeed/Settings/QuotaSurface.cs   | 122 +++---
- .../OpenCodeGoQuotaProviderTests.cs           | 401 ++++++++++++++++++
- .../QuotaFormatTests.cs                       |  62 ++-
- .../QuotaNotchGeometryTests.cs                |  55 ++-
- .../SettingsSerializerTests.cs                |  24 +-
- .../QuotaNotchViewTests.cs                    |  87 ++++
- .../QuotaNotchWindowTests.cs                  |   2 +-
- .../QuotaSettingsPageTests.cs                 |  64 ++-
- .../QuotaSurfaceProviderCollectionTests.cs    | 171 ++++++++
- .../QuotaSurfaceTests.cs                      |  23 +-
- 42 files changed, 2655 insertions(+), 410 deletions(-)
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
- create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
- create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
- create mode 100644 macos/Sources/AgentSpeedCore/Quota.swift
- create mode 100644 macos/Sources/CSQLite/module.modulemap
- create mode 100644 macos/Sources/CSQLite/shim.h
- create mode 100644 macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift
- create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
- create mode 100644 windows/src/AgentSpeed.Core/IQuotaProvider.cs
- create mode 100644 windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs
- create mode 100644 windows/tests/AgentSpeed.Core.Tests/OpenCodeGoQuotaProviderTests.cs
- create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
+ macos/Package.swift                                |   5 +-
+ macos/Resources/Codenotch-LICENSE.txt              |   7 +
+ macos/Resources/strings.macos.json                 |   7 +-
+ macos/Sources/AgentSpeed/App/QuotaController.swift |  31 +-
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift      | 177 ++++++---
+ .../AgentSpeed/App/QuotaNotchVisualHarness.swift   |  31 +-
+ macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift |  36 ++
+ .../AgentSpeed/Dashboard/DashboardView.swift       |  39 +-
+ .../AgentSpeed/Localization/StringTable.swift      |   7 +-
+ .../SettingsWindow/Panes/QuotaPane.swift           |  57 +--
+ .../AgentSpeedCore/CodexQuotaProvider.swift        | 122 ++-----
+ .../AgentSpeedCore/OpenCodeGoCredentials.swift     |  98 +++++
+ .../AgentSpeedCore/OpenCodeGoQuotaProvider.swift   | 244 +++++++++++++
+ macos/Sources/AgentSpeedCore/Quota.swift           | 122 +++++++
+ macos/Sources/CSQLite/module.modulemap             |   5 +
+ macos/Sources/CSQLite/shim.h                       |   1 +
+ .../Tests/AgentSpeedAppTests/QuotaNotchTests.swift |  62 +++-
+ .../QuotaPresentationTests.swift                   |  18 +-
+ .../CodexQuotaProviderTests.swift                  |   5 +-
+ .../OpenCodeGoQuotaProviderTests.swift             | 211 +++++++++++
+ macos/Tests/AgentSpeedCoreTests/QuotaTests.swift   |  50 +++
+ spec/QUOTA.md                                      |  24 +-
+ windows/src/AgentSpeed.Core/CodexQuotaProvider.cs  |   2 +-
+ windows/src/AgentSpeed.Core/IQuotaProvider.cs      |  10 +
+ .../src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs | 401 +++++++++++++++++++++
+ windows/src/AgentSpeed.Core/QuotaSnapshot.cs       |   8 +
+ .../Localization/Strings.Windows.json              |   4 +
+ .../Settings/QuotaFormat.cs                        |  60 ++-
+ .../Settings/QuotaNotchGeometry.cs                 |  70 ++--
+ .../src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt |   3 +-
+ windows/src/AgentSpeed/Settings/QuotaNotchView.cs  | 125 +++++--
+ .../src/AgentSpeed/Settings/QuotaSettingsPage.cs   |  12 +-
+ windows/src/AgentSpeed/Settings/QuotaSurface.cs    | 139 ++++---
+ .../OpenCodeGoQuotaProviderTests.cs                | 401 +++++++++++++++++++++
+ .../QuotaFormatTests.cs                            |  62 +++-
+ .../QuotaNotchGeometryTests.cs                     |  55 ++-
+ .../SettingsSerializerTests.cs                     |  24 +-
+ .../QuotaNotchViewTests.cs                         |  87 +++++
+ .../QuotaNotchWindowTests.cs                       |   2 +-
+ .../QuotaSettingsPageTests.cs                      |  89 ++++-
+ .../QuotaSurfaceProviderCollectionTests.cs         | 171 +++++++++
+ .../AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs  | 130 ++++++-
+ 42 files changed, 2795 insertions(+), 419 deletions(-)
 
 diff --git a/macos/Package.swift b/macos/Package.swift
 index c7b998e5..0500f99e 100644
@@ -2799,7 +2787,7 @@ index 90f5dd48..03cb5d84 100644
  
  MIT License
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index bd82986c..08d9e67e 100644
+index 5939ebd5..cf6b37f7 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -24,6 +24,9 @@ internal sealed class QuotaNotchView : FrameworkElement
@@ -2969,7 +2957,7 @@ index bd82986c..08d9e67e 100644
                          y += 8;
                      }
                      string usage;
-@@ -353,7 +408,6 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -365,7 +420,6 @@ internal sealed class QuotaNotchView : FrameworkElement
      private static Geometry Painted(Geometry geometry, Pen pen) => new CombinedGeometry(GeometryCombineMode.Union, geometry, geometry.GetWidenedPathGeometry(pen));
      private static Brush Brush(string hex) { var b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); b.Freeze(); return b; }
      private static Pen Pen(Brush brush, double width, bool round = false) { var p = new Pen(brush, width); if (round) p.StartLineCap = p.EndLineCap = PenLineCap.Round; p.Freeze(); return p; }
@@ -2977,7 +2965,7 @@ index bd82986c..08d9e67e 100644
      internal string ResetText(DateTimeOffset reset, DateTimeOffset now)
      {
          double milliseconds = (reset - now).TotalMilliseconds;
-@@ -393,6 +447,15 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -405,6 +459,15 @@ internal sealed class QuotaNotchView : FrameworkElement
      }
      private static void DrawGlyph(DrawingContext dc, Geometry glyph, Point center, double size, Brush color)
      { dc.PushTransform(new MatrixTransform(size/24, 0, 0, size/24, center.X-size/2, center.Y-size/2)); dc.DrawGeometry(color, null, glyph); dc.Pop(); }
@@ -2993,7 +2981,7 @@ index bd82986c..08d9e67e 100644
      private static Geometry LoadCodex()
      {
          using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("AgentSpeed.QuotaCodex.svg") ?? throw new InvalidOperationException("Missing embedded Codex vector.");
-@@ -401,9 +464,3 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -413,9 +476,3 @@ internal sealed class QuotaNotchView : FrameworkElement
          var geometry = Geometry.Parse("F0 " + path); geometry.Freeze(); return geometry;
      }
  }
@@ -3063,7 +3051,7 @@ index 99a3917a..e5d2a673 100644
              System.Windows.Automation.AutomationProperties.SetName(track, label + ": " + remainingText);
              reading.Children.Add(track);
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-index 648f3aa2..c67bda53 100644
+index 648f3aa2..d3e0b57c 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 @@ -1,5 +1,6 @@
@@ -3073,7 +3061,11 @@ index 648f3aa2..c67bda53 100644
  using System.Windows.Threading;
  using AgentSpeed.Core;
  using AgentSpeed.Presentation.Localization;
-@@ -17,11 +18,11 @@ internal sealed class QuotaSurface : IDisposable
+@@ -14,14 +15,15 @@ internal sealed class QuotaSurface : IDisposable
+ 
+     private readonly SettingsService _settings;
+     private readonly Localizer _loc;
++    private readonly Dispatcher _dispatcher;
      private readonly DispatcherTimer _timer;
      private readonly DispatcherTimer _flyoutClock;
      private readonly Func<DateTimeOffset> _now;
@@ -3089,7 +3081,7 @@ index 648f3aa2..c67bda53 100644
      private QuotaNotchWindow? _notch;
      private QuotaNotchFailure? _notchFailure;
      private QuotaSettingsPage? _page;
-@@ -29,8 +30,13 @@ internal sealed class QuotaSurface : IDisposable
+@@ -29,8 +31,13 @@ internal sealed class QuotaSurface : IDisposable
      private bool _flyoutOpen;
      private bool _disposed;
      private bool _autoRefresh;
@@ -3105,7 +3097,7 @@ index 648f3aa2..c67bda53 100644
      private bool _networkEnabled;
      private bool _dark;
      private bool _reduceMotion;
-@@ -38,13 +44,13 @@ internal sealed class QuotaSurface : IDisposable
+@@ -38,20 +45,24 @@ internal sealed class QuotaSurface : IDisposable
      public event Action? OpenSettingsRequested;
  
      public QuotaSurface(SettingsService settings, Localizer loc, bool dark,
@@ -3115,13 +3107,26 @@ index 648f3aa2..c67bda53 100644
      {
          _settings = settings;
          _loc = loc;
++        _dispatcher = Dispatcher.CurrentDispatcher;
          _dark = dark;
 -        _providerFactory = providerFactory;
 +        _providerFactory = providerFactory ?? QuotaProviders.Create;
          _now = now ?? (() => DateTimeOffset.UtcNow);
-         _flyoutClock = new DispatcherTimer(DispatcherPriority.Background)
+-        _flyoutClock = new DispatcherTimer(DispatcherPriority.Background)
++        _flyoutClock = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
          {
-@@ -118,32 +124,31 @@ internal sealed class QuotaSurface : IDisposable
+             Interval = TimeSpan.FromMinutes(1)
+         };
+         _flyoutClock.Tick += OnFlyoutClockTick;
+-        _timer = new DispatcherTimer { Interval = refreshInterval ?? TimeSpan.FromMinutes(5) };
++        _timer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
++        {
++            Interval = refreshInterval ?? TimeSpan.FromMinutes(5)
++        };
+         _timer.Tick += (_, _) => RefreshAutomatically();
+         ApplySettings();
+     }
+@@ -118,32 +129,31 @@ internal sealed class QuotaSurface : IDisposable
          var added = false;
          var networkChanged = _networkEnabled != _settings.Current.NetworkEnabled;
          _networkEnabled = _settings.Current.NetworkEnabled;
@@ -3169,7 +3174,7 @@ index 648f3aa2..c67bda53 100644
          if (_settings.Current.ShowQuotaNotch && _notchFailure is null)
          {
              if (_notch is null)
-@@ -171,7 +176,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -171,7 +181,7 @@ internal sealed class QuotaSurface : IDisposable
          _autoRefresh = _settings.Current.AutoRefreshQuota;
          Render();
          UpdateTimer();
@@ -3178,7 +3183,7 @@ index 648f3aa2..c67bda53 100644
          else if (added || startAutomatic || networkChanged && _networkEnabled) RefreshAutomatically();
      }
  
-@@ -197,7 +202,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -197,7 +207,7 @@ internal sealed class QuotaSurface : IDisposable
      private void UpdateTimer()
      {
          if (!_disposed && _settings.Current.NetworkEnabled && _settings.Current.AutoRefreshQuota &&
@@ -3187,7 +3192,7 @@ index 648f3aa2..c67bda53 100644
          else _timer.Stop();
      }
  
-@@ -206,30 +211,35 @@ internal sealed class QuotaSurface : IDisposable
+@@ -206,43 +216,58 @@ internal sealed class QuotaSurface : IDisposable
          if (_settings.Current.AutoRefreshQuota) Refresh();
      }
  
@@ -3229,26 +3234,33 @@ index 648f3aa2..c67bda53 100644
 -        bool IsCurrent() => !_disposed && _settings.Current.NetworkEnabled && generation == _generation;
 +        bool IsCurrent() => !_disposed && _settings.Current.NetworkEnabled && generation == reader.Generation &&
 +            _readers.TryGetValue(id, out var current) && ReferenceEquals(current, reader);
++        QuotaSnapshot? result = null;
          try
          {
 -            // The real adapter owns its persisted request floor, including manual refreshes.
 -            var result = await (startup ? provider.RefreshStartupAsync() : provider.RefreshAsync());
 -            if (IsCurrent()) _snapshots = [result];
 +            // Each adapter independently owns persisted success floors, failure cooldowns and account isolation.
-+            var result = await (startup ? reader.Provider.RefreshStartupAsync() : reader.Provider.RefreshAsync());
-+            if (IsCurrent()) reader.Snapshot = result;
++            result = await (startup ? reader.Provider.RefreshStartupAsync() : reader.Provider.RefreshAsync()).ConfigureAwait(false);
          }
          catch (OperationCanceledException) { }
          catch (ObjectDisposedException) { }
-@@ -237,12 +247,16 @@ internal sealed class QuotaSurface : IDisposable
+         finally
          {
-             if (IsCurrent())
+-            if (IsCurrent())
++            // Startup can run before a DispatcherSynchronizationContext exists. Keep both reader
++            // state and WPF rendering on the owning dispatcher, including cancellation/disposal races.
++            void CompleteRefresh()
              {
 -                _busy = false;
++                if (!IsCurrent()) return;
++                if (result is not null) reader.Snapshot = result;
 +                reader.Busy = false;
 +                CollectSnapshots();
                  Render();
              }
++            if (_dispatcher.CheckAccess()) CompleteRefresh();
++            else _ = _dispatcher.BeginInvoke(DispatcherPriority.Normal, new Action(CompleteRefresh));
          }
      }
  
@@ -3258,7 +3270,7 @@ index 648f3aa2..c67bda53 100644
      private string Text(string key) => _loc["win.quota." + key];
      private string Percent(double? value) => QuotaFormat.Percent(_loc, value);
      private string Date(DateTimeOffset value) => value.ToLocalTime().ToString("g", _loc.Culture);
-@@ -292,7 +306,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -292,7 +317,7 @@ internal sealed class QuotaSurface : IDisposable
          UpdateFlyoutClock();
          _page?.Update(new QuotaPageState(snapshots, _settings.Current.QuotaSources,
              _settings.Current.AutoRefreshQuota, _settings.Current.NetworkEnabled,
@@ -3267,7 +3279,7 @@ index 648f3aa2..c67bda53 100644
              _notchFailure is null ? null : Text("notchInitializationFailed"), _settings.Current.QuotaAllSources));
      }
  
-@@ -301,24 +315,23 @@ internal sealed class QuotaSurface : IDisposable
+@@ -301,24 +326,23 @@ internal sealed class QuotaSurface : IDisposable
          if (!_settings.Current.NetworkEnabled) return null;
          StackPanel? summaries = null;
          var now = _now();
@@ -3295,7 +3307,7 @@ index 648f3aa2..c67bda53 100644
                      reading.Children.Add(bar);
                  }
                  reading.Children.Add(Line(_loc.Format("win.quota.remaining", Percent(QuotaFormat.RemainingFraction(headline.UsedFraction))) + " · " + _loc.Format("win.quota.used", Percent(headline.UsedFraction)), 12));
-@@ -342,10 +355,13 @@ internal sealed class QuotaSurface : IDisposable
+@@ -342,10 +366,13 @@ internal sealed class QuotaSurface : IDisposable
          _timer.Stop();
          _flyoutClock.Stop();
          _flyoutClock.Tick -= OnFlyoutClockTick;
@@ -4022,7 +4034,7 @@ index 5e1a9af2..b7b7c8b8 100644
      {
          var delta = b - a;
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-index 4d3150de..ea95fb4e 100644
+index 555d0f78..22b3b2fb 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
 @@ -45,7 +45,7 @@ public sealed class QuotaNotchWindowTests
@@ -4035,7 +4047,7 @@ index 4d3150de..ea95fb4e 100644
  
          var source = Assert.Single(PresentationSource.CurrentSources.OfType<HwndSource>(),
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-index 9af2cdb1..763141dc 100644
+index 9af2cdb1..358d6d42 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 @@ -71,6 +71,41 @@ public class QuotaSettingsPageTests
@@ -4080,7 +4092,51 @@ index 9af2cdb1..763141dc 100644
      [Fact]
      public void EmptyStatesDoNotInventReadings()
      {
-@@ -197,23 +232,30 @@ public class QuotaSettingsPageTests
+@@ -104,23 +139,38 @@ public class QuotaSettingsPageTests
+     {
+         OnStaThread(() =>
+         {
+-            var page = Page(new QuotaPageState([], ["codex"], true, true, false, false, false, "native failure", true), 440);
++            using var page = Page(new QuotaPageState([], ["codex"], true, true, false, false, false, "native failure", true), 440);
+             var root = Assert.IsType<StackPanel>(page.Child);
+             var toolbar = Assert.IsType<DockPanel>(root.Children[0]);
+             var refresh = Assert.Single(LogicalDescendants(toolbar).OfType<Button>());
+             Assert.Equal(Loc["win.quota.refresh"], refresh.Content);
+             Assert.Equal(30, refresh.Height);
+             Assert.Equal(Dock.Right, DockPanel.GetDock(refresh));
+-            Assert.IsType<Border>(root.Children[1]);
+-            var preferences = Assert.IsType<StackPanel>(root.Children[2]);
+-            Assert.Equal(new Thickness(16, 26, 16, 0), preferences.Margin);
+             var elements = LogicalDescendants(page).ToArray();
++            var preferencesLabel = Assert.Single(elements.OfType<TextBlock>(), text => text.Text == Loc["win.quota.preferences"]);
++            var preferences = Assert.IsAssignableFrom<FrameworkElement>(preferencesLabel.Parent);
++            Assert.Equal(new Thickness(16, 26, 16, 0), preferences.Margin);
++            var preferencesTop = preferences.TransformToAncestor(page).Transform(new Point()).Y;
++            foreach (var provider in QuotaProviders.Supported)
++            {
++                var account = Assert.Single(elements.OfType<StackPanel>(), panel =>
++                    System.Windows.Automation.AutomationProperties.GetName(panel) == provider.DisplayName);
++                AssertVisibleWithin(account, page);
++                Assert.True(account.TransformToAncestor(page).Transform(new Point(0, account.ActualHeight)).Y <= preferencesTop);
++            }
+             var rows = LogicalDescendants(preferences).OfType<Grid>().Where(grid => grid.ColumnDefinitions.Count == 2).ToArray();
+             Assert.Equal(new[] { Loc["win.quota.autoRefresh"], Loc["win.quota.showNotch"], Loc["win.quota.keepExpanded"] },
+                 rows.Select(row => Assert.Single(row.Children.OfType<TextBlock>()).Text));
+             Assert.All(rows, row => Assert.InRange(row.ActualHeight, 46, 47));
+             Assert.All(rows, row => Assert.Equal(14, Assert.Single(row.Children.OfType<TextBlock>()).FontSize));
+-            Assert.Equal(2, elements.OfType<Border>().Count(border => border.BorderThickness == new Thickness(1) && border.CornerRadius == new CornerRadius(8)));
++            var sources = Assert.Single(elements.OfType<Border>(), border => border.BorderThickness == new Thickness(1) &&
++                border.CornerRadius == new CornerRadius(8) && LogicalDescendants(border).OfType<CheckBox>().Any(check =>
++                    System.Windows.Automation.AutomationProperties.GetName(check) == Loc["win.quota.allSources"]));
++            AssertVisibleWithin(sources, page);
++            var sourcesTop = sources.TransformToAncestor(page).Transform(new Point()).Y;
++            Assert.All(rows, row => Assert.True(row.TransformToAncestor(page).Transform(new Point(0, row.ActualHeight)).Y < sourcesTop));
++            Assert.Equal(QuotaProviders.Supported.Count, LogicalDescendants(sources).OfType<CheckBox>().Count(check =>
++                QuotaProviders.Supported.Any(provider => provider.DisplayName == System.Windows.Automation.AutomationProperties.GetName(check))));
+             Assert.Contains(elements.OfType<TextBlock>(), text => text.Text == "native failure");
+             Assert.DoesNotContain(elements, element => element is Expander || element is TextBox || element is AgentSpeed.Controls.SettingsCard);
+             Assert.DoesNotContain(elements.OfType<TextBlock>(), text => text.Text.Contains("Credentials", StringComparison.Ordinal));
+@@ -197,23 +247,30 @@ public class QuotaSettingsPageTests
      {
          OnStaThread(() =>
          {
@@ -4300,7 +4356,7 @@ index 00000000..b759efe5
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
-index f0cd97a4..ef3b16ec 100644
+index f0cd97a4..495efb86 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 @@ -36,7 +36,7 @@ public sealed class QuotaSurfaceTests
@@ -4385,3 +4441,129 @@ index f0cd97a4..ef3b16ec 100644
                      now: () => now);
                  settings.Changed += (_, _) => surface.ApplySettings();
                  UIElement? summary = null;
+@@ -445,6 +446,109 @@ public sealed class QuotaSurfaceTests
+         });
+     }
+ 
++    [Theory]
++    [InlineData("active")]
++    [InlineData("disposed")]
++    [InlineData("disposedBeforeCompletion")]
++    [InlineData("sourceRemoved")]
++    [InlineData("consentRevoked")]
++    public void StartupCompletionWithoutSynchronizationContextUsesOwnerDispatcherAndRejectsInvalidatedReaders(string transition)
++    {
++        RunSta(() =>
++        {
++            var directory = Path.Combine(Path.GetTempPath(), "quota-dispatcher-" + Guid.NewGuid().ToString("N"));
++            Directory.CreateDirectory(directory);
++            try
++            {
++                var dispatcher = Dispatcher.CurrentDispatcher;
++                var ownerThread = Environment.CurrentManagedThreadId;
++                Assert.Null(SynchronizationContext.Current);
++                var credentials = Path.Combine(directory, "auth.json");
++                File.WriteAllText(credentials, """{"tokens":{"access_token":"synthetic-token","account_id":"synthetic-account"}}""");
++                var observed = new DateTimeOffset(2026, 11, 15, 12, 0, 0, TimeSpan.Zero);
++                using var handler = new UsageHandler
++                {
++                    Plan = "dispatcher-result", UsedPercent = 95,
++                    IgnoreBlockCancellation = transition == "disposedBeforeCompletion",
++                    Block = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
++                };
++                using var settings = new SettingsService(dispatcher);
++                settings.MakeEphemeral();
++                settings.Update(s => s with { ShowQuotaNotch = false, AutoRefreshQuota = false, NetworkEnabled = true,
++                    QuotaSources = ["codex"], QuotaAllSources = false });
++                var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
++                // Constructor-started I/O deliberately precedes the first dispatcher frame/context.
++                using var surface = new QuotaSurface(settings, loc, false,
++                    _ => new CodexQuotaProvider(credentials, Path.Combine(directory, "schedule"), new HttpClient(handler, false), () => observed));
++                settings.Changed += (_, _) => surface.ApplySettings();
++                var page = Assert.IsType<QuotaSettingsPage>(surface.CreatePage());
++                UIElement? summary = null;
++                var updates = 0;
++                var notificationThread = 0;
++                surface.FlyoutChanged += element =>
++                {
++                    summary = element;
++                    notificationThread = Environment.CurrentManagedThreadId;
++                    updates++;
++                };
++                surface.SetFlyoutActive(true);
++                Assert.Null(SynchronizationContext.Current);
++                Assert.False(Assert.Single(Descendants(page).OfType<Button>()).IsEnabled);
++
++                // Hold the owner thread until the worker has queued its completion. This makes
++                // invalidation-before-render deterministic, rather than relying on sleeps or HTTP timing.
++                using var completionPosted = new ManualResetEventSlim();
++                void OnOperationPosted(object? sender, DispatcherHookEventArgs e)
++                {
++                    if (!dispatcher.CheckAccess() && e.Operation.Priority == DispatcherPriority.Normal) completionPosted.Set();
++                }
++                dispatcher.Hooks.OperationPosted += OnOperationPosted;
++                try
++                {
++                    if (transition == "disposedBeforeCompletion") surface.Dispose();
++                    handler.Block.SetResult();
++                    Assert.True(completionPosted.Wait(TimeSpan.FromSeconds(5)), "Quota completion was not posted to its owning dispatcher.");
++                }
++                finally { dispatcher.Hooks.OperationPosted -= OnOperationPosted; }
++
++                switch (transition)
++                {
++                    case "disposed": surface.Dispose(); break;
++                    case "sourceRemoved": settings.Update(s => s with { QuotaSources = [], QuotaAllSources = false }); break;
++                    case "consentRevoked": settings.Update(s => s with { NetworkEnabled = false }); break;
++                }
++                var beforeCompletion = page.Child;
++                var previousSummary = summary;
++                var previousUpdates = updates;
++                var drained = false;
++                dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => drained = true));
++                PumpUntil(() => drained);
++
++                Assert.Equal(ownerThread, notificationThread);
++                Assert.Equal(1, handler.UsageCalls);
++                Assert.Equal(transition == "disposedBeforeCompletion" ? 0 : 1, handler.ResetCalls);
++                if (transition == "active")
++                {
++                    Assert.Contains(Descendants(page).OfType<TextBlock>(), text => text.Text == handler.Plan);
++                    Assert.True(Assert.Single(Descendants(page).OfType<Button>()).IsEnabled);
++                    Assert.NotNull(summary);
++                    Assert.Same(dispatcher, summary.Dispatcher);
++                    Assert.Contains(Descendants(summary).OfType<TextBlock>(), text => text.Text == loc["win.quota.plan"] + ": " + handler.Plan);
++                    Assert.Equal(.95, Assert.Single(Descendants(summary).OfType<ProgressBar>()).Value);
++                    Assert.True(updates > previousUpdates);
++                }
++                else
++                {
++                    Assert.Same(beforeCompletion, page.Child);
++                    Assert.Same(previousSummary, summary);
++                    Assert.Equal(previousUpdates, updates);
++                    Assert.False(surface.IsFlyoutTimeRefreshActive);
++                }
++            }
++            finally { Directory.Delete(directory, true); }
++        });
++    }
++
+     private static void RunSta(Action action)
+     {
+         Exception? failure = null;
+@@ -488,12 +592,14 @@ public sealed class QuotaSurfaceTests
+         public string Plan = "plus";
+         public int UsedPercent = 13;
+         public TaskCompletionSource? Block;
++        // Simulate transport I/O that finishes only after its owner has already cancelled/disposed it.
++        public bool IgnoreBlockCancellation;
+ 
+         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+         {
+             var usage = request.RequestUri!.AbsolutePath.EndsWith("/usage", StringComparison.Ordinal);
+             if (usage) Interlocked.Increment(ref _usageCalls); else Interlocked.Increment(ref _resetCalls);
+-            if (usage && Block is { } block) await block.Task.WaitAsync(cancellationToken);
++            if (usage && Block is { } block) await block.Task.WaitAsync(IgnoreBlockCancellation ? CancellationToken.None : cancellationToken);
+             return new HttpResponseMessage(HttpStatusCode.OK)
+             {
+                 Content = new StringContent(usage
