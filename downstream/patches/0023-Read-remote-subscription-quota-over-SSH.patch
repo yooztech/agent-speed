@@ -1,6 +1,6 @@
-From 4d60990ef4e45bf8e97eea28dec9b4ab83e5bb38 Mon Sep 17 00:00:00 2001
+From 2ccb79b6c00e591801ee2cce963b4d0fcf89f381 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 22:36:37 +0800
+Date: Sun, 15 Nov 2026 23:00:28 +0800
 Subject: [PATCH] Read remote subscription quota over SSH
 
 ---
@@ -2596,7 +2596,7 @@ index b7ceeb7c51764959dd8d4a4960353ad3b95144a2..e5c11991c6a7212f6889f0096f571018
 +See [`QUOTA.md`](QUOTA.md) for provider parsing, cache isolation and wire details.
 +
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index e70223bce02123eb5b9335a1031eb992dc1ab0d5..554eaae9d82d7ca96ff1cec1335191bcdd35c63e 100644
+index ca6a82be7c8de29d6218c731240dc4be93dd2c64..aebc73715782cefe1761b9d3dec67538b2b269ae 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,20 @@
@@ -3842,7 +3842,7 @@ index 0000000000000000000000000000000000000000..b0f99956a3e7735e92e9d3ca015bc9f3
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index dee58e091faefcf405810a82c1e1cd2d162264d1..d4362ad676e9929f7483b0bb84a9a0481b4747d8 100644
+index 0ff48ce3877974cc7e266c23228af7a972fb42ba..de44dda2cfa9e30d4816cfbb36a04fe17f107edb 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 @@ -12,6 +12,37 @@ namespace AgentSpeed.Windows.Tests;

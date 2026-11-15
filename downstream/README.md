@@ -412,6 +412,22 @@ byte-identical to the checked tree. Owning-boundary checks also pass: 37 base
 macOS provider/controller tests without Go/remote/Kimi, 97 base Windows Codex/cold
 HTTP tests plus native app/test cross-compilation, and collector/test syntax
 checking at 0023 before Kimi prerequisites are introduced at 0024.
+Quota cleanup removes `QuotaNotchBodyInputTests` and other ordinary test assertions
+that freeze historical press points, default body/card dimensions, ring/logo/drop
+sizes, outline clearances or literal path fragments. These visual measurements
+are not Release contracts and must not be re-pinned after adding a supplier or
+changing layout. Equivalent macOS dimension assertions are removed too. Dead
+test-only clearance helpers are deleted; live placement/input helpers remain.
+Provider/window data, cold-start/rate-limit/cancellation behavior, persistence,
+drag/hover lifecycle and relationships derived from current paint/input geometry
+remain tested. No skip, production-layout workaround or new Release run is added.
+Focused cleanup verification passes all 84 remaining Presentation geometry/layout
+cases. The final and base-0021 Windows application/native test assemblies compile;
+the base boundary reports zero warnings/errors. The changed macOS native test file
+passes syntax parsing, not AppKit execution. All 24 patches replay, and all 3,137
+source files match the checked tree byte-for-byte; the obsolete body-input test
+file remains absent. Neither full Release preflight nor Release publication was
+rerun for this cleanup.
 Earlier compact-layout/deadline checks passed 155 formatting/geometry cases, the four
 replacement edge-containment cases and nine deadline/backoff policy cases.
 Windows application/native tests cross-compile with zero warnings/errors.

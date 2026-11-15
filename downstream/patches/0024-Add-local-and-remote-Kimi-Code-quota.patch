@@ -1,6 +1,6 @@
-From 982d1089b743e49c38ac64f71db983c7618a0bd5 Mon Sep 17 00:00:00 2001
+From a00dd6360eef8989e1a8ad52522c2d861c3d59ea Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 22:36:39 +0800
+Date: Sun, 15 Nov 2026 23:00:30 +0800
 Subject: [PATCH] Add local and remote Kimi Code quota
 
 ---
@@ -1799,7 +1799,7 @@ index 717b1b6d86a32596231f58b87309c8d73c1db588..510f61a89d1f5d23ac06f472904043bd
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 554eaae9d82d7ca96ff1cec1335191bcdd35c63e..4a29bb9018269fc8a93960dbcc3a3865adb50e45 100644
+index aebc73715782cefe1761b9d3dec67538b2b269ae..e7342fc2a996feb66063bf6e100a45bec0196a5c 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -6,15 +6,15 @@ On macOS and Windows, the local Codex provider reads `auth.json` from a non-empt
@@ -1830,7 +1830,7 @@ index 554eaae9d82d7ca96ff1cec1335191bcdd35c63e..4a29bb9018269fc8a93960dbcc3a3865
  
  Windows and macOS Subscription follow the approved account-card layout using their native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
  
-@@ -154,6 +154,14 @@ Follow the reference's distinction between missing Go entitlement and sign-out:
+@@ -156,6 +156,14 @@ Follow the reference's distinction between missing Go entitlement and sign-out:
  
  Go follows the pinned provider's polling semantics: successful requests do not create a hard minimum request interval, so a manual refresh may request again after the previous request completes. Automatic application polling remains five minutes; concurrent refreshes are coalesced, and persisted rate-limit/failure retry deadlines remain binding. This does not change Codex's existing successful-request floor or startup rules.
  
@@ -2870,7 +2870,7 @@ index b52734682ace2b2bab4729a3f5fda5a6708fed8c..984adecb9762b3e06fab245aaba90bf9
          Assert.True(legacy.QuotaAllSources);
          Assert.Same(AppSettings.Default.QuotaSources, legacy.QuotaSources);
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index d4362ad676e9929f7483b0bb84a9a0481b4747d8..066a8d3203621520ad1a3bbc8adf86ef934a0600 100644
+index de44dda2cfa9e30d4816cfbb36a04fe17f107edb..68121de9e286c360b00412f8c3c01f4591eb3c46 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 @@ -15,6 +15,7 @@ public class QuotaNotchViewTests

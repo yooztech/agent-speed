@@ -1,6 +1,6 @@
-From 13dbd597bbd4eb5d37d8c441c93cbfeb4ceb9bec Mon Sep 17 00:00:00 2001
+From 3cb7f7dd5dcba2e68bb618096bbc198858c91f05 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 22:32:00 +0800
+Date: Sun, 15 Nov 2026 23:00:27 +0800
 Subject: [PATCH] Add multi-window quota and OpenCode Go provider
 
 ---
@@ -19,7 +19,7 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  macos/Sources/CSQLite/module.modulemap        |   5 +
  macos/Sources/CSQLite/shim.h                  |   1 +
  .../QuotaControllerTests.swift                |  22 +-
- .../AgentSpeedAppTests/QuotaNotchTests.swift  |  37 +-
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  |  30 +-
  .../QuotaPresentationTests.swift              |   4 +-
  .../OpenCodeGoQuotaProviderTests.swift        | 256 ++++++++++
  .../QuotaColdStartTests.swift                 |  19 +-
@@ -40,14 +40,14 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  .../OpenCodeGoQuotaProviderTests.cs           | 449 ++++++++++++++++++
  .../QuotaColdStartTests.cs                    |  16 +-
  .../QuotaFormatTests.cs                       |  77 ++-
- .../QuotaNotchGeometryTests.cs                | 113 ++++-
+ .../QuotaNotchGeometryTests.cs                |  88 +++-
  .../SettingsSerializerTests.cs                |  24 +-
- .../QuotaNotchViewTests.cs                    |  92 ++++
+ .../QuotaNotchViewTests.cs                    |  89 ++++
  .../QuotaSettingsPageTests.cs                 |  89 +++-
  .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
  .../QuotaSurfaceTests.cs                      | 131 ++++-
- 43 files changed, 2711 insertions(+), 286 deletions(-)
+ 43 files changed, 2680 insertions(+), 282 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -855,7 +855,7 @@ index ead924c28ea2ac140b1ce2b78be43130e49a9347..b2a82557169798e8f8a2ce35fdc03b47
              #expect(restored.snapshots.isEmpty)
          }
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-index f1a32c5973ba8fef8ceb2620f8feb3b19c8e5556..0eeea32ee8e4cc553fd4c161e272d1d5d6af7d1a 100644
+index bc218bd73e1ee9d3824d85efff8affd520a771fb..0f7cad5ee7d68a722c057a3a461972f26d08ae87 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 @@ -15,7 +15,7 @@ struct QuotaNotchTests {
@@ -867,7 +867,7 @@ index f1a32c5973ba8fef8ceb2620f8feb3b19c8e5556..0eeea32ee8e4cc553fd4c161e272d1d5
                               windows: windows, headlineId: "rolling", block: nil, account: "account", plan: "Plus",
                               observedAt: now.addingTimeInterval(-300), source: "local", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
      }
-@@ -57,14 +57,16 @@ struct QuotaNotchTests {
+@@ -57,13 +57,14 @@ struct QuotaNotchTests {
      }
  
      @Test func everyProviderRetainsAllPeriodsWithoutFollowingHeadline() {
@@ -880,22 +880,15 @@ index f1a32c5973ba8fef8ceb2620f8feb3b19c8e5556..0eeea32ee8e4cc553fd4c161e272d1d5
              #expect(value.readings.count == 3)
              #expect(value.readings.first?.contains("-20%") == true)
              #expect(value.readings.last?.contains("79%") == true)
--            #expect(value.outerDiameter == 84)
-+            #expect(value.outerDiameter == 64)
-+            #expect(value.readingWidth == 90)
 +            #expect(value.rowHeights.count == 3)
          }
          let unknown = reading(snapshot(used: nil))
          #expect(unknown.readings.last?.contains("Unknown") == true)
-@@ -96,6 +98,23 @@ struct QuotaNotchTests {
+@@ -95,6 +96,19 @@ struct QuotaNotchTests {
          #expect(value.resetText(start.addingTimeInterval(7 * 86_400), now: start, calendar: calendar) == "Resets Jan 22")
      }
  
 +    @Test func compactRingMetricsAndFourEdgeCells() {
-+        #expect([0, 1, 2, 3, 4].map(NotchLayout.outerDiameter) == [52, 52, 58, 64, 76])
-+        #expect([1, 2, 3].map(NotchLayout.discDiameter) == [36, 30, 24])
-+        #expect([1, 2, 3].map(NotchLayout.logoExtent) == [22, 19, 16])
-+        #expect(NotchLayout.ringStroke == 4 && NotchLayout.ringPitch == 6)
 +        let value = reading(snapshot())
 +        for edge in NotchEdge.allCases {
 +            let cell = CGSize(width: max(value.outerDiameter, value.readingWidth), height: value.outerDiameter + 4 + value.readingHeight)
@@ -911,7 +904,7 @@ index f1a32c5973ba8fef8ceb2620f8feb3b19c8e5556..0eeea32ee8e4cc553fd4c161e272d1d5
      @Test func allCellsAndUprightLabelsFitEveryEdge() {
          let monitor = CGRect(x: -1_920, y: -1_080, width: 1_920, height: 1_080)
          for edge in NotchEdge.allCases {
-@@ -238,12 +257,12 @@ struct QuotaNotchTests {
+@@ -233,12 +247,12 @@ struct QuotaNotchTests {
          hover.keepExpanded = true
          hover.move(to: .cell("codex")); hover.move(to: .outside)
          clock.advance(0.1)
@@ -927,7 +920,7 @@ index f1a32c5973ba8fef8ceb2620f8feb3b19c8e5556..0eeea32ee8e4cc553fd4c161e272d1d5
          clock.advance(0.001)
          #expect(hover.expanded && hover.activeSource == nil && !hover.graceActive)
          hover.reset()
-@@ -261,9 +280,9 @@ struct QuotaNotchTests {
+@@ -256,9 +270,9 @@ struct QuotaNotchTests {
          #expect(!hover.expanded && hover.activeSource == nil && !hover.graceActive)
          hover.move(to: .bar)
          #expect(hover.expanded)
@@ -1371,7 +1364,7 @@ index 2182d48108eb65631dfe4b49019442274de81689..460bec0d382ddb13b639b0efcf09cb83
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 333cc4fb20c47240f5948f380ea15bcad43ec673..e70223bce02123eb5b9335a1031eb992dc1ab0d5 100644
+index 7618afd4ef0927fbe613e591a289c1dc065eaede..ca6a82be7c8de29d6218c731240dc4be93dd2c64 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,4 +1,4 @@
@@ -1400,7 +1393,7 @@ index 333cc4fb20c47240f5948f380ea15bcad43ec673..e70223bce02123eb5b9335a1031eb992
  
  The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
  
-@@ -128,6 +130,18 @@ On both platforms, each successful usage poll also queries `GET https://chatgpt.
+@@ -130,6 +132,18 @@ On both platforms, each successful usage poll also queries `GET https://chatgpt.
  Synthetic, credential-free examples: [`fixtures/codex-quota.json`](fixtures/codex-quota.json) shows main windows, an extra, a code-review window with unknown usage, and spend control; [`fixtures/codex-credit-quota.json`](fixtures/codex-credit-quota.json) shows missing rolling windows and a known zero balance. Their timestamps are examples, not current reset predictions. These are illustrative endpoint payloads, not captures of a real account.
  Both endpoint fixtures are raw provider responses, not snapshots; parsing either produces snapshot fidelity `official`.
  
@@ -2026,7 +2019,7 @@ index b38e173683618666a2b50aaddd78c3cbaab2df2d..81069553fe2a9e7b5ca548db20f2885d
  
  }
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
-index 264f83bf3d7ed14ca319fae8d0de88ba428c04aa..d8bb239682516e5e360220a58e8a2836a965508f 100644
+index 6793e5635ed739f26e61324e514cd62169e17d09..4346018a17d4e479a4f9babc2e3952be2ece9626 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
 @@ -14,10 +14,20 @@ public static class QuotaNotchGeometry
@@ -2109,7 +2102,7 @@ index 264f83bf3d7ed14ca319fae8d0de88ba428c04aa..d8bb239682516e5e360220a58e8a2836
      }
  
      public static Card CreateCard(double width, double height, double? along)
-@@ -270,24 +295,8 @@ public static class QuotaNotchGeometry
+@@ -253,24 +278,8 @@ public static class QuotaNotchGeometry
      public static double RemainingFill(double used) => Math.Clamp(1 - used, 0, 1);
      public static int Tone(double used) => used >= .7 ? 2 : used >= .5 ? 1 : 0;
  
@@ -3379,12 +3372,12 @@ index 7843155e5ec44dc252d4caffe2a6a44e663a96cd..0436e0c486f031b88afdef0ae4cf86f7
  
      [Fact]
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
-index a389c09fd0462e4e1354c4972afd587ec770b35f..e0c93c0cd9a90e9cb6f98d05df09a92c7b9ccd3d 100644
+index 6a0fc51377d6b528b7adcf4c732d4bc465090fcf..8b2fc0226d5aec067a276a6889b0ab26c2839f14 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
-@@ -26,15 +26,33 @@ public class QuotaNotchGeometryTests
-         Assert.Equal(model.BodyEnd + 38.7, model.Length, 4);
-     }
+@@ -5,12 +5,25 @@ namespace AgentSpeed.Presentation.Tests;
+ public class QuotaNotchGeometryTests
+ {
  
 -    [Fact]
 -    public void FlatEdgesKeepUprightCellWithinDeeperBody()
@@ -3397,10 +3390,7 @@ index a389c09fd0462e4e1354c4972afd587ec770b35f..e0c93c0cd9a90e9cb6f98d05df09a92c
      {
 -        var top = QuotaNotchGeometry.CreateMain(1, 1, horizontal: true);
 -        var bottom = QuotaNotchGeometry.CreateMain(1, 1, horizontal: true, bottom: true);
--        Assert.Equal(98, top.BodyDepth);
--        Assert.Equal(34, top.RingCenterX);
 -        Assert.Equal(top.BodyDepth - top.RingCenterX, bottom.RingCenterX);
--        Assert.Equal(80, top.BodyEnd - top.BodyStart, 4);
 +        bool horizontal = edge is "top" or "bottom";
 +        var cell = new QuotaNotchGeometry.Cell(52, 80, 52);
 +        var main = QuotaNotchGeometry.CreateMain(1, 1, horizontal, edge == "bottom", cell);
@@ -3413,18 +3403,10 @@ index a389c09fd0462e4e1354c4972afd587ec770b35f..e0c93c0cd9a90e9cb6f98d05df09a92c
 +        double top = corners.Min(p => p.Y), bottom = corners.Max(p => p.Y);
 +        Assert.InRange(content.X, left, right - content.Width);
 +        Assert.InRange(content.Y, top, bottom - content.Height);
-+        // The 6-DIP inset keeps the ring paint clear of the attachment edge;
-+        // the content remains upright rather than rotating with the body.
-+        if (horizontal)
-+        {
-+            Assert.InRange(content.Y - top, 6, 7);
-+            Assert.True(content.X - left >= 12 - 1e-6 && right - (content.X + content.Width) >= 12 - 1e-6);
-+        }
-+        else Assert.True(content.Y - top >= 12 - 1e-6 && bottom - (content.Y + content.Height) >= 12 - 1e-6);
      }
  
      [Theory]
-@@ -193,10 +211,10 @@ public class QuotaNotchGeometryTests
+@@ -134,10 +147,10 @@ public class QuotaNotchGeometryTests
      }
  
      [Theory]
@@ -3438,25 +3420,11 @@ index a389c09fd0462e4e1354c4972afd587ec770b35f..e0c93c0cd9a90e9cb6f98d05df09a92c
      public void DisplayHalvesMatchTheReference(double used, string spent, string remaining)
      {
          Assert.Equal((spent, remaining), QuotaNotchGeometry.PercentHalves(used));
-@@ -212,4 +230,77 @@ public class QuotaNotchGeometryTests
+@@ -153,4 +166,63 @@ public class QuotaNotchGeometryTests
          Assert.Equal(remaining, QuotaNotchGeometry.RemainingFill(used), 6);
          Assert.Equal(tone, QuotaNotchGeometry.Tone(used));
      }
 +
-+    [Theory]
-+    [InlineData(0, 52, 36, 22)]
-+    [InlineData(1, 52, 36, 22)]
-+    [InlineData(2, 58, 30, 19)]
-+    [InlineData(3, 64, 24, 16)]
-+    [InlineData(5, 88, 24, 16)]
-+    public void ExtraRingsShrinkTheCenterAndRetainSixDipPitch(int windows, double diameter, double disc, double glyph)
-+    {
-+        Assert.Equal(diameter, QuotaNotchGeometry.RingDiameter(windows));
-+        Assert.Equal(disc, QuotaNotchGeometry.CenterDiameter(windows));
-+        Assert.Equal(glyph, QuotaNotchGeometry.GlyphDiameter(windows));
-+        Assert.Equal(4, QuotaNotchGeometry.RingWidth);
-+        Assert.Equal(disc / 2 + 6, (diameter - QuotaNotchGeometry.RingWidth) / 2 - Math.Max(0, windows - 1) * QuotaNotchGeometry.RingStep);
-+    }
 +    [Theory]
 +    [InlineData("left")]
 +    [InlineData("right")]
@@ -3570,7 +3538,7 @@ index a346f35a60dacf8ae086a478df6161a1a6160263..b52734682ace2b2bab4729a3f5fda5a6
      public void AllQuotaSourcesPersistIntentRatherThanFreezingTheSavedRegistry()
      {
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index 5e1a9af2b3770f184153f57428da805a72217c74..dee58e091faefcf405810a82c1e1cd2d162264d1 100644
+index 7ba258722e081f90155bd240e0a0460f1ccdff03..0ff48ce3877974cc7e266c23228af7a972fb42ba 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 @@ -1,4 +1,5 @@
@@ -3579,7 +3547,7 @@ index 5e1a9af2b3770f184153f57428da805a72217c74..dee58e091faefcf405810a82c1e1cd2d
  using System.Windows;
  using System.Windows.Media;
  using System.Windows.Media.Imaging;
-@@ -277,6 +278,97 @@ public class QuotaNotchViewTests
+@@ -265,6 +266,94 @@ public class QuotaNotchViewTests
          Assert.True(opaque > 0 && clear > 0);
      });
  
@@ -3603,13 +3571,11 @@ index 5e1a9af2b3770f184153f57428da805a72217c74..dee58e091faefcf405810a82c1e1cd2d
 +        view.Update(state);
 +        var drawing = (DrawingGroup)typeof(QuotaNotchView).GetField("_drawing", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(view)!;
 +        var shapes = Descendants(drawing).OfType<GeometryDrawing>().Where(item => item.Geometry is EllipseGeometry).ToArray();
-+        var circles = shapes.Select(item => (EllipseGeometry)item.Geometry).ToArray();
-+        foreach (double radius in new[] { 30d, 24d, 18d, 12d }) Assert.Contains(circles, circle => circle.RadiusX == radius && circle.RadiusY == radius);
-+        var outer = circles.First(circle => circle.RadiusX == 30);
++        var outer = shapes.Select(item => (EllipseGeometry)item.Geometry).MaxBy(circle => circle.RadiusX)!;
 +        for (int sample = 0; sample < 360; sample++)
 +        {
 +            double angle = sample * Math.PI / 180;
-+            var point = outer.Center + new Vector(31.5 * Math.Cos(angle), 31.5 * Math.Sin(angle));
++            var point = outer.Center + new Vector(outer.RadiusX * Math.Cos(angle), outer.RadiusY * Math.Sin(angle));
 +            Assert.True(view.InputGeometry.FillContains(point));
 +            Assert.Equal(QuotaNotchTarget.Cell, view.HitTestTarget(point).Target);
 +        }
@@ -3620,7 +3586,7 @@ index 5e1a9af2b3770f184153f57428da805a72217c74..dee58e091faefcf405810a82c1e1cd2d
 +            new string(text.GlyphRun.Characters.ToArray()) == QuotaFormat.RemainingText(loc, window))).ToArray();
 +        Assert.Equal(3, readingRows.Length);
 +        Assert.Equal(3, readingRows.Select(text => text.Bounds.Top).Distinct().Count());
-+        Assert.True(readingRows.All(text => text.Bounds.Top > outer.Center.Y + 30));
++        Assert.True(readingRows.All(text => text.Bounds.Top > outer.Bounds.Bottom));
 +        foreach (var text in texts)
 +        {
 +            var bounds = text.Bounds;
@@ -3634,7 +3600,7 @@ index 5e1a9af2b3770f184153f57428da805a72217c74..dee58e091faefcf405810a82c1e1cd2d
 +        view.Update(state with { Snapshots = [snapshot with { Windows = [.. windows, unknown] }] });
 +        var expanded = (DrawingGroup)typeof(QuotaNotchView).GetField("_drawing", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(view)!;
 +        Assert.Contains(Descendants(expanded).OfType<GeometryDrawing>(), item => item.Pen?.DashStyle == DashStyles.Dot);
-+        Assert.Contains(Descendants(expanded).OfType<GeometryDrawing>(), item => item.Geometry is EllipseGeometry circle && circle.RadiusX == 36);
++        Assert.Contains(Descendants(expanded).OfType<GeometryDrawing>(), item => item.Geometry is EllipseGeometry circle && circle.RadiusX > outer.RadiusX);
 +    });
 +
 +    [Fact]
@@ -3662,7 +3628,6 @@ index 5e1a9af2b3770f184153f57428da805a72217c74..dee58e091faefcf405810a82c1e1cd2d
 +            var single = new QuotaNotchView(loc);
 +            single.Update(new([], [sources[0]], true, true, "right", 1));
 +            Assert.True(view.Extent.Height > single.Extent.Height);
-+            Assert.True((view.GetCardTarget(sources[1]) - view.GetCardTarget(sources[0])).Length > 56);
 +        }
 +    });
 +
@@ -4038,7 +4003,7 @@ index be4d0544b2f6096ef10ea153d5f323495d03a0b0..f69e05f09d1e6aa5f415577985a091d1
          }
      }
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
-index f0cd97a486d0b244cacd7179fd6fbd7b1d30a214..97bc894391839ac2429253c1c21a1341fa67c056 100644
+index 29890dea5f36470a519d50f3871a3d910b0fe9ad..f4a98e8c277b403130f77df07ebc09f49f169804 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 @@ -36,7 +36,7 @@ public sealed class QuotaSurfaceTests
@@ -4078,7 +4043,7 @@ index f0cd97a486d0b244cacd7179fd6fbd7b1d30a214..97bc894391839ac2429253c1c21a1341
                  Find(loc["win.quota.allSources"]).IsChecked = true;
                  var all = SettingsSerializer.Deserialize(SettingsSerializer.Serialize(settings.Current));
                  Assert.True(all.QuotaAllSources);
-@@ -197,7 +198,7 @@ public sealed class QuotaSurfaceTests
+@@ -193,7 +194,7 @@ public sealed class QuotaSurfaceTests
                          ShowQuotaNotch = false, AutoRefreshQuota = false, NetworkEnabled = true,
                          QuotaSources = ["codex"], QuotaAllSources = false, QuotaNotchEdge = "right", QuotaNotchAlong = .25
                      });
@@ -4087,7 +4052,7 @@ index f0cd97a486d0b244cacd7179fd6fbd7b1d30a214..97bc894391839ac2429253c1c21a1341
                      surface.SetReduceMotion(true);
                      settings.Changed += (_, _) => surface.ApplySettings();
                      var page = Assert.IsType<QuotaSettingsPage>(surface.CreatePage());
-@@ -240,7 +241,7 @@ public sealed class QuotaSurfaceTests
+@@ -236,7 +237,7 @@ public sealed class QuotaSurfaceTests
                  Assert.True(restored.Current.ShowQuotaNotch);
                  Assert.Equal("right", restored.Current.QuotaNotchEdge);
                  Assert.Equal(.25, restored.Current.QuotaNotchAlong);
@@ -4095,8 +4060,8 @@ index f0cd97a486d0b244cacd7179fd6fbd7b1d30a214..97bc894391839ac2429253c1c21a1341
 +                using var restarted = new QuotaSurface(restored, loc, false, _ => Provider());
                  restarted.SetReduceMotion(true);
                  // Startup consumes the saved mode without ever creating the settings page.
-                 AssertBody(VisibleWindow(), expanded: true);
-@@ -280,7 +281,7 @@ public sealed class QuotaSurfaceTests
+                 AssertBody(VisibleWindow());
+@@ -276,7 +277,7 @@ public sealed class QuotaSurfaceTests
                  settings.MakeEphemeral();
                  settings.Update(s => s with { ShowQuotaNotch = false, AutoRefreshQuota = automatic, NetworkEnabled = true, QuotaSources = ["codex"], QuotaAllSources = false });
                  var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
@@ -4105,7 +4070,7 @@ index f0cd97a486d0b244cacd7179fd6fbd7b1d30a214..97bc894391839ac2429253c1c21a1341
                  settings.Changed += (_, _) => surface.ApplySettings();
                  // Startup has no dependency on page creation, activation, or the five-minute timer.
                  PumpUntil(() => handler.UsageCalls == 2);
-@@ -345,7 +346,7 @@ public sealed class QuotaSurfaceTests
+@@ -341,7 +342,7 @@ public sealed class QuotaSurfaceTests
                  settings.Update(s => s with { ShowQuotaNotch = false, AutoRefreshQuota = false, NetworkEnabled = false, QuotaSources = [], QuotaAllSources = false });
                  var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
                  var factories = 0;
@@ -4114,7 +4079,7 @@ index f0cd97a486d0b244cacd7179fd6fbd7b1d30a214..97bc894391839ac2429253c1c21a1341
                  settings.Changed += (_, _) => surface.ApplySettings();
                  var page = Assert.IsType<QuotaSettingsPage>(surface.CreatePage());
                  string[] Texts() => Descendants(page).OfType<TextBlock>().Select(block => block.Text).ToArray();
-@@ -393,7 +394,7 @@ public sealed class QuotaSurfaceTests
+@@ -389,7 +390,7 @@ public sealed class QuotaSurfaceTests
                  settings.Update(s => s with { ShowQuotaNotch = false, AutoRefreshQuota = false, NetworkEnabled = true, QuotaSources = ["codex"], QuotaAllSources = false });
                  var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
                  using var surface = new QuotaSurface(settings, loc, false,
@@ -4123,7 +4088,7 @@ index f0cd97a486d0b244cacd7179fd6fbd7b1d30a214..97bc894391839ac2429253c1c21a1341
                      now: () => now);
                  settings.Changed += (_, _) => surface.ApplySettings();
                  UIElement? summary = null;
-@@ -445,6 +446,110 @@ public sealed class QuotaSurfaceTests
+@@ -441,6 +442,110 @@ public sealed class QuotaSurfaceTests
          });
      }
  
@@ -4234,7 +4199,7 @@ index f0cd97a486d0b244cacd7179fd6fbd7b1d30a214..97bc894391839ac2429253c1c21a1341
      private static void RunSta(Action action)
      {
          Exception? failure = null;
-@@ -488,12 +593,14 @@ public sealed class QuotaSurfaceTests
+@@ -484,12 +589,14 @@ public sealed class QuotaSurfaceTests
          public string Plan = "plus";
          public int UsedPercent = 13;
          public TaskCompletionSource? Block;

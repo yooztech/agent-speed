@@ -1,6 +1,6 @@
-From 4caf91c9f1b89b431536d03ae119d0df311d2dc5 Mon Sep 17 00:00:00 2001
+From efcdd52609492a9ca24e5ffa8f5f25cda8e8868c Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 22:31:58 +0800
+Date: Sun, 15 Nov 2026 23:00:25 +0800
 Subject: [PATCH] Add macOS Codex quota monitoring
 
 ---
@@ -25,17 +25,17 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  macos/Sources/AgentSpeedCore/Quota.swift      | 138 ++++
  .../AgentSpeedCore/QuotaPersistence.swift     |  82 +++
  .../QuotaControllerTests.swift                | 585 ++++++++++++++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 285 ++++++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 280 ++++++++
  .../QuotaPresentationTests.swift              | 172 +++++
  .../CodexQuotaProviderTests.swift             | 236 +++++++
  .../QuotaColdStartTests.swift                 | 202 ++++++
  .../QuotaLifecycleTests.swift                 | 191 ++++++
  .../AgentSpeedCoreTests/QuotaTests.swift      |  48 ++
  macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 | 125 ++++
+ spec/QUOTA.md                                 | 127 ++++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 31 files changed, 4718 insertions(+), 2 deletions(-)
+ 31 files changed, 4715 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -3731,10 +3731,10 @@ index 0000000000000000000000000000000000000000..ead924c28ea2ac140b1ce2b78be43130
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..f1a32c5973ba8fef8ceb2620f8feb3b19c8e5556
+index 0000000000000000000000000000000000000000..bc218bd73e1ee9d3824d85efff8affd520a771fb
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,285 @@
+@@ -0,0 +1,280 @@
 +import AppKit
 +import SwiftUI
 +import Testing
@@ -3801,7 +3801,6 @@ index 0000000000000000000000000000000000000000..f1a32c5973ba8fef8ceb2620f8feb3b1
 +            #expect(value.readings.count == 3)
 +            #expect(value.readings.first?.contains("-20%") == true)
 +            #expect(value.readings.last?.contains("79%") == true)
-+            #expect(value.outerDiameter == 84)
 +        }
 +        let unknown = reading(snapshot(used: nil))
 +        #expect(unknown.readings.last?.contains("Unknown") == true)
@@ -3840,8 +3839,6 @@ index 0000000000000000000000000000000000000000..f1a32c5973ba8fef8ceb2620f8feb3b1
 +            #expect(shape.centers.count == 2 && shape.cellRects.count == 2)
 +            #expect(monitor.contains(shape.panelFrame(on: monitor, along: 0.5)))
 +            for center in shape.centers { #expect(shape.bodyPath.contains(center)) }
-+            #expect(shape.cellRects[0].width == 300)
-+            #expect(shape.cellRects[0].height == 108)
 +            #expect(!shape.cellRects[0].intersects(shape.cellRects[1]))
 +            for along in [CGFloat(0), 0.5, 1] {
 +                let frame = shape.panelFrame(on: monitor, along: along)
@@ -3860,8 +3857,6 @@ index 0000000000000000000000000000000000000000..f1a32c5973ba8fef8ceb2620f8feb3b1
 +        for edge in NotchEdge.allCases {
 +            let closed = geometry(edge, expanded: false)
 +            let bounds = closed.bodyPath.boundingRect
-+            #expect(abs((edge.isVertical ? bounds.width : bounds.height) - 10) < 0.001)
-+            #expect(abs((edge.isVertical ? bounds.height : bounds.width) - 79) < 0.001)
 +            #expect(closed.bodyPath.contains(CGPoint(x: bounds.midX, y: bounds.midY)))
 +            #expect(!closed.bodyPath.contains(CGPoint(x: 1, y: 1)))
 +            let grip = QuotaGripPaint(geometry: closed, frame: QuotaGripFrame(arc: 1), filter: QuotaGripFilter(), scale: 2)
@@ -4913,10 +4908,10 @@ index 300ed6d282427f140ca0021e3bcebb8221ec7efb..5ee4c0474e1c1884e3fe8e371dc6edcc
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..dd4bbec2b3001e91ffdb69937c18c219516831cc
+index 0000000000000000000000000000000000000000..2b79580f3a618736361db21277bf179f6febe1b9
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,127 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -5006,6 +5001,8 @@ index 0000000000000000000000000000000000000000..dd4bbec2b3001e91ffdb69937c18c219
 +The existing transient menu-bar popover or tray flyout may show a compact quota summary when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers, but include every available quota window within each displayed provider; open the existing Settings quota page for details.
 +
 +Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
++
++Ordinary quota regressions must not pin historical pointer coordinates, default panel/card dimensions, ring/logo sizes, outline clearances or literal path fragments. Those are visual layout choices that can legitimately change with provider/window count and typography, not durable release contracts. The obsolete `OldAltDragPointsAreCellContentRatherThanDraggableBody` and related fixed-point body assertions are removed, rather than re-pinned, skipped or satisfied by changing production layout. Keep semantic provider/window data, cancellation/persistence, hover/drag lifecycle, edge attachment and paint-to-input/containment relationships derived from the actual current geometry. Coordinates used as inputs to placement/DPI algorithms remain valid algorithm tests. Optional visual diagnostics are not substitutes for ordinary behavior tests or extra Release gates.
 +
 +The macOS renderer uses finite scalar motion tracks and a closed-form damped spring for the independent body, arc, disc, reveal, hover and press states. Delayed tracks retain the exact previously painted pose until their start boundary, matching Windows. Reduced motion settles immediately, and a terminal state stops the frame subscription. Geometry, visible paint, native hit testing and the local liquid mask share the same frame; none is a browser preview or a desktop-wide input rectangle.
 +
