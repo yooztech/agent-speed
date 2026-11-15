@@ -206,7 +206,7 @@ the body or desktop. Mouse events and finite transitions drive updates; settled
 or hidden surfaces have no animation subscription and do not rebuild Settings
 on cursor movement.
 
-Without pointer attention, the quota surface collapses to a black 10-by-79-DIP
+By default, without pointer attention, the quota surface collapses to a black 10-by-79-DIP
 edge tab (79 by 10 on a horizontal edge). Pointer entry expands it; leaving the
 body and details card starts the existing 250-ms grace period before collapse.
 Details-card hover, an open context menu and dragging keep it expanded. Only the
@@ -248,9 +248,24 @@ still capture the painted pose before the stable four-DIP press-DPI threshold.
 Pending/active gestures hold expansion; release resamples and persists the anchor.
 Reduced motion settles every channel and idle states stop rendering.
 
-The floating details card's successful bottom label now actually reads “刚刚”,
-“X分钟前”, “X小时前” or “X天前”, derived from its original ObservedAt and localized
-in all four languages, instead of a timeless “latest”. Missing time is unknown;
+Native-dev.10 adds the Subscription switch “Keep expanded” / “保持展开” directly
+after the floating-panel visibility row, with the same OptionRow and native toggle
+style and four-language automation names. `quotaNotch.keepExpanded` defaults false;
+missing or nonboolean values preserve hover collapse without a version migration.
+It is independent of `quotaNotch.show` and monitor/edge/along placement. Enabled
+startup and re-show install an expanded body before the first visible native frame,
+even if Settings has never opened. The body and its resting entry arc stay open,
+but the six drops still require real control-family hover/hold. The switch does not
+invent pointer attention, open a card, refresh quota or reconstruct a provider.
+Turning it off applies immediately while retaining real body/card/menu/grace and
+pending/active capture attention until that interaction ends. Hide/close clear
+interaction and stop finite rendering; re-show reads the saved preference again.
+The approved dev.9 dimensions, placement, paint and liquid-control motion are unchanged.
+
+
+The floating details card's successful bottom label reads “刚刚更新”,
+“X分钟前更新”, “X小时前更新” or “X天前更新”, derived from its original ObservedAt and
+localized in all four languages (English “Updated …”), instead of a timeless “latest”. Missing time is unknown;
 future timestamps never display negative ages. Offline/error/stale/waiting and
 authentication states keep precedence. Only the visible details card and open
 tray summary run local observation-boundary clocks: a reading aged 59 or 119
@@ -258,6 +273,27 @@ seconds updates one second after opening. Snapshot/visibility changes reschedule
 the deadline; hidden/unloaded/disposed displays stop it, and the main black tab
 does not run this timer. These clocks make no HTTP requests and do not change
 provider polling, startup cache, account isolation or old/new 429 protection.
+
+Native-dev.10's final new-preference serializer/default-layout checks, Windows
+Release test cross-compile, production-settings save/reload proof, full formal
+queue tree replay and self-contained win-x64 publish are recorded in
+`artifacts/quota-native-dev-10/BUILDINFO.json` and `verification.log`. The relative-age
+wording delta comes from isolated commit `2d9e63b43df755ebddadf6e47069228eb2cf9400`;
+its agent reported QuotaFormatTests 52 passed once. That external result is
+attributed, not represented as a local dev.10 run or rerun. Core/Geometry/Motion
+checks are not rerun because those implementations did not change. Windows
+regressions cover first SourceInitialized paint/native region, pin/unpin and real
+attention/grace/card/capture/menu lifecycle, independent resting arc, hidden/re-show
+and finite/reduced motion. They are cross-compiled only here, not executed natively.
+The page-to-service regression includes disk reload and handler/factory counters
+after advancing beyond the quota floor; no native UI screenshot is claimed.
+The new package remains unpublished: no tag, push, Release or full-platform gates.
+The dev.10 source archive captures the actual current formal queue. Concurrent,
+pre-existing documentation edits in patches 0014 and 0016 are preserved, not
+replaced with dev.9 inputs. BUILDINFO records their current hashes and the final
+replayed/built tree; this task modifies none of patches 0001–0020. Narrow settings
+checks are reused only after byte-identical affected production/test source proof.
+
 
 Native-dev.9's narrow QuotaNotch Geometry/Orb/GripMotion checks, Release Windows
 test cross-compile and self-contained win-x64 publish are recorded in

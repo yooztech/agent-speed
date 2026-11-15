@@ -1,26 +1,26 @@
-From 757183248c69a8d66035e93f4cd3f8816e513e89 Mon Sep 17 00:00:00 2001
+From adf2dd15e48221f497772f1f2250bc752591ca64 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 13 Nov 2026 20:09:33 +0800
-Subject: [PATCH 21/21] Add Windows Codex quota monitoring
+Subject: [PATCH] Add Windows Codex quota monitoring
 
 ---
- spec/QUOTA.md                                 |   50 +-
+ spec/QUOTA.md                                 |   52 +-
  .../AgentSpeed.Core/AgentSpeed.Core.csproj    |    1 +
- .../src/AgentSpeed.Core/CodexQuotaProvider.cs |  411 +++++++
+ .../src/AgentSpeed.Core/CodexQuotaProvider.cs |  411 ++++++
  windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   20 +
- .../Localization/Strings.Windows.json         |   84 ++
+ .../Localization/Strings.Windows.json         |   85 ++
  .../Menus/MenuAction.cs                       |    3 +
  .../Menus/OrbMenuModel.cs                     |    2 +-
  .../Menus/QuickMenuModel.cs                   |   15 +-
- .../Settings/AppSettings.cs                   |   29 +
+ .../Settings/AppSettings.cs                   |   30 +
  .../Settings/QuotaFormat.cs                   |  112 ++
- .../Settings/QuotaNotchGeometry.cs            |  292 +++++
- .../Settings/QuotaNotchGeometryFilter.cs      |  190 ++++
+ .../Settings/QuotaNotchGeometry.cs            |  292 ++++
+ .../Settings/QuotaNotchGeometryFilter.cs      |  190 +++
  .../Settings/QuotaNotchGeometryOrb.cs         |   99 ++
- .../Settings/QuotaNotchGeometryRaster.cs      |   69 ++
- .../Settings/QuotaNotchGripMotion.cs          |  141 +++
+ .../Settings/QuotaNotchGeometryRaster.cs      |   69 +
+ .../Settings/QuotaNotchGripMotion.cs          |  141 ++
  .../Settings/QuotaNotchLayout.cs              |   79 ++
- .../Settings/SettingsSerializer.cs            |   36 +
+ .../Settings/SettingsSerializer.cs            |   38 +
  windows/src/AgentSpeed/AgentSpeed.csproj      |    6 +
  windows/src/AgentSpeed/App/AppController.cs   |   16 +
  .../AgentSpeed/Dashboard/DashboardWindow.xaml |    2 +
@@ -31,32 +31,32 @@ Subject: [PATCH 21/21] Add Windows Codex quota monitoring
  .../Settings/QuotaNotch.LICENSE.txt           |   49 +
  .../src/AgentSpeed/Settings/QuotaNotchGoo.cs  |   95 ++
  .../AgentSpeed/Settings/QuotaNotchRegion.cs   |  118 ++
- .../src/AgentSpeed/Settings/QuotaNotchView.cs |  409 +++++++
- .../AgentSpeed/Settings/QuotaNotchWindow.cs   |  753 ++++++++++++
- .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  313 +++++
- .../src/AgentSpeed/Settings/QuotaSurface.cs   |  355 ++++++
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs |  409 ++++++
+ .../AgentSpeed/Settings/QuotaNotchWindow.cs   |  759 ++++++++++
+ .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  315 +++++
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   |  355 +++++
  .../AgentSpeed/Settings/SettingsViewModel.cs  |    1 +
  .../AgentSpeed/Settings/SettingsWindow.xaml   |   12 +-
  .../Settings/SettingsWindow.xaml.cs           |   27 +-
  windows/src/AgentSpeed/Theme/Styles.xaml      |    4 +-
- .../CodexQuotaProviderTests.cs                |  727 ++++++++++++
+ .../CodexQuotaProviderTests.cs                |  727 ++++++++++
  .../OrbMenuModelTests.cs                      |   43 +-
- .../QuotaFormatTests.cs                       |  265 +++++
- .../QuotaNotchFilterParityTests.cs            |  209 ++++
+ .../QuotaFormatTests.cs                       |  251 ++++
+ .../QuotaNotchFilterParityTests.cs            |  209 +++
  .../QuotaNotchGeometryFilterTests.cs          |   35 +
- .../QuotaNotchGeometryOrbTests.cs             |  139 +++
+ .../QuotaNotchGeometryOrbTests.cs             |  139 ++
  .../QuotaNotchGeometryRasterTests.cs          |   29 +
- .../QuotaNotchGeometryTests.cs                |  215 ++++
- .../QuotaNotchGripMotionTests.cs              |  137 +++
- .../QuotaNotchLayoutTests.cs                  |  230 ++++
+ .../QuotaNotchGeometryTests.cs                |  215 +++
+ .../QuotaNotchGripMotionTests.cs              |  137 ++
+ .../QuotaNotchLayoutTests.cs                  |  241 ++++
  .../Reporting/ReportMenuTests.cs              |   11 +-
- .../SettingsSerializerTests.cs                |   71 ++
+ .../SettingsSerializerTests.cs                |  109 ++
  .../QuotaDisplayClockTests.cs                 |   63 +
- .../QuotaNotchViewTests.cs                    |  302 +++++
- .../QuotaNotchWindowTests.cs                  | 1013 +++++++++++++++++
- .../QuotaSettingsPageTests.cs                 |  352 ++++++
- .../QuotaSurfaceTests.cs                      |  402 +++++++
- 52 files changed, 8057 insertions(+), 45 deletions(-)
+ .../QuotaNotchViewTests.cs                    |  302 ++++
+ .../QuotaNotchWindowTests.cs                  | 1255 +++++++++++++++++
+ .../QuotaSettingsPageTests.cs                 |  386 +++++
+ .../QuotaSurfaceTests.cs                      |  505 +++++++
+ 52 files changed, 8485 insertions(+), 45 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
@@ -91,7 +91,7 @@ Subject: [PATCH 21/21] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index e0a41411..88825b56 100644
+index e0a41411..b6aeba76 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,7 +1,9 @@
@@ -113,7 +113,7 @@ index e0a41411..88825b56 100644
  
  A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`, and `duration`. `id` is stable and unique within a snapshot; `label` is display text. For Codex windows, `usedFraction` and `used` are the reported percentage divided by 100, and `remaining` is 1 minus that fraction. These nullable fractions are not absolute counts and are not clamped: usage may exceed 1 and remaining may be negative. Zero is known zero, not unknown. `resetAt` is a nullable absolute instant and `duration` is a nullable window length in seconds. Unknown fields remain null, including an unknown fraction on an otherwise valid window.
  
-@@ -36,13 +39,50 @@ A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`,
+@@ -36,13 +39,52 @@ A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`,
  * `error`: a network, decoding, service, or other failure that does not establish a more specific state.
  
  An authentication failure must not be represented as zero usage. If old data is retained, it must be visibly stale; a previous timestamp must never be advanced on an unsuccessful refresh. Rate limiting is a transient failure, not an empty successful observation. Respect server retry guidance and avoid repeatedly querying the endpoint while it is rate-limited.
@@ -133,7 +133,7 @@ index e0a41411..88825b56 100644
 +
 +Windows quota graphics show remaining allowance: `clamp(1 - usedFraction, 0, 1)` fills bars and rings, while labels preserve the actual remaining value and unknown stays unknown. Warning thresholds still use actual used quota. The underlying snapshot's `usedFraction` is never inverted. Persisted `quota.sources` and `quota.autoRefresh` control enabled sources and automatic versus manual refresh; manual refresh still obeys the provider's existing floor and backoff.
 +
-+The Windows floating details card's bottom successful-observation label is a short relative age derived from the original `observedAt`, not a timeless “latest” indicator: “Just now”, whole minutes, whole hours or whole days (Simplified Chinese: “刚刚”, “X分钟前”, “X小时前”, “X天前”; Traditional Chinese and Japanese are localized too). Missing `observedAt` is unknown and future observations never produce negative ages. Offline, stale, waiting, authentication and error states keep precedence. The details card and an open tray summary refresh only their visible local labels at the next observation-relative minute boundary: opening an observation aged 59 or 119 seconds schedules one second, not another full minute. Recompute the deadline after snapshot/visibility changes, clamp sub-millisecond deadlines to one millisecond, and stop on hidden/unloaded/disposed displays. The collapsed/main quota window has no age timer. These clocks never request HTTP or alter provider polling/backoff; Subscription's approved absolute update timestamp and reset-countdown layout remain unchanged.
++The Windows floating details card's bottom successful-observation label is a short relative update age derived from the original `observedAt`, not a timeless “latest” indicator: “Updated just now”, “Updated Xm ago”, “Updated Xh ago” or “Updated Xd ago” (Simplified Chinese: “刚刚更新”, “X分钟前更新”, “X小时前更新”, “X天前更新”; Traditional Chinese and Japanese are localized too). Missing `observedAt` is unknown and future observations never produce negative ages. Offline, stale, waiting, authentication and error states keep precedence. The details card and an open tray summary refresh only their visible local labels at the next observation-relative minute boundary: opening an observation aged 59 or 119 seconds schedules one second, not another full minute. Recompute the deadline after snapshot/visibility changes, clamp sub-millisecond deadlines to one millisecond, and stop on hidden/unloaded/disposed displays. The collapsed/main quota window has no age timer. These clocks never request HTTP or alter provider polling/backoff; Subscription's approved absolute update timestamp and reset-countdown layout remain unchanged.
 +
 +Windows quota startup belongs to the application, not any visible surface. With a supported source enabled, hydrate the current account's last successful observation immediately, including when network access is disabled. Independently attempt one startup refresh as soon as networking is permitted, even in manual periodic-refresh mode and without opening Settings or the floating panel. This one-shot startup request may bypass only the ordinary five-minute floor following a successful observation; persisted 429 Retry-After, failure backoff and unchanged-token authentication rejection still apply. Source and network toggles within the same Surface lifetime do not repeatedly grant this exception. Automatic mode then continues the normal five-minute cadence while all surfaces are closed; manual mode stops periodic requests. Explicit non-startup refreshes still obey the ordinary floor and backoff. Network errors retain the last good snapshot with its original observation time. Cancellation, disposal and account/token changes must prevent obsolete in-flight results from replacing the currently displayed account or its persisted snapshot.
 +For migration, a legacy Windows schedule without a validated version-1 account snapshot cannot distinguish a normal successful floor from an optional reset-credit 429 extension. Preserve its future `NextAllowedAt` rather than granting the startup bypass. After that deadline, a successful request upgrades the structured snapshot and independent retry deadline; subsequent application starts may bypass only the ordinary successful floor.
@@ -142,7 +142,9 @@ index e0a41411..88825b56 100644
 +
 +The main HWND keeps a bounded animation canvas stable while the painted shape changes. Its actual input region excludes unused canvas except for the small control padding and narrow connecting routes described below; this is not a screen-sized interception rectangle. The body-center anchor remains stable while expanding, collapsing and dragging. This stationary-anchor principle was also cross-checked against [WIsland's native Qt window](https://github.com/AsamiAkito/wisland/blob/11ebd0f0a3af2afcb5b8a4d9792f4f6f011f53f4/wisland/ui/island.py); desktop capture, constant compact animation and cursor polling are not used. The control-pocket liquid filter, tight local source rasterizer and shared alpha-mask input conversion run only for finite arc/disc/drop transitions, not for the body or desktop. The native region converter treats a null flattened transform as identity before appending DPI, and frozen parsed paths receive transforms through an immutable parent geometry group.
 +
-+Without pointer attention, the Windows panel starts and rests as the canonical collapsed `CreateMain(0)` strip: 10 by 79 DIP on vertical edges or 79 by 10 DIP on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
++By default, without pointer attention, the Windows panel starts and rests as the canonical collapsed `CreateMain(0)` strip: 10 by 79 DIP on vertical edges or 79 by 10 DIP on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
++
++The Windows Subscription preference “Keep expanded” (Simplified Chinese: “保持展开”) sits immediately after the floating-panel visibility switch. It defaults off and persists as the boolean `quotaNotch.keepExpanded`, independently of `quotaNotch.show` and monitor/edge/along placement; missing or nonboolean values retain the off default without a settings-version migration. When enabled, the first native region and first visible body are already expanded at startup or re-show, even if Settings has never been opened. Leaving the panel does not collapse its body. This preference changes only the body target: it does not synthesize pointer attention, reveal the six-dot grip, open an account card, refresh quota or rebuild a provider. The resting arc still follows body expansion and the arc/disc/dots retain their independent real hover/held interaction. Disabling the preference applies immediately but preserves any real body/card/menu/grace/pending-drag/active-drag attention until that interaction ends. Hide/close clear interaction and stop finite motion; re-show reads the preference again, and settled pinned rest has no continuous rendering subscription.
 +
 +The expanded Windows floating panel has an independently visible quarter-circle affordance in the trailing flare pocket. This is not the body's outline, a blank body hotspot, an internal footer or a settings shortcut. Settings remains available through the context menu and tray/main Settings entry; no gear or permanent disc is restored. The original Codenotch `SettingsHandle.swift` describes the arc as saying "there is something here". Its Windows geometry (`windows/codenotch/ui/notch.html` at `835550a`, lines 1983–1984 and 2223–2354) supplies GooArc, DiscToArc and DiscMerge shapes. Arc and temporary disc retain their 0.9 reference scale: arc radius 25.65 DIP, fill stroke 6.12 with an 8.12-DIP outer stroke, and disc radius 20.97. The enlarged dot grid is independently 8.0-DIP neutral diameter and 12.5-DIP pitch, with the existing 30% hover growth to 10.4 DIP, one-DIP outlines and held squeeze ratios unchanged. Do not globally enlarge the arc or body to enlarge the dots. All are derived from the flare center `(38.7, BodyEnd + 38.7)`; the final grid moves only eight DIP along the edge from that center rather than adding the original 43.2-DIP external reach. Left/right grids are three columns by two rows; the same edge transform makes top/bottom grids two columns by three rows. Fill and one-DIP dot/disc outlines use the panel palette (dark `#000000`/`#2e2e2e`, light `#f5f5f7`/`#d2d2d7`), not six bright white ink dots.
 +
@@ -166,7 +168,7 @@ index e0a41411..88825b56 100644
  
  The existing transient menu-bar popover or tray flyout may show a compact quota summary only when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers; open the existing Settings quota page for details.
  
-@@ -61,7 +101,7 @@ The first command runs the ordinary geometry, typography, animation interpolatio
+@@ -61,7 +103,7 @@ The first command runs the ordinary geometry, typography, animation interpolatio
  
  The optional captures pin reduced motion on and reduced transparency off through `QuotaNotchRenderingPreferences`. Without an explicit input, the unchanged production view reads the real SwiftUI accessibility environment and passes the resolved preferences to the orb. The optional harness exercises both explicit preference flags and observes the real render environment without assigning its read-only properties. Ordinary tests do not retain standalone preference-wiring equality assertions in place of the moved visual checks. Public immutable quota snapshot/window value initializers support synthetic harness input without `@testable` imports; provider parsing, polling, credentials, and runtime UI paint are unchanged.
  
@@ -175,7 +177,7 @@ index e0a41411..88825b56 100644
  
  The optional visual harness retains the canonical native paint control with the same pixel-aligned overlapping strokes: the white 18.8% track, #00ff88 progress, and outer 45% stale opacity (75% with reduced transparency) over opaque black, plus a full-strength control. Opacity is not an encoded sRGB channel value: comparing a final green sample directly with 0.45 or 0.75 ignores native compositing, the track, and color-space conversion. All RGB samples are converted with `NSColor.usingColorSpace(NSColorSpace.sRGB)` and decoded to linear light before comparison with matched controls; both the progress-over-track and uncovered-track samples are checked. Fresh, stale, offline, and unknown states use the same unchanged thresholds and rendering contract. These optional controls establish compositing correctness, not pixel identity to a captured Codenotch screenshot.
  
-@@ -76,6 +116,8 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
+@@ -76,6 +118,8 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
  `GET https://chatgpt.com/backend-api/wham/usage` uses the local Codex session's bearer access token and `ChatGPT-Account-Id`; `Accept: application/json` requests JSON. Never place either credential in fixtures or logs. `plan_type` is the plan when supplied. The main `rate_limit.primary_window` and `rate_limit.secondary_window` are independent; parse each without discarding a valid sibling because another is null or malformed. A window's numeric `used_percent` converts to `usedFraction` by dividing by 100 without clamping. `limit_window_seconds` gives duration. `reset_at` is Unix epoch seconds; when absent, `reset_after_seconds` is relative to the observation time. Null or omitted data stays unknown. A non-null 0 percentage is a valid measurement.
  `additional_rate_limits` is an array of feature-scoped rate-limit objects (`limit_name`, `metered_feature`, `rate_limit`), not a replacement for the main account windows. `code_review_rate_limit` may contain another pair. Preserve source scope when representing these windows. A malformed extra must not destroy usable main data. `spend_control.individual_limit` is a separate credit-backed allowance: its `limit` and `used` can be decimal strings, `used_percent` is a percentage, and `reset_at` is epoch seconds. The response's `credits` balance is distinct from that allowance and from unused reset credits at the separate `/wham/rate-limit-reset-credits` endpoint; none is interchangeable with another.
  
@@ -639,10 +641,10 @@ index 00000000..91e5af4c
 +    ]);
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
-index 9e3d20ca..2c9b09e6 100644
+index 9e3d20ca..c79fdd36 100644
 --- a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
 +++ b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
-@@ -1,5 +1,89 @@
+@@ -1,5 +1,90 @@
  {
    "_comment": "Windows-only UI strings. Same format as spec/strings.json; every key needs zh-Hant, zh-Hans, en and ja.",
 +  "win.quota.title": {"zh-Hant":"訂閱","zh-Hans":"订阅","en":"Subscriptions","ja":"サブスクリプション"},
@@ -659,6 +661,7 @@ index 9e3d20ca..2c9b09e6 100644
 +  "win.menu.hideQuotaFloating": {"zh-Hant":"隱藏額度懸浮窗","zh-Hans":"隐藏额度悬浮窗","en":"Hide quota floating panel","ja":"使用枠のフローティングパネルを隠す"},
 +  "win.quota.refresh": {"zh-Hant":"立即重新整理","zh-Hans":"立即刷新","en":"Refresh now","ja":"今すぐ更新"},
 +  "win.quota.showNotch": {"zh-Hant":"顯示額度懸浮窗","zh-Hans":"显示额度悬浮窗","en":"Show floating quota panel","ja":"使用枠のフローティング表示"},
++  "win.quota.keepExpanded": {"zh-Hant":"保持展開","zh-Hans":"保持展开","en":"Keep expanded","ja":"展開したままにする"},
 +  "win.quota.hideNotch": {"zh-Hant":"隱藏額度懸浮面板","zh-Hans":"隐藏额度悬浮面板","en":"Hide floating quota notch","ja":"使用枠のフローティング表示を隠す"},
 +  "win.quota.notchInitializationFailed": {"zh-Hant":"無法啟動額度懸浮面板。請關閉並重新開啟此選項，或重新啟動 Agent Speed。","zh-Hans":"无法启动额度悬浮面板。请关闭并重新开启此选项，或重新启动 Agent Speed。","en":"Could not start the floating quota panel. Turn this option off and on, or restart Agent Speed.","ja":"使用枠のフローティング表示を開始できませんでした。この設定をオフにして再度オンにするか、Agent Speed を再起動してください。"},
 +  "win.quota.empty": {"zh-Hant":"尚無額度資料。","zh-Hans":"尚无额度数据。","en":"No quota data yet.","ja":"使用枠データはまだありません。"},
@@ -695,10 +698,10 @@ index 9e3d20ca..2c9b09e6 100644
 +  "win.quota.unlimited": {"zh-Hant":"無限制","zh-Hans":"无限制","en":"Unlimited","ja":"無制限"},
 +  "win.quota.yes": {"zh-Hant":"是","zh-Hans":"是","en":"Yes","ja":"はい"},
 +  "win.quota.no": {"zh-Hant":"否","zh-Hans":"否","en":"No","ja":"いいえ"},
-+  "win.quota.justNow": {"zh-Hant":"剛剛","zh-Hans":"刚刚","en":"Just now","ja":"たった今"},
-+  "win.quota.minutesAgo": {"zh-Hant":"%@分鐘前","zh-Hans":"%@分钟前","en":"%@m ago","ja":"%@分前"},
-+  "win.quota.hoursAgo": {"zh-Hant":"%@小時前","zh-Hans":"%@小时前","en":"%@h ago","ja":"%@時間前"},
-+  "win.quota.daysAgo": {"zh-Hant":"%@天前","zh-Hans":"%@天前","en":"%@d ago","ja":"%@日前"},
++  "win.quota.justNow": {"zh-Hant":"剛剛更新","zh-Hans":"刚刚更新","en":"Updated just now","ja":"たった今更新"},
++  "win.quota.minutesAgo": {"zh-Hant":"%@分鐘前更新","zh-Hans":"%@分钟前更新","en":"Updated %@m ago","ja":"%@分前に更新"},
++  "win.quota.hoursAgo": {"zh-Hant":"%@小時前更新","zh-Hans":"%@小时前更新","en":"Updated %@h ago","ja":"%@時間前に更新"},
++  "win.quota.daysAgo": {"zh-Hant":"%@天前更新","zh-Hans":"%@天前更新","en":"Updated %@d ago","ja":"%@日前に更新"},
 +  "win.quota.stale": {"zh-Hant":"資料已過期","zh-Hans":"数据已过期","en":"Stale","ja":"古いデータ"},
 +  "win.quota.needsauth": {"zh-Hant":"請登入","zh-Hans":"请登录","en":"Sign in required","ja":"サインインが必要"},
 +  "win.quota.accessdenied": {"zh-Hant":"存取遭拒","zh-Hans":"访问被拒绝","en":"Access denied","ja":"アクセス拒否"},
@@ -800,7 +803,7 @@ index a7ad8b4d..9a7e3fde 100644
      private static MenuRow OrbsMenu(AppSettings settings, IEnumerable<OrbDefinition> orbs, SourceAvailability sources, Localizer localizer,
          bool sourceTraffic) =>
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
-index 491527f3..b2627180 100644
+index 491527f3..704ba04a 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
 @@ -70,6 +70,7 @@ public sealed record AppSettings
@@ -811,11 +814,12 @@ index 491527f3..b2627180 100644
  
      public static AppSettings Default { get; } = new();
  
-@@ -98,6 +99,17 @@ public sealed record AppSettings
+@@ -98,6 +99,18 @@ public sealed record AppSettings
  
      public bool ShowOnTaskbar { get; init; } = true;
  
 +    public bool ShowQuotaNotch { get; init; } = true;
++    public bool KeepQuotaNotchExpanded { get; init; }
 +    public string QuotaNotchEdge { get; init; } = "right";
 +    public double QuotaNotchAlong { get; init; } = .5;
 +    public string? QuotaNotchMonitor { get; init; }
@@ -829,7 +833,7 @@ index 491527f3..b2627180 100644
      public BarDisplayMode BarMode { get; init; } = BarDisplayMode.GlyphAndValue;
  
      public bool BarColoredGlyph { get; init; } = true;
-@@ -131,6 +143,7 @@ public sealed record AppSettings
+@@ -131,6 +144,7 @@ public sealed record AppSettings
      /// <summary>Master switch of all floating orbs (DESIGN 2b); files without it take <see cref="ShowOrb"/>.</summary>
      public bool ShowOrbs { get; init; } = true;
  
@@ -837,7 +841,7 @@ index 491527f3..b2627180 100644
      /// <summary>Every floating orb and its positions per display arrangement (settings value <c>orbs</c>).</summary>
      public OrbsDocument Orbs { get; init; } = OrbsDocument.ProcessDefault;
  
-@@ -388,6 +401,10 @@ public sealed record AppSettings
+@@ -388,6 +402,10 @@ public sealed record AppSettings
          RedlineTotal = HeatMath.ClampRedlineTotal(RedlineTotal),
          BarMode = Enum.IsDefined(BarMode) ? BarMode : BarDisplayMode.GlyphAndValue,
          TaskbarOffset = TaskbarPosition.Normalize(TaskbarOffset),
@@ -848,7 +852,7 @@ index 491527f3..b2627180 100644
          OrbSize = double.IsFinite(OrbSize) ? Math.Clamp(Math.Round(OrbSize), MinOrbSize, MaxOrbSize) : DefaultOrbSize,
          OrbOpacity = double.IsFinite(OrbOpacity) ? Math.Clamp(OrbOpacity, MinOrbOpacity, MaxOrbOpacity) : MaxOrbOpacity,
          Effects = Enum.IsDefined(Effects) ? Effects : EffectsIntensity.Standard,
-@@ -455,6 +472,18 @@ public sealed record AppSettings
+@@ -455,6 +473,18 @@ public sealed record AppSettings
              : builder.ToImmutable();
      }
  
@@ -1892,15 +1896,16 @@ index 00000000..2c476469
 +
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs b/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
-index 760f5860..5082b254 100644
+index 760f5860..3df50319 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
-@@ -58,6 +58,21 @@ public static class SettingsSerializer
+@@ -58,6 +58,22 @@ public static class SettingsSerializer
              w.WriteNumber("offset", s.TaskbarOffset);
              w.WriteEndObject();
  
 +            w.WriteStartObject("quotaNotch");
 +            w.WriteBoolean("show", s.ShowQuotaNotch);
++            w.WriteBoolean("keepExpanded", s.KeepQuotaNotchExpanded);
 +            w.WriteString("edge", s.QuotaNotchEdge);
 +            w.WriteNumber("along", s.QuotaNotchAlong);
 +            if (s.QuotaNotchMonitor is not null) w.WriteString("monitor", s.QuotaNotchMonitor);
@@ -1917,7 +1922,7 @@ index 760f5860..5082b254 100644
              w.WriteStartObject("orb");
              w.WriteBoolean("show", s.ShowOrb);
              w.WriteNumber("size", s.OrbSize);
-@@ -231,6 +246,8 @@ public static class SettingsSerializer
+@@ -231,6 +247,8 @@ public static class SettingsSerializer
  
          var d = AppSettings.Default;
          var taskbar = Child(root, "taskbar");
@@ -1926,11 +1931,12 @@ index 760f5860..5082b254 100644
          var orb = Child(root, "orb");
          var effects = Child(root, "effects");
          var sources = Child(root, "sources");
-@@ -261,6 +278,13 @@ public static class SettingsSerializer
+@@ -261,6 +279,14 @@ public static class SettingsSerializer
              BarSecondary = ReadBool(taskbar, "secondary", d.BarSecondary),
              BarIntelligence = legacyIntelligence || ReadBool(taskbar, "intelligence", d.BarIntelligence),
              TaskbarOffset = ReadDouble(taskbar, "offset", d.TaskbarOffset),
 +            ShowQuotaNotch = ReadBool(quotaNotch, "show", d.ShowQuotaNotch),
++            KeepQuotaNotchExpanded = ReadBool(quotaNotch, "keepExpanded", d.KeepQuotaNotchExpanded),
 +            QuotaNotchEdge = ReadString(quotaNotch, "edge") ?? d.QuotaNotchEdge,
 +            QuotaNotchAlong = ReadDouble(quotaNotch, "along", d.QuotaNotchAlong),
 +            QuotaNotchMonitor = ReadString(quotaNotch, "monitor"),
@@ -1940,7 +1946,7 @@ index 760f5860..5082b254 100644
              ShowOrb = ReadBool(orb, "show", d.ShowOrb),
              ShowOrbs = ReadBool(root, "showOrbs", ReadBool(orb, "show", d.ShowOrb)),
              OrbNames = OrbNamesModes.Parse(ReadString(root, "orbNames")),
-@@ -346,6 +370,18 @@ public static class SettingsSerializer
+@@ -346,6 +372,18 @@ public static class SettingsSerializer
          };
      }
  
@@ -2873,10 +2879,10 @@ index 00000000..bd82986c
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
 new file mode 100644
-index 00000000..7a21c59a
+index 00000000..87db0a22
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
-@@ -0,0 +1,753 @@
+@@ -0,0 +1,759 @@
 +using System.ComponentModel;
 +using System.Diagnostics;
 +using System.Windows;
@@ -3016,6 +3022,8 @@ index 00000000..7a21c59a
 +            _region.Apply(_hwnd, Geometry.Empty, Matrix.Identity);
 +            _stage = "main.card-owner";
 +            _card.Owner = this;
++            // Seed the first painted/native region before Show can expose a collapsed frame.
++            _expansion = _toExpansion = _settings.Current.KeepQuotaNotchExpanded ? 1 : 0;
 +            Place();
 +        }
 +        catch (Exception ex) { Fail(ex); }
@@ -3309,13 +3317,14 @@ index 00000000..7a21c59a
 +
 +    private void UpdateTargets()
 +    {
-+        var attention = IsVisible && !_failed && !_closed && (_mainInside || _cardInside || _menuOpen || _leaveGrace.IsEnabled || _dragging || _pendingDrag);
++        var visible = IsVisible && !_failed && !_closed;
++        var attention = visible && (_mainInside || _cardInside || _menuOpen || _leaveGrace.IsEnabled || _dragging || _pendingDrag);
 +        if (_attention != attention)
 +        {
 +            _attention = attention;
 +            AttentionChanged?.Invoke(attention);
 +        }
-+        var expansion = attention ? 1d : 0d;
++        var expansion = visible && (_settings.Current.KeepQuotaNotchExpanded || attention) ? 1d : 0d;
 +        if (_toExpansion != expansion)
 +        {
 +            _toExpansion = expansion;
@@ -3323,7 +3332,7 @@ index 00000000..7a21c59a
 +        }
 +        bool held = _pressed.Target == QuotaNotchTarget.Grip && (_pendingDrag || _dragging);
 +        bool hoverGrip = _mainInside && _view.HitTestTarget(_pointerLocal).Target == QuotaNotchTarget.Grip;
-+        bool expanded = IsVisible && attention && (_reduceMotion || _expansion >= 1);
++        bool expanded = visible && _toExpansion == 1 && (_reduceMotion || _expansion >= 1);
 +        bool reveal = expanded && (held || hoverGrip);
 +        _gripMotion.SetTargets(expanded, reveal, hoverGrip, held, MotionNow, _reduceMotion);
 +        if (_reduceMotion || !IsVisible || _closed || _failed) { SettleMotion(); return; }
@@ -3531,6 +3540,8 @@ index 00000000..7a21c59a
 +        if (IsVisible)
 +        {
 +            if (_failed) { Hide(); return; }
++            _expansion = _toExpansion = _settings.Current.KeepQuotaNotchExpanded ? 1 : 0;
++            _expansionRun = default;
 +            UpdateTargets();
 +            Place();
 +            return;
@@ -3557,6 +3568,7 @@ index 00000000..7a21c59a
 +    private void SettingsChanged(object? sender, SettingsChangedEventArgs e)
 +    {
 +        if (!e.Current.ShowQuotaNotch && IsVisible) Hide();
++        UpdateTargets();
 +        Place();
 +    }
 +
@@ -3632,10 +3644,10 @@ index 00000000..7a21c59a
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 new file mode 100644
-index 00000000..750f766d
+index 00000000..99a3917a
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,315 @@
 +using System.Windows;
 +using System.Windows.Controls;
 +using System.Windows.Shapes;
@@ -3649,7 +3661,7 @@ index 00000000..750f766d
 +namespace AgentSpeed.Settings;
 +
 +internal sealed record QuotaPageState(IReadOnlyList<QuotaSnapshot> Snapshots, IReadOnlyList<string> EnabledSources,
-+    bool AutoRefresh, bool NetworkEnabled, bool IsRefreshing, bool ShowNotch, string? NotchError, bool AllSources);
++    bool AutoRefresh, bool NetworkEnabled, bool IsRefreshing, bool ShowNotch, bool KeepNotchExpanded, string? NotchError, bool AllSources);
 +
 +/// <summary>The account list and subscription preferences in Settings.</summary>
 +internal sealed class QuotaSettingsPage : Border, IDisposable
@@ -3659,7 +3671,7 @@ index 00000000..750f766d
 +        Blue = "AccentFillColorDefaultBrush", Amber = "SystemFillColorCautionBrush";
 +    private readonly Localizer _loc;
 +    private readonly Action _refresh;
-+    private readonly Action<bool> _autoRefreshChanged, _showNotchChanged, _allSourcesChanged;
++    private readonly Action<bool> _autoRefreshChanged, _showNotchChanged, _keepNotchExpandedChanged, _allSourcesChanged;
 +    private readonly Action<string, bool> _sourceChanged;
 +    private readonly Func<DateTimeOffset> _now;
 +    private readonly DispatcherTimer _clockTimer;
@@ -3667,11 +3679,12 @@ index 00000000..750f766d
 +    private bool _active, _disposed;
 +
 +    public QuotaSettingsPage(Localizer loc, Action refresh, Action<bool> autoRefreshChanged,
-+        Action<string, bool> sourceChanged, Action<bool> showNotchChanged, Action<bool> allSourcesChanged,
++        Action<string, bool> sourceChanged, Action<bool> showNotchChanged, Action<bool> keepNotchExpandedChanged, Action<bool> allSourcesChanged,
 +        Func<DateTimeOffset>? now = null)
 +    {
 +        _loc = loc; _refresh = refresh; _autoRefreshChanged = autoRefreshChanged;
 +        _sourceChanged = sourceChanged; _showNotchChanged = showNotchChanged; _allSourcesChanged = allSourcesChanged;
++        _keepNotchExpandedChanged = keepNotchExpandedChanged;
 +        _now = now ?? (() => DateTimeOffset.UtcNow);
 +        Resources["QuotaCodexSourceBrush"] = MediaColors.Frozen(MediaColors.ToColor(HeatPalette.SourceColor(SourceKind.Codex)));
 +        _clockTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
@@ -3733,6 +3746,7 @@ index 00000000..750f766d
 +        preferences.Children.Add(Text(T("preferences"), 12, Muted, margin: new Thickness(0, 0, 0, 7)));
 +        preferences.Children.Add(OptionRow(T("autoRefresh"), Toggle(T("autoRefresh"), state.AutoRefresh, _autoRefreshChanged)));
 +        preferences.Children.Add(OptionRow(T("showNotch"), Toggle(T("showNotch"), state.ShowNotch, _showNotchChanged)));
++        preferences.Children.Add(OptionRow(T("keepExpanded"), Toggle(T("keepExpanded"), state.KeepNotchExpanded, _keepNotchExpandedChanged)));
 +        if (!string.IsNullOrWhiteSpace(state.NotchError))
 +            preferences.Children.Add(Text(state.NotchError, 12, Ink, margin: new Thickness(0, 6, 0, 0)));
 +
@@ -3951,7 +3965,7 @@ index 00000000..750f766d
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 new file mode 100644
-index 00000000..43fd9920
+index 00000000..648f3aa2
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 @@ -0,0 +1,355 @@
@@ -4022,7 +4036,7 @@ index 00000000..43fd9920
 +            {
 +                _notchFailure = null;
 +                _settings.Update(s => s with { ShowQuotaNotch = enabled });
-+            }, SetAllSources, _now);
++            }, enabled => _settings.Update(s => s with { KeepQuotaNotchExpanded = enabled }), SetAllSources, _now);
 +        Render();
 +        _page.SetActive(_pageActive);
 +        return _page;
@@ -4249,7 +4263,7 @@ index 00000000..43fd9920
 +        UpdateFlyoutClock();
 +        _page?.Update(new QuotaPageState(snapshots, _settings.Current.QuotaSources,
 +            _settings.Current.AutoRefreshQuota, _settings.Current.NetworkEnabled,
-+            _busy, _settings.Current.ShowQuotaNotch,
++            _busy, _settings.Current.ShowQuotaNotch, _settings.Current.KeepQuotaNotchExpanded,
 +            _notchFailure is null ? null : Text("notchInitializationFailed"), _settings.Current.QuotaAllSources));
 +    }
 +
@@ -5272,10 +5286,10 @@ index a287b483..5f7e162d 100644
      [Fact]
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 new file mode 100644
-index 00000000..0b31784d
+index 00000000..a4380803
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,251 @@
 +using AgentSpeed.Core;
 +using AgentSpeed.Presentation.Localization;
 +using AgentSpeed.Presentation.Settings;
@@ -5389,8 +5403,8 @@ index 00000000..0b31784d
 +    }
 +
 +    [Theory]
-+    [InlineData(59, "1m ago")]
-+    [InlineData(119, "2m ago")]
++    [InlineData(59, "Updated 1m ago")]
++    [InlineData(119, "Updated 2m ago")]
 +    public void DisplayOpenedJustBeforeAgeBoundarySchedulesOnlyRemainingSecond(int seconds, string nextText)
 +    {
 +        var snapshot = Snapshot(QuotaStatus.Ok, []) with { ObservedAt = Now.AddSeconds(-seconds) };
@@ -5410,16 +5424,16 @@ index 00000000..0b31784d
 +    }
 +
 +    [Theory]
-+    [InlineData(-86400, "Just now")]
-+    [InlineData(0, "Just now")]
-+    [InlineData(59, "Just now")]
-+    [InlineData(60, "1m ago")]
-+    [InlineData(119, "1m ago")]
-+    [InlineData(3599, "59m ago")]
-+    [InlineData(3600, "1h ago")]
-+    [InlineData(86399, "23h ago")]
-+    [InlineData(86400, "1d ago")]
-+    [InlineData(172800, "2d ago")]
++    [InlineData(-86400, "Updated just now")]
++    [InlineData(0, "Updated just now")]
++    [InlineData(59, "Updated just now")]
++    [InlineData(60, "Updated 1m ago")]
++    [InlineData(119, "Updated 1m ago")]
++    [InlineData(3599, "Updated 59m ago")]
++    [InlineData(3600, "Updated 1h ago")]
++    [InlineData(86399, "Updated 23h ago")]
++    [InlineData(86400, "Updated 1d ago")]
++    [InlineData(172800, "Updated 2d ago")]
 +    public void SuccessfulObservationUsesOriginalTimestampAndWholeAgeBoundaries(int seconds, string expected)
 +    {
 +        var observed = Now.AddSeconds(-seconds);
@@ -5428,20 +5442,6 @@ index 00000000..0b31784d
 +        Assert.Equal(observed, snapshot.ObservedAt);
 +    }
 +
-+    [Theory]
-+    [InlineData("zh-Hans", "刚刚", "1分钟前", "1小时前", "1天前")]
-+    [InlineData("zh-Hant", "剛剛", "1分鐘前", "1小時前", "1天前")]
-+    [InlineData("en", "Just now", "1m ago", "1h ago", "1d ago")]
-+    [InlineData("ja", "たった今", "1分前", "1時間前", "1日前")]
-+    public void SuccessfulObservationAgeIsShortAndLocalized(string language, string justNow, string minute, string hour, string day)
-+    {
-+        var loc = new Localizer(Localizer.LoadEmbeddedTable(), language);
-+        var snapshot = Snapshot(QuotaStatus.Ok, []) with { ObservedAt = Now };
-+        Assert.Equal(justNow, QuotaFormat.Status(loc, true, snapshot, Now.AddSeconds(59)));
-+        Assert.Equal(minute, QuotaFormat.Status(loc, true, snapshot, Now.AddMinutes(1)));
-+        Assert.Equal(hour, QuotaFormat.Status(loc, true, snapshot, Now.AddHours(1)));
-+        Assert.Equal(day, QuotaFormat.Status(loc, true, snapshot, Now.AddDays(1)));
-+    }
 +
 +    [Fact]
 +    public void MissingObservationCannotClaimToBeFresh()
@@ -5478,8 +5478,8 @@ index 00000000..0b31784d
 +        var snapshot = Snapshot(QuotaStatus.Ok, [Window(TimeSpan.FromHours(5), .2)]) with { ObservedAt = Now };
 +        var minute = QuotaFormat.NotchProjection(Loc, true, snapshot, Now.AddMinutes(1));
 +        var hour = QuotaFormat.NotchProjection(Loc, true, snapshot, Now.AddHours(1));
-+        Assert.Equal("1m ago", minute.Note);
-+        Assert.Equal("1h ago", hour.Note);
++        Assert.Equal("Updated 1m ago", minute.Note);
++        Assert.Equal("Updated 1h ago", hour.Note);
 +        Assert.Equal("ok", hour.Status);
 +        Assert.Equal(Now, hour.ObservedAt);
 +        Assert.Same(snapshot.Windows, hour.Windows);
@@ -6343,10 +6343,10 @@ index 00000000..c5a1bb59
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs
 new file mode 100644
-index 00000000..20577fbd
+index 00000000..27db5c22
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,241 @@
 +using AgentSpeed.Presentation.Layout;
 +using AgentSpeed.Presentation.Settings;
 +
@@ -6354,6 +6354,17 @@ index 00000000..20577fbd
 +
 +public class QuotaNotchLayoutTests
 +{
++    [Fact]
++    public void FloatingPanelDefaultsToVisibleHoverCollapsedAtTheRightEdge()
++    {
++        var settings = AppSettings.Default;
++        Assert.True(settings.ShowQuotaNotch);
++        Assert.False(settings.KeepQuotaNotchExpanded);
++        Assert.Equal("right", settings.QuotaNotchEdge);
++        Assert.Equal(.5, settings.QuotaNotchAlong);
++        Assert.Null(settings.QuotaNotchMonitor);
++    }
++
 +    [Fact]
 +    public void HiddenNotchAndPlacementSurviveSettingsRoundTrip()
 +    {
@@ -6607,10 +6618,10 @@ index aaa5ffb2..630baf40 100644
  
      [Theory]
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
-index 9d8b6424..e1611d6b 100644
+index 9d8b6424..a346f35a 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
-@@ -93,6 +93,77 @@ public class SettingsSerializerTests
+@@ -93,6 +93,115 @@ public class SettingsSerializerTests
          Assert.Equal(d, d.Validated() with { OrbAnchors = d.OrbAnchors });
      }
  
@@ -6639,6 +6650,44 @@ index 9d8b6424..e1611d6b 100644
 +        Assert.Empty(quota.GetProperty("sources").EnumerateArray());
 +        Assert.False(quota.GetProperty("autoRefresh").GetBoolean());
 +        Assert.False(quota.GetProperty("allSources").GetBoolean());
++    }
++
++    [Theory]
++    [InlineData(false, false)]
++    [InlineData(false, true)]
++    [InlineData(true, false)]
++    [InlineData(true, true)]
++    public void QuotaKeepExpandedRoundTripsIndependentlyOfVisibilityAndPlacement(bool show, bool keepExpanded)
++    {
++        var selected = (AppSettings.Default with
++        {
++            ShowQuotaNotch = show, KeepQuotaNotchExpanded = keepExpanded,
++            QuotaNotchEdge = "bottom", QuotaNotchAlong = .2, QuotaNotchMonitor = "display-two"
++        }).Validated();
++        var json = SettingsSerializer.Serialize(selected);
++        using var document = JsonDocument.Parse(json);
++        Assert.Equal(keepExpanded, document.RootElement.GetProperty("quotaNotch").GetProperty("keepExpanded").GetBoolean());
++        var restored = SettingsSerializer.Deserialize(json);
++        Assert.Equal(show, restored.ShowQuotaNotch);
++        Assert.Equal(keepExpanded, restored.KeepQuotaNotchExpanded);
++        Assert.Equal("bottom", restored.QuotaNotchEdge);
++        Assert.Equal(.2, restored.QuotaNotchAlong);
++        Assert.Equal("display-two", restored.QuotaNotchMonitor);
++    }
++
++    [Theory]
++    [InlineData("{}")]
++    [InlineData("{\"quotaNotch\":{\"show\":true,\"edge\":\"left\"}}")]
++    [InlineData("{\"quotaNotch\":{\"keepExpanded\":null}}")]
++    [InlineData("{\"quotaNotch\":{\"keepExpanded\":\"true\"}}")]
++    [InlineData("{\"quotaNotch\":{\"keepExpanded\":1}}")]
++    [InlineData("{\"quotaNotch\":{\"keepExpanded\":{}}}")]
++    public void QuotaKeepExpandedMissingOrInvalidKeepsHoverDefault(string json)
++    {
++        var restored = SettingsSerializer.Deserialize(json);
++        Assert.False(restored.KeepQuotaNotchExpanded);
++        Assert.True(restored.ShowQuotaNotch);
++        Assert.False(SettingsSerializer.Deserialize(SettingsSerializer.Serialize(restored)).KeepQuotaNotchExpanded);
 +    }
 +
 +    [Theory]
@@ -7067,10 +7116,10 @@ index 00000000..5e1a9af2
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
 new file mode 100644
-index 00000000..e22f837a
+index 00000000..4d3150de
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchWindowTests.cs
-@@ -0,0 +1,1013 @@
+@@ -0,0 +1,1255 @@
 +using System.IO;
 +using System.Net.Http;
 +using System.Collections;
@@ -7179,6 +7228,221 @@ index 00000000..e22f837a
 +            AssertInRegion(region, device.Transform(blank), false);
 +        }
 +        finally { DeleteObject(region); }
++    });
++
++    [Theory]
++    [InlineData("left", false)]
++    [InlineData("right", false)]
++    [InlineData("top", false)]
++    [InlineData("bottom", false)]
++    [InlineData("left", true)]
++    [InlineData("right", true)]
++    [InlineData("top", true)]
++    [InlineData("bottom", true)]
++    public void KeepExpandedFirstNativeRegionAndVisibleFrameHaveExpandedBodyAndOnlyRestingArc(string edge, bool dark) => OnSta(() =>
++    {
++        using var settings = InteractionSettings(edge);
++        settings.Update(s => s with { KeepQuotaNotchExpanded = true });
++        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), dark);
++        window.SetReduceMotion(true);
++        var attention = new List<bool>();
++        window.AttentionChanged += attention.Add;
++        int initialized = 0;
++        window.SourceInitialized += (_, _) =>
++        {
++            initialized++;
++            // This runs after the real SourceInitialized placement but before native show.
++            // A private expansion target alone cannot satisfy paint AND installed-region checks.
++            AssertBodyState(window, edge, expanded: true);
++        };
++        try
++        {
++            window.Show();
++            Assert.Equal(1, initialized);
++            PumpLayout();
++            Assert.True(IsWindowVisible(new WindowInteropHelper(window).Handle));
++            Assert.Contains("initialized=True", window.RuntimeDiagnostic);
++            Assert.Contains("failed=False", window.RuntimeDiagnostic);
++            AssertBodyState(window, edge, expanded: true);
++            AssertIdleArcOnly(window, edge);
++            Assert.Empty(attention);
++            Assert.DoesNotContain(window.OwnedWindows.Cast<Window>(), card => card.IsVisible);
++            Leave(window);
++            ExpireGrace(window);
++            AssertBodyState(window, edge, expanded: true);
++            AssertIdleArcOnly(window, edge);
++        }
++        finally { window.Close(); }
++    });
++
++    [Theory]
++    [InlineData("body")]
++    [InlineData("card")]
++    [InlineData("grace")]
++    public void DisablingKeepExpandedPreservesRealBodyCardAndGraceAttention(string hold) => OnSta(() =>
++    {
++        using var settings = InteractionSettings("right");
++        settings.Update(s => s with { KeepQuotaNotchExpanded = true });
++        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
++        window.SetReduceMotion(true);
++        var attention = new List<bool>();
++        window.AttentionChanged += attention.Add;
++        try
++        {
++            window.Show(); PumpLayout();
++            var view = Assert.IsType<QuotaNotchView>(window.Content);
++            var model = QuotaNotchGeometry.CreateMain(1, 1);
++            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
++            var transform = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model));
++            var body = transform.Apply(new(12, model.BodyEnd - 40));
++            Invoke(window, "PointerEnter", new Point(body.X, body.Y));
++            var card = Assert.Single(window.OwnedWindows.Cast<Window>());
++            if (hold == "card")
++            {
++                var cell = transform.Apply(new(model.RingCenterX, model.RingCenterY));
++                var local = new Point(cell.X, cell.Y);
++                Invoke(window, "PointerMove", local, view.PointToScreen(local));
++                Assert.True(card.IsVisible);
++                Leave(window);
++                Enter(card);
++            }
++            else if (hold == "grace") Leave(window);
++            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
++            AssertBodyState(window, "right", expanded: true);
++            Assert.Equal(new[] { true }, attention);
++            if (hold == "card") Leave(card);
++            else if (hold == "body") Leave(window);
++            AssertBodyState(window, "right", expanded: true);
++            ExpireGrace(window);
++            AssertBodyState(window, "right", expanded: false);
++            Assert.False(card.IsVisible);
++            Assert.Equal(new[] { true, false }, attention);
++            // Repinning a genuinely idle body must not reopen the old card or invent attention.
++            settings.Update(s => s with { KeepQuotaNotchExpanded = true });
++            AssertBodyState(window, "right", expanded: true);
++            AssertIdleArcOnly(window, "right");
++            Assert.False(card.IsVisible);
++            Assert.Equal(new[] { true, false }, attention);
++        }
++        finally { window.Close(); }
++    });
++
++    [Theory]
++    [InlineData(false, false)]
++    [InlineData(false, true)]
++    [InlineData(true, false)]
++    [InlineData(true, true)]
++    public void DisablingKeepExpandedHonorsPendingAndActiveCaptureThroughReleaseOrLoss(bool activeDrag, bool loseCapture) => OnSta(() =>
++    {
++        using var settings = InteractionSettings("right");
++        settings.Update(s => s with { KeepQuotaNotchExpanded = true });
++        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
++        window.SetReduceMotion(true);
++        int refreshes = 0;
++        window.RefreshRequested += () => refreshes++;
++        try
++        {
++            window.Show(); PumpLayout();
++            var view = Assert.IsType<QuotaNotchView>(window.Content);
++            var model = QuotaNotchGeometry.CreateMain(1, 1);
++            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
++            var p = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model)).Apply(new(12, model.BodyEnd - 40));
++            var local = new Point(p.X, p.Y);
++            var screen = view.PointToScreen(local);
++            Invoke(window, "PointerEnter", local);
++            Invoke(window, "PointerPress", local, ModifierKeys.Alt, screen);
++            Assert.True(window.IsMouseCaptured);
++            if (activeDrag)
++            {
++                var moved = new Point(screen.X, screen.Y + Field<double>(window, "_pressScale") * 8);
++                Invoke(window, "PointerMove", view.PointFromScreen(moved), moved);
++            }
++            Leave(window);
++            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
++            ExpireGrace(window);
++            AssertBodyState(window, "right", expanded: true);
++            Assert.True(window.IsMouseCaptured);
++            if (loseCapture) window.ReleaseMouseCapture();
++            else Invoke(window, "PointerRelease", new Point(-100, -100), view.PointToScreen(new Point(-100, -100)));
++            Assert.False(window.IsMouseCaptured);
++            Leave(window);
++            AssertBodyState(window, settings.Current.QuotaNotchEdge, expanded: true);
++            ExpireGrace(window);
++            AssertBodyState(window, settings.Current.QuotaNotchEdge, expanded: false);
++            Assert.Equal(0, refreshes);
++        }
++        finally { window.Close(); }
++    });
++
++    [Fact]
++    public void DisablingKeepExpandedWaitsForMenuCloseAndItsGrace() => OnSta(() =>
++    {
++        using var settings = InteractionSettings("right");
++        settings.Update(s => s with { KeepQuotaNotchExpanded = true });
++        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
++        window.SetReduceMotion(true);
++        try
++        {
++            window.Show();
++            // Isolate menu ownership without moving the shared runner's physical cursor.
++            SetField(window, "_menuOpen", true);
++            Invoke(window, "UpdateTargets");
++            Leave(window);
++            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
++            ExpireGrace(window);
++            AssertBodyState(window, "right", expanded: true);
++            Invoke(window, "MenuClosed", window, new RoutedEventArgs());
++            AssertBodyState(window, "right", expanded: true);
++            ExpireGrace(window);
++            AssertBodyState(window, "right", expanded: false);
++        }
++        finally { window.Close(); }
++    });
++
++    [Theory]
++    [InlineData(false)]
++    [InlineData(true)]
++    public void KeepExpandedToggleAndReshowSettleAndUnsubscribeWithoutHiddenAnimation(bool reducedMotion) => OnSta(() =>
++    {
++        using var settings = InteractionSettings("right");
++        var window = new QuotaNotchWindow(settings, new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En), true);
++        window.SetReduceMotion(reducedMotion);
++        try
++        {
++            window.Show(); PumpLayout();
++            settings.Update(s => s with { KeepQuotaNotchExpanded = true });
++            if (!reducedMotion)
++            {
++                Assert.Contains("rendering=True", window.RuntimeDiagnostic);
++                AdvanceFiniteMotion(window);
++            }
++            AssertBodyState(window, "right", expanded: true);
++            AssertIdleArcOnly(window, "right");
++            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
++            if (!reducedMotion) AdvanceFiniteMotion(window);
++            AssertBodyState(window, "right", expanded: false);
++            settings.Update(s => s with { KeepQuotaNotchExpanded = true });
++            window.Hide();
++            Assert.False(window.IsVisible);
++            Assert.Contains("rendering=False", window.RuntimeDiagnostic);
++            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
++            settings.Update(s => s with { KeepQuotaNotchExpanded = true });
++            Assert.Contains("rendering=False", window.RuntimeDiagnostic);
++            window.Show();
++            // The first re-shown body is already open; only its independent arc may animate.
++            var view = Assert.IsType<QuotaNotchView>(window.Content);
++            var model = QuotaNotchGeometry.CreateMain(1, 1);
++            var envelope = QuotaNotchGeometry.CreateEnvelope(1);
++            var body = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model)).Apply(new(30, (model.BodyStart + model.BodyEnd) / 2));
++            AssertPaintedInput(window, new Point(body.X, body.Y));
++            if (!reducedMotion) AdvanceFiniteMotion(window);
++            AssertBodyState(window, "right", expanded: true);
++            AssertIdleArcOnly(window, "right");
++            window.Close();
++            settings.Update(s => s with { KeepQuotaNotchExpanded = false });
++            Assert.Contains("rendering=False", window.RuntimeDiagnostic);
++        }
++        finally { window.Close(); }
 +    });
 +
 +    [Theory]
@@ -7939,6 +8203,33 @@ index 00000000..e22f837a
 +    private static void Invoke(QuotaNotchWindow window, string name, params object?[] args) =>
 +        typeof(QuotaNotchWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, args);
 +
++    private static void AdvanceFiniteMotion(QuotaNotchWindow window)
++    {
++        var run = Field<object>(window, "_expansionRun");
++        run.GetType().GetField("_start", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(run, -10000d);
++        SetField(window, "_expansionRun", run);
++        Invoke(window, "Animate", null, EventArgs.Empty);
++        // Advance real independent tracks, but never call Settle/StopMotion: the host
++        // must reach and unsubscribe its own terminal state for the assertions to pass.
++        AdvanceControlTracks(window, 10000);
++    }
++
++    private static void AssertIdleArcOnly(QuotaNotchWindow window, string edge)
++    {
++        var model = QuotaNotchGeometry.CreateMain(1, 1, edge is "top" or "bottom", edge == "bottom");
++        var envelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
++        var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(model));
++        var center = QuotaNotchGeometry.GetOrbCenter(model);
++        var arc = transform.Apply(new(center.X - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5),
++            center.Y - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5)));
++        AssertPaintedInput(window, new Point(arc.X, arc.Y));
++        for (int i = 0; i < 6; i++)
++        {
++            var dot = transform.Apply(QuotaNotchGeometry.GetGripDot(model, i).Center);
++            AssertClearInput(window, new Point(dot.X, dot.Y));
++        }
++    }
++
 +    private static void AssertBodyState(QuotaNotchWindow window, string edge, bool expanded)
 +    {
 +        var view = Assert.IsType<QuotaNotchView>(window.Content);
@@ -8086,10 +8377,10 @@ index 00000000..e22f837a
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 new file mode 100644
-index 00000000..dda9a696
+index 00000000..9af2cdb1
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-@@ -0,0 +1,352 @@
+@@ -0,0 +1,386 @@
 +using System.Runtime.ExceptionServices;
 +using System.Windows;
 +using System.Windows.Controls;
@@ -8177,14 +8468,14 @@ index 00000000..dda9a696
 +                (Snapshot(QuotaStatus.Error, []) with { ObservedAt = null }, true, false, "error"),
 +                (Snapshot(QuotaStatus.Ok, []), true, false, "noReadings") })
 +            {
-+                var page = Page(new QuotaPageState(snapshot is null ? [] : [snapshot], ["codex"], true, network, refreshing, false, null, false), 440);
++                var page = Page(new QuotaPageState(snapshot is null ? [] : [snapshot], ["codex"], true, network, refreshing, false, false, null, false), 440);
 +                var card = FindAccount(page);
 +                var texts = Descendants(card).OfType<TextBlock>().Select(t => t.Text).ToArray();
 +                Assert.Single(texts, t => t == Loc["win.quota." + key]);
 +                Assert.DoesNotContain(texts, t => t == Loc["win.quota.window"] || t == Loc["win.quota.unknown"]);
 +                Assert.Empty(Descendants(card).OfType<Grid>());
 +            }
-+            var disabled = Page(new QuotaPageState([], [], true, true, false, false, null, false), 440);
++            var disabled = Page(new QuotaPageState([], [], true, true, false, false, false, null, false), 440);
 +            Assert.Contains(LogicalDescendants(disabled).OfType<TextBlock>(), t => t.Text == Loc["win.quota.enableSource"]);
 +            Assert.Single(LogicalDescendants(disabled).OfType<CheckBox>(), c => System.Windows.Automation.AutomationProperties.GetName(c) == "Codex");
 +            Assert.Empty(LogicalDescendants(disabled).OfType<Expander>());
@@ -8196,7 +8487,7 @@ index 00000000..dda9a696
 +    {
 +        OnStaThread(() =>
 +        {
-+            var page = Page(new QuotaPageState([], ["codex"], true, true, false, false, "native failure", true), 440);
++            var page = Page(new QuotaPageState([], ["codex"], true, true, false, false, false, "native failure", true), 440);
 +            var root = Assert.IsType<StackPanel>(page.Child);
 +            var toolbar = Assert.IsType<DockPanel>(root.Children[0]);
 +            var refresh = Assert.Single(LogicalDescendants(toolbar).OfType<Button>());
@@ -8208,7 +8499,8 @@ index 00000000..dda9a696
 +            Assert.Equal(new Thickness(16, 26, 16, 0), preferences.Margin);
 +            var elements = LogicalDescendants(page).ToArray();
 +            var rows = LogicalDescendants(preferences).OfType<Grid>().Where(grid => grid.ColumnDefinitions.Count == 2).ToArray();
-+            Assert.Equal(2, rows.Length);
++            Assert.Equal(new[] { Loc["win.quota.autoRefresh"], Loc["win.quota.showNotch"], Loc["win.quota.keepExpanded"] },
++                rows.Select(row => Assert.Single(row.Children.OfType<TextBlock>()).Text));
 +            Assert.All(rows, row => Assert.InRange(row.ActualHeight, 46, 47));
 +            Assert.All(rows, row => Assert.Equal(14, Assert.Single(row.Children.OfType<TextBlock>()).FontSize));
 +            Assert.Equal(2, elements.OfType<Border>().Count(border => border.BorderThickness == new Thickness(1) && border.CornerRadius == new CornerRadius(8)));
@@ -8226,7 +8518,7 @@ index 00000000..dda9a696
 +            var snapshot = Snapshot(QuotaStatus.Error, []) with { ObservedAt = null, WaitingForRefresh = true };
 +            foreach (var auto in new[] { false, true })
 +            {
-+                var card = FindAccount(Page(new QuotaPageState([snapshot], ["codex"], auto, true, false, false, null, false), 440));
++                var card = FindAccount(Page(new QuotaPageState([snapshot], ["codex"], auto, true, false, false, false, null, false), 440));
 +                var key = auto ? "providerWait" : "providerWaitManual";
 +                Assert.Contains(Descendants(card).OfType<TextBlock>(), text => text.Text == Loc["win.quota." + key] && text.FontSize >= 12);
 +                Assert.Empty(Descendants(card).OfType<Grid>());
@@ -8239,17 +8531,19 @@ index 00000000..dda9a696
 +    {
 +        OnStaThread(() =>
 +        {
-+            bool? auto = null, notch = null, source = null, all = null; int refreshes = 0;
-+            var state = new QuotaPageState([], ["codex"], true, true, false, false, "error", false);
-+            using var page = new QuotaSettingsPage(Loc, () => refreshes++, v => auto = v, (_, v) => source = v, v => notch = v, v => all = v);
++            bool? auto = null, notch = null, expanded = null, source = null, all = null; int refreshes = 0;
++            var state = new QuotaPageState([], ["codex"], true, true, false, false, false, "error", false);
++            using var page = new QuotaSettingsPage(Loc, () => refreshes++, v => auto = v, (_, v) => source = v, v => notch = v, v => expanded = v, v => all = v);
 +            page.Update(state);
 +            var controls = LogicalDescendants(page).ToArray();
 +            Assert.Single(controls.OfType<CheckBox>(), c => System.Windows.Automation.AutomationProperties.GetName(c) == Loc["win.quota.autoRefresh"]).IsChecked = false;
 +            Assert.Single(controls.OfType<CheckBox>(), c => System.Windows.Automation.AutomationProperties.GetName(c) == Loc["win.quota.showNotch"]).IsChecked = true;
++            Assert.Single(controls.OfType<CheckBox>(), c => System.Windows.Automation.AutomationProperties.GetName(c) == Loc["win.quota.keepExpanded"]).IsChecked = true;
 +            Assert.Single(controls.OfType<CheckBox>(), c => System.Windows.Automation.AutomationProperties.GetName(c) == "Codex").IsChecked = false;
 +            Assert.Single(controls.OfType<CheckBox>(), c => System.Windows.Automation.AutomationProperties.GetName(c) == Loc["win.quota.allSources"]).IsChecked = true;
 +            Assert.Single(controls.OfType<Button>(), b => Equals(b.Content, Loc["win.quota.refresh"])).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 +            Assert.Equal(1, refreshes); Assert.Equal(false, auto); Assert.Equal(true, notch); Assert.Equal(false, source); Assert.Equal(true, all);
++            Assert.Equal(true, expanded);
 +            Assert.Empty(controls.OfType<Expander>()); Assert.Empty(controls.OfType<TextBox>());
 +        });
 +    }
@@ -8286,7 +8580,7 @@ index 00000000..dda9a696
 +    {
 +        OnStaThread(() =>
 +        {
-+            var state = new QuotaPageState([], ["codex"], true, true, false, false, null, true);
++            var state = new QuotaPageState([], ["codex"], true, true, false, false, false, null, true);
 +            using var page = Page(state, 440);
 +            var checks = LogicalDescendants(page).OfType<CheckBox>().ToArray();
 +            var master = Assert.Single(checks, c => System.Windows.Automation.AutomationProperties.GetName(c) == Loc["win.quota.allSources"]);
@@ -8332,9 +8626,9 @@ index 00000000..dda9a696
 +            var now = Observed;
 +            var resetAt = now.AddHours(2);
 +            int providerRefreshes = 0;
-+            using var page = new QuotaSettingsPage(Loc, () => providerRefreshes++, _ => { }, (_, _) => { }, _ => { }, _ => { }, () => now);
++            using var page = new QuotaSettingsPage(Loc, () => providerRefreshes++, _ => { }, (_, _) => { }, _ => { }, _ => { }, _ => { }, () => now);
 +            page.Update(new QuotaPageState([Snapshot(QuotaStatus.Ok, [new QuotaWindow("a", "", .2, .8, .2, resetAt, TimeSpan.FromDays(7))])],
-+                ["codex"], false, true, false, false, null, false));
++                ["codex"], false, true, false, false, false, null, false));
 +            var before = LogicalDescendants(page).ToArray();
 +            var reset = Assert.Single(before.OfType<TextBlock>(), text => text.Text == QuotaFormat.ResetTime(Loc, resetAt, now));
 +            var updated = Assert.Single(before.OfType<TextBlock>(), text => text.Text == Loc.Format("win.quota.updatedAt", QuotaFormat.AbsoluteTime(Loc, Observed)));
@@ -8367,7 +8661,7 @@ index 00000000..dda9a696
 +        OnStaThread(() =>
 +        {
 +            using var page = Page(new QuotaPageState([Snapshot(QuotaStatus.Ok, [new QuotaWindow("a", "", .2, .8, .2, null, TimeSpan.FromDays(7))])],
-+                ["codex"], true, true, false, false, null, true), 440);
++                ["codex"], true, true, false, false, false, null, true), 440);
 +            page.SetActive(true);
 +            Assert.False(page.IsTimeRefreshActive);
 +            Assert.DoesNotContain(LogicalDescendants(page).OfType<TextBlock>(), text => text.Text.Contains("Quota resets", StringComparison.Ordinal));
@@ -8381,8 +8675,39 @@ index 00000000..dda9a696
 +    {
 +        OnStaThread(() =>
 +        {
-+            using var page = Page(new QuotaPageState([], ["codex"], true, network, refreshing, false, null, true), 440);
++            using var page = Page(new QuotaPageState([], ["codex"], true, network, refreshing, false, false, null, true), 440);
 +            Assert.False(Assert.Single(LogicalDescendants(page).OfType<Button>()).IsEnabled);
++        });
++    }
++
++    [Theory]
++    [InlineData("zh-Hans", "保持展开")]
++    [InlineData("zh-Hant", "保持展開")]
++    [InlineData("en", "Keep expanded")]
++    [InlineData("ja", "展開したままにする")]
++    public void KeepExpandedIsLocalizedAccessibleAndIndependentOfVisibilityOrNetwork(string language, string label)
++    {
++        OnStaThread(() =>
++        {
++            var loc = new Localizer(Localizer.LoadEmbeddedTable(), language);
++            bool? selected = null;
++            using var page = new QuotaSettingsPage(loc, () => { }, _ => { }, (_, _) => { }, _ => { }, value => selected = value, _ => { });
++            var state = new QuotaPageState([], [], false, false, false, false, true, null, false);
++            page.Update(state);
++            var toggle = Assert.Single(LogicalDescendants(page).OfType<CheckBox>(), check =>
++                System.Windows.Automation.AutomationProperties.GetName(check) == label);
++            Assert.Contains(LogicalDescendants(page).OfType<TextBlock>(), text => text.Text == label);
++            Assert.True(toggle.IsChecked);
++            Assert.True(toggle.IsEnabled);
++            Assert.Equal(Visibility.Visible, toggle.Visibility);
++            toggle.IsChecked = false;
++            Assert.Equal(false, selected);
++            page.Update(state with { ShowNotch = true, NetworkEnabled = true, KeepNotchExpanded = false });
++            toggle = Assert.Single(LogicalDescendants(page).OfType<CheckBox>(), check =>
++                System.Windows.Automation.AutomationProperties.GetName(check) == label);
++            Assert.False(toggle.IsChecked);
++            toggle.IsChecked = true;
++            Assert.Equal(true, selected);
 +        });
 +    }
 +
@@ -8390,11 +8715,11 @@ index 00000000..dda9a696
 +        new("codex", "Codex", "official", status, windows, "a", null, "person@example.com", "Plus", Observed, "local", null, null, false);
 +
 +    private static FrameworkElement AccountCard(QuotaSnapshot snapshot, double width) =>
-+        FindAccount(Page(new QuotaPageState([snapshot], ["codex"], true, true, false, false, null, false), width));
++        FindAccount(Page(new QuotaPageState([snapshot], ["codex"], true, true, false, false, false, null, false), width));
 +
 +    private static QuotaSettingsPage Page(QuotaPageState state, double width)
 +    {
-+        var page = new QuotaSettingsPage(Loc, () => { }, _ => { }, (_, _) => { }, _ => { }, _ => { }, () => Observed.AddHours(-1));
++        var page = new QuotaSettingsPage(Loc, () => { }, _ => { }, (_, _) => { }, _ => { }, _ => { }, _ => { }, () => Observed.AddHours(-1));
 +        page.Update(state);
 +        page.Measure(new Size(width, double.PositiveInfinity));
 +        page.Arrange(new Rect(0, 0, width, page.DesiredSize.Height));
@@ -8444,18 +8769,20 @@ index 00000000..dda9a696
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 new file mode 100644
-index 00000000..569e3004
+index 00000000..f0cd97a4
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
-@@ -0,0 +1,402 @@
+@@ -0,0 +1,505 @@
 +using System.IO;
 +using System.Net;
 +using System.Net.Http;
 +using System.Windows;
 +using System.Windows.Controls;
++using System.Windows.Interop;
 +using System.Windows.Threading;
 +using AgentSpeed.Core;
 +using AgentSpeed.Presentation.Localization;
++using AgentSpeed.Presentation.Layout;
 +using AgentSpeed.Presentation.Settings;
 +using AgentSpeed.Services;
 +using AgentSpeed.Settings;
@@ -8600,6 +8927,107 @@ index 00000000..569e3004
 +        });
 +        thread.SetApartmentState(ApartmentState.STA); thread.Start(); thread.Join();
 +        if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
++    }
++
++    [Fact]
++    public void KeepExpandedPageSwitchPersistsReloadsWithoutPageAndNeverRefreshesOrRebuildsProvider()
++    {
++        RunSta(() =>
++        {
++            var directory = Path.Combine(Path.GetTempPath(), "quota-expanded-" + Guid.NewGuid().ToString("N"));
++            Directory.CreateDirectory(directory);
++            var previousSettingsFile = Environment.GetEnvironmentVariable("AGENT_SPEED_SETTINGS_FILE");
++            Environment.SetEnvironmentVariable("AGENT_SPEED_SETTINGS_FILE", Path.Combine(directory, "settings.json"));
++            try
++            {
++                var credentials = Path.Combine(directory, "auth.json");
++                File.WriteAllText(credentials, """{"tokens":{"access_token":"synthetic-token","account_id":"synthetic-account"}}""");
++                var time = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
++                var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
++                using var handler = new UsageHandler();
++                int providers = 0;
++                CodexQuotaProvider Provider()
++                {
++                    providers++;
++                    return new CodexQuotaProvider(credentials, Path.Combine(directory, "schedule"), new HttpClient(handler, false), () => time);
++                }
++                QuotaNotchWindow VisibleWindow() => Assert.IsType<QuotaNotchWindow>(Assert.Single(
++                    PresentationSource.CurrentSources.OfType<HwndSource>(), source =>
++                        source.Dispatcher.CheckAccess() && source.RootVisual is QuotaNotchWindow { IsVisible: true }).RootVisual);
++                void AssertBody(QuotaNotchWindow window, bool expanded)
++                {
++                    var view = Assert.IsType<QuotaNotchView>(window.Content);
++                    var model = QuotaNotchGeometry.CreateMain(expanded ? 1 : 0, 1);
++                    var envelope = QuotaNotchGeometry.CreateEnvelope(1);
++                    var p = QuotaNotchGeometry.EdgeTransform("right", envelope.Depth, envelope.Offset(model)).Apply(new(30, (model.BodyStart + model.BodyEnd) / 2));
++                    Assert.Equal(expanded, view.InputGeometry.FillContains(new Point(p.X, p.Y)));
++                    Assert.Contains("rendering=False", window.RuntimeDiagnostic);
++                    Assert.DoesNotContain(window.OwnedWindows.Cast<Window>(), card => card.IsVisible);
++                }
++
++                using (var settings = new SettingsService(Dispatcher.CurrentDispatcher))
++                {
++                    settings.Update(s => s with
++                    {
++                        ShowQuotaNotch = false, AutoRefreshQuota = false, NetworkEnabled = true,
++                        QuotaSources = ["codex"], QuotaAllSources = false, QuotaNotchEdge = "right", QuotaNotchAlong = .25
++                    });
++                    using var surface = new QuotaSurface(settings, loc, false, Provider);
++                    surface.SetReduceMotion(true);
++                    settings.Changed += (_, _) => surface.ApplySettings();
++                    var page = Assert.IsType<QuotaSettingsPage>(surface.CreatePage());
++                    CheckBox Find(string key) => Assert.Single(Descendants(page).OfType<CheckBox>(), check =>
++                        System.Windows.Automation.AutomationProperties.GetName(check) == loc["win.quota." + key]);
++                    PumpUntil(() => handler.UsageCalls == 1 && handler.ResetCalls == 1 &&
++                        Descendants(page).OfType<TextBlock>().Any(text => text.Text == handler.Plan));
++                    // An accidental explicit refresh must be observable, not hidden by the five-minute floor.
++                    time = time.AddMinutes(6);
++                    Assert.False(Find("keepExpanded").IsChecked);
++                    Find("keepExpanded").IsChecked = true;
++                    Assert.True(settings.Current.KeepQuotaNotchExpanded);
++                    Assert.False(settings.Current.ShowQuotaNotch);
++                    Find("showNotch").IsChecked = true;
++                    var window = VisibleWindow();
++                    AssertBody(window, expanded: true);
++                    Assert.Contains("attention=False", window.RuntimeDiagnostic);
++                    Find("keepExpanded").IsChecked = false;
++                    AssertBody(window, expanded: false);
++                    Find("keepExpanded").IsChecked = true;
++                    AssertBody(window, expanded: true);
++                    Find("showNotch").IsChecked = false;
++                    Assert.False(window.IsVisible);
++                    Assert.True(Find("keepExpanded").IsChecked);
++                    Find("showNotch").IsChecked = true;
++                    Assert.Same(window, VisibleWindow());
++                    AssertBody(window, expanded: true);
++                    PumpFor(TimeSpan.FromMilliseconds(30));
++                    Assert.Equal(1, providers);
++                    Assert.Equal(1, handler.UsageCalls);
++                    Assert.Equal(1, handler.ResetCalls);
++                    surface.ClosePage();
++                    settings.Update(s => s with { NetworkEnabled = false });
++                    settings.Flush();
++                }
++
++                using var restored = new SettingsService(Dispatcher.CurrentDispatcher);
++                restored.Load();
++                Assert.True(restored.Current.KeepQuotaNotchExpanded);
++                Assert.True(restored.Current.ShowQuotaNotch);
++                Assert.Equal("right", restored.Current.QuotaNotchEdge);
++                Assert.Equal(.25, restored.Current.QuotaNotchAlong);
++                using var restarted = new QuotaSurface(restored, loc, false, Provider);
++                restarted.SetReduceMotion(true);
++                // Startup consumes the saved mode without ever creating the settings page.
++                AssertBody(VisibleWindow(), expanded: true);
++                Assert.Equal(1, handler.UsageCalls);
++                Assert.Equal(1, handler.ResetCalls);
++            }
++            finally
++            {
++                Environment.SetEnvironmentVariable("AGENT_SPEED_SETTINGS_FILE", previousSettingsFile);
++                Directory.Delete(directory, true);
++            }
++        });
 +    }
 +
 +    [Theory]
@@ -8749,26 +9177,26 @@ index 00000000..569e3004
 +                string[] Texts() => summary is null ? [] : Descendants(summary).OfType<TextBlock>().Select(text => text.Text).ToArray();
 +                Assert.False(surface.IsFlyoutTimeRefreshActive);
 +                surface.SetFlyoutActive(true);
-+                PumpUntil(() => Texts().Contains("Codex · Just now"));
++                PumpUntil(() => Texts().Contains("Codex · Updated just now"));
 +                Assert.True(surface.IsFlyoutTimeRefreshActive);
 +                surface.SetFlyoutActive(false);
 +                now = observed.AddSeconds(59);
 +                surface.SetFlyoutActive(true);
 +                Assert.Equal(TimeSpan.FromSeconds(1), surface.FlyoutTimeRefreshDelay);
-+                Assert.Contains("Codex · Just now", Texts());
++                Assert.Contains("Codex · Updated just now", Texts());
 +                now = observed.AddMinutes(1);
 +                surface.RefreshFlyoutTimes();
-+                Assert.Contains("Codex · 1m ago", Texts());
++                Assert.Contains("Codex · Updated 1m ago", Texts());
 +                Assert.Equal(TimeSpan.FromMinutes(1), surface.FlyoutTimeRefreshDelay);
 +                now = observed.AddSeconds(119);
 +                surface.RefreshFlyoutTimes();
 +                Assert.Equal(TimeSpan.FromSeconds(1), surface.FlyoutTimeRefreshDelay);
 +                now = observed.AddMinutes(2);
 +                surface.RefreshFlyoutTimes();
-+                Assert.Contains("Codex · 2m ago", Texts());
++                Assert.Contains("Codex · Updated 2m ago", Texts());
 +                now = observed.AddHours(1);
 +                surface.RefreshFlyoutTimes();
-+                Assert.Contains("Codex · 1h ago", Texts());
++                Assert.Contains("Codex · Updated 1h ago", Texts());
 +                Assert.Equal(1, handler.UsageCalls);
 +                Assert.Equal(1, handler.ResetCalls);
 +
@@ -8779,7 +9207,7 @@ index 00000000..569e3004
 +                surface.RefreshFlyoutTimes();
 +                Assert.Equal(closedUpdates, updates);
 +                surface.SetFlyoutActive(true);
-+                Assert.Contains("Codex · 1d ago", Texts());
++                Assert.Contains("Codex · Updated 1d ago", Texts());
 +                Assert.True(surface.IsFlyoutTimeRefreshActive);
 +                Assert.Equal(1, handler.UsageCalls);
 +                settings.Update(s => s with { NetworkEnabled = false });
@@ -8850,3 +9278,6 @@ index 00000000..569e3004
 +        }
 +    }
 +}
+-- 
+2.41.0
+

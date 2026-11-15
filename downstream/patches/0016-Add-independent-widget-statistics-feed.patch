@@ -2399,8 +2399,8 @@ index 006ad6bd..05884a2b 100644
 +
 +HTTP 200 acknowledges storage only; a failed Apple push must not erase the stored projection. The Worker
 +owns its independent installation-wide 30-minute push budget across host/token/lease replacements.
-+WidgetKit push only invalidates a widget timeline; no ordinary notification, alert, sound or
-+push-to-start is introduced. Narrow read/token-update credentials stay on the mobile/extension side,
++WidgetKit push only invalidates a widget timeline; it is separate from ActivityKit push-to-start.
++Narrow read/token-update credentials stay on the mobile/extension side,
 +not the target host. Read access does not renew publisher authority, and removing widgets may stop
 +pushes while a separately consented publisher lease continues storing bounded statistics until expiry.
 +Local development checks and an unpublished ELF are not proof of production deployment or Apple delivery.

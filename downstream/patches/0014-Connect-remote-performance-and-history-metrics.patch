@@ -4675,8 +4675,8 @@ index c49834db..cd0bd5d7 100644
 +eight-hour destination. Explicit lease unsubscribe, replacement and terminal relay rejection stop that publisher. The mobile app
 +separately revokes relay authorization; activity-level DELETE operations must not race a newer lease. With no clients
 +or authorized leases, the daemon exits after 30 seconds. Host logout/cgroup policy may kill it earlier; no system
-+service or linger policy is installed. Only existing activities are updated: no alert, sound, banner, ordinary
-+completion notification or push-to-start is sent. Local relay verification does not prove Cloudflare/APNs/iPhone delivery.
++service or linger policy is installed. Ordinary completion notifications, alerts, sounds and banners are not sent.
++Local relay verification does not prove Cloudflare/APNs/iPhone delivery.
 +
 +
 +Continuity keeps ordinary ten-second latest-only publishes even on quiet hosts, with the same edge and backoff
