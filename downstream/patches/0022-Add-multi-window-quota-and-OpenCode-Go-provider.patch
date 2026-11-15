@@ -18,7 +18,7 @@ Subject: [PATCH 22/22] Add multi-window quota and OpenCode Go provider
  macos/Sources/AgentSpeedCore/Quota.swift      |   2 +-
  macos/Sources/CSQLite/module.modulemap        |   5 +
  macos/Sources/CSQLite/shim.h                  |   1 +
- .../QuotaControllerTests.swift                |  26 +-
+ .../QuotaControllerTests.swift                |  22 +-
  .../AgentSpeedAppTests/QuotaNotchTests.swift  |  10 +-
  .../QuotaPresentationTests.swift              |   4 +-
  .../OpenCodeGoQuotaProviderTests.swift        | 213 ++++++++++
@@ -44,7 +44,7 @@ Subject: [PATCH 22/22] Add multi-window quota and OpenCode Go provider
  .../QuotaSettingsPageTests.cs                 |  89 +++-
  .../QuotaSurfaceProviderCollectionTests.cs    | 171 ++++++++
  .../QuotaSurfaceTests.cs                      | 131 +++++-
- 37 files changed, 2367 insertions(+), 213 deletions(-)
+ 37 files changed, 2365 insertions(+), 211 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -624,84 +624,74 @@ index 00000000..f52e1f09
 @@ -0,0 +1 @@
 +#include <sqlite3.h>
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-index db1d05c4..e01deb4e 100644
+index 3b884f77..61e80334 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -58,7 +58,7 @@ struct QuotaControllerTests {
-         let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-         defer { defaults.removePersistentDomain(forName: suite) }
-         defaults.set(false, forKey: "quota.autoRefreshEnabled")
--        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("test-source")
-+        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("opencode-go")
-         let controller = QuotaController(defaults: defaults, providers: [codex, go], refreshInterval: 0.01)
-         #expect(!controller.keepExpanded)
-         try await waitUntil { controller.snapshots.count == 2 }
-@@ -73,7 +73,7 @@ struct QuotaControllerTests {
-         controller.setNetworkEnabled(false)
-         controller.setNetworkEnabled(true)
-         controller.enabledProviderIDs = ["codex"]
--        controller.enabledProviderIDs = ["codex", "test-source"]
-+        controller.enabledProviderIDs = ["codex", "opencode-go"]
-         try await waitUntil { controller.snapshots.count == 2 && !controller.isRefreshing }
-         #expect(await codex.counts().startup == 1)
-         #expect(await go.counts().startup == 1)
-@@ -89,7 +89,7 @@ struct QuotaControllerTests {
-         let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-         defer { defaults.removePersistentDomain(forName: suite) }
-         defaults.set(false, forKey: "quota.autoRefreshEnabled")
--        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("test-source")
-+        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("opencode-go")
-         await codex.setHeld(true)
-         await go.setHeld(true)
-         let controller = QuotaController(defaults: defaults, providers: [codex, go])
-@@ -100,12 +100,12 @@ struct QuotaControllerTests {
-             return codexPending == 1 && goPending == 1
+@@ -142,7 +142,7 @@ private final class ControllerFixture {
+ @Suite("Quota controller lifecycle", .timeLimit(.minutes(1)))
+ @MainActor
+ struct QuotaControllerTests {
+-    private func withFixture(ids: [String] = ["codex", "test-source"], automatic: Bool = false,
++    private func withFixture(ids: [String] = ["codex", "opencode-go"], automatic: Bool = false,
+                              _ body: @MainActor (ControllerFixture) async throws -> Void) async throws {
+         let fixture = ControllerFixture(ids: ids, automatic: automatic)
+         try await withTaskCancellationHandler {
+@@ -181,7 +181,7 @@ struct QuotaControllerTests {
+             controller.setNetworkEnabled(false)
+             controller.setNetworkEnabled(true)
+             controller.enabledProviderIDs = ["codex"]
+-            controller.enabledProviderIDs = ["codex", "test-source"]
++            controller.enabledProviderIDs = ["codex", "opencode-go"]
+             await fixture.barrier().value
+             #expect(controller.snapshots.count == 2)
+             #expect(!controller.isRefreshing)
+@@ -212,14 +212,14 @@ struct QuotaControllerTests {
+             let oldResponses = fixture.barrier()
+             let goCancellations = await go.counts().cancellations
+ 
+-            controller.enabledProviderIDs = ["test-source"]
+-            #expect(controller.snapshots.map(\.id) == ["test-source"], "Disabling an account must remove it synchronously")
++            controller.enabledProviderIDs = ["opencode-go"]
++            #expect(controller.snapshots.map(\.id) == ["opencode-go"], "Disabling an account must remove it synchronously")
+             #expect(await codex.complete(codexStartup, status: .error))
+             #expect(await go.complete(goStartup))
+             await oldResponses.value
+             await fixture.barrier().value
+             #expect(!controller.isRefreshing)
+-            #expect(controller.snapshots.map(\.id) == ["test-source"], "A removed account's late response must stay removed")
++            #expect(controller.snapshots.map(\.id) == ["opencode-go"], "A removed account's late response must stay removed")
+             #expect(controller.snapshots.first?.status == .ok)
+             #expect(await go.counts().cancellations == goCancellations, "Removing Codex must not cancel OpenCode Go")
+ 
+@@ -274,10 +274,10 @@ struct QuotaControllerTests {
+         try await withFixture { fixture in
+             let controller = fixture.controller
+             controller.allSourcesEnabled = false
+-            #expect(controller.enabledProviderIDs == ["codex", "test-source"])
+-            controller.enabledProviderIDs = ["test-source", "unavailable"]
++            #expect(controller.enabledProviderIDs == ["codex", "opencode-go"])
++            controller.enabledProviderIDs = ["opencode-go", "unavailable"]
+             #expect(!controller.allSourcesEnabled)
+-            #expect(controller.enabledProviderIDs == ["test-source"])
++            #expect(controller.enabledProviderIDs == ["opencode-go"])
+             controller.keepExpanded = true
+             controller.floatingVisible = false
+             controller.autoRefreshEnabled = false
+@@ -285,11 +285,11 @@ struct QuotaControllerTests {
+             #expect(restored.keepExpanded)
+             #expect(!restored.floatingVisible)
+             #expect(!restored.autoRefreshEnabled)
+-            #expect(restored.enabledProviderIDs == ["test-source"])
++            #expect(restored.enabledProviderIDs == ["opencode-go"])
+             await fixture.barrier().value
+-            #expect(restored.snapshots.map(\.id) == ["test-source"])
++            #expect(restored.snapshots.map(\.id) == ["opencode-go"])
+             restored.allSourcesEnabled = true
+-            #expect(restored.enabledProviderIDs == ["codex", "test-source"])
++            #expect(restored.enabledProviderIDs == ["codex", "opencode-go"])
+             restored.enabledProviderIDs = []
+             #expect(restored.snapshots.isEmpty)
          }
-         let goCancellations = await go.counts().cancellations
--        controller.enabledProviderIDs = ["test-source"]
--        #expect(controller.snapshots.map(\.id) == ["test-source"])
-+        controller.enabledProviderIDs = ["opencode-go"]
-+        #expect(controller.snapshots.map(\.id) == ["opencode-go"])
-         await codex.release()
-         await go.release()
-         try await waitUntil { !controller.isRefreshing }
--        #expect(controller.snapshots.map(\.id) == ["test-source"])
-+        #expect(controller.snapshots.map(\.id) == ["opencode-go"])
-         #expect(controller.snapshots.first?.status == .ok)
-         #expect(await go.counts().cancellations == goCancellations)
-         controller.setNetworkEnabled(false)
-@@ -132,13 +132,13 @@ struct QuotaControllerTests {
-     @Test func allAndIndividualSelectionAndIndependentExpansionPersist() async throws {
-         let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-         defer { defaults.removePersistentDomain(forName: suite) }
--        let providers = [ControllerQuotaProvider("codex"), ControllerQuotaProvider("test-source")]
-+        let providers = [ControllerQuotaProvider("codex"), ControllerQuotaProvider("opencode-go")]
-         let controller = QuotaController(defaults: defaults, providers: providers)
-         controller.allSourcesEnabled = false
--        #expect(controller.enabledProviderIDs == ["codex", "test-source"])
--        controller.enabledProviderIDs = ["test-source", "unavailable"]
-+        #expect(controller.enabledProviderIDs == ["codex", "opencode-go"])
-+        controller.enabledProviderIDs = ["opencode-go", "unavailable"]
-         #expect(!controller.allSourcesEnabled)
--        #expect(controller.enabledProviderIDs == ["test-source"])
-+        #expect(controller.enabledProviderIDs == ["opencode-go"])
-         controller.keepExpanded = true
-         controller.floatingVisible = false
-         controller.autoRefreshEnabled = false
-@@ -146,10 +146,10 @@ struct QuotaControllerTests {
-         #expect(restored.keepExpanded)
-         #expect(!restored.floatingVisible)
-         #expect(!restored.autoRefreshEnabled)
--        #expect(restored.enabledProviderIDs == ["test-source"])
--        try await waitUntil { restored.snapshots.map(\.id) == ["test-source"] }
-+        #expect(restored.enabledProviderIDs == ["opencode-go"])
-+        try await waitUntil { restored.snapshots.map(\.id) == ["opencode-go"] }
-         restored.allSourcesEnabled = true
--        #expect(restored.enabledProviderIDs == ["codex", "test-source"])
-+        #expect(restored.enabledProviderIDs == ["codex", "opencode-go"])
-         restored.enabledProviderIDs = []
-         #expect(restored.snapshots.isEmpty)
-     }
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 index 931bcd1e..b46f0026 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
@@ -3534,3 +3524,4 @@ index f0cd97a4..97bc8943 100644
              return new HttpResponseMessage(HttpStatusCode.OK)
              {
                  Content = new StringContent(usage
+

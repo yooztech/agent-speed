@@ -11,11 +11,12 @@ Subject: [PATCH 20/22] Add macOS Codex quota monitoring
  .../Sources/AgentSpeed/App/AppDelegate.swift  |   7 +
  macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
  .../AgentSpeed/App/LaunchOptions.swift        |   6 +
- .../AgentSpeed/App/QuotaController.swift      | 209 ++++++
+ .../AgentSpeed/App/QuotaController.swift      | 212 ++++++
  .../AgentSpeed/App/QuotaGlyphOutline.swift    | 102 +++
  macos/Sources/AgentSpeed/App/QuotaNotch.swift | 642 ++++++++++++++++++
- .../AgentSpeed/App/QuotaNotchShape.swift      | 454 +++++++++++++
+ .../AgentSpeed/App/QuotaNotchShape.swift      | 449 ++++++++++++
  .../App/QuotaNotchVisualHarness.swift         | 150 ++++
+ .../App/QuotaRefreshScheduler.swift           |  32 +
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
  .../AgentSpeed/Dashboard/DashboardView.swift  |  72 ++
  .../AgentSpeed/Localization/StringTable.swift |  90 +++
@@ -25,8 +26,8 @@ Subject: [PATCH 20/22] Add macOS Codex quota monitoring
  .../AgentSpeedCore/CodexQuotaProvider.swift   | 346 ++++++++++
  macos/Sources/AgentSpeedCore/Quota.swift      | 138 ++++
  .../AgentSpeedCore/QuotaPersistence.swift     |  82 +++
- .../QuotaControllerTests.swift                | 156 +++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 230 +++++++
+ .../QuotaControllerTests.swift                | 297 ++++++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 229 +++++++
  .../QuotaPresentationTests.swift              | 161 +++++
  .../CodexQuotaProviderTests.swift             | 236 +++++++
  .../QuotaLifecycleTests.swift                 | 190 ++++++
@@ -35,13 +36,14 @@ Subject: [PATCH 20/22] Add macOS Codex quota monitoring
  spec/QUOTA.md                                 | 119 ++++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 29 files changed, 3852 insertions(+), 2 deletions(-)
+ 30 files changed, 4022 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotch.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
  create mode 100644 macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
@@ -255,10 +257,10 @@ index 740fad3c..443a880e 100644
                      options.screenshotsDirectory = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
 diff --git a/macos/Sources/AgentSpeed/App/QuotaController.swift b/macos/Sources/AgentSpeed/App/QuotaController.swift
 new file mode 100644
-index 00000000..bb6ef0d9
+index 00000000..f3d016b0
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaController.swift
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,212 @@
 +import AgentSpeedCore
 +import Foundation
 +import Observation
@@ -281,7 +283,7 @@ index 00000000..bb6ef0d9
 +    private var readers: [String: Reader] = [:]
 +    private var cancellations: [String: Task<Void, Never>] = [:]
 +    private var startupAttempted: Set<String> = []
-+    private var pollingTask: Task<Void, Never>?
++    private let scheduler: any QuotaRefreshScheduling
 +    private var updatingPreferences = false
 +    private let refreshInterval: TimeInterval
 +    private(set) var snapshots: [QuotaSnapshot] = []
@@ -328,10 +330,11 @@ index 00000000..bb6ef0d9
 +    }
 +
 +    init(defaults: UserDefaults = .standard, providers: [any QuotaProvider] = QuotaProviderRegistry.makeProviders(),
-+         refreshInterval: TimeInterval = 300) {
++         refreshInterval: TimeInterval = 300, scheduler: any QuotaRefreshScheduling = QuotaRefreshScheduler()) {
 +        self.defaults = defaults
 +        self.providers = providers
 +        self.refreshInterval = refreshInterval
++        self.scheduler = scheduler
 +        floatingVisible = defaults.object(forKey: "quota.floatingVisible") as? Bool ?? true
 +        keepExpanded = defaults.object(forKey: "quota.keepExpanded") as? Bool ?? false
 +        autoRefreshEnabled = defaults.object(forKey: "quota.autoRefreshEnabled") as? Bool ?? true
@@ -359,6 +362,15 @@ index 00000000..bb6ef0d9
 +    func refresh() {
 +        guard networkEnabled else { return }
 +        for reader in readers.values { start(reader, startup: false) }
++    }
++
++    /// Capture current work before changing sources or consent, then await its completion.
++    /// A removed reader's cancelled task may still be returning from a provider.
++    func operationBarrier() -> Task<Void, Never> {
++        let tasks = readers.values.compactMap(\.task) + Array(cancellations.values)
++        return Task {
++            for task in tasks { await task.value }
++        }
 +    }
 +
 +    private func reconcileSources() {
@@ -454,17 +466,10 @@ index 00000000..bb6ef0d9
 +    }
 +
 +    private func updateTimer() {
-+        pollingTask?.cancel()
-+        pollingTask = nil
++        scheduler.stop()
 +        guard networkEnabled, autoRefreshEnabled, !readers.isEmpty else { return }
-+        let interval = refreshInterval
-+        pollingTask = Task { [weak self] in
-+            while !Task.isCancelled {
-+                do { try await Task.sleep(for: .seconds(interval)) }
-+                catch { return }
-+                if let self { self.refreshAutomatically() }
-+                else { return }
-+            }
++        scheduler.start(every: refreshInterval) { [weak self] in
++            self?.refreshAutomatically()
 +        }
 +    }
 +}
@@ -578,7 +583,7 @@ index 00000000..b1a81438
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 00000000..b9ec9814
+index 00000000..f32e2cbc
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 @@ -0,0 +1,642 @@
@@ -725,13 +730,13 @@ index 00000000..b9ec9814
 +        for shape in shapes where !shape.source.isEmpty {
 +            let path = filter.contour(shape, scale: scale).intersection(clip).applying(geometry.transform)
 +            contours.append(path)
-+            hit = hit.union(path).union(path.strokedPath(StrokeStyle(lineWidth: 1)))
++            hit = hit.union(path).union(quotaStrokeOutline(path, width: 1))
 +        }
 +        if frame.reveal > 0.01 {
 +            let drops = QuotaGripGeometry.drops(center, frame: frame)
 +            let path = filter.contour(drops.shape, scale: scale).applying(geometry.transform)
 +            contours.append(path)
-+            hit = hit.union(path).union(path.strokedPath(StrokeStyle(lineWidth: 1)))
++            hit = hit.union(path).union(quotaStrokeOutline(path, width: 1))
 +            routes = drops.hit.applying(geometry.transform)
 +        }
 +        routes = routes.union(QuotaGripGeometry.routes(center, frame: frame).applying(geometry.transform))
@@ -1050,7 +1055,7 @@ index 00000000..b9ec9814
 +        let frame = geometry.panelFrame(on: screen.visibleFrame, along: along)
 +        if panel.frame != frame { panel.setFrame(frame, display: true) }
 +        hosting.frame = CGRect(origin: .zero, size: geometry.size)
-+        hosting.input = geometry.bodyPath.union(geometry.bodyPath.strokedPath(StrokeStyle(lineWidth: expansion.value > 0 ? 1 : 0))).union(grip.hit)
++        hosting.input = geometry.bodyPath.union(quotaStrokeOutline(geometry.bodyPath, width: expansion.value > 0 ? 1 : 0)).union(grip.hit)
 +        hosting.rootView = AnyView(QuotaNotchView(readings: readings, geometry: geometry, grip: grip, now: displayNow, dark: dark))
 +        placeCard(on: screen)
 +        updateInterception(NSEvent.mouseLocation)
@@ -1226,10 +1231,10 @@ index 00000000..b9ec9814
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
 new file mode 100644
-index 00000000..b5d7d873
+index 00000000..02424a34
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
-@@ -0,0 +1,454 @@
+@@ -0,0 +1,449 @@
 +import AgentSpeedCore
 +import AppKit
 +import SwiftUI
@@ -1238,24 +1243,10 @@ index 00000000..b5d7d873
 +// Measurements and timelines mirror Windows QuotaNotchGeometry / GripMotion.
 +enum NotchLayout {
 +    static let curlRadius: CGFloat = 38.7
-+    static let cornerRadius: CGFloat = 20
-+    static let ringDiameter: CGFloat = 56
-+    static let glyphSize: CGFloat = 26
-+    static let trackStroke: CGFloat = 5
-+    static let progressStroke: CGFloat = 5
-+    static let ringStep: CGFloat = 8
-+    static let cardWidth: CGFloat = 246
-+    static let cardCorner: CGFloat = 16
-+    static let cardPadding: CGFloat = 16
-+    static let tailLength: CGFloat = 28.2
-+    static let tailHeight: CGFloat = 32.72
-+    static let tailGap: CGFloat = 10.5
 +    static let arcRadius: CGFloat = 28.5 * 0.9
 +    static let arcFill: CGFloat = 6.8 * 0.9
 +    static let discRadius: CGFloat = 23.3 * 0.9
 +    static let gripPitch: CGFloat = 12.5
-+    static let gripDot: CGFloat = 8
-+    static let gripReach: CGFloat = 8
 +
 +    static func outerDiameter(_ count: Int) -> CGFloat { 56 + CGFloat(max(0, count - 1)) * 16 }
 +    static func periodColor(_ window: QuotaWindow) -> Color {
@@ -1285,6 +1276,15 @@ index 00000000..b5d7d873
 +func quotaSmooth(_ value: CGFloat) -> CGFloat {
 +    let t = min(max(value, 0), 1)
 +    return t * t * (3 - 2 * t)
++}
++
++// Boolean operations and native input need a filled outline, not SwiftUI's
++// deferred strokedPath representation. Match Windows GetWidenedPathGeometry.
++func quotaStrokeOutline(_ path: Path, width: CGFloat, rounded: Bool = false) -> Path {
++    guard width > 0 else { return Path() }
++    return Path(path.cgPath.copy(strokingWithWidth: width,
++                                 lineCap: rounded ? .round : .butt,
++                                 lineJoin: rounded ? .round : .miter, miterLimit: 10))
 +}
 +
 +struct QuotaMotionTrack {
@@ -1506,7 +1506,7 @@ index 00000000..b5d7d873
 +        return path
 +    }
 +    private static func into(_ center: CGPoint, _ distance: CGFloat) -> CGPoint { CGPoint(x: center.x - s * distance, y: center.y - s * distance) }
-+    private static func stroke(_ path: Path, _ width: CGFloat) -> Path { path.strokedPath(StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)) }
++    private static func stroke(_ path: Path, _ width: CGFloat) -> Path { quotaStrokeOutline(path, width: width, rounded: true) }
 +    static func goo(_ center: CGPoint, separation: CGFloat, returning: Bool, quick: Bool) -> QuotaOrbShape {
 +        guard separation > 0.001 else { return QuotaOrbShape() }
 +        let fill = NotchLayout.arcFill, fillet = NotchLayout.curlRadius, radius = NotchLayout.arcRadius
@@ -1686,7 +1686,7 @@ index 00000000..b5d7d873
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 new file mode 100644
-index 00000000..60469a19
+index 00000000..e4ae6321
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 @@ -0,0 +1,150 @@
@@ -1779,7 +1779,7 @@ index 00000000..60469a19
 +                        try save(bitmap, to: directory.appendingPathComponent(name))
 +                        check(abs(CGFloat(bitmap.pixelsWide) / scale - geometry.size.width) < 1, "\(name): tight native width")
 +                        check(abs(CGFloat(bitmap.pixelsHigh) / scale - geometry.size.height) < 1, "\(name): tight native height")
-+                        let input = geometry.bodyPath.union(geometry.bodyPath.strokedPath(StrokeStyle(lineWidth: state == "folded" ? 0 : 1))).union(grip.hit)
++                        let input = geometry.bodyPath.union(quotaStrokeOutline(geometry.bodyPath, width: state == "folded" ? 0 : 1)).union(grip.hit)
 +                        for y in stride(from: 2, to: bitmap.pixelsHigh - 2, by: 4) {
 +                            for x in stride(from: 2, to: bitmap.pixelsWide - 2, by: 4) {
 +                                let color = try require(bitmap.colorAt(x: x, y: y), "\(name): missing native sample")
@@ -1840,6 +1840,44 @@ index 00000000..60469a19
 +    }
 +}
 +#endif
+diff --git a/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift b/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
+new file mode 100644
+index 00000000..6488fe5a
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
+@@ -0,0 +1,32 @@
++import Foundation
++
++@MainActor
++protocol QuotaRefreshScheduling: AnyObject {
++    func start(every interval: TimeInterval, tick: @escaping @MainActor () -> Void)
++    func stop()
++}
++
++/// The controller owns the polling policy; this only schedules its ticks.
++@MainActor
++final class QuotaRefreshScheduler: QuotaRefreshScheduling {
++    private var task: Task<Void, Never>?
++
++    func start(every interval: TimeInterval, tick: @escaping @MainActor () -> Void) {
++        stop()
++        task = Task {
++            while !Task.isCancelled {
++                do { try await Task.sleep(for: .seconds(interval)) }
++                catch { return }
++                guard !Task.isCancelled else { return }
++                tick()
++            }
++        }
++    }
++
++    func stop() {
++        task?.cancel()
++        task = nil
++    }
++
++    deinit { task?.cancel() }
++}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 new file mode 100644
 index 00000000..c1200063
@@ -2963,42 +3001,73 @@ index 00000000..25c2bf28
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 new file mode 100644
-index 00000000..db1d05c4
+index 00000000..3b884f77
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,297 @@
 +import Foundation
-+import Observation
 +import Testing
 +@testable import AgentSpeed
 +@testable import AgentSpeedCore
 +
 +private actor ControllerQuotaProvider: QuotaProvider {
++    struct Request: Sendable, Equatable {
++        enum Kind: Sendable, Equatable { case startup, refresh }
++        let number: Int
++        let kind: Kind
++    }
++
 +    nonisolated let id: String
++    nonisolated let requests: AsyncStream<Request>
++    private let events: AsyncStream<Request>.Continuation
 +    private var manualRequests = 0
 +    private var startupRequests = 0
 +    private var cancellations = 0
-+    private var pending: [CheckedContinuation<QuotaSnapshot, Never>] = []
-+    private var hold = false
++    private var pending: [Int: CheckedContinuation<QuotaSnapshot, Never>] = [:]
++    private var finished = false
 +    private let observed = Date(timeIntervalSince1970: 1_800_000_000)
 +
-+    init(_ id: String) { self.id = id }
-+    func readCachedSnapshot() -> QuotaSnapshot { snapshot(.stale) }
-+    func refreshStartup() async -> QuotaSnapshot { startupRequests += 1; return await result() }
-+    func refresh() async -> QuotaSnapshot { manualRequests += 1; return await result() }
-+    func cancel() { cancellations += 1 }
-+    func setHeld(_ held: Bool) { hold = held }
-+    func counts() -> (manual: Int, startup: Int, cancellations: Int, pending: Int) {
-+        (manualRequests, startupRequests, cancellations, pending.count)
++    init(_ id: String) {
++        self.id = id
++        let stream = AsyncStream<Request>.makeStream()
++        requests = stream.stream
++        events = stream.continuation
 +    }
-+    func release() {
-+        let continuations = pending
++
++    func readCachedSnapshot() -> QuotaSnapshot { snapshot(.stale) }
++    func refreshStartup() async -> QuotaSnapshot {
++        startupRequests += 1
++        return await result(.startup)
++    }
++    func refresh() async -> QuotaSnapshot {
++        manualRequests += 1
++        return await result(.refresh)
++    }
++    // Deliberately leave responses held: cancellation is not a guarantee that a
++    // provider cannot return a late response. The controller must reject it.
++    func cancel() { cancellations += 1 }
++    func counts() -> (manual: Int, startup: Int, cancellations: Int) {
++        (manualRequests, startupRequests, cancellations)
++    }
++    func complete(_ request: Request, status: QuotaStatus = .ok) -> Bool {
++        guard let continuation = pending.removeValue(forKey: request.number) else { return false }
++        continuation.resume(returning: snapshot(status))
++        return true
++    }
++    func finish() {
++        finished = true
++        events.finish()
++        let continuations = pending.values
 +        pending.removeAll()
 +        for continuation in continuations { continuation.resume(returning: snapshot(.ok)) }
 +    }
-+    private func result() async -> QuotaSnapshot {
-+        if hold { return await withCheckedContinuation { pending.append($0) } }
-+        return snapshot(.ok)
++    private func result(_ kind: Request.Kind) async -> QuotaSnapshot {
++        guard !finished else { return snapshot(.ok) }
++        let request = Request(number: startupRequests + manualRequests, kind: kind)
++        return await withCheckedContinuation {
++            pending[request.number] = $0
++            events.yield(request)
++        }
 +    }
 +    private func snapshot(_ status: QuotaStatus) -> QuotaSnapshot {
 +        QuotaSnapshot(id: id, displayName: id, fidelity: "official", status: status,
@@ -3009,126 +3078,236 @@ index 00000000..db1d05c4
 +    }
 +}
 +
-+@Suite("Quota controller lifecycle")
++@MainActor
++private final class ControlledQuotaScheduler: QuotaRefreshScheduling {
++    private var tick: (@MainActor () -> Void)?
++    var isRunning: Bool { tick != nil }
++    func start(every interval: TimeInterval, tick: @escaping @MainActor () -> Void) { self.tick = tick }
++    func stop() { tick = nil }
++    func fire() { tick?() }
++}
++
++@MainActor
++private final class ControllerFixture {
++    let suite = UUID().uuidString
++    let defaults: UserDefaults
++    let providers: [ControllerQuotaProvider]
++    let scheduler = ControlledQuotaScheduler()
++    let controller: QuotaController
++    private var controllers: [QuotaController]
++    private var barriers: [Task<Void, Never>] = []
++    private var cleanup: Task<Void, Never>?
++
++    init(ids: [String], automatic: Bool) {
++        defaults = UserDefaults(suiteName: suite)!
++        defaults.set(automatic, forKey: "quota.autoRefreshEnabled")
++        providers = ids.map { ControllerQuotaProvider($0) }
++        controller = QuotaController(defaults: defaults, providers: providers, scheduler: scheduler)
++        controllers = [controller]
++    }
++
++    func restore() -> QuotaController {
++        let restored = QuotaController(defaults: defaults, providers: providers, scheduler: ControlledQuotaScheduler())
++        controllers.append(restored)
++        return restored
++    }
++
++    func request(_ provider: ControllerQuotaProvider, _ kind: ControllerQuotaProvider.Request.Kind) async throws -> ControllerQuotaProvider.Request {
++        var iterator = provider.requests.makeAsyncIterator()
++        let request = try #require(await iterator.next(), "\(provider.id): request stream ended before \(kind)")
++        try #require(request.kind == kind, "\(provider.id): expected \(kind), received \(request.kind)")
++        return request
++    }
++
++    /// Capture before removing a reader so its late response is also drained.
++    func barrier() -> Task<Void, Never> {
++        let operations = controllers.map { $0.operationBarrier() }
++        let barrier = Task { for operation in operations { await operation.value } }
++        barriers.append(barrier)
++        return barrier
++    }
++
++    func close() -> Task<Void, Never> {
++        if let cleanup { return cleanup }
++        _ = barrier()
++        for controller in controllers {
++            controller.setNetworkEnabled(false)
++            controller.enabledProviderIDs = []
++        }
++        _ = barrier()
++        let barriers = barriers
++        let cleanup = Task {
++            for provider in providers { await provider.finish() }
++            for barrier in barriers { await barrier.value }
++            defaults.removePersistentDomain(forName: suite)
++        }
++        self.cleanup = cleanup
++        return cleanup
++    }
++}
++
++@Suite("Quota controller lifecycle", .timeLimit(.minutes(1)))
 +@MainActor
 +struct QuotaControllerTests {
-+    private func waitUntil(_ condition: @MainActor () async -> Bool) async throws {
-+        let deadline = Date().addingTimeInterval(3)
-+        while !(await condition()) {
-+            if Date() >= deadline {
-+                Issue.record("Timed out waiting for quota lifecycle result")
-+                throw URLError(.timedOut)
++    private func withFixture(ids: [String] = ["codex", "test-source"], automatic: Bool = false,
++                             _ body: @MainActor (ControllerFixture) async throws -> Void) async throws {
++        let fixture = ControllerFixture(ids: ids, automatic: automatic)
++        try await withTaskCancellationHandler {
++            do { try await body(fixture) }
++            catch {
++                await fixture.close().value
++                throw error
 +            }
-+            try await Task.sleep(for: .milliseconds(1))
++            await fixture.close().value
++        } onCancel: {
++            Task { @MainActor in await fixture.close().value }
 +        }
 +    }
 +
 +    @Test func manualModeHydratesOfflineAndStartsExactlyOnceAcrossConsentAndSourceToggles() async throws {
-+        let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-+        defer { defaults.removePersistentDomain(forName: suite) }
-+        defaults.set(false, forKey: "quota.autoRefreshEnabled")
-+        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("test-source")
-+        let controller = QuotaController(defaults: defaults, providers: [codex, go], refreshInterval: 0.01)
-+        #expect(!controller.keepExpanded)
-+        try await waitUntil { controller.snapshots.count == 2 }
-+        #expect(controller.snapshots.allSatisfy { $0.status == .stale && $0.observedAt != nil })
-+        #expect(await codex.counts().startup == 0)
-+        #expect(await go.counts().manual == 0)
-+        controller.setNetworkEnabled(true)
-+        try await waitUntil { await codex.counts().startup == 1 && !controller.isRefreshing }
-+        #expect(await go.counts().startup == 1)
-+        try await Task.sleep(for: .milliseconds(30))
-+        #expect(await codex.counts().manual == 0)
-+        controller.setNetworkEnabled(false)
-+        controller.setNetworkEnabled(true)
-+        controller.enabledProviderIDs = ["codex"]
-+        controller.enabledProviderIDs = ["codex", "test-source"]
-+        try await waitUntil { controller.snapshots.count == 2 && !controller.isRefreshing }
-+        #expect(await codex.counts().startup == 1)
-+        #expect(await go.counts().startup == 1)
-+        #expect(await codex.counts().manual == 0)
-+        #expect(await go.counts().manual == 0)
-+        controller.refresh()
-+        try await waitUntil { await codex.counts().manual == 1 && !controller.isRefreshing }
-+        #expect(await go.counts().manual == 1)
-+        controller.setNetworkEnabled(false)
++        try await withFixture { fixture in
++            let controller = fixture.controller
++            let codex = fixture.providers[0], go = fixture.providers[1]
++            await fixture.barrier().value
++            #expect(!controller.keepExpanded)
++            #expect(controller.snapshots.count == 2, "Both enabled accounts must hydrate without network consent")
++            #expect(controller.snapshots.allSatisfy { $0.status == .stale && $0.observedAt != nil })
++            #expect(await codex.counts().startup == 0)
++            #expect(await go.counts().manual == 0)
++            #expect(!fixture.scheduler.isRunning, "Offline mode must not schedule polls")
++
++            controller.setNetworkEnabled(true)
++            let codexStartup = try await fixture.request(codex, .startup)
++            let goStartup = try await fixture.request(go, .startup)
++            #expect(await codex.complete(codexStartup))
++            #expect(await go.complete(goStartup))
++            await fixture.barrier().value
++            #expect(!controller.isRefreshing)
++            #expect(!fixture.scheduler.isRunning, "Manual mode allows startup hydration, not periodic polls")
++
++            controller.setNetworkEnabled(false)
++            controller.setNetworkEnabled(true)
++            controller.enabledProviderIDs = ["codex"]
++            controller.enabledProviderIDs = ["codex", "test-source"]
++            await fixture.barrier().value
++            #expect(controller.snapshots.count == 2)
++            #expect(!controller.isRefreshing)
++            #expect(await codex.counts().startup == 1)
++            #expect(await go.counts().startup == 1)
++            #expect(await codex.counts().manual == 0)
++            #expect(await go.counts().manual == 0)
++
++            controller.refresh()
++            let codexManual = try await fixture.request(codex, .refresh)
++            let goManual = try await fixture.request(go, .refresh)
++            #expect(await codex.complete(codexManual))
++            #expect(await go.complete(goManual))
++            await fixture.barrier().value
++            #expect(!controller.isRefreshing)
++            #expect(await codex.counts().manual == 1)
++            #expect(await go.counts().manual == 1)
++        }
 +    }
 +
 +    @Test func sourceRemovalIsImmediateAndCannotCommitAnOldResponseOrCancelAnotherSource() async throws {
-+        let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-+        defer { defaults.removePersistentDomain(forName: suite) }
-+        defaults.set(false, forKey: "quota.autoRefreshEnabled")
-+        let codex = ControllerQuotaProvider("codex"), go = ControllerQuotaProvider("test-source")
-+        await codex.setHeld(true)
-+        await go.setHeld(true)
-+        let controller = QuotaController(defaults: defaults, providers: [codex, go])
-+        controller.setNetworkEnabled(true)
-+        try await waitUntil {
-+            let codexPending = await codex.counts().pending
-+            let goPending = await go.counts().pending
-+            return codexPending == 1 && goPending == 1
++        try await withFixture { fixture in
++            let controller = fixture.controller
++            let codex = fixture.providers[0], go = fixture.providers[1]
++            controller.setNetworkEnabled(true)
++            let codexStartup = try await fixture.request(codex, .startup)
++            let goStartup = try await fixture.request(go, .startup)
++            let oldResponses = fixture.barrier()
++            let goCancellations = await go.counts().cancellations
++
++            controller.enabledProviderIDs = ["test-source"]
++            #expect(controller.snapshots.map(\.id) == ["test-source"], "Disabling an account must remove it synchronously")
++            #expect(await codex.complete(codexStartup, status: .error))
++            #expect(await go.complete(goStartup))
++            await oldResponses.value
++            await fixture.barrier().value
++            #expect(!controller.isRefreshing)
++            #expect(controller.snapshots.map(\.id) == ["test-source"], "A removed account's late response must stay removed")
++            #expect(controller.snapshots.first?.status == .ok)
++            #expect(await go.counts().cancellations == goCancellations, "Removing Codex must not cancel OpenCode Go")
++
++            // Consent invalidates a still-present reader too: a late live response
++            // must not replace the cache-only state loaded after network revocation.
++            controller.refresh()
++            let late = try await fixture.request(go, .refresh)
++            let revokedResponse = fixture.barrier()
++            controller.setNetworkEnabled(false)
++            await fixture.barrier().value
++            #expect(controller.snapshots.first?.status == .stale)
++            #expect(await go.complete(late, status: .error))
++            await revokedResponse.value
++            #expect(controller.snapshots.first?.status == .stale, "Revoked network consent must reject an old live response")
++            #expect(!controller.isRefreshing)
 +        }
-+        let goCancellations = await go.counts().cancellations
-+        controller.enabledProviderIDs = ["test-source"]
-+        #expect(controller.snapshots.map(\.id) == ["test-source"])
-+        await codex.release()
-+        await go.release()
-+        try await waitUntil { !controller.isRefreshing }
-+        #expect(controller.snapshots.map(\.id) == ["test-source"])
-+        #expect(controller.snapshots.first?.status == .ok)
-+        #expect(await go.counts().cancellations == goCancellations)
-+        controller.setNetworkEnabled(false)
 +    }
 +
 +    @Test func automaticRefreshContinuesWithoutVisibleSurfacesAndStopsInManualMode() async throws {
-+        let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-+        defer { defaults.removePersistentDomain(forName: suite) }
-+        let provider = ControllerQuotaProvider("codex")
-+        let controller = QuotaController(defaults: defaults, providers: [provider], refreshInterval: 0.01)
-+        controller.floatingVisible = false
-+        controller.setNetworkEnabled(true)
-+        try await waitUntil { await provider.counts().manual > 0 }
-+        controller.autoRefreshEnabled = false
-+        try await waitUntil { !controller.isRefreshing }
-+        let count = await provider.counts().manual
-+        try await Task.sleep(for: .milliseconds(30))
-+        #expect(await provider.counts().manual == count)
-+        controller.refresh()
-+        try await waitUntil { await provider.counts().manual == count + 1 && !controller.isRefreshing }
-+        controller.setNetworkEnabled(false)
++        try await withFixture(ids: ["codex"], automatic: true) { fixture in
++            let controller = fixture.controller, provider = fixture.providers[0]
++            controller.floatingVisible = false
++            controller.setNetworkEnabled(true)
++            let startup = try await fixture.request(provider, .startup)
++            #expect(await provider.complete(startup))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.isRunning, "Hiding all surfaces must not stop automatic polling")
++
++            fixture.scheduler.fire()
++            let automatic = try await fixture.request(provider, .refresh)
++            controller.autoRefreshEnabled = false
++            #expect(!fixture.scheduler.isRunning, "Manual mode must stop polling without cancelling an in-flight response")
++            #expect(await provider.complete(automatic))
++            await fixture.barrier().value
++            #expect(await provider.counts().manual == 1)
++            #expect(!controller.isRefreshing)
++
++            fixture.scheduler.fire()
++            await fixture.barrier().value
++            #expect(await provider.counts().manual == 1, "No periodic read is allowed in manual mode")
++
++            controller.refresh()
++            let manual = try await fixture.request(provider, .refresh)
++            #expect(await provider.complete(manual))
++            await fixture.barrier().value
++            #expect(await provider.counts().manual == 2, "Explicit refresh must still work in manual mode")
++            #expect(!controller.isRefreshing)
++        }
 +    }
 +
 +    @Test func allAndIndividualSelectionAndIndependentExpansionPersist() async throws {
-+        let suite = UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
-+        defer { defaults.removePersistentDomain(forName: suite) }
-+        let providers = [ControllerQuotaProvider("codex"), ControllerQuotaProvider("test-source")]
-+        let controller = QuotaController(defaults: defaults, providers: providers)
-+        controller.allSourcesEnabled = false
-+        #expect(controller.enabledProviderIDs == ["codex", "test-source"])
-+        controller.enabledProviderIDs = ["test-source", "unavailable"]
-+        #expect(!controller.allSourcesEnabled)
-+        #expect(controller.enabledProviderIDs == ["test-source"])
-+        controller.keepExpanded = true
-+        controller.floatingVisible = false
-+        controller.autoRefreshEnabled = false
-+        let restored = QuotaController(defaults: defaults, providers: providers)
-+        #expect(restored.keepExpanded)
-+        #expect(!restored.floatingVisible)
-+        #expect(!restored.autoRefreshEnabled)
-+        #expect(restored.enabledProviderIDs == ["test-source"])
-+        try await waitUntil { restored.snapshots.map(\.id) == ["test-source"] }
-+        restored.allSourcesEnabled = true
-+        #expect(restored.enabledProviderIDs == ["codex", "test-source"])
-+        restored.enabledProviderIDs = []
-+        #expect(restored.snapshots.isEmpty)
++        try await withFixture { fixture in
++            let controller = fixture.controller
++            controller.allSourcesEnabled = false
++            #expect(controller.enabledProviderIDs == ["codex", "test-source"])
++            controller.enabledProviderIDs = ["test-source", "unavailable"]
++            #expect(!controller.allSourcesEnabled)
++            #expect(controller.enabledProviderIDs == ["test-source"])
++            controller.keepExpanded = true
++            controller.floatingVisible = false
++            controller.autoRefreshEnabled = false
++            let restored = fixture.restore()
++            #expect(restored.keepExpanded)
++            #expect(!restored.floatingVisible)
++            #expect(!restored.autoRefreshEnabled)
++            #expect(restored.enabledProviderIDs == ["test-source"])
++            await fixture.barrier().value
++            #expect(restored.snapshots.map(\.id) == ["test-source"])
++            restored.allSourcesEnabled = true
++            #expect(restored.enabledProviderIDs == ["codex", "test-source"])
++            restored.enabledProviderIDs = []
++            #expect(restored.snapshots.isEmpty)
++        }
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 00000000..931bcd1e
+index 00000000..0395eaea
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,229 @@
 +import AppKit
 +import SwiftUI
 +import Testing
@@ -3154,20 +3333,7 @@ index 00000000..931bcd1e
 +        QuotaNotchReading(snapshot: snapshot, networkEnabled: enabled, l10n: Localizer(preference: .en))
 +    }
 +    private func geometry(_ edge: NotchEdge, expanded: Bool = true, count: Int = 2) -> QuotaNotchGeometry {
-+        QuotaNotchGeometry(edge: edge, expansion: expanded ? 1 : 0, count: count, cellSize: CGSize(width: 300, height: 108), ringSize: 88)
-+    }
-+
-+    @Test func approvedWindowsMeasurementsRemainShared() {
-+        #expect(NotchLayout.curlRadius == 38.7)
-+        #expect(NotchLayout.cornerRadius == 20)
-+        #expect(NotchLayout.outerDiameter(1) == 56)
-+        #expect(NotchLayout.outerDiameter(3) == 88)
-+        #expect(NotchLayout.glyphSize == 26)
-+        #expect(NotchLayout.trackStroke == 5)
-+        #expect(NotchLayout.arcRadius == 28.5 * 0.9)
-+        #expect(NotchLayout.discRadius == 23.3 * 0.9)
-+        #expect(NotchLayout.gripDot == 8 && NotchLayout.gripPitch == 12.5)
-+        #expect(NotchLayout.cardWidth == 246 && NotchLayout.tailLength == 28.2)
++        QuotaNotchGeometry(edge: edge, expansion: expanded ? 1 : 0, count: count, cellSize: CGSize(width: 300, height: 108), ringSize: NotchLayout.outerDiameter(3))
 +    }
 +
 +    @Test func everyProviderRetainsAllPeriodsWithoutFollowingHeadline() {
@@ -3246,16 +3412,28 @@ index 00000000..931bcd1e
 +        }
 +    }
 +
-+    @Test func externalArcHasNoSettingsActionOrRectangularHoleTarget() {
++    @Test func restingArcAcceptsPaintedPointsAndPassesThroughItsCenter() {
++        _ = NSApplication.shared
 +        for edge in NotchEdge.allCases {
 +            let shape = geometry(edge)
 +            let grip = QuotaGripPaint(geometry: shape, frame: QuotaGripFrame(arc: 1), filter: QuotaGripFilter(), scale: 2)
-+            #expect(!grip.hit.contains(shape.orbCenter.applying(shape.transform)))
++            let host = QuotaNotchHostingView(rootView: AnyView(EmptyView()))
++            let bounds = CGRect(origin: .zero, size: shape.size)
++            let container = NSView(frame: bounds)
++            host.frame = bounds
++            host.input = shape.bodyPath.union(quotaStrokeOutline(shape.bodyPath, width: 1)).union(grip.hit)
++            container.addSubview(host)
++            let center = shape.orbCenter.applying(shape.transform)
++            #expect(!grip.hit.contains(center))
++            #expect(grip.contours.allSatisfy { !$0.contains(center) })
++            #expect(host.hitTest(host.convert(center, to: container)) == nil)
 +            for step in 0...8 {
 +                let angle = -.pi + CGFloat(step) * .pi / 16
 +                let point = CGPoint(x: shape.orbCenter.x + NotchLayout.arcRadius * cos(angle), y: shape.orbCenter.y + NotchLayout.arcRadius * sin(angle)).applying(shape.transform)
 +                #expect(grip.hit.contains(point))
++                #expect(grip.contours.contains { $0.contains(point) })
 +                #expect(!shape.bodyPath.contains(point))
++                #expect(host.hitTest(host.convert(point, to: container)) != nil)
 +            }
 +        }
 +    }
@@ -4201,3 +4379,4 @@ index 00000000..ba85a8b2
 +    "individual_limit": { "limit": "100.00", "used": "0", "used_percent": 0, "reset_at": 1800400000 }
 +  }
 +}
+

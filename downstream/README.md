@@ -234,9 +234,22 @@ not block Release as ordinary tests. Geometry, hit routing, folding, animation,
 unknown/status, and reset-formatting regressions remain in the registered
 `swift test --package-path macos --filter QuotaNotchTests` suite, without test
 skip conditions, widened assertions, or replacement wiring-only assertions.
-No tests or builds have been run for this separation; the optional harness and
-remaining native tests have not yet been validated on macOS. Linux syntax
-checks and language probes must not be reported as macOS validation.
+Release run `43695455501` compiled the macOS application and tests, then failed four
+quota tests among 1,637 tests: two brittle lifecycle waits, an exact floating-point
+layout-pin test, and a genuine resting-grip input-path assertion. The correction
+deletes the layout-pin test and unused constants, materializes CoreGraphics stroke
+outlines before path operations, and uses controlled refresh ticks and actual task
+completion for lifecycle tests instead of short sleeps or polling deadlines. It
+does not restore live-window, synthetic-pointer or capture gates on either platform.
+The existing resting-arc test retains center pass-through and painted-arc input
+checks. Linux syntax/portable checks are not native AppKit/SwiftUI verification;
+the changed native geometry still requires macOS execution.
+The four formal controller lifecycle tests pass on Linux with Swift 6.2.4 using
+the real controller, scheduler, providers and test source in a disposable package.
+All seven changed Swift files pass syntax parsing. The 22-patch queue also replays
+successfully, and the replayed native source/test trees match the checked prepared
+tree byte-for-byte. These results do not establish native geometry or hosting-view
+hit-test acceptance; no new Release run was triggered.
 The redesigned native surfaces and real-login behavior remain unverified on
 Windows and macOS. Portable geometry checks and SVG previews validate shared
 shape calculations, not native window placement, hit testing, font rasterization
