@@ -113,10 +113,21 @@ rate, distinct from the zero live rate of a disconnected host; last known totals
 The quota patches add an optional Codenotch-style edge-attached floating surface
 and a Subscription page inside the existing Settings window. The floating
 renderer is pinned to Codenotch commit `835550a342871779135b6484d6899161c5222f7c`:
-macOS uses its native shape and layout, while Windows hosts its HTML/CSS/SVG in
-WebView2 rather than approximating those pixels with WPF controls. Windows needs
-the Microsoft Edge WebView2 Runtime; if unavailable, Settings reports that
-requirement instead of substituting a different surface. Settings retains the
+macOS uses native shapes and layout, and Windows uses cached WPF vector drawing.
+The application, native tests and profiling harness target `net10.0-windows`;
+the former browser-specific Windows SDK/CsWinRT target and dependencies, HTML
+resource, navigation policy and Runtime-install prompts are removed. The
+dashboard orb's existing Vortice Direct3D/DirectComposition dependencies remain
+in use and are not part of that removal.
+WPF-parsed paths remain immutable: a separate geometry group carries the drawing
+transform. Assigning `Transform` directly to a `Geometry.Parse` result throws
+before the first native placement because WPF returns a frozen geometry.
+Flattened WPF paths may carry a null transform: that means identity, not an
+invalid path. The HWND-region converter uses identity in that case and then
+appends device DPI. The former grip-only liquid converter is now removed.
+The Windows implementation has no WebView2 runtime, browser process, JavaScript
+bridge or composition-capture surface. Its native input region follows the
+actual visible geometry rather than a transparent host rectangle. Settings retains the
 supplied account-card/progress-bar design. The existing transient dashboard
 flyout shows at most two summaries near a limit, when blocked, or when sign-in
 is required; clicking one opens Settings. Status-item bodies, taskbar widgets,
@@ -170,11 +181,183 @@ No tests or builds have been run for this separation; the optional harness and
 remaining native tests have not yet been validated on macOS. Linux syntax
 checks and language probes must not be reported as macOS validation.
 The redesigned native surfaces and real-login behavior remain unverified on
-Windows and macOS. A same-browser fixture comparison can establish equality of
-the shipped Windows renderer and its pinned reference for the compared states;
-it does not establish native window placement, hit testing, font rasterization
+Windows and macOS. Portable geometry checks and SVG previews validate shared
+shape calculations, not native window placement, hit testing, font rasterization
 or mixed-DPI behavior. Do not claim pixel identity without matching native
 screenshots. Claude quota and Linux quota interfaces are future phases.
+
+The Windows native replacement retains the source-neutral Subscription page and
+Light, Dark or System appearance; Codex remains the only live adapter. Quota bars,
+rings and flyout summaries show remaining allowance, with warning colors based on
+actual usage. Dashboard and quota-window visibility controls remain independent.
+
+The floating surface is drawn directly with cached WPF paths, glyphs and text.
+The main surface uses a bounded, stable animation canvas and the details card
+uses a separate tightly sized HWND; both are nonactivating. For one Codex source,
+the canvas is 70.5 by 214.37 DIP vertically or 190.37 by 98.5 DIP horizontally.
+Unused canvas is excluded from input. Rendering, hit classification and the
+Win32 window region share each frame's body and external grip geometry/mask.
+Region coordinates and placement use the monitor's physical work area and DPI.
+The browser, navigation/nonce bridge, screen-sized transparent input surface,
+cursor polling and full-window capture/diagnostic alpha scans remain removed.
+Only the control family's finite arc/disc/drop transitions use the tight local
+source rasterizer, alpha filter and mask-to-input conversion; they never filter
+the body or desktop. Mouse events and finite transitions drive updates; settled
+or hidden surfaces have no animation subscription and do not rebuild Settings
+on cursor movement.
+
+Without pointer attention, the quota surface collapses to a black 10-by-79-DIP
+edge tab (79 by 10 on a horizontal edge). Pointer entry expands it; leaving the
+body and details card starts the existing 250-ms grace period before collapse.
+Details-card hover, an open context menu and dragging keep it expanded. Only the
+painted tab accepts input while collapsed; the stable animation canvas does not
+reserve a transparent desktop-sized hit area. The settings shortcut and gear
+remain absent; Settings stays available through the existing context menu and
+tray entry. Native-dev.9 corrects the earlier removal of the necessary visible
+entry arc: an expanded resting body shows an independent quarter arc in its
+trailing flare pocket before hover. It is not the body's own flare. The arc
+remains visible when the temporary disc divides into six nearby dots; the final
+pose is Arc=1, Disc=0, Reveal=1, without a permanent disc, gear or settings action.
+The original body stays 104 DIP vertically or 80 DIP horizontally, with no footer.
+Arc and temporary disc retain their 0.9 reference scale: arc radius25.65,
+fill stroke6.12 plus two-DIP edge outline (8.12 total), disc radius20.97 DIP.
+The enlarged dot grid is independently diameter8.0/pitch12.5 DIP, with the
+existing30% hover growth to10.4 DIP, one-DIP outline and unchanged squeeze ratios.
+Its outlined envelope is34 by21.5 DIP neutral or36.4 by23.9 DIP at settled hover;
+hitboxes, fan, corridor and liquid core/neck consumers share those real dimensions.
+The arc/body are not globally enlarged. Their common anchor remains edge-local
+(38.7, BodyEnd + 38.7); final drops move only eight DIP tailward from that anchor,
+not the old 43.2-DIP reach or intermediate proposals. Production stroke geometry
+gives an 8.49-DIP body-to-arc gap and 17.23-DIP body-to-disc gap; the probe records
+the actual nearest quarter-arc/dot outlined clearances, not axial offsets.
+The shared motion restores the arc's 340-ms delay plus 950-ms initial separation,
+220-ms arc-to-disc morph, then 20-ms delay plus 420-ms drop division. On leave,
+drops return for200 ms, wait100 ms and roll the temporary disc back into the arc
+over400 ms; quick arc return during collapse takes260 ms. Hover uses the original
+220-ms-response/0.55-damping spring, with held squeeze and immediate reduced motion.
+Only actual painted arc/disc/drop geometry and its small connecting routes form
+one Grip family. The old body-edge blind hotspot is removed. Touching an emerging
+arc carries its exact last-painted GooArc phase/return flags until family return
+finishes, rather than replacing the touched paint or using an invisible snapshot.
+An activation-only, nonzero-filled fan of eighteen eight-DIP-wide straight routes
+connects both arc ends and midpoint to all six dots; overlap unions without holes.
+It is not a whole transparent circle or canvas, and the unhovered arc has no fan.
+Pointer-leave is reclassified against the painted frame, so a native-region update
+does not close the control under a stationary pointer. Grip and Alt-body presses
+still capture the painted pose before the stable four-DIP press-DPI threshold.
+Pending/active gestures hold expansion; release resamples and persists the anchor.
+Reduced motion settles every channel and idle states stop rendering.
+
+The floating details card's successful bottom label now actually reads “刚刚”,
+“X分钟前”, “X小时前” or “X天前”, derived from its original ObservedAt and localized
+in all four languages, instead of a timeless “latest”. Missing time is unknown;
+future timestamps never display negative ages. Offline/error/stale/waiting and
+authentication states keep precedence. Only the visible details card and open
+tray summary run local observation-boundary clocks: a reading aged 59 or 119
+seconds updates one second after opening. Snapshot/visibility changes reschedule
+the deadline; hidden/unloaded/disposed displays stop it, and the main black tab
+does not run this timer. These clocks make no HTTP requests and do not change
+provider polling, startup cache, account isolation or old/new 429 protection.
+
+Native-dev.9's narrow QuotaNotch Geometry/Orb/GripMotion checks, Release Windows
+test cross-compile and self-contained win-x64 publish are recorded in
+`artifacts/quota-native-dev-9/BUILDINFO.json` and `verification.log`. Core and
+QuotaFormat are unchanged and are not rerun or assigned copied historical counts.
+The self-contained `probe/motion-preview.html` plays actual production frames,
+including unhovered visible arc, liquid entry, temporary disc, retained arc with
+same-pocket drops, captured emerging-arc carry, hover/squeeze, return and reduced
+motion on four edges in both themes. Its diagnostic switch shows only the actual
+compact activation fan. Liquid frames show clipped production vector sources,
+not a substitute shader: native WPF union/flatten/local-goo pixels cannot run here.
+The prior original browser proof and dev.8 evidence remain intact; the new
+`probe/before-after.png` labels those sources alongside dev.9 states honestly.
+Windows regressions cover all eighteen arc-to-dot slow straight transfers with
+forced leave/grace expiry, real paint/hit/installed-region checks, emerging-arc
+carry and device-pixel parity at1/1.25/2x, but are compiled, not run on Linux.
+Neither the preview nor compilation proves native hover, first-downward drag,
+pixels/fonts, capture, click-through, mixed DPI, monitor transfer or real-login.
+The development archive remains unpublished; no release/tag/push/full suite/CI
+is performed. Source-generated snapshot JSON and all cache/startup/429 protections
+remain intact without suppressions; the approved Subscription layout is unchanged.
+
+
+
+
+Automatic quota polling runs independently of whether Settings, the flyout or
+the floating surface is open, while preserving manual mode, network consent and
+provider backoff.
+Native-dev.7 synchronously restores the current account's last successful structured
+snapshot before first Subscription render or notch Show, preserving the original
+observation time as stale, even with networking off. Once networking is permitted,
+one startup refresh is attempted per Surface lifetime, including manual mode with
+no visible page. Source/network toggles do not reset this one-shot allowance.
+Only a validated version-1 account snapshot permits bypassing the ordinary
+successful five-minute floor; authentication rejection, failures and persisted
+429 deadlines (including reset-credit 429 after successful usage) remain binding.
+Legacy schedules without a validated snapshot retain their future NextAllowedAt:
+the old format cannot distinguish the ordinary floor from an optional-endpoint
+429 extension. A successful request after that deadline upgrades the format;
+subsequent starts can bypass the ordinary successful floor. Cache misses/corruption,
+account changes and cancellation never expose another account or commit obsolete
+HTTP results. Cache uses LocalAppData/AgentSpeed/quota/<sha256account>.json with
+atomic same-directory replacement, inherited Windows ACLs (0700/0600 on Unix),
+and no credentials, headers or raw response. Tests use isolated synthetic auth/cache
+and injected HTTP handlers, not real credentials or quota endpoints.
+Native-dev.6's approved Subscription account layout is unchanged:
+provider identity and plan, full-width remaining-allowance windows, absolute
+reset times with localized day/hour/minute countdowns, and a separated footer
+with balances/reset cards on the left and the original update time on the right.
+The page's minute timer updates only reset labels while the page is active; it
+does not request data, recreate controls or keep running after page closure.
+Available reset cards may show the nearest valid reported expiration, parsed
+independently of count; an authoritative zero suppresses the expiry label.
+Unknown count/expiry remain unknown, never a quota reset or monetary balance.
+Preferences use aligned switches and the existing orb-style source editor.
+All sources defaults on, includes future supported readers, persists separately
+and disables individual choices; legacy explicit JSON lists migrate to all off.
+Codex is still the only real adapter. The diagnostics disclosure/callback and
+credential-storage footer are removed, while initialization failures remain
+visible. Cards retain updated time, not source/precision/next-available metadata,
+and Subscription has its own icon. Internal safe native diagnostics remain for
+regressions; no hidden replacement diagnostics UI is introduced.
+
+The Windows implementation was cross-checked against
+[WIsland's native window choreography](https://github.com/AsamiAkito/wisland/blob/11ebd0f0a3af2afcb5b8a4d9792f4f6f011f53f4/wisland/ui/island.py).
+Only its anchored-animation-canvas principle was adopted. WIsland creates a
+translucent, frameless, nonactivating Qt QWidget and paints a QPainterPath.
+Its `setMask` call clips the inner content widget; it is not this implementation's
+WPF-to-GDI input-region conversion. That conversion is downstream code, not a
+copied WIsland display path. The 900-by-680 host, constant compact animation,
+cursor polling and desktop-sampled glass are not imported. WIsland is MIT
+licensed; no implementation code was copied from it.
+
+Initial native-dev.1 verification passed 51 Codex provider tests, 307 related Presentation
+tests and a subsequent 21-test geometry/envelope check. The Windows native test
+assembly compiles; it has not executed on this Linux host. A throwaway probe
+compared 48 orb states and 14 grip states against the pinned reference's actual
+JavaScript geometry: scalar deviation was zero and sampled path deviation was
+at most 0.01014 DIP. SVG previews use the actual shared C# paths, not native WPF.
+The conservative model-derived local filter benchmark allocated zero steady-state
+bytes: orb/grip were about 0.31/0.16 ms at 1x, 1.82/1.09 ms at 2x and
+15.72/4.09 ms at 4x on this host. These are filter-only microbenchmarks, not
+Windows frame times, end-to-end input latency or a native visual acceptance.
+
+Native-dev.2 fixes the frozen-path initialization failure reported on Windows
+and integrates compact account cards and direct source selection. Its Windows
+test assembly and self-contained win-x64 publication build with no warnings or
+errors, and 311 related Presentation tests pass. `QuotaNotchWindowTests` now
+exercises the real Surface-to-Show startup on all four edges, painted versus
+transparent points, installed native regions and safe copyable failure stages.
+It is included in the registered Windows filter but has only compiled here;
+the Windows startup and layout assertions have not executed on this Linux host.
+
+
+Portable geometry/input/placement checks and compilation are not native Windows
+interaction or pixel validation. Windows must still verify cross-process desktop
+click-through outside the drawn shapes, responsive clicks/dragging, DPI changes
+and the pinned visual appearance; do not mark those checks passed from a browser
+or Linux-only result. No release is authorized by this development work.
+
 
 ### Standalone collector release assets (unreleased)
 

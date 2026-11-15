@@ -3,6 +3,12 @@
 /build/
 /.build/
 /artifacts/
+/AgentSpeed-quota-ui-dev-win-x64.zip
+/AgentSpeed-quota-ui-dev.2-win-x64.zip
+/AgentSpeed-quota-ui-dev.3-win-x64.zip
+/AgentSpeed-quota-ui-dev.4-win-x64.zip
+/AgentSpeed-quota-ui-dev.5-win-x64.zip
+/AgentSpeed-quota-native-dev.1-win-x64.zip
 /.claude/
 /request.md
 __pycache__/
