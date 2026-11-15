@@ -331,7 +331,7 @@
     "regression": [
       {
         "platform": "macos",
-        "run": "cd macos && swift test --filter 'CodexQuotaProviderTests|QuotaLifecycleTests'"
+        "run": "cd macos && swift test --filter 'CodexQuotaProviderTests|QuotaLifecycleTests|QuotaColdStartTests'"
       }
     ],
     "related": [
@@ -350,11 +350,11 @@
     "regression": [
       {
         "platform": "linux",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release --filter FullyQualifiedName~CodexQuotaProviderTests --framework net10.0"
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release --filter 'FullyQualifiedName~CodexQuotaProviderTests|FullyQualifiedName~QuotaColdStartTests' --framework net10.0"
       },
       {
         "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release --filter FullyQualifiedName~CodexQuotaProviderTests --framework net10.0"
+        "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release --filter 'FullyQualifiedName~CodexQuotaProviderTests|FullyQualifiedName~QuotaColdStartTests' --framework net10.0"
       },
       {
         "platform": "windows",
@@ -391,9 +391,9 @@
   },
   "0022-Add-multi-window-quota-and-OpenCode-Go-provider.patch": {
     "regression": [
-      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests'"},
-      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests'"},
-      {"platform": "macos", "run": "swift test --package-path macos --filter 'OpenCodeGoQuotaProviderTests|CodexQuotaProviderTests|QuotaTests|QuotaLifecycleTests'"}
+      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests|FullyQualifiedName~QuotaColdStartTests'"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests|FullyQualifiedName~QuotaColdStartTests'"},
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'OpenCodeGoQuotaProviderTests|CodexQuotaProviderTests|QuotaTests|QuotaLifecycleTests|QuotaColdStartTests'"}
     ],
     "related": [
       {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~Quota|FullyQualifiedName~SettingsSerializerTests'"},

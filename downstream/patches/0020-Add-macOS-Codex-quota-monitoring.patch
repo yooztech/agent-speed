@@ -1,6 +1,6 @@
-From 85fc1ebd70ef6c86ce91fa2d2c1ea1572a194d97 Mon Sep 17 00:00:00 2001
+From 4caf91c9f1b89b431536d03ae119d0df311d2dc5 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 22:07:56 +0800
+Date: Sun, 15 Nov 2026 22:31:58 +0800
 Subject: [PATCH] Add macOS Codex quota monitoring
 
 ---
@@ -14,27 +14,28 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  macos/Sources/AgentSpeed/App/QuotaNotch.swift | 647 ++++++++++++++++++
  .../AgentSpeed/App/QuotaNotchShape.swift      | 451 ++++++++++++
  .../App/QuotaNotchVisualHarness.swift         | 150 ++++
- .../App/QuotaRefreshScheduler.swift           |  88 +++
+ .../App/QuotaRefreshScheduler.swift           |  94 +++
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
  .../AgentSpeed/Dashboard/DashboardView.swift  |  72 ++
  .../AgentSpeed/Localization/StringTable.swift |  91 +++
  .../SettingsWindow/Panes/QuotaPane.swift      | 294 ++++++++
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
  .../AgentSpeed/Support/MenuFactory.swift      |   1 +
- .../AgentSpeedCore/CodexQuotaProvider.swift   | 346 ++++++++++
+ .../AgentSpeedCore/CodexQuotaProvider.swift   | 360 ++++++++++
  macos/Sources/AgentSpeedCore/Quota.swift      | 138 ++++
  .../AgentSpeedCore/QuotaPersistence.swift     |  82 +++
- .../QuotaControllerTests.swift                | 527 ++++++++++++++
+ .../QuotaControllerTests.swift                | 585 ++++++++++++++++
  .../AgentSpeedAppTests/QuotaNotchTests.swift  | 285 ++++++++
  .../QuotaPresentationTests.swift              | 172 +++++
  .../CodexQuotaProviderTests.swift             | 236 +++++++
- .../QuotaLifecycleTests.swift                 | 190 +++++
+ .../QuotaColdStartTests.swift                 | 202 ++++++
+ .../QuotaLifecycleTests.swift                 | 191 ++++++
  .../AgentSpeedCoreTests/QuotaTests.swift      |  48 ++
  macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 | 121 ++++
+ spec/QUOTA.md                                 | 125 ++++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 30 files changed, 4433 insertions(+), 2 deletions(-)
+ 31 files changed, 4718 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -51,6 +52,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
  create mode 100644 spec/QUOTA.md
@@ -1889,10 +1891,10 @@ index 0000000000000000000000000000000000000000..e4ae63214ed2e45d6e80065436e21e1b
 +#endif
 diff --git a/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift b/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..7faa4eb7a703525bb1f21079349e0ef90b843179
+index 0000000000000000000000000000000000000000..73bf336c0639222190657660c9c29a6f1e4b3420
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,94 @@
 +import AgentSpeedCore
 +import Foundation
 +
@@ -1958,10 +1960,12 @@ index 0000000000000000000000000000000000000000..7faa4eb7a703525bb1f21079349e0ef9
 +struct QuotaFailureRetry {
 +    private(set) var dueAt: Date?
 +    private var failures = 0
++    private var coldFailures = 0
 +
 +    mutating func clear() {
 +        dueAt = nil
 +        failures = 0
++        coldFailures = 0
 +    }
 +
 +    mutating func complete(before: QuotaSnapshot, result: QuotaSnapshot, startedAt: Date, now: Date) {
@@ -1973,11 +1977,15 @@ index 0000000000000000000000000000000000000000..7faa4eb7a703525bb1f21079349e0ef9
 +        // another failure count. Cache-only hydration never calls this method.
 +        if !(before.nextAllowedAt.map { $0 > startedAt && result.nextAllowedAt == $0 } ?? false) {
 +            failures = min(failures + 1, 5)
++            if result.observedAt == nil { coldFailures = min(coldFailures + 1, 4) }
 +        }
-+        if let deadline = result.nextAllowedAt {
-+            dueAt = deadline > now ? deadline : now.addingTimeInterval(1)
++        let fallback = result.observedAt == nil
++            ? min(30, 5 * Double(1 << max(0, coldFailures - 1)))
++            : min(60 * Double(1 << max(0, failures - 1)), 900)
++        if let deadline = result.nextAllowedAt, deadline > now {
++            dueAt = deadline
 +        } else {
-+            dueAt = now.addingTimeInterval(min(60 * Double(1 << (failures - 1)), 900))
++            dueAt = now.addingTimeInterval(fallback)
 +        }
 +    }
 +}
@@ -2534,10 +2542,10 @@ index 7d20173cd90bd12b4db5ac390df17747ec398078..7075c36d4db6a796b84410546ef2b7f0
              menu.addItem(report)
 diff --git a/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..25152a26c6352d2df3a35f578691e9be6e71a442
+index 0000000000000000000000000000000000000000..3ee8aceaa0416743e2b5cbf057370c7909490e80
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
-@@ -0,0 +1,346 @@
+@@ -0,0 +1,360 @@
 +import Foundation
 +#if canImport(CryptoKit)
 +import CryptoKit
@@ -2560,6 +2568,7 @@ index 0000000000000000000000000000000000000000..25152a26c6352d2df3a35f578691e9be
 +private struct QuotaSchedule: Codable {
 +    var nextAllowedAt: Date?
 +    var failures: Int = 0
++    var coldFailures: Int?
 +    var rejectedToken: String?
 +    var successfulObservation: Bool? = nil
 +    var retryNotBefore: Date?
@@ -2678,16 +2687,19 @@ index 0000000000000000000000000000000000000000..25152a26c6352d2df3a35f578691e9be
 +        var request = Self.authorizedRequest("https://chatgpt.com/backend-api/wham/usage", credentials: credentials)
 +        request.timeoutInterval = 15
 +        var result: QuotaSnapshot
++        var retry: TimeInterval = 0
 +        do {
 +            let (body, response) = try await transport(request)
 +            guard !Task.isCancelled, readCredentials() == credentials else { return readCachedSnapshot() }
 +            let completed = now()
++            retry = response.value(forHTTPHeaderField: "Retry-After").map { Self.retryAfter($0, now: completed) } ?? 0
 +            switch response.statusCode {
 +            case 200...299:
 +                let parsed = try Self.parse(body, at: completed)
 +                schedule.nextAllowedAt = completed.addingTimeInterval(300)
 +                schedule.retryNotBefore = nil
 +                schedule.failures = 0
++                schedule.coldFailures = nil
 +                schedule.successfulObservation = true
 +                var reset: (available: Int?, expiry: Date?) = (nil, nil)
 +                if schedule.resetRejectedToken != tokenKey {
@@ -2698,7 +2710,7 @@ index 0000000000000000000000000000000000000000..25152a26c6352d2df3a35f578691e9be
 +                        let (data, response) = try await transport(resetRequest)
 +                        guard !Task.isCancelled, readCredentials() == credentials else { return readCachedSnapshot() }
 +                        if response.statusCode == 401 || response.statusCode == 403 { schedule.resetRejectedToken = tokenKey }
-+                        if response.statusCode == 429 {
++                        if response.statusCode == 429 || (!(200...299).contains(response.statusCode) && response.value(forHTTPHeaderField: "Retry-After") != nil) {
 +                            let retry = now().addingTimeInterval(Self.retryAfter(response.value(forHTTPHeaderField: "Retry-After"), now: now()))
 +                            schedule.nextAllowedAt = max(schedule.nextAllowedAt!, retry)
 +                            schedule.retryNotBefore = schedule.nextAllowedAt
@@ -2717,12 +2729,12 @@ index 0000000000000000000000000000000000000000..25152a26c6352d2df3a35f578691e9be
 +                schedule.successfulObservation = false
 +                result = snapshot(status: .needsAuth)
 +            default:
-+                backoff(&schedule, at: completed, retry: response.statusCode == 429 ? Self.retryAfter(response.value(forHTTPHeaderField: "Retry-After"), now: completed) : 0)
++                backoff(&schedule, account: accountKey, at: completed, retry: retry, rateLimited: response.statusCode == 429)
 +                result = staleOrError(accountKey, next: schedule.nextAllowedAt)
 +            }
 +        } catch {
 +            guard !Task.isCancelled, readCredentials() == credentials else { return readCachedSnapshot() }
-+            backoff(&schedule, at: now(), retry: 0)
++            backoff(&schedule, account: accountKey, at: now(), retry: retry)
 +            result = staleOrError(accountKey, next: schedule.nextAllowedAt)
 +        }
 +        guard !Task.isCancelled, readCredentials() == credentials else { return readCachedSnapshot() }
@@ -2732,9 +2744,19 @@ index 0000000000000000000000000000000000000000..25152a26c6352d2df3a35f578691e9be
 +        return result
 +    }
 +
-+    private func backoff(_ schedule: inout QuotaSchedule, at time: Date, retry: TimeInterval) {
++    private func backoff(_ schedule: inout QuotaSchedule, account: String, at time: Date,
++                         retry: TimeInterval, rateLimited: Bool = false) {
++        let cold = schedule.observation?.validated(accountKey: account, id: id, source: "wham/usage") == nil
 +        schedule.failures = min(schedule.failures + 1, 6)
-+        schedule.nextAllowedAt = time.addingTimeInterval(max(60 * pow(2, Double(schedule.failures - 1)), retry))
++        let wait: TimeInterval
++        if cold && !rateLimited {
++            let attempt = min((schedule.coldFailures ?? 0) + 1, 4)
++            schedule.coldFailures = attempt
++            wait = min(30, 5 * pow(2, Double(attempt - 1)))
++        } else {
++            wait = 60 * pow(2, Double(schedule.failures - 1))
++        }
++        schedule.nextAllowedAt = time.addingTimeInterval(max(wait, retry))
 +        schedule.retryNotBefore = schedule.nextAllowedAt
 +        schedule.successfulObservation = false
 +    }
@@ -3118,10 +3140,10 @@ index 0000000000000000000000000000000000000000..25c2bf286ad2a10d815de699a2589dde
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b6f0242da
+index 0000000000000000000000000000000000000000..ead924c28ea2ac140b1ce2b78be43130e49a9347
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -0,0 +1,527 @@
+@@ -0,0 +1,585 @@
 +import Foundation
 +#if canImport(FoundationNetworking)
 +import FoundationNetworking
@@ -3134,6 +3156,8 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +    private let lock = NSLock()
 +    private var now = Date(timeIntervalSince1970: 1_800_000_000)
 +    private var usageCalls = 0
++    private let failureStatus: Int
++    init(failureStatus: Int = 429) { self.failureStatus = failureStatus }
 +    func time() -> Date { lock.lock(); defer { lock.unlock() }; return now }
 +    func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; now.addTimeInterval(seconds) }
 +    func count() -> Int { lock.lock(); defer { lock.unlock() }; return usageCalls }
@@ -3145,8 +3169,8 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +        let body = usage
 +            ? #"{"rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}}}"#
 +            : #"{"available_count":2}"#
-+        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: limited ? 429 : 200,
-+            httpVersion: nil, headerFields: limited ? ["Retry-After": "75"] : [:])!)
++        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: limited ? failureStatus : 200,
++            httpVersion: nil, headerFields: limited && failureStatus == 429 ? ["Retry-After": "75"] : [:])!)
 +    }
 +}
 +
@@ -3166,9 +3190,11 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +    private var pending: [Int: CheckedContinuation<QuotaSnapshot, Never>] = [:]
 +    private var finished = false
 +    private let observed = Date(timeIntervalSince1970: 1_800_000_000)
++    private var hasObservation: Bool
 +
-+    init(_ id: String) {
++    init(_ id: String, cold: Bool = false) {
 +        self.id = id
++        hasObservation = !cold
 +        let stream = AsyncStream<Request>.makeStream()
 +        requests = stream.stream
 +        events = stream.continuation
@@ -3191,6 +3217,7 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +    }
 +    func complete(_ request: Request, status: QuotaStatus = .ok, nextAllowedAt: Date? = nil, waiting: Bool = false) -> Bool {
 +        guard let continuation = pending.removeValue(forKey: request.number) else { return false }
++        if status == .ok { hasObservation = true }
 +        continuation.resume(returning: snapshot(status, nextAllowedAt: nextAllowedAt, waiting: waiting))
 +        return true
 +    }
@@ -3211,9 +3238,9 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +    }
 +    private func snapshot(_ status: QuotaStatus, nextAllowedAt: Date? = nil, waiting: Bool = false) -> QuotaSnapshot {
 +        QuotaSnapshot(id: id, displayName: id, fidelity: "official", status: status,
-+            windows: [QuotaWindow(id: "rolling", label: "", usedFraction: 0.25, remaining: 0.75,
-+                used: 0.25, resetAt: nil, duration: 18_000)], headlineId: "rolling", block: nil,
-+            account: nil, plan: nil, observedAt: observed, source: "fixture", credits: nil,
++            windows: hasObservation ? [QuotaWindow(id: "rolling", label: "", usedFraction: 0.25, remaining: 0.75,
++                used: 0.25, resetAt: nil, duration: 18_000)] : [], headlineId: "rolling", block: nil,
++            account: nil, plan: nil, observedAt: hasObservation ? observed : nil, source: "fixture", credits: nil,
 +            nextAllowedAt: nextAllowedAt, waitingForRefresh: waiting)
 +    }
 +}
@@ -3251,10 +3278,10 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +    private var barriers: [Task<Void, Never>] = []
 +    private var cleanup: Task<Void, Never>?
 +
-+    init(ids: [String], automatic: Bool) {
++    init(ids: [String], automatic: Bool, cold: Bool = false) {
 +        defaults = UserDefaults(suiteName: suite)!
 +        defaults.set(automatic, forKey: "quota.autoRefreshEnabled")
-+        providers = ids.map { ControllerQuotaProvider($0) }
++        providers = ids.map { ControllerQuotaProvider($0, cold: cold) }
 +        let clock = QuotaTestClock()
 +        self.clock = clock
 +        controller = QuotaController(defaults: defaults, providers: providers, scheduler: scheduler, now: { clock.now })
@@ -3304,9 +3331,9 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +@Suite("Quota controller lifecycle", .timeLimit(.minutes(1)))
 +@MainActor
 +struct QuotaControllerTests {
-+    private func withFixture(ids: [String] = ["codex", "test-source"], automatic: Bool = false,
++    private func withFixture(ids: [String] = ["codex", "test-source"], automatic: Bool = false, cold: Bool = false,
 +                             _ body: @MainActor (ControllerFixture) async throws -> Void) async throws {
-+        let fixture = ControllerFixture(ids: ids, automatic: automatic)
++        let fixture = ControllerFixture(ids: ids, automatic: automatic, cold: cold)
 +        try await withTaskCancellationHandler {
 +            do { try await body(fixture) }
 +            catch {
@@ -3591,7 +3618,7 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +        #expect(retry.dueAt == now.addingTimeInterval(42))
 +        let expired = snapshot(now.addingTimeInterval(-1))
 +        retry.complete(before: cached, result: expired, startedAt: now, now: now)
-+        #expect(retry.dueAt == now.addingTimeInterval(1))
++        #expect(retry.dueAt == now.addingTimeInterval(5))
 +    }
 +    @Test func firstProvider429RetriesAtProviderDeadlineInsteadOfNormalTick() async throws {
 +        let suite = UUID().uuidString
@@ -3627,7 +3654,7 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +    @Test(arguments: ["network", "source", "dispose", "manual"])
 +    func cancellingPendingRetryRemovesWakeupAndRejectsQueuedCallback(_ transition: String) async throws {
 +        let id = "remote:11111111-1111-1111-1111-111111111111:codex"
-+        try await withFixture(ids: [id], automatic: true) { fixture in
++        try await withFixture(ids: [id], automatic: true, cold: true) { fixture in
 +            let controller = fixture.controller, provider = fixture.providers[0]
 +            controller.setNetworkEnabled(true)
 +            let startup = try await fixture.request(provider, .startup)
@@ -3647,6 +3674,59 @@ index 0000000000000000000000000000000000000000..0e195ca0287fd2d98b58fcbb38729d4b
 +            #expect(await provider.counts().manual == 0)
 +            #expect(fixture.scheduler.retries.isEmpty)
 +        }
++    }
++    @Test func coldFallbackCapsAtThirtyThenSuccessReturnsToWarmPolling() async throws {
++        let id = "remote:11111111-1111-1111-1111-111111111111:kimi"
++        try await withFixture(ids: [id, "codex"], automatic: true, cold: true) { fixture in
++            let provider = fixture.providers[0], other = fixture.providers[1]
++            fixture.controller.setNetworkEnabled(true)
++            var request = try await fixture.request(provider, .startup)
++            let otherStartup = try await fixture.request(other, .startup)
++            #expect(await other.complete(otherStartup))
++            for delay in [TimeInterval(5), 10, 20, 30, 30, 30] {
++                #expect(await provider.complete(request, status: .error))
++                await fixture.barrier().value
++                #expect(fixture.scheduler.retries[id]?.delay == delay)
++                #expect(fixture.scheduler.retries["codex"] == nil)
++                fixture.clock.now.addTimeInterval(delay)
++                fixture.scheduler.fireRetry(id)
++                request = try await fixture.request(provider, .refresh)
++            }
++            #expect(await provider.complete(request))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries.isEmpty)
++            fixture.controller.enabledProviderIDs = [id]
++            fixture.scheduler.fire()
++            let warm = try await fixture.request(provider, .refresh)
++            #expect(await provider.complete(warm, status: .stale))
++            await fixture.barrier().value
++            #expect(fixture.scheduler.retries[id]?.delay == 60)
++        }
++    }
++
++    @Test func firstTransientFailureSchedulesGenuineCodexTransportAfterFiveSeconds() async throws {
++        let suite = UUID().uuidString, directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++        defer { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
++        let auth = directory.appendingPathComponent("auth.json")
++        try Data(#"{"tokens":{"access_token":"fixture","account_id":"fixture-account"}}"#.utf8).write(to: auth)
++        let transport = RetryProviderTransport(failureStatus: 503), scheduler = ControlledQuotaScheduler()
++        let provider = CodexQuotaProvider(credentialURL: auth, defaults: UserDefaults(suiteName: suite)!, now: { transport.time() }, transport: { transport.fetch($0) })
++        let controller = QuotaController(defaults: UserDefaults(suiteName: suite)!, providers: [provider], scheduler: scheduler, now: { transport.time() })
++        defer { controller.dispose() }
++        controller.setNetworkEnabled(true)
++        await controller.operationBarrier().value
++        #expect(transport.count() == 1)
++        #expect(scheduler.retries["codex"]?.delay == 5)
++        transport.advance(4)
++        scheduler.fireRetry("codex")
++        #expect(transport.count() == 1)
++        transport.advance(1)
++        scheduler.fireRetry("codex")
++        await controller.operationBarrier().value
++        #expect(transport.count() == 2)
++        #expect(controller.snapshots.first?.status == .ok)
++        #expect(scheduler.retries.isEmpty)
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
@@ -4360,12 +4440,220 @@ index 0000000000000000000000000000000000000000..2ed5f6c6971c71d96c137f87b9a17968
 +    }
 +
 +}
+diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..5dc4af735722b1307458a29762a25d2301a00c25
+--- /dev/null
++++ b/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
+@@ -0,0 +1,202 @@
++import Foundation
++#if canImport(FoundationNetworking)
++import FoundationNetworking
++#endif
++import Testing
++@testable import AgentSpeedCore
++
++private final class ColdQuotaHTTP: @unchecked Sendable {
++    private let lock = NSLock()
++    private var time = Date(timeIntervalSince1970: 1_800_000_000)
++    private var status = 503
++    private var retry: String?
++    private var malformed = false
++    private var calls = 0
++    func now() -> Date { lock.withLock { time } }
++    func advance(_ seconds: TimeInterval) { lock.withLock { time.addTimeInterval(seconds) } }
++    func count() -> Int { lock.withLock { calls } }
++    func respond(_ status: Int, retry: String? = nil, malformed: Bool = false) {
++        lock.withLock { self.status = status; self.retry = retry; self.malformed = malformed }
++    }
++    func fetch(_ request: URLRequest) throws -> (Data, HTTPURLResponse) {
++        try lock.withLock {
++            let reset = request.url!.path.hasSuffix("rate-limit-reset-credits")
++            if !reset { calls += 1 }
++            if !reset && status == 599 { throw URLError(.notConnectedToInternet) }
++            let body = reset ? #"{"available_count":2}"# : malformed ? "not-json"
++                : #"{"rate_limit":{"primary_window":{"used_percent":25}}}"#
++            return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: reset ? 200 : status,
++                httpVersion: nil, headerFields: reset ? nil : retry.map { ["Retry-After": $0] })!)
++        }
++    }
++}
++
++private struct ColdQuotaHarness: Sendable {
++    let id: String
++    let directory: URL
++    let suite = UUID().uuidString
++    let http = ColdQuotaHTTP()
++    init(_ id: String) throws {
++        self.id = id
++        directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
++        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++        let auth: String
++        switch id {
++        case "codex": auth = #"{"tokens":{"access_token":"fixture-token","account_id":"fixture-account"}}"#
++        default: preconditionFailure("Unsupported quota fixture source")
++        }
++        try Data(auth.utf8).write(to: directory.appendingPathComponent("auth.json"))
++    }
++    func provider() -> any QuotaProvider {
++        let auth = directory.appendingPathComponent("auth.json"), cache = directory.appendingPathComponent("cache")
++        switch id {
++        case "codex":
++            return CodexQuotaProvider(credentialURL: auth, defaults: UserDefaults(suiteName: suite)!,
++                now: { http.now() }, cacheDirectory: cache, transport: { try http.fetch($0) })
++        default:
++            preconditionFailure("Unsupported quota fixture source")
++        }
++    }
++    func close() {
++        try? FileManager.default.removeItem(at: directory)
++        UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
++    }
++}
++
++@Suite("Quota cold-start actual HTTP pacing")
++struct QuotaColdStartTests {
++    @Test(arguments: ["codex"])
++    func coldTransportRequestsFollowSequenceAcrossRestartsThenUseWarmPacing(_ id: String) async throws {
++        let harness = try ColdQuotaHarness(id), http = harness.http
++        defer { harness.close() }
++        for (index, delay) in [TimeInterval(5), 10, 20, 30, 30, 30].enumerated() {
++            // Exercise transport errors, server failures and decoding failures through the real provider seam.
++            http.respond(index % 3 == 0 ? 599 : index % 3 == 1 ? 503 : 200, malformed: index % 3 == 2)
++            let reader = harness.provider()
++            let result = await reader.refreshStartup()
++            #expect(result.status == .error && result.observedAt == nil && result.windows.isEmpty)
++            #expect(result.nextAllowedAt == http.now().addingTimeInterval(delay))
++            #expect(http.count() == index + 1)
++            let restarted = harness.provider()
++            #expect(await restarted.readCachedSnapshot().observedAt == nil)
++            #expect(await restarted.refreshStartup().nextAllowedAt == result.nextAllowedAt)
++            http.advance(delay - 1)
++            _ = await restarted.refresh()
++            #expect(http.count() == index + 1, "No real HTTP request before the persisted deadline")
++            http.advance(1)
++        }
++        http.respond(200)
++        let successful = await harness.provider().refresh()
++        #expect(successful.status == .ok && successful.observedAt == http.now())
++        #expect(http.count() == 7)
++        let warm = harness.provider()
++        #expect(await warm.readCachedSnapshot().observedAt == successful.observedAt)
++        http.advance(300)
++        http.respond(503)
++        let failed = await warm.refresh()
++        #expect(failed.status == .stale && failed.observedAt == successful.observedAt)
++        #expect(failed.nextAllowedAt == http.now().addingTimeInterval(60))
++        #expect(http.count() == 8)
++        let restartedWarm = harness.provider()
++        _ = await restartedWarm.refreshStartup()
++        #expect(http.count() == 8, "A validated persisted observation remains warm after restart")
++        http.advance(60)
++        #expect(await restartedWarm.refresh().nextAllowedAt == http.now().addingTimeInterval(120))
++        #expect(http.count() == 9)
++    }
++
++    @Test(arguments: ["codex"], [429, 503])
++    func explicitRetryAfterRemainsHardFloorAcrossRestart(_ id: String, _ status: Int) async throws {
++        let harness = try ColdQuotaHarness(id), http = harness.http
++        defer { harness.close() }
++        http.respond(status, retry: "900")
++        let failed = await harness.provider().refresh()
++        #expect(failed.nextAllowedAt == http.now().addingTimeInterval(900))
++        let restarted = harness.provider()
++        http.respond(200)
++        http.advance(899)
++        #expect(await restarted.refreshStartup().nextAllowedAt == failed.nextAllowedAt)
++        #expect(http.count() == 1)
++        http.advance(1)
++        #expect(await restarted.refresh().status == .ok)
++        #expect(http.count() == 2)
++    }
++
++    @Test(arguments: ["codex"])
++    func headerless429KeepsSupplierFloorWithoutCountingAsColdTransient(_ id: String) async throws {
++        let harness = try ColdQuotaHarness(id), http = harness.http
++        defer { harness.close() }
++        http.respond(429)
++        #expect(await harness.provider().refresh().nextAllowedAt == http.now().addingTimeInterval(60))
++        http.advance(59)
++        _ = await harness.provider().refreshStartup()
++        #expect(http.count() == 1)
++        http.advance(1)
++        http.respond(503)
++        #expect(await harness.provider().refresh().nextAllowedAt == http.now().addingTimeInterval(5))
++        #expect(http.count() == 2)
++        http.advance(5)
++        http.respond(429)
++        #expect(await harness.provider().refresh().nextAllowedAt == http.now().addingTimeInterval(240))
++        #expect(http.count() == 3)
++    }
++
++    @Test(arguments: ["codex"])
++    func legacyUnknownDeadlineIsNeverShortenedAndResumesColdOnlyAfterExpiry(_ id: String) async throws {
++        let harness = try ColdQuotaHarness(id), http = harness.http
++        defer { harness.close() }
++        _ = await harness.provider().refresh()
++        let cache = harness.directory.appendingPathComponent("cache")
++        let file = try #require(FileManager.default.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil).first)
++        var schedule = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
++        schedule.removeValue(forKey: "coldFailures")
++        // A legacy success flag without a validated observation does not prove successful data.
++        schedule["successfulObservation"] = true
++        schedule[id == "codex" ? "nextAllowedAt" : "next"] = http.now().addingTimeInterval(900).timeIntervalSinceReferenceDate
++        try JSONSerialization.data(withJSONObject: schedule).write(to: file)
++        let restarted = harness.provider()
++        #expect(await restarted.refreshStartup().nextAllowedAt == http.now().addingTimeInterval(900))
++        http.advance(899)
++        _ = await restarted.refresh()
++        #expect(http.count() == 1)
++        http.advance(1)
++        let failed = await restarted.refresh()
++        #expect(failed.observedAt == nil)
++        #expect(failed.nextAllowedAt == http.now().addingTimeInterval(5))
++        #expect(http.count() == 2)
++    }
++    @Test(arguments: ["codex"])
++    func cancellingReaderPreservesColdFloorAndNextAttempt(_ id: String) async throws {
++        let harness = try ColdQuotaHarness(id), http = harness.http
++        defer { harness.close() }
++        let reader = harness.provider()
++        #expect(await reader.refresh().nextAllowedAt == http.now().addingTimeInterval(5))
++        await reader.cancel()
++        let restarted = harness.provider()
++        _ = await restarted.refreshStartup()
++        #expect(http.count() == 1)
++        http.advance(5)
++        #expect(await restarted.refresh().nextAllowedAt == http.now().addingTimeInterval(10))
++        #expect(http.count() == 2)
++    }
++
++    @Test(arguments: ["codex"])
++    func replacingAccountNeverInheritsAnotherAccountsColdCounterOrFloor(_ id: String) async throws {
++        let harness = try ColdQuotaHarness(id), http = harness.http
++        defer { harness.close() }
++        let reader = harness.provider()
++        _ = await reader.refresh()
++        http.advance(5)
++        #expect(await reader.refresh().nextAllowedAt == http.now().addingTimeInterval(10))
++        let auth: String
++        switch id {
++        case "codex": auth = #"{"tokens":{"access_token":"fixture-other","account_id":"other-account"}}"#
++        default: auth = #"{"access_token":"fixture-other","refresh_token":"other-session","expires_at":1900000000}"#
++        }
++        try Data(auth.utf8).write(to: harness.directory.appendingPathComponent("auth.json"))
++        let other = await reader.readCachedSnapshot()
++        #expect(other.observedAt == nil && other.nextAllowedAt == nil)
++        #expect(await reader.refresh().nextAllowedAt == http.now().addingTimeInterval(5))
++        #expect(http.count() == 3)
++    }
++}
 diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..132d342f7b47035be8a1aca31a591b2e627c1473
+index 0000000000000000000000000000000000000000..b38fbee231c5fdb7377382ff5aa6daf4dc0bc63a
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,191 @@
 +import Foundation
 +#if canImport(FoundationNetworking)
 +import FoundationNetworking
@@ -4466,13 +4754,14 @@ index 0000000000000000000000000000000000000000..132d342f7b47035be8a1aca31a591b2e
 +        #expect(fixture.count() == 1)
 +    }
 +
-+    @Test func optionalResetEndpoint429SurvivesRestartAndTokenRotation() async throws {
++    @Test(arguments: [429, 503])
++    func optionalResetEndpointServerFloorSurvivesRestartAndTokenRotation(_ status: Int) async throws {
 +        let directory = try directory(), suite = UUID().uuidString
 +        let defaults = UserDefaults(suiteName: suite)!, fixture = LifecycleQuotaFixture()
 +        defer { try? FileManager.default.removeItem(at: directory); defaults.removePersistentDomain(forName: suite) }
 +        let auth = directory.appendingPathComponent("auth.json")
 +        try writeCodex(auth)
-+        fixture.resetStatus = 429
++        fixture.resetStatus = status
 +        let result = await codex(auth, suite: suite, fixture: fixture).refresh()
 +        #expect(result.status == .ok)
 +        #expect(result.resetCreditsAvailable == nil)
@@ -4624,10 +4913,10 @@ index 300ed6d282427f140ca0021e3bcebb8221ec7efb..5ee4c0474e1c1884e3fe8e371dc6edcc
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..ada7e11a65cfc94a2f3197112dddfe6ef9012593
+index 0000000000000000000000000000000000000000..dd4bbec2b3001e91ffdb69937c18c219516831cc
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,125 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -4687,7 +4976,11 @@ index 0000000000000000000000000000000000000000..ada7e11a65cfc94a2f3197112dddfe6e
 +
 +Quota startup on macOS belongs to the application, not any visible surface. With a supported source enabled, hydrate the current account's last successful observation, including when network access is disabled. Independently attempt one startup refresh as soon as networking is permitted, even in manual periodic-refresh mode and without opening Settings or the floating panel. This one-shot startup request may bypass only the ordinary five-minute floor following a successful observation; persisted 429 Retry-After, failure backoff and unchanged-token authentication rejection still apply. Source and network toggles within the same application lifetime do not repeatedly grant this exception. Automatic mode then continues the normal five-minute cadence while all surfaces are closed; manual mode stops periodic requests. Explicit non-startup refreshes still obey the ordinary floor and backoff. Network errors retain the last good snapshot with its original observation time. Cancellation, disposal and account/token changes must prevent obsolete in-flight results from replacing the currently displayed account or its persisted snapshot.
 +
-+Automatic polling also schedules a per-source retry when a refresh returns a transiently unavailable observation (`error` or `stale`), instead of waiting for the next ordinary five-minute tick. A future provider `nextAllowedAt` is authoritative, including persisted Retry-After; waiting behind an existing deadline does not count as another failed network attempt. A stale cached reading returned by a refresh may schedule a wake at its existing floor, but an `ok` snapshot, authentication/unsupported state or cache-only hydration alone does not arm a failure retry. Transport failures without a supplier deadline use a client delay starting at 60 seconds, doubling to at most 15 minutes. An expired deadline never creates a zero-delay loop. Retry wakes only its affected source, coalesces with already-running work, and clears on success. Turning automatic refresh off, revoking network access, removing a source or disposing the application cancels the applicable retry work; late results cannot re-arm it. These rules apply to local and SSH-host readers identically and never invent a default zero observation.
++Automatic polling schedules per-source retries when a refresh returns a transiently unavailable observation (`error` or `stale`), rather than waiting for the next ordinary five-minute tick. Cold start means the current account/source has no validated successful observation; an available account-bound cached observation is displayed stale immediately and is not cold. Before the first successful observation, genuine transport, service and decoding failures retry after 5, 10, 20 and then at most 30 seconds per attempt. Both the native scheduler and the credential-owning provider enforce this short cadence: a five-second UI wake blocked by a hidden sixty-second provider floor does not satisfy the contract. Remote connection readiness triggers the existing immediate selected-source startup read. The first successful observation clears cold-start pacing and restores normal polling; failures with an already available observation retain the ordinary backoff policy.
++
++A provider's future `nextAllowedAt` is authoritative. HTTP 429 retains its conservative supplier rate-limit protection even without a valid header, and an explicit `Retry-After` on any transient response (including a 503 or OpenCode Console probe) cannot be shortened to the cold-start cap. Optional Codex reset-credit throttling remains binding without invalidating successfully observed usage. Persisted deadlines survive restarts; a legacy future deadline of unknown cause is not blindly shortened because it may be a rate limit. After that deadline, new results use the explicit cold/server pacing rules. Cache hydration and blocked requests do not count as additional HTTP failures. Expired deadlines cannot produce a tight loop. Authentication, permission and unsupported states do not enter rapid retry.
++
++Retries wake only the affected source and coalesce with in-flight work; no synthetic zero reading is created. Turning automatic refresh off, revoking network access, removing a source or disposing the application cancels its pending retry work, and stale callbacks/results cannot re-arm it. Existing manual/startup preference semantics remain unchanged. These rules apply to Codex, OpenCode Go and Kimi on both native clients and the shared remote collector; no extra SSH process or autonomous collector quota polling is introduced.
 +For migration, a legacy schedule without a validated version-1 account snapshot cannot distinguish a normal successful floor from an optional reset-credit 429 extension. Preserve its future `nextAllowedAt` rather than granting the startup bypass. After that deadline, a successful request upgrades the structured snapshot and independent retry deadline; subsequent application starts may bypass only the ordinary successful floor.
 +
 +By default, without pointer attention, the macOS panel start and rest as a collapsed strip: 10 by 79 logical pixels on vertical edges or 79 by 10 on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.

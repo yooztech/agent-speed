@@ -356,17 +356,36 @@ reset-card count/expiry and the same one-shot startup-floor exception, while
 authentication rejection, legacy schedules, failures and usage/reset-endpoint
 429 deadlines remain binding. Source selection and automatic/manual polling now
 belong to the application lifecycle rather than a visible subscription surface.
-Automatic refresh also wakes a failed source at its provider retry deadline,
-instead of waiting for the next five-minute poll. A transient refresh result with
-no deadline uses a 60-second exponential client delay capped at 15 minutes;
-persisted Retry-After remains authoritative. Retries are per source, never an
-all-account refresh loop. Cache hydration alone does not arm them; success,
-automatic-off, network revocation, source removal and disposal cancel applicable
-wakeups. Manual mode retains its existing explicit/startup behavior, and unknown
-observations are never converted to a default zero. These controller fixes belong
-to the base platform patches, with only necessary multi-provider/remote integration
-in the later feature patches.
-Focused checks for this repair passed 155 formatting/geometry cases, the four
+Automatic refresh wakes an unavailable source at its provider retry deadline,
+instead of waiting for the next five-minute poll. Before the current account has
+any validated successful observation, transient failures retry after 5, 10, 20
+and then at most 30 seconds. The native timer and the actual local/remote provider
+request floors both implement this cadence; a timer-only wake blocked by a long
+provider floor is not sufficient. A valid cached observation is shown stale and
+does not count as a cold start. First success exits cold pacing and restores the
+normal cadence/backoff. HTTP 429 and explicit Retry-After on other error/probe
+responses remain authoritative, including waits longer than the normal cadence;
+legacy future deadlines of unknown cause are not blindly shortened. Auth/access
+and unsupported states do not enter rapid retry. Remote readiness triggers the
+existing immediate startup read. Source/network/automatic-off/disposal cancellation
+and manual-mode semantics remain intact; unknown is never filled with zero.
+Base platform fixes remain in 0020/0021, Go in 0022, collector/remote integration
+in 0023 and Kimi in 0024; no unrelated visual changes accompany this correction.
+Cold-start verification passes 186 Windows Core provider/transport cases, ten
+portable retry-policy cases, 76 real-source Swift provider/controller/remote tests
+across seven suites, and 32 collector quota cases. The deadline tests count actual
+transport requests before and at 5/10/20/30-second deadlines, not merely timer
+wakes; they cover first success, warm cached data, rate limits/Retry-After,
+restart/legacy pacing, source cancellation and immediate remote readiness.
+Windows application/native tests cross-compile with zero warnings/errors. These
+are synthetic isolated HTTP checks, not live supplier-account or native desktop
+execution. No visual layout, wire/credential route, package or Release changed.
+The corrected 24-patch queue replays from the pin with all 3,138 source files
+byte-identical to the checked tree. Owning-boundary checks also pass: 37 base
+macOS provider/controller tests without Go/remote/Kimi, 97 base Windows Codex/cold
+HTTP tests plus native app/test cross-compilation, and collector/test syntax
+checking at 0023 before Kimi prerequisites are introduced at 0024.
+Earlier compact-layout/deadline checks passed 155 formatting/geometry cases, the four
 replacement edge-containment cases and nine deadline/backoff policy cases.
 Windows application/native tests cross-compile with zero warnings/errors.
 The real Swift controller and remote-lifecycle regressions pass under Swift

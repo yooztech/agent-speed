@@ -1,6 +1,6 @@
-From a40ca11bbd81aa8dac5ab3a2c6bbadae32457f0a Mon Sep 17 00:00:00 2001
+From 13dbd597bbd4eb5d37d8c441c93cbfeb4ceb9bec Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 22:07:58 +0800
+Date: Sun, 15 Nov 2026 22:32:00 +0800
 Subject: [PATCH] Add multi-window quota and OpenCode Go provider
 
 ---
@@ -13,39 +13,41 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +-
  .../AgentSpeed/Localization/StringTable.swift |   1 +
  .../SettingsWindow/Panes/QuotaPane.swift      |   4 +-
- .../OpenCodeGoCredentials.swift               |  98 +++++
- .../OpenCodeGoQuotaProvider.swift             | 276 ++++++++++++
+ .../OpenCodeGoCredentials.swift               |  98 ++++
+ .../OpenCodeGoQuotaProvider.swift             | 290 +++++++++++
  macos/Sources/AgentSpeedCore/Quota.swift      |   2 +-
  macos/Sources/CSQLite/module.modulemap        |   5 +
  macos/Sources/CSQLite/shim.h                  |   1 +
  .../QuotaControllerTests.swift                |  22 +-
  .../AgentSpeedAppTests/QuotaNotchTests.swift  |  37 +-
  .../QuotaPresentationTests.swift              |   4 +-
- .../OpenCodeGoQuotaProviderTests.swift        | 213 ++++++++++
+ .../OpenCodeGoQuotaProviderTests.swift        | 256 ++++++++++
+ .../QuotaColdStartTests.swift                 |  19 +-
  .../QuotaLifecycleTests.swift                 |  28 +-
  .../AgentSpeedCoreTests/QuotaTests.swift      |   8 +
  spec/QUOTA.md                                 |  20 +-
  .../src/AgentSpeed.Core/CodexQuotaProvider.cs |   2 +-
  windows/src/AgentSpeed.Core/IQuotaProvider.cs |  10 +
- .../OpenCodeGoQuotaProvider.cs                | 401 ++++++++++++++++++
+ .../OpenCodeGoQuotaProvider.cs                | 419 ++++++++++++++++
  windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   8 +
  .../Localization/Strings.Windows.json         |   4 +
  .../Settings/QuotaFormat.cs                   |  64 ++-
- .../Settings/QuotaNotchGeometry.cs            |  73 ++--
+ .../Settings/QuotaNotchGeometry.cs            |  73 +--
  .../Settings/QuotaNotch.LICENSE.txt           |   3 +-
- .../src/AgentSpeed/Settings/QuotaNotchView.cs | 132 ++++--
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs | 132 +++--
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  12 +-
- .../src/AgentSpeed/Settings/QuotaSurface.cs   | 190 +++++----
- .../OpenCodeGoQuotaProviderTests.cs           | 401 ++++++++++++++++++
- .../QuotaFormatTests.cs                       |  77 +++-
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   | 190 ++++----
+ .../OpenCodeGoQuotaProviderTests.cs           | 449 ++++++++++++++++++
+ .../QuotaColdStartTests.cs                    |  16 +-
+ .../QuotaFormatTests.cs                       |  77 ++-
  .../QuotaNotchGeometryTests.cs                | 113 ++++-
  .../SettingsSerializerTests.cs                |  24 +-
  .../QuotaNotchViewTests.cs                    |  92 ++++
  .../QuotaSettingsPageTests.cs                 |  89 +++-
- .../QuotaSurfaceProviderCollectionTests.cs    | 171 ++++++++
- .../QuotaSurfaceRetryTests.cs                 |   2 +-
- .../QuotaSurfaceTests.cs                      | 131 +++++-
- 41 files changed, 2555 insertions(+), 276 deletions(-)
+ .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
+ .../QuotaSurfaceRetryTests.cs                 |  10 +-
+ .../QuotaSurfaceTests.cs                      | 131 ++++-
+ 43 files changed, 2711 insertions(+), 286 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -459,10 +461,10 @@ index 0000000000000000000000000000000000000000..31948d641906f2be7c9cba42ac4899ec
 +}
 diff --git a/macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift b/macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..dd82efbd82d35ab0a6c2cb7fe65dbb341f236a37
+index 0000000000000000000000000000000000000000..257d644ad737fd79317f2ef3f76ac4cff86eb36b
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,290 @@
 +import Foundation
 +import CoreFoundation
 +#if canImport(CryptoKit)
@@ -483,6 +485,7 @@ index 0000000000000000000000000000000000000000..dd82efbd82d35ab0a6c2cb7fe65dbb34
 +    private struct Schedule: Codable {
 +        var next: Date?
 +        var failures = 0
++        var coldFailures: Int?
 +        var rejected = false
 +        var status: QuotaStatus?
 +        var observation: QuotaPersistedObservation?
@@ -578,10 +581,13 @@ index 0000000000000000000000000000000000000000..dd82efbd82d35ab0a6c2cb7fe65dbb34
 +        // Keep credential-specific reference routes; never retry a borrowed token on another usage route.
 +        let endpoint = credential.oauth ? "https://opencode.ai/inference/go/v1/usage" : "https://opencode.ai/zen/go/v1/usage"
 +        let request = Self.authorizedRequest(URL(string: endpoint)!, credential: credential)
++        var retry: TimeInterval?
++        let allowCold = credential.expires.map { $0 > now() } ?? true
 +        do {
 +            let (data, response) = try await transport(request)
 +            guard isCurrent(credential) else { return readCachedSnapshot() }
 +            let completed = now()
++            retry = Self.retryAfter(response.value(forHTTPHeaderField: "Retry-After"), now: completed)
 +            switch response.statusCode {
 +            case 200...299:
 +                let result = try Self.parse(data, at: completed)
@@ -604,16 +610,18 @@ index 0000000000000000000000000000000000000000..dd82efbd82d35ab0a6c2cb7fe65dbb34
 +                            return result
 +                        }
 +                        guard answer.statusCode == 401 || answer.statusCode == 403 else {
-+                            return failure(account, schedule: &schedule, key: account)
++                            return failure(account, schedule: &schedule, key: account,
++                                           retryAfter: max(retry ?? 0, Self.retryAfter(answer.value(forHTTPHeaderField: "Retry-After"), now: now()) ?? 0),
++                                           rateLimited: answer.statusCode == 429, allowCold: allowCold)
 +                        }
 +                    } catch {
 +                        guard isCurrent(credential) else { return readCachedSnapshot() }
-+                        return failure(account, schedule: &schedule, key: account)
++                        return failure(account, schedule: &schedule, key: account, retryAfter: retry, allowCold: allowCold)
 +                    }
 +                }
 +                // An expired token may be renewed by OpenCode without changing its local timestamp.
 +                if let expires = credential.expires, expires <= now() {
-+                    return failure(account, schedule: &schedule, key: account, otherwise: .needsAuth)
++                    return failure(account, schedule: &schedule, key: account, retryAfter: retry, otherwise: .needsAuth)
 +                }
 +                schedule.rejected = true
 +                schedule.next = nil
@@ -628,20 +636,28 @@ index 0000000000000000000000000000000000000000..dd82efbd82d35ab0a6c2cb7fe65dbb34
 +                cached[account] = result
 +                return result
 +            case 429:
-+                return failure(account, schedule: &schedule, key: account,
-+                               retryAfter: Self.retryAfter(response.value(forHTTPHeaderField: "Retry-After"), now: completed))
++                return failure(account, schedule: &schedule, key: account, retryAfter: retry, rateLimited: true, allowCold: allowCold)
 +            default:
-+                return failure(account, schedule: &schedule, key: account)
++                return failure(account, schedule: &schedule, key: account, retryAfter: retry, allowCold: allowCold)
 +            }
 +        } catch {
 +            guard isCurrent(credential) else { return readCachedSnapshot() }
-+            return failure(account, schedule: &schedule, key: account)
++            return failure(account, schedule: &schedule, key: account, retryAfter: retry, allowCold: allowCold)
 +        }
 +    }
 +
 +    private func failure(_ account: String, schedule: inout Schedule, key: String,
-+                         retryAfter: TimeInterval? = nil, otherwise: QuotaStatus = .error) -> QuotaSnapshot {
-+        let wait = Self.backoff(attempt: schedule.failures, retryAfter: retryAfter)
++                         retryAfter: TimeInterval? = nil, rateLimited: Bool = false, allowCold: Bool = true,
++                         otherwise: QuotaStatus = .error) -> QuotaSnapshot {
++        let cold = schedule.observation?.validated(accountKey: account, id: id, source: "go/v1/usage") == nil
++        let wait: TimeInterval
++        if cold && allowCold && !rateLimited && otherwise == .error {
++            let attempt = min((schedule.coldFailures ?? 0) + 1, 4)
++            schedule.coldFailures = attempt
++            wait = max(min(30, 5 * pow(2, Double(attempt - 1))), retryAfter ?? 0)
++        } else {
++            wait = Self.backoff(attempt: schedule.failures, retryAfter: retryAfter)
++        }
 +        schedule.failures = min(schedule.failures + 1, 5)
 +        schedule.next = now().addingTimeInterval(wait)
 +        schedule.status = .error
@@ -770,19 +786,19 @@ index 0000000000000000000000000000000000000000..f52e1f09e6bbfc8a3cb0c03c6f4624b7
 @@ -0,0 +1 @@
 +#include <sqlite3.h>
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-index 0e195ca0287fd2d98b58fcbb38729d4b6f0242da..34e612c077d8efde034038aa7b147a355d8f82ce 100644
+index ead924c28ea2ac140b1ce2b78be43130e49a9347..b2a82557169798e8f8a2ce35fdc03b47aa53fb37 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -180,7 +180,7 @@ private final class ControllerFixture {
+@@ -185,7 +185,7 @@ private final class ControllerFixture {
  @Suite("Quota controller lifecycle", .timeLimit(.minutes(1)))
  @MainActor
  struct QuotaControllerTests {
--    private func withFixture(ids: [String] = ["codex", "test-source"], automatic: Bool = false,
-+    private func withFixture(ids: [String] = ["codex", "opencode-go"], automatic: Bool = false,
+-    private func withFixture(ids: [String] = ["codex", "test-source"], automatic: Bool = false, cold: Bool = false,
++    private func withFixture(ids: [String] = ["codex", "opencode-go"], automatic: Bool = false, cold: Bool = false,
                               _ body: @MainActor (ControllerFixture) async throws -> Void) async throws {
-         let fixture = ControllerFixture(ids: ids, automatic: automatic)
+         let fixture = ControllerFixture(ids: ids, automatic: automatic, cold: cold)
          try await withTaskCancellationHandler {
-@@ -219,7 +219,7 @@ struct QuotaControllerTests {
+@@ -224,7 +224,7 @@ struct QuotaControllerTests {
              controller.setNetworkEnabled(false)
              controller.setNetworkEnabled(true)
              controller.enabledProviderIDs = ["codex"]
@@ -791,7 +807,7 @@ index 0e195ca0287fd2d98b58fcbb38729d4b6f0242da..34e612c077d8efde034038aa7b147a35
              await fixture.barrier().value
              #expect(controller.snapshots.count == 2)
              #expect(!controller.isRefreshing)
-@@ -250,14 +250,14 @@ struct QuotaControllerTests {
+@@ -255,14 +255,14 @@ struct QuotaControllerTests {
              let oldResponses = fixture.barrier()
              let goCancellations = await go.counts().cancellations
  
@@ -809,7 +825,7 @@ index 0e195ca0287fd2d98b58fcbb38729d4b6f0242da..34e612c077d8efde034038aa7b147a35
              #expect(controller.snapshots.first?.status == .ok)
              #expect(await go.counts().cancellations == goCancellations, "Removing Codex must not cancel OpenCode Go")
  
-@@ -312,10 +312,10 @@ struct QuotaControllerTests {
+@@ -317,10 +317,10 @@ struct QuotaControllerTests {
          try await withFixture { fixture in
              let controller = fixture.controller
              controller.allSourcesEnabled = false
@@ -823,7 +839,7 @@ index 0e195ca0287fd2d98b58fcbb38729d4b6f0242da..34e612c077d8efde034038aa7b147a35
              controller.keepExpanded = true
              controller.floatingVisible = false
              controller.autoRefreshEnabled = false
-@@ -323,11 +323,11 @@ struct QuotaControllerTests {
+@@ -328,11 +328,11 @@ struct QuotaControllerTests {
              #expect(restored.keepExpanded)
              #expect(!restored.floatingVisible)
              #expect(!restored.autoRefreshEnabled)
@@ -940,10 +956,10 @@ index 665ae9ee61b6ce976e42dc4afcbe30f03354d7b1..af7e2dfa12f9ae80f368001b4fc088bd
          #expect(quotaResetCards(snapshot(nil), l10n)?.contains("Earliest known expiry") == true)
 diff --git a/macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..023211fc004e86cd02b62dc46d8e99cdc682fe31
+index 0000000000000000000000000000000000000000..1f76240df9623cdc6c6ce687e8b9875f8d66e677
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift
-@@ -0,0 +1,213 @@
+@@ -0,0 +1,256 @@
 +import Foundation
 +import Testing
 +import CSQLite
@@ -958,10 +974,12 @@ index 0000000000000000000000000000000000000000..023211fc004e86cd02b62dc46d8e99cd
 +    private var requests: [URLRequest] = []
 +    private var statuses: [Int]
 +    let body: Data
++    let retryAfter: String?
 +
-+    init(_ statuses: [Int] = [200], body: Data = Data(#"{"usage":{"rolling":{"status":"ok","percent":16,"resetsAt":"2027-03-01T12:00:00.611Z"},"weekly":{"status":"ok","percent":64,"resetsAt":"2027-03-01T12:00:00Z"},"monthly":{"status":"ok","percent":38,"resetsAt":"2027-03-01T12:00:00Z"}}}"#.utf8)) {
++    init(_ statuses: [Int] = [200], body: Data = Data(#"{"usage":{"rolling":{"status":"ok","percent":16,"resetsAt":"2027-03-01T12:00:00.611Z"},"weekly":{"status":"ok","percent":64,"resetsAt":"2027-03-01T12:00:00Z"},"monthly":{"status":"ok","percent":38,"resetsAt":"2027-03-01T12:00:00Z"}}}"#.utf8), retryAfter: String? = nil) {
 +        self.statuses = statuses
 +        self.body = body
++        self.retryAfter = retryAfter
 +    }
 +    func now() -> Date { lock.withLock { time } }
 +    func advance(_ seconds: TimeInterval) { lock.withLock { time = time.addingTimeInterval(seconds) } }
@@ -971,7 +989,7 @@ index 0000000000000000000000000000000000000000..023211fc004e86cd02b62dc46d8e99cd
 +            requests.append(request)
 +            let status = statuses.isEmpty ? 200 : statuses.removeFirst()
 +            return (body, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,
-+                                          headerFields: ["Retry-After": "120"])!)
++                                          headerFields: (status == 429 || status == 503) ? retryAfter.map { ["Retry-After": $0] } : nil)!)
 +        }
 +    }
 +}
@@ -1156,9 +1174,143 @@ index 0000000000000000000000000000000000000000..023211fc004e86cd02b62dc46d8e99cd
 +        #expect(OpenCodeGoCredentials.decode(["type": "oauth", "access": "fixture", "metadata": ["server": "https://example.com"]]) == nil)
 +        #expect(OpenCodeGoCredentials.decode(["type": "key", "key": "fixture", "metadata": ["orgID": "old"], "configuration": ["orgID": "current"]])?.org == "current")
 +    }
++    @Test(arguments: [429, 503])
++    func consoleProbeRetryAfterIsPersistentAndNeverBypassedByStartup(_ status: Int) async throws {
++        let directory = try temporaryDirectory(), suite = UUID().uuidString
++        defer { try? FileManager.default.removeItem(at: directory); UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
++        try writeAuth(directory, oauth: true)
++        let fixture = GoFixture([401, status, 200], retryAfter: "900")
++        let result = await provider(directory, suite: suite, fixture: fixture).refresh()
++        #expect(result.status == .error && result.observedAt == nil)
++        #expect(result.nextAllowedAt == fixture.now().addingTimeInterval(900))
++        fixture.advance(899)
++        _ = await provider(directory, suite: suite, fixture: fixture).refreshStartup()
++        #expect(fixture.captured().count == 2)
++        fixture.advance(1)
++        #expect(await provider(directory, suite: suite, fixture: fixture).refresh().status == .ok)
++        #expect(fixture.captured().count == 3)
++    }
++
++    @Test func headerlessConsoleProbe429RetainsSupplierFloor() async throws {
++        let directory = try temporaryDirectory(), suite = UUID().uuidString
++        defer { try? FileManager.default.removeItem(at: directory); UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
++        try writeAuth(directory, oauth: true)
++        let fixture = GoFixture([401, 429, 200])
++        #expect(await provider(directory, suite: suite, fixture: fixture).refresh().nextAllowedAt == fixture.now().addingTimeInterval(60))
++        fixture.advance(59)
++        _ = await provider(directory, suite: suite, fixture: fixture).refreshStartup()
++        #expect(fixture.captured().count == 2)
++        fixture.advance(1)
++        #expect(await provider(directory, suite: suite, fixture: fixture).refresh().status == .ok)
++        #expect(fixture.captured().count == 3)
++    }
++    @Test func expiredOAuthProbeFailureKeepsConservativePacing() async throws {
++        let directory = try temporaryDirectory(), suite = UUID().uuidString
++        defer { try? FileManager.default.removeItem(at: directory); UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
++        let fixture = GoFixture([401, 503])
++        let auth: [String: Any] = ["opencode": ["type": "oauth", "access": "expired-fixture", "expires": fixture.now().timeIntervalSince1970 * 1_000]]
++        try JSONSerialization.data(withJSONObject: auth).write(to: directory.appendingPathComponent("auth.json"))
++        #expect(await provider(directory, suite: suite, fixture: fixture).refresh().nextAllowedAt == fixture.now().addingTimeInterval(60))
++        fixture.advance(5)
++        _ = await provider(directory, suite: suite, fixture: fixture).refreshStartup()
++        #expect(fixture.captured().count == 2)
++    }
 +}
+diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
+index 5dc4af735722b1307458a29762a25d2301a00c25..ba7d5cfe7a4849cf04ee6e76b6f95086080faba7 100644
+--- a/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
++++ b/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
+@@ -24,7 +24,7 @@ private final class ColdQuotaHTTP: @unchecked Sendable {
+             if !reset { calls += 1 }
+             if !reset && status == 599 { throw URLError(.notConnectedToInternet) }
+             let body = reset ? #"{"available_count":2}"# : malformed ? "not-json"
+-                : #"{"rate_limit":{"primary_window":{"used_percent":25}}}"#
++                : #"{"rate_limit":{"primary_window":{"used_percent":25}},"usage":{"rolling":{"percent":25}}}"#
+             return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: reset ? 200 : status,
+                 httpVersion: nil, headerFields: reset ? nil : retry.map { ["Retry-After": $0] })!)
+         }
+@@ -43,6 +43,7 @@ private struct ColdQuotaHarness: Sendable {
+         let auth: String
+         switch id {
+         case "codex": auth = #"{"tokens":{"access_token":"fixture-token","account_id":"fixture-account"}}"#
++        case "opencode-go": auth = #"{"opencode-go":{"type":"api","key":"fixture-token"}}"#
+         default: preconditionFailure("Unsupported quota fixture source")
+         }
+         try Data(auth.utf8).write(to: directory.appendingPathComponent("auth.json"))
+@@ -53,6 +54,9 @@ private struct ColdQuotaHarness: Sendable {
+         case "codex":
+             return CodexQuotaProvider(credentialURL: auth, defaults: UserDefaults(suiteName: suite)!,
+                 now: { http.now() }, cacheDirectory: cache, transport: { try http.fetch($0) })
++        case "opencode-go":
++            return OpenCodeGoQuotaProvider(directory: directory, defaults: UserDefaults(suiteName: suite)!,
++                now: { http.now() }, cacheDirectory: cache, transport: { try http.fetch($0) })
+         default:
+             preconditionFailure("Unsupported quota fixture source")
+         }
+@@ -65,7 +69,7 @@ private struct ColdQuotaHarness: Sendable {
+ 
+ @Suite("Quota cold-start actual HTTP pacing")
+ struct QuotaColdStartTests {
+-    @Test(arguments: ["codex"])
++    @Test(arguments: ["codex", "opencode-go"])
+     func coldTransportRequestsFollowSequenceAcrossRestartsThenUseWarmPacing(_ id: String) async throws {
+         let harness = try ColdQuotaHarness(id), http = harness.http
+         defer { harness.close() }
+@@ -105,7 +109,7 @@ struct QuotaColdStartTests {
+         #expect(http.count() == 9)
+     }
+ 
+-    @Test(arguments: ["codex"], [429, 503])
++    @Test(arguments: ["codex", "opencode-go"], [429, 503])
+     func explicitRetryAfterRemainsHardFloorAcrossRestart(_ id: String, _ status: Int) async throws {
+         let harness = try ColdQuotaHarness(id), http = harness.http
+         defer { harness.close() }
+@@ -122,7 +126,7 @@ struct QuotaColdStartTests {
+         #expect(http.count() == 2)
+     }
+ 
+-    @Test(arguments: ["codex"])
++    @Test(arguments: ["codex", "opencode-go"])
+     func headerless429KeepsSupplierFloorWithoutCountingAsColdTransient(_ id: String) async throws {
+         let harness = try ColdQuotaHarness(id), http = harness.http
+         defer { harness.close() }
+@@ -141,7 +145,7 @@ struct QuotaColdStartTests {
+         #expect(http.count() == 3)
+     }
+ 
+-    @Test(arguments: ["codex"])
++    @Test(arguments: ["codex", "opencode-go"])
+     func legacyUnknownDeadlineIsNeverShortenedAndResumesColdOnlyAfterExpiry(_ id: String) async throws {
+         let harness = try ColdQuotaHarness(id), http = harness.http
+         defer { harness.close() }
+@@ -165,7 +169,7 @@ struct QuotaColdStartTests {
+         #expect(failed.nextAllowedAt == http.now().addingTimeInterval(5))
+         #expect(http.count() == 2)
+     }
+-    @Test(arguments: ["codex"])
++    @Test(arguments: ["codex", "opencode-go"])
+     func cancellingReaderPreservesColdFloorAndNextAttempt(_ id: String) async throws {
+         let harness = try ColdQuotaHarness(id), http = harness.http
+         defer { harness.close() }
+@@ -180,7 +184,7 @@ struct QuotaColdStartTests {
+         #expect(http.count() == 2)
+     }
+ 
+-    @Test(arguments: ["codex"])
++    @Test(arguments: ["codex", "opencode-go"])
+     func replacingAccountNeverInheritsAnotherAccountsColdCounterOrFloor(_ id: String) async throws {
+         let harness = try ColdQuotaHarness(id), http = harness.http
+         defer { harness.close() }
+@@ -191,6 +195,7 @@ struct QuotaColdStartTests {
+         let auth: String
+         switch id {
+         case "codex": auth = #"{"tokens":{"access_token":"fixture-other","account_id":"other-account"}}"#
++        case "opencode-go": auth = #"{"opencode-go":{"type":"api","key":"fixture-other"}}"#
+         default: auth = #"{"access_token":"fixture-other","refresh_token":"other-session","expires_at":1900000000}"#
+         }
+         try Data(auth.utf8).write(to: harness.directory.appendingPathComponent("auth.json"))
 diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
-index 132d342f7b47035be8a1aca31a591b2e627c1473..3db6e76c9d54ddc3eb2abbac01c3df50772c1fda 100644
+index b38fbee231c5fdb7377382ff5aa6daf4dc0bc63a..2ab959f77f7b48d893d7abd277f1ac32181642dd 100644
 --- a/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
 +++ b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
 @@ -23,7 +23,7 @@ private final class LifecycleQuotaFixture: @unchecked Sendable {
@@ -1170,7 +1322,7 @@ index 132d342f7b47035be8a1aca31a591b2e627c1473..3db6e76c9d54ddc3eb2abbac01c3df50
              return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: reset ? resetStatus : usageStatus,
                  httpVersion: nil, headerFields: ["Retry-After": "900"])!)
          }
-@@ -187,4 +187,30 @@ struct QuotaLifecycleTests {
+@@ -188,4 +188,30 @@ struct QuotaLifecycleTests {
          #expect(await provider.readCachedSnapshot().observedAt == nil)
          #expect(!FileManager.default.fileExists(atPath: auth.appendingPathExtension("quota-cache").path))
      }
@@ -1219,7 +1371,7 @@ index 2182d48108eb65631dfe4b49019442274de81689..460bec0d382ddb13b639b0efcf09cb83
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 25ca22b234fa737e81a7584bfb08b8ae92c1077f..ef546f1370a59e27daf2ea30ba6379677621ab85 100644
+index 333cc4fb20c47240f5948f380ea15bcad43ec673..e70223bce02123eb5b9335a1031eb992dc1ab0d5 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,4 +1,4 @@
@@ -1237,7 +1389,7 @@ index 25ca22b234fa737e81a7584bfb08b8ae92c1077f..ef546f1370a59e27daf2ea30ba637967
  
  Windows and macOS Subscription follow the approved account-card layout using their native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
  
-@@ -82,7 +82,9 @@ Pointer entry during the arc's initial emergence also retains its exact last-pai
+@@ -86,7 +86,9 @@ Pointer entry during the arc's initial emergence also retains its exact last-pai
  
  Subscription Settings no longer exposes runtime diagnostics or a credential-storage footnote. Safe initialization/placement stage and exception type/HResult state may remain internal to the native host for tests; no page callback or hidden replacement diagnostic UI is retained. Pointer events and finite transitions drive the panel lifecycle; it has no continuous cursor, browser bridge, or bitmap polling loop. Provider refresh and backoff remain independent of this rendering lifecycle.
  
@@ -1248,7 +1400,7 @@ index 25ca22b234fa737e81a7584bfb08b8ae92c1077f..ef546f1370a59e27daf2ea30ba637967
  
  The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
  
-@@ -124,6 +126,18 @@ On both platforms, each successful usage poll also queries `GET https://chatgpt.
+@@ -128,6 +130,18 @@ On both platforms, each successful usage poll also queries `GET https://chatgpt.
  Synthetic, credential-free examples: [`fixtures/codex-quota.json`](fixtures/codex-quota.json) shows main windows, an extra, a code-review window with unknown usage, and spend control; [`fixtures/codex-credit-quota.json`](fixtures/codex-credit-quota.json) shows missing rolling windows and a known zero balance. Their timestamps are examples, not current reset predictions. These are illustrative endpoint payloads, not captures of a real account.
  Both endpoint fixtures are raw provider responses, not snapshots; parsing either produces snapshot fidelity `official`.
  
@@ -1268,7 +1420,7 @@ index 25ca22b234fa737e81a7584bfb08b8ae92c1077f..ef546f1370a59e27daf2ea30ba637967
  
  Endpoint and response research consulted [Codenotch](https://github.com/vinzdg/codenotch), particularly `Sources/Providers/CodexLocalProvider.swift` and `Sources/Providers/CodexUsage.swift`. Codenotch is MIT licensed, copyright (c) 2026 Vinz. This specification and its synthetic examples describe observed facts and do not reproduce Codenotch source code. If source code or a substantial portion is copied into the implementation, retain its full MIT copyright and permission notice with that code.
 diff --git a/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
-index 96949fa9e2188e01ee5db91dea61983a062f4be4..afc8749743ee882d9708a6ca541010703f5bc573 100644
+index ae4bb284357643c2ed60b8dba0257a65f16c405c..db976cf15cc90b531d6a95d43ef85cf3c4604d69 100644
 --- a/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
 +++ b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
 @@ -9,7 +9,7 @@ using System.Text.Json.Serialization;
@@ -1298,10 +1450,10 @@ index 0000000000000000000000000000000000000000..f82d2af0bf4500ef7b14ffb1e9aff373
 +}
 diff --git a/windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs b/windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..4e4e1077bc99f37fa3895035ffdff7869d18c3d1
+index 0000000000000000000000000000000000000000..397344af11c0c7ed0b64994e2d15bd157b662a8c
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs
-@@ -0,0 +1,401 @@
+@@ -0,0 +1,419 @@
 +using System.Globalization;
 +using System.Net;
 +using System.Net.Http.Headers;
@@ -1490,14 +1642,18 @@ index 0000000000000000000000000000000000000000..4e4e1077bc99f37fa3895035ffdff786
 +                schedule.NextAllowedAt = null;
 +                schedule.RetryNotBefore = null;
 +                schedule.Failures = 0;
++                schedule.ColdFailures = 0;
 +                schedule.SuccessfulObservation = true;
 +                schedule.Snapshot = result;
 +            }
 +            else if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
 +            {
-+                var noPlan = response.StatusCode == HttpStatusCode.Forbidden || credential.OAuth &&
-+                    await SignedInAsync(credential, timeout.Token).ConfigureAwait(false);
-+                if (noPlan)
++                var signedIn = credential.OAuth && response.StatusCode == HttpStatusCode.Unauthorized
++                    ? await SignedInAsync(credential, schedule, timeout.Token).ConfigureAwait(false) : false;
++                var noPlan = response.StatusCode == HttpStatusCode.Forbidden || signedIn == true;
++                if (signedIn is null)
++                    result = StaleOrError(schedule);
++                else if (noPlan)
 +                {
 +                    schedule.RejectedStatus = QuotaStatus.Unsupported;
 +                    schedule.SuccessfulObservation = false;
@@ -1509,7 +1665,7 @@ index 0000000000000000000000000000000000000000..4e4e1077bc99f37fa3895035ffdff786
 +                else if (credential.Expires is { } expires && expires <= now())
 +                {
 +                    // OpenCode renews this credential itself. Its old observation remains true, but stale.
-+                    Backoff(schedule, now(), 0);
++                    Backoff(schedule, now(), 0, transient: false);
 +                    result = schedule.Snapshot is not null ? StaleOrError(schedule) : Empty(QuotaStatus.NeedsAuth, schedule.NextAllowedAt);
 +                }
 +                else
@@ -1523,8 +1679,8 @@ index 0000000000000000000000000000000000000000..4e4e1077bc99f37fa3895035ffdff786
 +            else
 +            {
 +                var completed = now();
-+                Backoff(schedule, completed, response.StatusCode == HttpStatusCode.TooManyRequests
-+                    ? response.Headers.RetryAfter?.Delta?.TotalSeconds ?? (response.Headers.RetryAfter?.Date - completed)?.TotalSeconds ?? 60 : 0);
++                Backoff(schedule, completed, RetrySeconds(response, completed),
++                    response.StatusCode == HttpStatusCode.TooManyRequests, (int)response.StatusCode >= 500);
 +                result = StaleOrError(schedule);
 +            }
 +        }
@@ -1544,7 +1700,7 @@ index 0000000000000000000000000000000000000000..4e4e1077bc99f37fa3895035ffdff786
 +        }
 +    }
 +
-+    private async Task<bool> SignedInAsync(Credential credential, CancellationToken cancellationToken)
++    private async Task<bool?> SignedInAsync(Credential credential, Schedule schedule, CancellationToken cancellationToken)
 +    {
 +        var console = new Uri(credential.Console.AbsoluteUri.TrimEnd('/') + "/api/user");
 +        using var request = new HttpRequestMessage(HttpMethod.Get, console);
@@ -1552,18 +1708,29 @@ index 0000000000000000000000000000000000000000..4e4e1077bc99f37fa3895035ffdff786
 +        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 +        if (credential.Organization is not null) request.Headers.Add("x-opencode-org-id", credential.Organization);
 +        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-+        return response.StatusCode switch
-+        {
-+            HttpStatusCode.OK => true,
-+            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => false,
-+            _ => throw new HttpRequestException("Console authentication could not be established.")
-+        };
++        if (response.StatusCode == HttpStatusCode.OK) return true;
++        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) return false;
++        var completed = now();
++        // The Console probe is a real supplier request too: never lose its rate limit or Retry-After.
++        Backoff(schedule, completed, RetrySeconds(response, completed),
++            response.StatusCode == HttpStatusCode.TooManyRequests, (int)response.StatusCode >= 500);
++        return null;
 +    }
 +
-+    private static void Backoff(Schedule schedule, DateTimeOffset time, double retrySeconds)
++    private static double RetrySeconds(HttpResponseMessage response, DateTimeOffset time) =>
++        Math.Max(response.StatusCode == HttpStatusCode.TooManyRequests ? 60 : 0,
++            response.Headers.RetryAfter?.Delta?.TotalSeconds ?? (response.Headers.RetryAfter?.Date - time)?.TotalSeconds ?? 0);
++
++    private static void Backoff(Schedule schedule, DateTimeOffset time, double retrySeconds, bool rateLimited = false, bool transient = true)
 +    {
 +        schedule.Failures = Math.Min(schedule.Failures + 1, 6);
-+        var seconds = Math.Max(Math.Min(900, 60 * Math.Pow(2, schedule.Failures - 1)), retrySeconds);
++        var seconds = Math.Min(900, 60 * Math.Pow(2, schedule.Failures - 1));
++        if (schedule.Snapshot?.ObservedAt is null && transient && !rateLimited)
++        {
++            schedule.ColdFailures = Math.Min(schedule.ColdFailures + 1, 4);
++            seconds = Math.Min(5 * (1 << (schedule.ColdFailures - 1)), 30);
++        }
++        seconds = Math.Max(seconds, retrySeconds);
 +        schedule.NextAllowedAt = seconds >= (DateTimeOffset.MaxValue - time).TotalSeconds ? DateTimeOffset.MaxValue : time.AddSeconds(seconds);
 +        schedule.RetryNotBefore = schedule.NextAllowedAt;
 +        schedule.SuccessfulObservation = false;
@@ -1608,6 +1775,7 @@ index 0000000000000000000000000000000000000000..4e4e1077bc99f37fa3895035ffdff786
 +    {
 +        public DateTimeOffset? NextAllowedAt, RetryNotBefore;
 +        public int Failures;
++        public int ColdFailures;
 +        public bool SuccessfulObservation;
 +        public QuotaStatus? RejectedStatus;
 +        public QuotaSnapshot? Snapshot;
@@ -1631,6 +1799,7 @@ index 0000000000000000000000000000000000000000..4e4e1077bc99f37fa3895035ffdff786
 +            schedule.NextAllowedAt = Date(root, "nextAllowedAt");
 +            schedule.RetryNotBefore = Date(root, "retryNotBefore");
 +            schedule.Failures = (int)Math.Clamp(Number(root, "failures") ?? 0, 0, 6);
++            schedule.ColdFailures = (int)Math.Clamp(Number(root, "coldFailures") ?? 0, 0, 4);
 +            schedule.SuccessfulObservation = Property(root, "successfulObservation").ValueKind == JsonValueKind.True;
 +            var rejected = Number(root, "rejectedStatus");
 +            if (rejected == (int)QuotaStatus.NeedsAuth) schedule.RejectedStatus = QuotaStatus.NeedsAuth;
@@ -1671,6 +1840,7 @@ index 0000000000000000000000000000000000000000..4e4e1077bc99f37fa3895035ffdff786
 +                if (schedule.NextAllowedAt is { } next) writer.WriteString("nextAllowedAt", next);
 +                if (schedule.RetryNotBefore is { } retry) writer.WriteString("retryNotBefore", retry);
 +                writer.WriteNumber("failures", schedule.Failures);
++                writer.WriteNumber("coldFailures", schedule.ColdFailures);
 +                writer.WriteBoolean("successfulObservation", schedule.SuccessfulObservation);
 +                if (schedule.RejectedStatus is { } rejected) writer.WriteNumber("rejectedStatus", (int)rejected);
 +                if (schedule.Snapshot is { } snapshot)
@@ -2590,10 +2760,10 @@ index 218f309c23845a452375db316b6b3bab666e2cd0..627b416a3d2003b429e02e5d8c91156a
          _notch = null;
 diff --git a/windows/tests/AgentSpeed.Core.Tests/OpenCodeGoQuotaProviderTests.cs b/windows/tests/AgentSpeed.Core.Tests/OpenCodeGoQuotaProviderTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..768c0175ce6e9fa927bdf5af30d0881b28009ba2
+index 0000000000000000000000000000000000000000..8d4c6f97486c647369b907ed1cc8a54a4df8e50a
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/OpenCodeGoQuotaProviderTests.cs
-@@ -0,0 +1,401 @@
+@@ -0,0 +1,449 @@
 +using System.Net;
 +using System.Net.Http.Headers;
 +using System.Text.Json;
@@ -2945,6 +3115,54 @@ index 0000000000000000000000000000000000000000..768c0175ce6e9fa927bdf5af30d0881b
 +        Assert.Equal(1, fixture.Handler.Calls);
 +    }
 +
++    [Fact]
++    public async Task ExpiredOAuthWithoutObservationKeepsAuthRenewalPacingInsteadOfColdTransientRetries()
++    {
++        using var fixture = new Fixture();
++        fixture.OAuth(expires: Time.AddSeconds(-1));
++        fixture.Handler.Reply = _ => Response(401);
++        using var provider = fixture.Provider();
++        var failure = await provider.RefreshAsync();
++        Assert.Equal(QuotaStatus.NeedsAuth, failure.Status);
++        Assert.Equal(Time.AddSeconds(60), failure.NextAllowedAt);
++        fixture.Clock = Time.AddSeconds(5);
++        await provider.RefreshAsync();
++        Assert.Equal(2, fixture.Handler.Calls); // Usage and Console probe only; no hidden renewal request.
++    }
++
++    [Theory]
++    [InlineData(429, -1, 60)]
++    [InlineData(429, 2400, 2400)]
++    [InlineData(503, 2400, 2400)]
++    [InlineData(503, -1, 5)]
++    public async Task ConsoleProbeOwnsRealRetryFloorAcrossRestart(int status, int retry, int expected)
++    {
++        using var fixture = new Fixture();
++        fixture.OAuth();
++        fixture.Handler.Reply = request =>
++        {
++            if (!request.RequestUri!.AbsolutePath.EndsWith("/api/user", StringComparison.Ordinal)) return Response(401);
++            var response = Response(status);
++            if (retry >= 0) response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(retry));
++            return response;
++        };
++        using (var provider = fixture.Provider())
++        {
++            var failure = await provider.RefreshAsync();
++            Assert.Equal(QuotaStatus.Error, failure.Status);
++            Assert.Equal(Time.AddSeconds(expected), failure.NextAllowedAt);
++            Assert.Equal(2, fixture.Handler.Calls);
++        }
++        using var restarted = fixture.Provider();
++        fixture.Clock = Time.AddSeconds(expected).AddTicks(-1);
++        await restarted.RefreshStartupAsync();
++        Assert.Equal(2, fixture.Handler.Calls);
++        fixture.Clock = Time.AddSeconds(expected);
++        fixture.Handler.Reply = _ => Response(200);
++        Assert.Equal(QuotaStatus.Ok, (await restarted.RefreshAsync()).Status);
++        Assert.Equal(3, fixture.Handler.Calls);
++    }
++
 +    private static HttpResponseMessage Response(int status) => new((HttpStatusCode)status) { Content = new StringContent(Reading) };
 +
 +    private sealed class Fixture : IDisposable
@@ -2995,6 +3213,79 @@ index 0000000000000000000000000000000000000000..768c0175ce6e9fa927bdf5af30d0881b
 +        }
 +    }
 +}
+diff --git a/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs b/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
+index 48778a2e56d6247900591ecd2e2fe12ba06bec44..758faf54c199db0eb6b1ff16a46b3010b7a42d7c 100644
+--- a/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
++++ b/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
+@@ -13,6 +13,9 @@ public sealed class QuotaColdStartTests
+     [InlineData("codex", "network")]
+     [InlineData("codex", "server")]
+     [InlineData("codex", "decode")]
++    [InlineData("opencode-go", "network")]
++    [InlineData("opencode-go", "server")]
++    [InlineData("opencode-go", "decode")]
+     public async Task ColdTransientDeadlinesGateActualHttpAcrossRestartsAndSuccessRestoresWarmPolicy(string id, string failure)
+     {
+         using var fixture = new Fixture(id);
+@@ -78,6 +81,10 @@ public sealed class QuotaColdStartTests
+     [InlineData("codex", 429, 5, false, 60)]
+     [InlineData("codex", 429, 2400, false, 2400)]
+     [InlineData("codex", 503, 2400, true, 2400)]
++    [InlineData("opencode-go", 429, -1, false, 60)]
++    [InlineData("opencode-go", 429, 5, false, 60)]
++    [InlineData("opencode-go", 429, 2400, false, 2400)]
++    [InlineData("opencode-go", 503, 2400, true, 2400)]
+     public async Task ColdServerFloorsRemainAuthoritativeAcrossRestart(string id, int status, int retry, bool date, int expected)
+     {
+         using var fixture = new Fixture(id);
+@@ -98,6 +105,7 @@ public sealed class QuotaColdStartTests
+ 
+     [Theory]
+     [InlineData("codex")]
++    [InlineData("opencode-go")]
+     public async Task RateLimitDoesNotConsumeColdTransientSequence(string id)
+     {
+         using var fixture = new Fixture(id);
+@@ -112,6 +120,7 @@ public sealed class QuotaColdStartTests
+ 
+     [Theory]
+     [InlineData("codex")]
++    [InlineData("opencode-go")]
+     public async Task LegacyUnknownFutureDeadlineCannotBeShortenedByColdPolicy(string id)
+     {
+         using var fixture = new Fixture(id);
+@@ -138,6 +147,8 @@ public sealed class QuotaColdStartTests
+     [Theory]
+     [InlineData("codex", false)]
+     [InlineData("codex", true)]
++    [InlineData("opencode-go", false)]
++    [InlineData("opencode-go", true)]
+     public async Task CanceledOrReplacedSourceCannotPersistColdFailureDeadline(string id, bool changeAccount)
+     {
+         using var fixture = new Fixture(id);
+@@ -173,11 +184,13 @@ public sealed class QuotaColdStartTests
+         public void Credentials(string identity) => File.WriteAllText(Auth, id switch
+         {
+             "codex" => JsonSerializer.Serialize(new { tokens = new { access_token = identity, account_id = identity } }),
++            "opencode-go" => JsonSerializer.Serialize(new Dictionary<string, object> { ["opencode-go"] = new { type = "api", key = identity } }),
+             _ => throw new InvalidOperationException("Unsupported quota fixture source")
+         });
+-        public CodexQuotaProvider Provider() => id switch
++        public IQuotaProvider Provider() => id switch
+         {
+             "codex" => new CodexQuotaProvider(Auth, Schedule, new HttpClient(Handler, false), () => Clock),
++            "opencode-go" => new OpenCodeGoQuotaProvider(Auth, Schedule, new HttpClient(Handler, false), () => Clock),
+             _ => throw new InvalidOperationException("Unsupported quota fixture source")
+         };
+         public void Dispose() { Handler.Dispose(); Directory.Delete(root, true); }
+@@ -200,6 +213,7 @@ public sealed class QuotaColdStartTests
+             var body = Failure == "decode" ? "not json" : id switch
+             {
+                 "codex" => "{\"rate_limit\":{\"primary_window\":{\"used_percent\":25,\"limit_window_seconds\":18000}}}",
++                "opencode-go" => "{\"usage\":{\"rolling\":{\"percent\":25}}}",
+                 _ => throw new InvalidOperationException("Unsupported quota fixture source")
+             };
+             var response = new HttpResponseMessage((HttpStatusCode)(Failure == "server" ? 503 : Status)) { Content = new StringContent(body) };
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 index 7843155e5ec44dc252d4caffe2a6a44e663a96cd..0436e0c486f031b88afdef0ae4cf86f7bbc180c3 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
@@ -3696,10 +3987,38 @@ index 0000000000000000000000000000000000000000..b759efe5430be9176e2539dcff7235bf
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
-index e101b36de922832f5da74941f369931d39ad9cbc..d9be5502a1fba8257f1fe01f9dd9947a5fe7f112 100644
+index be4d0544b2f6096ef10ea153d5f323495d03a0b0..f69e05f09d1e6aa5f415577985a091d1d5059cb7 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
-@@ -34,7 +34,7 @@ public sealed class QuotaSurfaceRetryTests
+@@ -17,6 +17,7 @@ public sealed class QuotaSurfaceRetryTests
+ {
+     [Theory]
+     [InlineData("codex")]
++    [InlineData("opencode-go")]
+     public void FirstTransientProviderFailureMakesActualHttpAtFiveSecondsInsteadOfNormalTick(string id)
+     {
+         RunSta(() =>
+@@ -29,6 +30,7 @@ public sealed class QuotaSurfaceRetryTests
+                 File.WriteAllText(auth, id switch
+                 {
+                     "codex" => """{"tokens":{"access_token":"fixture","account_id":"fixture"}}""",
++                    "opencode-go" => """{"opencode-go":{"type":"api","key":"fixture"}}""",
+                     _ => throw new InvalidOperationException("Unsupported quota fixture source")
+                 });
+                 var now = new DateTimeOffset(2026, 11, 15, 12, 0, 0, TimeSpan.Zero);
+@@ -39,9 +41,10 @@ public sealed class QuotaSurfaceRetryTests
+                 var scheduler = new ControlledScheduler();
+                 using var handler = new First429Handler(HttpStatusCode.ServiceUnavailable);
+                 var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
+-                CodexQuotaProvider Provider() => id switch
++                IQuotaProvider Provider(string _) => id switch
+                 {
+                     "codex" => new CodexQuotaProvider(auth, Path.Combine(directory, "schedule"), new HttpClient(handler, false), () => now),
++                    "opencode-go" => new OpenCodeGoQuotaProvider(auth, Path.Combine(directory, "schedule"), new HttpClient(handler, false), () => now),
+                     _ => throw new InvalidOperationException("Unsupported quota fixture source")
+                 };
+                 using var surface = new QuotaSurface(settings, loc, false, Provider,
+@@ -82,7 +85,7 @@ public sealed class QuotaSurfaceRetryTests
                  using var handler = new First429Handler();
                  var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
                  using var surface = new QuotaSurface(settings, loc, false,
@@ -3708,6 +4027,16 @@ index e101b36de922832f5da74941f369931d39ad9cbc..d9be5502a1fba8257f1fe01f9dd9947a
                      refreshInterval: TimeSpan.FromHours(1), now: () => now, retryScheduler: scheduler);
                  Drain();
                  Assert.Equal(1, handler.UsageCalls);
+@@ -114,7 +117,8 @@ public sealed class QuotaSurfaceRetryTests
+                     limited.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(75));
+                 return Task.FromResult(limited);
+             }
+-            var body = !usage ? """{"available_count":2}""" : """{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}}}""";
++            var body = !usage ? """{"available_count":2}""" : request.RequestUri!.Host == "opencode.ai"
++                ? """{"usage":{"rolling":{"percent":25}}}""" : """{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}}}""";
+             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+         }
+     }
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 index f0cd97a486d0b244cacd7179fd6fbd7b1d30a214..97bc894391839ac2429253c1c21a1341fa67c056 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs

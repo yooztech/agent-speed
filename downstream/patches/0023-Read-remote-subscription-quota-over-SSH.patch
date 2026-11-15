@@ -1,6 +1,6 @@
-From a6ea8151012ded49682d1cffef9922d250ee0ebe Mon Sep 17 00:00:00 2001
+From 4d60990ef4e45bf8e97eea28dec9b4ab83e5bb38 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 22:07:59 +0800
+Date: Sun, 15 Nov 2026 22:36:37 +0800
 Subject: [PATCH] Read remote subscription quota over SSH
 
 ---
@@ -9,24 +9,24 @@ Subject: [PATCH] Read remote subscription quota over SSH
  linux/collector/CMakeLists.txt                |   5 +-
  linux/collector/daemon.cpp                    |  13 +-
  linux/collector/quota.LICENSE.txt             |  26 +
- linux/collector/quota.cpp                     | 547 ++++++++++++++++++
+ linux/collector/quota.cpp                     | 556 ++++++++++++++++++
  linux/collector/quota.hpp                     |  73 +++
  linux/tests/CMakeLists.txt                    |   1 +
  linux/tests/collector_daemon_test.cpp         |  35 +-
- linux/tests/quota_test.cpp                    | 276 +++++++++
+ linux/tests/quota_test.cpp                    | 473 +++++++++++++++
  macos/Sources/AgentSpeed/App/AppModel.swift   |   6 +
  .../AgentSpeed/App/QuotaController.swift      |  42 +-
  macos/Sources/AgentSpeed/App/QuotaNotch.swift |   8 +-
  .../AgentSpeed/App/QuotaSourceLogo.swift      |   3 +-
  .../Sources/AgentSpeed/App/QuotaSources.swift |  13 +
  macos/Sources/AgentSpeed/App/RemoteHost.swift |  25 +
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  65 ++-
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  65 +-
  .../AgentSpeed/App/RemoteQuotaProvider.swift  | 185 ++++++
  .../SettingsWindow/Panes/QuotaPane.swift      |  16 +-
  .../Sources/AgentSpeedCore/RemoteQuota.swift  |  71 +++
  .../QuotaControllerTests.swift                |  50 ++
  .../QuotaPresentationTests.swift              |  15 +
- .../RemoteQuotaTransportTests.swift           | 264 +++++++++
+ .../RemoteQuotaTransportTests.swift           | 283 +++++++++
  .../RemoteQuotaTests.swift                    |  49 ++
  spec/NETWORK.md                               |  36 ++
  spec/QUOTA.md                                 |  16 +-
@@ -50,8 +50,8 @@ Subject: [PATCH] Read remote subscription quota over SSH
  .../QuotaNotchViewTests.cs                    |  31 +
  .../QuotaSettingsPageTests.cs                 |  21 +
  .../QuotaSurfaceProviderCollectionTests.cs    |  85 +++
- .../QuotaSurfaceRetryTests.cs                 | 242 ++++++++
- 47 files changed, 2976 insertions(+), 94 deletions(-)
+ .../QuotaSurfaceRetryTests.cs                 | 274 +++++++++
+ 47 files changed, 3233 insertions(+), 94 deletions(-)
  create mode 100644 linux/collector/quota.LICENSE.txt
  create mode 100644 linux/collector/quota.cpp
  create mode 100644 linux/collector/quota.hpp
@@ -214,10 +214,10 @@ index 0000000000000000000000000000000000000000..1db9e6d86a905777f8a847977499c6e8
 +SOFTWARE.
 diff --git a/linux/collector/quota.cpp b/linux/collector/quota.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..d8969eb2ffb61c089ed43404524072d74bd34d2f
+index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b33a513b25
 --- /dev/null
 +++ b/linux/collector/quota.cpp
-@@ -0,0 +1,547 @@
+@@ -0,0 +1,556 @@
 +// Provider integration adapted from Codenotch, MIT, commit
 +// 835550a342871779135b6484d6899161c5222f7c. See quota.LICENSE.txt.
 +#include "quota.hpp"
@@ -598,19 +598,20 @@ index 0000000000000000000000000000000000000000..d8969eb2ffb61c089ed43404524072d7
 +    std::string id; Paths paths; Transport transport; Now now; Fd directory;
 +    std::string key, rejectedToken, resetRejectedToken, rejectedStatus;
 +    std::optional<std::int64_t> next, retry;
-+    int failures = 0; bool success = false;
++    int failures = 0, coldFailures = 0; bool success = false;
 +    std::optional<Snapshot> snapshot;
 +    Impl(std::string providerId, Paths providerPaths, Transport providerTransport, Now providerNow) : id(std::move(providerId)), paths(std::move(providerPaths)), transport(providerTransport ? std::move(providerTransport) : http), now(providerNow ? std::move(providerNow) : clockNow), directory(cacheDirectory(paths.home)) {}
 +    std::string accountKey(const Credential& c) const { return digest(id + "\n" + (id == "codex" ? c.account : c.context + "\n" + c.organization + "\n" + c.token + "\n" + (c.oauth ? "oauth" : "api") + "\n" + c.console)); }
 +    void load(const std::string& newKey) {
 +        if (key == newKey) return;
-+        key = newKey; rejectedToken.clear(); resetRejectedToken.clear(); rejectedStatus.clear(); next.reset(); retry.reset(); failures = 0; success = false; snapshot.reset();
++        key = newKey; rejectedToken.clear(); resetRejectedToken.clear(); rejectedStatus.clear(); next.reset(); retry.reset(); failures = 0; coldFailures = 0; success = false; snapshot.reset();
 +        if (directory.value < 0) return;
 +        auto data = fileAt(directory.value, id + "-" + key + ".json", true); Document doc;
 +        if (!data || !doc.parse(*data)) return;
 +        auto v = doc.root(); if (v["version"].raw() != "1" || !v["contextKey"].equals(key)) return;
 +        next = date(v["nextAllowedAt"]); retry = date(v["retryNotBefore"]);
 +        failures = static_cast<int>(std::clamp<std::int64_t>(v["failures"].ordinal().value_or(0), 0, 6));
++        coldFailures = static_cast<int>(std::clamp<std::int64_t>(v["coldFailures"].ordinal().value_or(0), 0, 4));
 +        rejectedToken = text(v["rejectedToken"]).value_or(""); resetRejectedToken = text(v["resetRejectedToken"]).value_or("");
 +        auto status = text(v["rejectedStatus"]); if (status == "unsupported" || status == "needsAuth" || status == "accessDenied") rejectedStatus = *status;
 +        success = v["successfulObservation"].isTrue();
@@ -619,7 +620,7 @@ index 0000000000000000000000000000000000000000..d8969eb2ffb61c089ed43404524072d7
 +    void save() {
 +        Json observation;
 +        if (snapshot) { auto s = *snapshot; s.status = "ok"; s.nextAllowedAt.reset(); observation = s.json(); }
-+        saveFile(directory.value, id + "-" + key + ".json", Json::object({{"version", Json::of(1)}, {"contextKey", Json::of(key)}, {"nextAllowedAt", stamp(next)}, {"retryNotBefore", stamp(retry)}, {"failures", Json::of(failures)}, {"successfulObservation", Json::of(success)}, {"rejectedToken", Json::of(rejectedToken)}, {"resetRejectedToken", Json::of(resetRejectedToken)}, {"rejectedStatus", Json::of(rejectedStatus)}, {"snapshot", std::move(observation)}}).compact());
++        saveFile(directory.value, id + "-" + key + ".json", Json::object({{"version", Json::of(1)}, {"contextKey", Json::of(key)}, {"nextAllowedAt", stamp(next)}, {"retryNotBefore", stamp(retry)}, {"failures", Json::of(failures)}, {"coldFailures", Json::of(coldFailures)}, {"successfulObservation", Json::of(success)}, {"rejectedToken", Json::of(rejectedToken)}, {"resetRejectedToken", Json::of(resetRejectedToken)}, {"rejectedStatus", Json::of(rejectedStatus)}, {"snapshot", std::move(observation)}}).compact());
 +    }
 +    Snapshot retained() const {
 +        auto s = snapshot.value_or(empty(id)); s.nextAllowedAt = next;
@@ -627,10 +628,17 @@ index 0000000000000000000000000000000000000000..d8969eb2ffb61c089ed43404524072d7
 +        if (snapshot) s.status = "stale";
 +        s.waitingForRefresh = !snapshot && success && next && *next > now(); return s;
 +    }
-+    void backoff(std::int64_t delay = 0) {
++    void backoff(std::int64_t delay = 0, bool rateLimited = false, bool transient = true) {
 +        failures = std::min(failures + 1, 6); success = false;
-+        const auto floor = std::min<std::int64_t>(id == "codex" ? 1920000 : 900000, 60000LL << (failures - 1));
-+        next = std::min(kMaxDate, now() + std::min(kMaxDate - now(), std::max(floor, delay))); retry = next;
++        auto floor = std::min<std::int64_t>(id == "codex" ? 1920000 : 900000, 60000LL << (failures - 1));
++        if (!snapshot && transient && !rateLimited) {
++            // Only failures without a validated observation use first-data pacing.
++            // Supplier throttling must not advance this independent sequence.
++            constexpr std::array<std::int64_t, 4> cold{5000, 10000, 20000, 30000};
++            coldFailures = std::min(coldFailures + 1, 4); floor = cold[coldFailures - 1];
++        }
++        const auto observed = now();
++        next = observed + std::min(kMaxDate - observed, std::max(floor, delay)); retry = next;
 +    }
 +    Snapshot read(bool refresh) {
 +        auto c = credentials(id, paths); if (!c) { snapshot.reset(); key.clear(); return empty(id, "needsAuth"); }
@@ -641,14 +649,15 @@ index 0000000000000000000000000000000000000000..d8969eb2ffb61c089ed43404524072d7
 +        if (!rejectedStatus.empty() && (!next || *next > now())) { auto s = empty(id, rejectedStatus); s.nextAllowedAt = next; return s; }
 +        if (!refresh) return retained();
 +        if (next && *next > now()) { auto s = success && snapshot ? *snapshot : retained(); s.nextAllowedAt = next; return s; }
-+        rejectedToken.clear(); rejectedStatus.clear(); Snapshot result;
++        rejectedToken.clear(); rejectedStatus.clear(); Snapshot result; std::int64_t serverDelay = 0;
 +        try {
 +            const std::string url = id == "codex" ? "https://chatgpt.com/backend-api/wham/usage" : c->oauth ? "https://opencode.ai/inference/go/v1/usage" : "https://opencode.ai/zen/go/v1/usage";
 +            auto reply = transport(url, *c, false);
++            if (!reply.retryAfter.empty()) serverDelay = retryDelay(reply.retryAfter, now());
 +            if (reply.status >= 200 && reply.status < 300) {
 +                auto observed = now(); result = id == "codex" ? parseCodex(reply.body, observed) : parseGo(reply.body, observed);
 +                next = id == "codex" ? std::optional<std::int64_t>(std::min(kMaxDate, observed + 300000)) : std::nullopt;
-+                retry.reset(); failures = 0; success = true;
++                retry.reset(); failures = 0; coldFailures = 0; success = true;
 +                if (id == "codex" && resetRejectedToken != token) {
 +                    // Optional endpoint failure never destroys a successfully parsed usage observation.
 +                    try {
@@ -656,7 +665,7 @@ index 0000000000000000000000000000000000000000..d8969eb2ffb61c089ed43404524072d7
 +                        if (reset.status >= 200 && reset.status < 300) {
 +                            auto reading = parseResetCredits(reset.body); result.resetCreditsAvailable = reading.first; result.resetCreditsNextExpiry = reading.second;
 +                        } else if (reset.status == 401 || reset.status == 403) resetRejectedToken = token;
-+                        else if (reset.status == 429) { next = std::max(next.value_or(0), std::min(kMaxDate, now() + retryDelay(reset.retryAfter, now()))); retry = next; }
++                        else if (reset.status == 429 || !reset.retryAfter.empty()) { next = std::max(next.value_or(0), std::min(kMaxDate, now() + retryDelay(reset.retryAfter, now()))); retry = next; }
 +                    } catch (...) { /* Optional reading remains unknown. */ }
 +                }
 +                result.nextAllowedAt = next; snapshot = result;
@@ -665,18 +674,18 @@ index 0000000000000000000000000000000000000000..d8969eb2ffb61c089ed43404524072d7
 +                if (id == "opencode-go" && c->oauth && reply.status == 401) {
 +                    auto probe = transport(c->console + "/api/user", *c, false);
 +                    if (probe.status == 200) noPlan = true;
-+                    else if (probe.status != 401 && probe.status != 403) { backoff(probe.status == 429 ? retryDelay(probe.retryAfter, now()) : 0); result = retained(); }
++                    else if (probe.status != 401 && probe.status != 403) { backoff(probe.retryAfter.empty() ? 0 : retryDelay(probe.retryAfter, now()), probe.status == 429); result = retained(); }
 +                    else result = empty(id, "needsAuth");
 +                    if (!noPlan && probe.status != 401 && probe.status != 403) {
 +                        if (credentials(id, paths) != c) { key.clear(); snapshot.reset(); return read(false); }
 +                        save(); return result;
 +                    }
 +                }
-+                if (noPlan) { snapshot.reset(); success = false; rejectedStatus = "unsupported"; next = std::min(kMaxDate, now() + 300000); retry = next; result = empty(id, "unsupported"); result.nextAllowedAt = next; }
-+                else if (id == "opencode-go" && c->expires && *c->expires <= now()) { backoff(); result = snapshot ? retained() : empty(id, "needsAuth"); result.nextAllowedAt = next; }
-+                else { snapshot.reset(); success = false; rejectedToken = token; result = empty(id, "needsAuth"); }
-+            } else { backoff(reply.status == 429 ? retryDelay(reply.retryAfter, now()) : 0); result = retained(); }
-+        } catch (...) { backoff(); result = retained(); }
++                if (noPlan) { snapshot.reset(); success = false; coldFailures = 0; rejectedStatus = "unsupported"; next = std::min(kMaxDate, now() + 300000); retry = next; result = empty(id, "unsupported"); result.nextAllowedAt = next; }
++                else if (id == "opencode-go" && c->expires && *c->expires <= now()) { backoff(0, false, false); result = snapshot ? retained() : empty(id, "needsAuth"); result.nextAllowedAt = next; }
++                else { snapshot.reset(); success = false; coldFailures = 0; rejectedToken = token; result = empty(id, "needsAuth"); }
++            } else { backoff(serverDelay, reply.status == 429); result = retained(); }
++        } catch (...) { backoff(serverDelay); result = retained(); }
 +        // Never commit or reply with an old account after a concurrent auth/workspace change.
 +        if (credentials(id, paths) != c) { key.clear(); snapshot.reset(); return read(false); }
 +        save(); return result;
@@ -930,10 +939,10 @@ index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a740683
  } // namespace
 diff --git a/linux/tests/quota_test.cpp b/linux/tests/quota_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..a33ec62ede44f070d9cf4d12822bc87525d6258c
+index 0000000000000000000000000000000000000000..52bc3d6920f9e4b1c08fa64201547db18ffee3a8
 --- /dev/null
 +++ b/linux/tests/quota_test.cpp
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,473 @@
 +#include <gtest/gtest.h>
 +#include "../collector/quota.hpp"
 +#include "agentspeed/json.hpp"
@@ -1207,6 +1216,203 @@ index 0000000000000000000000000000000000000000..a33ec62ede44f070d9cf4d12822bc875
 +    home.goAuth(R"({"opencode-go":"different-key"})"); int calls = 0;
 +    q::Provider unauthorized("opencode-go", home.paths(), [&](const auto&, const auto&, bool) { ++calls; return q::HttpReply{401, "", ""}; }, [] { return now; });
 +    EXPECT_EQ(unauthorized.read(true).status, "needsAuth"); EXPECT_EQ(unauthorized.read(true).status, "needsAuth"); EXPECT_EQ(calls, 1);
++}
++
++TEST(CollectorQuotaProvider, ColdTransportCallsFollowPersistedDeadlinesCapAndReturnToWarmPacing) {
++    for (const auto* id : {"codex", "opencode-go"}) {
++        SCOPED_TRACE(id);
++        Home home; home.codexAuth(); home.goAuth(); auto time = now;
++        int usageCalls = 0, resetCalls = 0;
++        auto transport = [&](const std::string& url, const q::Credential& c, bool reset) -> q::HttpReply {
++            if (reset) { ++resetCalls; return success(url, c, reset); }
++            ++usageCalls;
++            if (usageCalls == 1) throw std::runtime_error("synthetic network failure");
++            if (usageCalls == 2) return {};
++            if (usageCalls == 3 || usageCalls == 5 || usageCalls > 6) return {503, "", ""};
++            if (usageCalls == 4) return {200, "[", ""};
++            return success(url, c, reset);
++        };
++        for (auto delay : {5000, 10000, 20000, 30000, 30000}) {
++            q::Provider provider(id, home.paths(), transport, [&] { return time; });
++            auto before = usageCalls;
++            auto failure = provider.read(true);
++            EXPECT_EQ(usageCalls, before + 1); EXPECT_EQ(failure.status, "error"); EXPECT_FALSE(failure.observedAt);
++            EXPECT_TRUE(failure.windows.empty()); ASSERT_EQ(failure.nextAllowedAt, time + delay);
++            time += delay - 1;
++            q::Provider restored(id, home.paths(), transport, [&] { return time; });
++            EXPECT_EQ(restored.read(false).nextAllowedAt, failure.nextAllowedAt);
++            EXPECT_EQ(restored.read(true).nextAllowedAt, failure.nextAllowedAt); EXPECT_EQ(usageCalls, before + 1);
++            ++time;
++        }
++        q::Provider recovered(id, home.paths(), transport, [&] { return time; });
++        auto value = recovered.read(true); ASSERT_EQ(value.status, "ok"); ASSERT_EQ(value.observedAt, time);
++        EXPECT_EQ(usageCalls, 6); EXPECT_EQ(resetCalls, std::string(id) == "codex" ? 1 : 0);
++        const auto observed = time;
++        if (value.nextAllowedAt) time = *value.nextAllowedAt;
++        // A validated persisted observation is warm even after process restart.
++        q::Provider warm(id, home.paths(), transport, [&] { return time; });
++        EXPECT_EQ(warm.read(false).observedAt, observed); EXPECT_EQ(usageCalls, 6);
++        auto failure = warm.read(true); EXPECT_EQ(usageCalls, 7); EXPECT_EQ(failure.status, "stale");
++        EXPECT_EQ(failure.observedAt, observed); EXPECT_EQ(failure.nextAllowedAt, time + 60000);
++        time += 59999; EXPECT_EQ(warm.read(true).nextAllowedAt, failure.nextAllowedAt); EXPECT_EQ(usageCalls, 7);
++        ++time; failure = warm.read(true); EXPECT_EQ(usageCalls, 8); EXPECT_EQ(failure.nextAllowedAt, time + 120000);
++    }
++}
++
++TEST(CollectorQuotaProvider, ColdRateLimitAndTransientRetryAfterAreHardFloorsAcrossRestart) {
++    for (const auto* id : {"codex", "opencode-go"}) for (long status : {429L, 503L}) {
++        for (const auto* hint : {"", "1", "invalid", "1200", "Wed, 18 Nov 2026 00:00:00 GMT"}) {
++            SCOPED_TRACE(std::string(id) + "/" + std::to_string(status) + "/" + hint);
++            Home home; home.codexAuth(); home.goAuth();
++            auto time = now; int calls = 0;
++            bool recover = false;
++            auto transport = [&](const std::string& url, const q::Credential& c, bool reset) {
++                if (reset) return success(url, c, reset);
++                ++calls; return recover ? success(url, c, reset) : q::HttpReply{status, "", hint};
++            };
++            std::int64_t delay = status == 429 ? 60000 : 5000;
++            if (std::string(hint) == "invalid") delay = 60000;
++            if (std::string(hint) == "1200") delay = 1200000;
++            if (std::string(hint).find("GMT") != std::string::npos) delay = *agentspeed::parseTimestamp("2026-11-18T00:00:00Z") - time;
++            {
++                q::Provider provider(id, home.paths(), transport, [&] { return time; });
++                auto failure = provider.read(true); EXPECT_EQ(failure.status, "error"); EXPECT_FALSE(failure.observedAt);
++                EXPECT_EQ(failure.nextAllowedAt, time + delay); EXPECT_EQ(calls, 1);
++            }
++            recover = true; const auto deadline = time + delay;
++            q::Provider restored(id, home.paths(), transport, [&] { return time; });
++            time = deadline - 1; EXPECT_EQ(restored.read(true).nextAllowedAt, deadline); EXPECT_EQ(calls, 1);
++            ++time; EXPECT_EQ(restored.read(true).status, "ok"); EXPECT_EQ(calls, 2);
++        }
++    }
++}
++
++TEST(CollectorQuotaProvider, GoConsoleProbeColdFailuresPersistWithoutAdvancingForRateLimits) {
++    Home home; home.goAuth(R"({"opencode":{"type":"oauth","access":"synthetic-oauth"}})");
++    auto time = now; int usageCalls = 0, probeCalls = 0; bool recover = false;
++    auto transport = [&](const std::string& url, const q::Credential& c, bool reset) -> q::HttpReply {
++        if (url.find("/api/user") == std::string::npos) {
++            ++usageCalls; return recover ? success(url, c, reset) : q::HttpReply{401, "", ""};
++        }
++        ++probeCalls;
++        if (probeCalls == 1) return {429, "", "1"};
++        if (probeCalls == 2) return {503, "", "1200"};
++        if (probeCalls == 4) throw std::runtime_error("synthetic console failure");
++        return {503, "", ""};
++    };
++    for (auto delay : {60000, 1200000, 10000, 20000}) {
++        q::Provider provider("opencode-go", home.paths(), transport, [&] { return time; });
++        const auto before = usageCalls;
++        auto failure = provider.read(true); EXPECT_EQ(failure.status, "error"); EXPECT_FALSE(failure.observedAt);
++        EXPECT_EQ(failure.nextAllowedAt, time + delay); EXPECT_EQ(usageCalls, before + 1); EXPECT_EQ(probeCalls, usageCalls);
++        time += delay - 1;
++        q::Provider restored("opencode-go", home.paths(), transport, [&] { return time; });
++        EXPECT_EQ(restored.read(true).nextAllowedAt, failure.nextAllowedAt); EXPECT_EQ(usageCalls, before + 1);
++        ++time;
++    }
++    recover = true;
++    q::Provider recovered("opencode-go", home.paths(), transport, [&] { return time; });
++    EXPECT_EQ(recovered.read(true).status, "ok"); EXPECT_EQ(usageCalls, 5); EXPECT_EQ(probeCalls, 4);
++    EXPECT_EQ(recovered.read(true).status, "ok"); EXPECT_EQ(usageCalls, 6);
++}
++
++TEST(CollectorQuotaProvider, OptionalCodexTransientRetryAfterRetainsUsageAndPersistentDeadline) {
++    Home home; home.codexAuth(); auto time = now; int usageCalls = 0, resetCalls = 0;
++    auto transport = [&](const std::string&, const q::Credential&, bool reset) {
++        if (reset) { ++resetCalls; return q::HttpReply{503, "", "1200"}; }
++        ++usageCalls; return q::HttpReply{200, codex, ""};
++    };
++    { q::Provider provider("codex", home.paths(), transport, [&] { return time; }); auto s = provider.read(true); EXPECT_EQ(s.status, "ok"); EXPECT_EQ(s.observedAt, time); EXPECT_EQ(s.nextAllowedAt, time + 1200000); }
++    q::Provider restored("codex", home.paths(), transport, [&] { return time; });
++    time += 1199999; auto waiting = restored.read(true); EXPECT_EQ(waiting.status, "stale"); EXPECT_EQ(waiting.observedAt, now);
++    EXPECT_EQ(usageCalls, 1); EXPECT_EQ(resetCalls, 1);
++    ++time; EXPECT_EQ(restored.read(true).status, "ok"); EXPECT_EQ(usageCalls, 2); EXPECT_EQ(resetCalls, 2);
++}
++
++TEST(CollectorQuotaProvider, LegacyUnknownFutureDeadlineSurvivesUntilActualRequestThenUsesColdSequence) {
++    for (const auto* id : {"codex", "opencode-go"}) {
++        SCOPED_TRACE(id);
++        Home home; home.codexAuth(); home.goAuth(); auto time = now; int calls = 0;
++        auto transport = [&](const auto&, const auto&, bool) { ++calls; return q::HttpReply{429, "", "1200"}; };
++        { q::Provider provider(id, home.paths(), transport, [&] { return time; }); EXPECT_EQ(provider.read(true).nextAllowedAt, now + 1200000); }
++        fs::path cache;
++        for (const auto& entry : fs::directory_iterator(home.root + "/.agent-speed/quota")) cache = entry.path();
++        ASSERT_FALSE(cache.empty()); std::ifstream input(cache); std::string content((std::istreambuf_iterator<char>(input)), {});
++        auto count = content.find("\"coldFailures\":0,"); ASSERT_NE(count, std::string::npos);
++        content.erase(count, std::string("\"coldFailures\":0,").size()); put(cache, content);
++        q::Provider legacy(id, home.paths(), [&](const auto&, const auto&, bool) { ++calls; return q::HttpReply{503, "", ""}; }, [&] { return time; });
++        EXPECT_EQ(legacy.read(false).nextAllowedAt, now + 1200000); EXPECT_EQ(calls, 1);
++        time += 1199999; EXPECT_EQ(legacy.read(true).nextAllowedAt, now + 1200000); EXPECT_EQ(calls, 1);
++        ++time; EXPECT_EQ(legacy.read(true).nextAllowedAt, time + 5000); EXPECT_EQ(calls, 2);
++    }
++}
++
++TEST(CollectorQuotaProvider, ExpiredGoAuthenticationDoesNotUseColdTransientPacing) {
++    Home home; home.goAuth(R"({"opencode-go":{"type":"api","key":"synthetic-expired","expires":1794743999000}})");
++    auto time = now; int calls = 0;
++    q::Provider provider("opencode-go", home.paths(), [&](const auto&, const auto&, bool) { ++calls; return q::HttpReply{401, "", ""}; }, [&] { return time; });
++    auto value = provider.read(true); EXPECT_EQ(value.status, "needsAuth"); EXPECT_EQ(value.nextAllowedAt, time + 60000); EXPECT_EQ(calls, 1);
++    time += 5000; EXPECT_EQ(provider.read(true).nextAllowedAt, now + 60000); EXPECT_EQ(calls, 1);
++}
++
++TEST(CollectorQuotaService, ColdRetriesCoalesceActualRequestsOnlyAtDeadlineForEverySupplier) {
++    for (const auto* id : {"codex", "opencode-go"}) {
++        SCOPED_TRACE(id);
++        Home home; home.codexAuth(); home.goAuth(); std::atomic<std::int64_t> time{now};
++        std::mutex mutex; std::condition_variable cv; bool started = false, release = false;
++        std::atomic<int> usageCalls{0}; const auto providers = "\"" + std::string(id) + "\"";
++        q::Service service(home.paths(), [&](const std::string& url, const q::Credential& c, bool reset) {
++            if (reset) return success(url, c, reset);
++            auto attempt = ++usageCalls;
++            { std::unique_lock<std::mutex> lock(mutex); started = true; cv.notify_all(); cv.wait(lock, [&] { return release; }); }
++            return attempt == 1 ? q::HttpReply{503, "", ""} : success(url, c, reset);
++        }, [&] { return time.load(); });
++        auto pair = [&](const std::string& request, bool network) {
++            if (network) { std::lock_guard<std::mutex> lock(mutex); started = false; release = false; }
++            EXPECT_TRUE(service.control(command(request + "-a", true, providers), 1));
++            if (network) {
++                std::unique_lock<std::mutex> lock(mutex);
++                if (!cv.wait_for(lock, std::chrono::seconds(3), [&] { return started; })) {
++                    release = true; cv.notify_all(); ADD_FAILURE() << "quota transport did not start"; return;
++                }
++            }
++            EXPECT_TRUE(service.control(command(request + "-b", true, providers), 2));
++            if (network) { { std::lock_guard<std::mutex> lock(mutex); release = true; } cv.notify_all(); }
++            auto out = replies(service, 2); ASSERT_EQ(out.size(), 2u);
++            std::set<std::uint64_t> subscribers;
++            for (const auto& [subscriber, line] : out) {
++                subscribers.insert(subscriber); Document doc; ASSERT_TRUE(doc.parse(line));
++                const auto snapshot = doc.root()["snapshots"].at(0);
++                EXPECT_TRUE(snapshot["id"].equals(id));
++                if (time < now + 5000) {
++                    EXPECT_TRUE(snapshot["status"].equals("error")); EXPECT_TRUE(snapshot["observedAt"].isNull());
++                    auto deadline = snapshot["nextAllowedAt"].string(); ASSERT_TRUE(deadline);
++                    EXPECT_EQ(agentspeed::parseTimestamp(*deadline), now + 5000);
++                } else EXPECT_TRUE(snapshot["status"].equals("ok"));
++            }
++            EXPECT_EQ(subscribers, (std::set<std::uint64_t>{1, 2}));
++        };
++        pair("cold", true); EXPECT_EQ(usageCalls, 1);
++        time = now + 4999; pair("early", false); EXPECT_EQ(usageCalls, 1);
++        time = now + 5000; pair("retry", true); EXPECT_EQ(usageCalls, 2);
++    }
++}
++
++TEST(CollectorQuotaProvider, ColdInFlightCredentialRotationCannotPublishOrPersistOldFailurePacing) {
++    for (const auto* id : {"codex", "opencode-go"}) {
++        SCOPED_TRACE(id);
++        Home home; home.codexAuth(); home.goAuth(); int calls = 0;
++        q::Provider rotating(id, home.paths(), [&](const auto&, const auto&, bool) {
++            ++calls;
++            if (std::string(id) == "codex") home.codexAuth("new-token", "new-account");
++            else home.goAuth(R"({"opencode-go":"new-token"})");
++            return q::HttpReply{503, "", "1200"};
++        }, [] { return now; });
++        auto discarded = rotating.read(true); EXPECT_EQ(calls, 1); EXPECT_EQ(discarded.status, "error");
++        EXPECT_FALSE(discarded.observedAt); EXPECT_FALSE(discarded.nextAllowedAt);
++        q::Provider current(id, home.paths(), success, [] { return now; });
++        EXPECT_FALSE(current.read(false).nextAllowedAt); EXPECT_EQ(current.read(true).status, "ok");
++    }
 +}
 +
 +} // namespace
@@ -1908,10 +2114,10 @@ index 0000000000000000000000000000000000000000..ac08cf374784cde0218e126e3faa6630
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-index 34e612c077d8efde034038aa7b147a355d8f82ce..1639d787a07fe6d2efe39cf4065f2324e93a91ee 100644
+index b2a82557169798e8f8a2ce35fdc03b47aa53fb37..c64256fd69fbe909e67f424a4bf23ee3a6890723 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -500,6 +500,56 @@ struct QuotaControllerTests {
+@@ -505,6 +505,56 @@ struct QuotaControllerTests {
          #expect(transport.count() == 2)
          #expect(scheduler.retries.isEmpty)
      }
@@ -1945,8 +2151,8 @@ index 34e612c077d8efde034038aa7b147a355d8f82ce..1639d787a07fe6d2efe39cf4065f2324
 +        let startupCompletion = controller.operationBarrier()
 +        transport.expire(startup)
 +        await startupCompletion.value
-+        #expect(scheduler.retries[id]?.delay == 60)
-+        clock.now.addTimeInterval(60)
++        #expect(scheduler.retries[id]?.delay == 5)
++        clock.now.addTimeInterval(5)
 +        scheduler.fireRetry(id)
 +        let retry = try #require(await requests.next())
 +        let reading = QuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: .error,
@@ -1996,10 +2202,10 @@ index af7e2dfa12f9ae80f368001b4fc088bda0848dae..368f9c520e2c08d9c9ddcdbbf5226db1
          #expect(quotaStatus(account("signed-out", status: .needsAuth), english) == english("mac.quota.status.needsAuth", "signed-out"))
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..aa156b70070720e1a789988635d56ae2a5b296ce
+index 0000000000000000000000000000000000000000..619fa13a6a2f022f5c6f1858737b1d1536fa1415
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,283 @@
 +import Foundation
 +import Testing
 +@testable import AgentSpeed
@@ -2263,6 +2469,25 @@ index 0000000000000000000000000000000000000000..aa156b70070720e1a789988635d56ae2
 +            #expect(fixture.transport.cached(hostID: changed.id, providerID: "codex").account == nil)
 +        }
 +    }
++    @Test func readyConnectionImmediatelyRestartsSelectedConsentedColdSourceWithoutTimerTick() async throws {
++        try await withFixture { fixture in
++            fixture.transport.configure(hosts: [fixture.host], connections: [:])
++            fixture.controller.enabledProviderIDs = [fixture.go]
++            fixture.controller.setNetworkEnabled(true)
++            await fixture.controller.operationBarrier().value
++            #expect(fixture.sent == 0)
++            #expect(fixture.controller.snapshots.first?.observedAt == nil)
++            // This is the existing collector connection becoming ready, not a new quota-specific SSH process.
++            fixture.connect()
++            let immediate = try await fixture.next()
++            #expect(immediate.providers == ["opencode-go"] && immediate.refresh)
++            fixture.transport.receive(try fixture.response(immediate), hostID: fixture.host.id, connection: fixture.connection)
++            await fixture.controller.operationBarrier().value
++            #expect(fixture.sent == 1, "Readiness rebuilds only the selected reader and immediately performs its startup read")
++            #expect(fixture.controller.snapshots.first?.status == .ok)
++        }
++    }
++
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift b/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift
 new file mode 100644
@@ -2371,7 +2596,7 @@ index b7ceeb7c51764959dd8d4a4960353ad3b95144a2..e5c11991c6a7212f6889f0096f571018
 +See [`QUOTA.md`](QUOTA.md) for provider parsing, cache isolation and wire details.
 +
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index ef546f1370a59e27daf2ea30ba6379677621ab85..978683840c4b58305eea3b2f94d2cf449893e3bb 100644
+index e70223bce02123eb5b9335a1031eb992dc1ab0d5..554eaae9d82d7ca96ff1cec1335191bcdd35c63e 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,20 @@
@@ -3787,10 +4012,10 @@ index b759efe5430be9176e2539dcff7235bfafdf2092..d84b9fe4c83064b91cbe834a45986d5d
      public void ProvidersHydrateBeforePaintStartIndependentlyAndDisplayEveryQualifyingWindow()
      {
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
-index d9be5502a1fba8257f1fe01f9dd9947a5fe7f112..731a4c87c79f2a49f8d24c6b4ed056c96225232d 100644
+index f69e05f09d1e6aa5f415577985a091d1d5059cb7..9912817fe5c7e65a4621c0ad9f24c735cf308f57 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
-@@ -14,6 +14,195 @@ namespace AgentSpeed.Windows.Tests;
+@@ -15,6 +15,226 @@ namespace AgentSpeed.Windows.Tests;
  
  public sealed class QuotaSurfaceRetryTests
  {
@@ -3846,7 +4071,7 @@ index d9be5502a1fba8257f1fe01f9dd9947a5fe7f112..731a4c87c79f2a49f8d24c6b4ed056c9
 +            var other = remote ? fixture.Local : fixture.Remote;
 +            var id = remote ? fixture.RemoteId : "codex";
 +            other.Complete(QuotaStatus.Ok);
-+            foreach (var seconds in new[] { 60, 120, 240, 480, 900, 900 })
++            foreach (var seconds in new[] { 5, 10, 20, 30, 30, 30 })
 +            {
 +                provider.Complete(QuotaStatus.Error);
 +                Drain();
@@ -3889,7 +4114,7 @@ index d9be5502a1fba8257f1fe01f9dd9947a5fe7f112..731a4c87c79f2a49f8d24c6b4ed056c9
 +            provider.Complete(QuotaStatus.Error);
 +            Drain();
 +            var queued = fixture.Scheduler.Pending[id].Retry;
-+            fixture.Now = fixture.Now.AddSeconds(60);
++            fixture.Now = fixture.Now.AddSeconds(5);
 +            fixture.Scheduler.Fire(id);
 +            Assert.Equal(2, provider.Requests);
 +            switch (transition)
@@ -3983,10 +4208,41 @@ index d9be5502a1fba8257f1fe01f9dd9947a5fe7f112..731a4c87c79f2a49f8d24c6b4ed056c9
 +        });
 +    }
 +
-     [Fact]
-     public void FirstProvider429WakesAtRetryAfterRatherThanFiveMinuteTick()
-     {
-@@ -71,6 +260,59 @@ public sealed class QuotaSurfaceRetryTests
++    [Theory]
++    [InlineData(true)]
++    [InlineData(false)]
++    public void RemoteOnlineImmediatelyRestartsOnlySelectedReaderWithoutWaitingForRetry(bool automatic)
++    {
++        RunSta(() =>
++        {
++            using var fixture = new Fixture(automatic);
++            fixture.Enable();
++            fixture.Local.Complete(QuotaStatus.Ok);
++            fixture.Remote.Complete(QuotaStatus.Error, fixture.Now.AddMinutes(40));
++            Drain();
++            var now = fixture.Now;
++            // Deliver the same owning-thread callback as RemoteConnectionManager's SSH-online event.
++            typeof(QuotaSurface).GetMethod("OnRemoteConnectionChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
++                .Invoke(fixture.Surface, [fixture.Host.Id, true, null]);
++            Assert.Equal(now, fixture.Now);
++            Assert.Equal(2, fixture.Remote.Requests);
++            Assert.Equal(1, fixture.Local.Requests);
++            Assert.Empty(fixture.Scheduler.Pending);
++            fixture.Remote.Complete(QuotaStatus.Ok);
++            Drain();
++            fixture.Settings.Update(s => s with { NetworkEnabled = false });
++            typeof(QuotaSurface).GetMethod("OnRemoteConnectionChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
++                .Invoke(fixture.Surface, [fixture.Host.Id, true, null]);
++            Assert.Equal(2, fixture.Remote.Requests); // Readiness is not network consent.
++            fixture.Enable();
++            Assert.Equal(3, fixture.Remote.Requests);
++        });
++    }
++
+     [Theory]
+     [InlineData("codex")]
+     [InlineData("opencode-go")]
+@@ -123,6 +343,60 @@ public sealed class QuotaSurfaceRetryTests
          }
      }
  
@@ -4036,7 +4292,8 @@ index d9be5502a1fba8257f1fe01f9dd9947a5fe7f112..731a4c87c79f2a49f8d24c6b4ed056c9
 +        }
 +        public void Complete(QuotaStatus status, DateTimeOffset? deadline = null, bool waiting = false)
 +        {
-+            _cached = _cached with { Status = status, NextAllowedAt = deadline, WaitingForRefresh = waiting };
++            _cached = _cached with { Status = status, NextAllowedAt = deadline, WaitingForRefresh = waiting,
++                ObservedAt = status == QuotaStatus.Ok ? new DateTimeOffset(2026, 11, 15, 12, 0, 0, TimeSpan.Zero) : _cached.ObservedAt };
 +            _pending.Dequeue().SetResult(_cached);
 +        }
 +        public void Cancel() { } // Intentionally permits late results.

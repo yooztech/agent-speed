@@ -1,19 +1,19 @@
-From 44ce3180697739383d8fa460a02e8a7d5a29be74 Mon Sep 17 00:00:00 2001
+From 403cf150a54a353b9020825730e352b35cff28ac Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 22:07:57 +0800
+Date: Sun, 15 Nov 2026 22:31:59 +0800
 Subject: [PATCH] Add Windows Codex quota monitoring
 
 ---
  spec/QUOTA.md                                 |  32 +-
  .../AgentSpeed.Core/AgentSpeed.Core.csproj    |   1 +
- .../src/AgentSpeed.Core/CodexQuotaProvider.cs | 411 ++++++++++
+ .../src/AgentSpeed.Core/CodexQuotaProvider.cs | 425 ++++++++++
  windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |  20 +
  .../Localization/Strings.Windows.json         |  86 ++
  .../Menus/MenuAction.cs                       |   3 +
  .../Menus/OrbMenuModel.cs                     |   2 +-
  .../Menus/QuickMenuModel.cs                   |  15 +-
  .../Settings/AppSettings.cs                   |  30 +
- .../Settings/QuotaFailureRetry.cs             |  40 +
+ .../Settings/QuotaFailureRetry.cs             |  42 +
  .../Settings/QuotaFormat.cs                   | 121 +++
  .../Settings/QuotaNotchGeometry.cs            | 293 +++++++
  .../Settings/QuotaNotchGeometryFilter.cs      | 190 +++++
@@ -41,9 +41,10 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../AgentSpeed/Settings/SettingsWindow.xaml   |  12 +-
  .../Settings/SettingsWindow.xaml.cs           |  27 +-
  windows/src/AgentSpeed/Theme/Styles.xaml      |   4 +-
- .../CodexQuotaProviderTests.cs                | 727 +++++++++++++++++
+ .../CodexQuotaProviderTests.cs                | 755 +++++++++++++++++
+ .../QuotaColdStartTests.cs                    | 211 +++++
  .../OrbMenuModelTests.cs                      |  43 +-
- .../QuotaFailureRetryTests.cs                 |  92 +++
+ .../QuotaFailureRetryTests.cs                 | 112 +++
  .../QuotaFormatTests.cs                       | 251 ++++++
  .../QuotaNotchBodyInputTests.cs               |  67 ++
  .../QuotaNotchFilterParityTests.cs            | 209 +++++
@@ -58,9 +59,9 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../QuotaDisplayClockTests.cs                 |  63 ++
  .../QuotaNotchViewTests.cs                    | 302 +++++++
  .../QuotaSettingsPageTests.cs                 | 386 +++++++++
- .../QuotaSurfaceRetryTests.cs                 | 103 +++
+ .../QuotaSurfaceRetryTests.cs                 | 151 ++++
  .../QuotaSurfaceTests.cs                      | 505 ++++++++++++
- 56 files changed, 7602 insertions(+), 53 deletions(-)
+ 57 files changed, 7925 insertions(+), 53 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
@@ -82,6 +83,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  create mode 100644 windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
  create mode 100644 windows/src/AgentSpeed/Settings/QuotaSurface.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaFailureRetryTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
  create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchBodyInputTests.cs
@@ -99,7 +101,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index ada7e11a65cfc94a2f3197112dddfe6ef9012593..25ca22b234fa737e81a7584bfb08b8ae92c1077f 100644
+index dd4bbec2b3001e91ffdb69937c18c219516831cc..333cc4fb20c47240f5948f380ea15bcad43ec673 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,8 @@
@@ -131,7 +133,7 @@ index ada7e11a65cfc94a2f3197112dddfe6ef9012593..25ca22b234fa737e81a7584bfb08b8ae
  
  ## Desktop presentation
  
-@@ -47,24 +47,28 @@ Quota is presented in the existing Settings window as source-neutral account car
+@@ -47,15 +47,15 @@ Quota is presented in the existing Settings window as source-neutral account car
  
  Subscription is a source-neutral account list and settings group, with the real Codex adapter; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
  
@@ -148,7 +150,10 @@ index ada7e11a65cfc94a2f3197112dddfe6ef9012593..25ca22b234fa737e81a7584bfb08b8ae
 -Quota startup on macOS belongs to the application, not any visible surface. With a supported source enabled, hydrate the current account's last successful observation, including when network access is disabled. Independently attempt one startup refresh as soon as networking is permitted, even in manual periodic-refresh mode and without opening Settings or the floating panel. This one-shot startup request may bypass only the ordinary five-minute floor following a successful observation; persisted 429 Retry-After, failure backoff and unchanged-token authentication rejection still apply. Source and network toggles within the same application lifetime do not repeatedly grant this exception. Automatic mode then continues the normal five-minute cadence while all surfaces are closed; manual mode stops periodic requests. Explicit non-startup refreshes still obey the ordinary floor and backoff. Network errors retain the last good snapshot with its original observation time. Cancellation, disposal and account/token changes must prevent obsolete in-flight results from replacing the currently displayed account or its persisted snapshot.
 +Quota startup on both platforms belongs to the application, not any visible surface. With a supported source enabled, hydrate the current account's last successful observation, including when network access is disabled. Independently attempt one startup refresh as soon as networking is permitted, even in manual periodic-refresh mode and without opening Settings or the floating panel. This one-shot startup request may bypass only the ordinary five-minute floor following a successful observation; persisted 429 Retry-After, failure backoff and unchanged-token authentication rejection still apply. Source and network toggles within the same application lifetime do not repeatedly grant this exception. Automatic mode then continues the normal five-minute cadence while all surfaces are closed; manual mode stops periodic requests. Explicit non-startup refreshes still obey the ordinary floor and backoff. Network errors retain the last good snapshot with its original observation time. Cancellation, disposal and account/token changes must prevent obsolete in-flight results from replacing the currently displayed account or its persisted snapshot.
  
- Automatic polling also schedules a per-source retry when a refresh returns a transiently unavailable observation (`error` or `stale`), instead of waiting for the next ordinary five-minute tick. A future provider `nextAllowedAt` is authoritative, including persisted Retry-After; waiting behind an existing deadline does not count as another failed network attempt. A stale cached reading returned by a refresh may schedule a wake at its existing floor, but an `ok` snapshot, authentication/unsupported state or cache-only hydration alone does not arm a failure retry. Transport failures without a supplier deadline use a client delay starting at 60 seconds, doubling to at most 15 minutes. An expired deadline never creates a zero-delay loop. Retry wakes only its affected source, coalesces with already-running work, and clears on success. Turning automatic refresh off, revoking network access, removing a source or disposing the application cancels the applicable retry work; late results cannot re-arm it. These rules apply to local and SSH-host readers identically and never invent a default zero observation.
+ Automatic polling schedules per-source retries when a refresh returns a transiently unavailable observation (`error` or `stale`), rather than waiting for the next ordinary five-minute tick. Cold start means the current account/source has no validated successful observation; an available account-bound cached observation is displayed stale immediately and is not cold. Before the first successful observation, genuine transport, service and decoding failures retry after 5, 10, 20 and then at most 30 seconds per attempt. Both the native scheduler and the credential-owning provider enforce this short cadence: a five-second UI wake blocked by a hidden sixty-second provider floor does not satisfy the contract. Remote connection readiness triggers the existing immediate selected-source startup read. The first successful observation clears cold-start pacing and restores normal polling; failures with an already available observation retain the ordinary backoff policy.
+ 
+@@ -64,11 +64,15 @@ A provider's future `nextAllowedAt` is authoritative. HTTP 429 retains its conse
+ Retries wake only the affected source and coalesce with in-flight work; no synthetic zero reading is created. Turning automatic refresh off, revoking network access, removing a source or disposing the application cancels its pending retry work, and stale callbacks/results cannot re-arm it. Existing manual/startup preference semantics remain unchanged. These rules apply to Codex, OpenCode Go and Kimi on both native clients and the shared remote collector; no extra SSH process or autonomous collector quota polling is introduced.
  For migration, a legacy schedule without a validated version-1 account snapshot cannot distinguish a normal successful floor from an optional reset-credit 429 extension. Preserve its future `nextAllowedAt` rather than granting the startup bypass. After that deadline, a successful request upgrades the structured snapshot and independent retry deadline; subsequent application starts may bypass only the ordinary successful floor.
  
 -By default, without pointer attention, the macOS panel start and rest as a collapsed strip: 10 by 79 logical pixels on vertical edges or 79 by 10 on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
@@ -166,7 +171,7 @@ index ada7e11a65cfc94a2f3197112dddfe6ef9012593..25ca22b234fa737e81a7584bfb08b8ae
  
  The outlined resting arc has 8.49 DIP of true radial clearance from the outlined circular body flare; the temporary full disc has 17.23 DIP. Neutral outlined dot paint spans X 21.7–55.7 and Y `BodyEnd + 35.95`–`BodyEnd + 57.45`, a 34-by-21.5-DIP envelope; settled hover paint is 36.4 by 23.9 DIP. Hit padding, radial bridge, activation fan and liquid core/neck consumers use the actual production dot/grid geometry, not independently enlarged SVGs or a blanket input rectangle. `GripPaintClearance` measures the actual quarter curve including its endpoints, not the full circle or a bounding rectangle; `ArcGripPaintClearance` measures the retained outlined arc against all six outlined dots, including hover. These production methods drive regressions and the frame probe. The animation canvas still conservatively reserves 32.97 DIP beyond the flare for transient disc/filter bounds, without making that envelope interactive or moving the screen anchor.
  
-@@ -80,6 +84,10 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
+@@ -84,6 +88,10 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
  
  The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
  
@@ -177,7 +182,7 @@ index ada7e11a65cfc94a2f3197112dddfe6ef9012593..25ca22b234fa737e81a7584bfb08b8ae
  The existing transient menu-bar popover or tray flyout may show a compact quota summary when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers, but include every available quota window within each displayed provider; open the existing Settings quota page for details.
  
  Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
-@@ -93,7 +101,7 @@ swift test --package-path macos --filter QuotaNotchTests
+@@ -97,7 +105,7 @@ swift test --package-path macos --filter QuotaNotchTests
  swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native
  ```
  
@@ -186,7 +191,7 @@ index ada7e11a65cfc94a2f3197112dddfe6ef9012593..25ca22b234fa737e81a7584bfb08b8ae
  
  The optional captures use fixed synthetic frames and credential-free observations, not live requests or substitute browser graphics. They exercise folded, resting arc, emerging arc, temporary disc, dividing drops, six drops, held, stale, offline, unknown and authentication states. The harness checks tight native bounds, opaque paint against the shared input mask, the resting arc's transparent hole and every revealed drop's draggable target. Its four localized details captures cover English, Simplified Chinese, Traditional Chinese and Japanese.
  
-@@ -111,7 +119,7 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
+@@ -115,7 +123,7 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
  `GET https://chatgpt.com/backend-api/wham/usage` uses the local Codex session's bearer access token and `ChatGPT-Account-Id`; `Accept: application/json` requests JSON. Never place either credential in fixtures or logs. `plan_type` is the plan when supplied. The main `rate_limit.primary_window` and `rate_limit.secondary_window` are independent; parse each without discarding a valid sibling because another is null or malformed. A window's numeric `used_percent` converts to `usedFraction` by dividing by 100 without clamping. `limit_window_seconds` gives duration. `reset_at` is Unix epoch seconds; when absent, `reset_after_seconds` is relative to the observation time. Null or omitted data stays unknown. A non-null 0 percentage is a valid measurement.
  `additional_rate_limits` is an array of feature-scoped rate-limit objects (`limit_name`, `metered_feature`, `rate_limit`), not a replacement for the main account windows. `code_review_rate_limit` may contain another pair. Preserve source scope when representing these windows. A malformed extra must not destroy usable main data. `spend_control.individual_limit` is a separate credit-backed allowance: its `limit` and `used` can be decimal strings, `used_percent` is a percentage, and `reset_at` is epoch seconds. The response's `credits` balance is distinct from that allowance and from unused reset credits at the separate `/wham/rate-limit-reset-credits` endpoint; none is interchangeable with another.
  
@@ -208,10 +213,10 @@ index fe867767b5041c5d8895692c482e70dffbf24db2..7e567f9b3820458d2ba38a6b716a2f3e
  </Project>
 diff --git a/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..96949fa9e2188e01ee5db91dea61983a062f4be4
+index 0000000000000000000000000000000000000000..ae4bb284357643c2ed60b8dba0257a65f16c405c
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
-@@ -0,0 +1,411 @@
+@@ -0,0 +1,425 @@
 +using System.Globalization;
 +using System.Net;
 +using System.Net.Http.Headers;
@@ -351,6 +356,7 @@ index 0000000000000000000000000000000000000000..96949fa9e2188e01ee5db91dea61983a
 +                schedule.NextAllowedAt = completed.AddMinutes(5);
 +                schedule.RetryNotBefore = null;
 +                schedule.Failures = 0;
++                schedule.ColdFailures = 0;
 +                schedule.SuccessfulObservation = true;
 +                var resetCredits = schedule.ResetRejectedToken == tokenKey ? default :
 +                    await FetchResetCreditsAsync(token, account, tokenKey, schedule, cancellationToken).ConfigureAwait(false);
@@ -365,7 +371,8 @@ index 0000000000000000000000000000000000000000..96949fa9e2188e01ee5db91dea61983a
 +            }
 +            else
 +            {
-+                Backoff(schedule, completed, (int)response.StatusCode == 429 ? RetryAfter(response.Headers.RetryAfter, completed) : 0);
++                Backoff(schedule, completed, RetrySeconds(response, completed),
++                    response.StatusCode == HttpStatusCode.TooManyRequests, (int)response.StatusCode >= 500);
 +                lock (gate) result = StaleOrError(accountKey, schedule.NextAllowedAt);
 +            }
 +        }
@@ -388,10 +395,18 @@ index 0000000000000000000000000000000000000000..96949fa9e2188e01ee5db91dea61983a
 +        }
 +    }
 +
-+    private static void Backoff(Schedule schedule, DateTimeOffset completed, double retrySeconds)
++    private static void Backoff(Schedule schedule, DateTimeOffset completed, double retrySeconds, bool rateLimited = false, bool transient = true)
 +    {
 +        schedule.Failures = Math.Min(schedule.Failures + 1, 6);
-+        schedule.NextAllowedAt = completed.AddSeconds(Math.Max(60 * Math.Pow(2, schedule.Failures - 1), retrySeconds));
++        var seconds = 60 * Math.Pow(2, schedule.Failures - 1);
++        // A validated account-bound observation survives errors; the last-attempt flag does not.
++        if (schedule.Snapshot?.ObservedAt is null && transient && !rateLimited)
++        {
++            schedule.ColdFailures = Math.Min(schedule.ColdFailures + 1, 4);
++            seconds = Math.Min(5 * (1 << (schedule.ColdFailures - 1)), 30);
++        }
++        seconds = Math.Max(seconds, retrySeconds);
++        schedule.NextAllowedAt = seconds >= (DateTimeOffset.MaxValue - completed).TotalSeconds ? DateTimeOffset.MaxValue : completed.AddSeconds(seconds);
 +        schedule.RetryNotBefore = schedule.NextAllowedAt;
 +        schedule.SuccessfulObservation = false;
 +    }
@@ -411,10 +426,10 @@ index 0000000000000000000000000000000000000000..96949fa9e2188e01ee5db91dea61983a
 +            using var response = await client.SendAsync(request, timeout.Token).ConfigureAwait(false);
 +            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
 +                schedule.ResetRejectedToken = tokenKey;
-+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
++            if (response.StatusCode == HttpStatusCode.TooManyRequests || !response.IsSuccessStatusCode && response.Headers.RetryAfter is not null)
 +            {
 +                var completed = now();
-+                var seconds = RetryAfter(response.Headers.RetryAfter, completed);
++                var seconds = RetrySeconds(response, completed);
 +                var retryAt = seconds >= (DateTimeOffset.MaxValue - completed).TotalSeconds ? DateTimeOffset.MaxValue : completed.AddSeconds(seconds);
 +                if (schedule.NextAllowedAt is not { } next || retryAt > next) schedule.NextAllowedAt = retryAt;
 +                schedule.RetryNotBefore = schedule.NextAllowedAt;
@@ -465,13 +480,15 @@ index 0000000000000000000000000000000000000000..96949fa9e2188e01ee5db91dea61983a
 +        return text.EndsWith('Z') || text.Length >= 25 && text[^6] is '+' or '-' ? expiry : null;
 +    }
 +
-+    private static double RetryAfter(RetryConditionHeaderValue? retry, DateTimeOffset time) =>
-+        Math.Max(60, retry?.Delta?.TotalSeconds ?? (retry?.Date - time)?.TotalSeconds ?? 60);
++    private static double RetrySeconds(HttpResponseMessage response, DateTimeOffset time) =>
++        Math.Max(response.StatusCode == HttpStatusCode.TooManyRequests ? 60 : 0,
++            response.Headers.RetryAfter?.Delta?.TotalSeconds ?? (response.Headers.RetryAfter?.Date - time)?.TotalSeconds ?? 0);
 +    private static string Digest(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
 +    private sealed class Schedule
 +    {
 +        public DateTimeOffset? NextAllowedAt { get; set; }
 +        public int Failures { get; set; }
++        public int ColdFailures { get; set; }
 +        public string? RejectedToken { get; set; }
 +        public string? ResetRejectedToken { get; set; }
 +        public bool? SuccessfulObservation { get; set; }
@@ -488,6 +505,7 @@ index 0000000000000000000000000000000000000000..96949fa9e2188e01ee5db91dea61983a
 +            var schedule = new Schedule { NextAllowedAt = DateTimeOffset.TryParse(Text(root, "nextAllowedAt"), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var date) ? date : null,
 +                RetryNotBefore = DateTimeOffset.TryParse(Text(root, "retryNotBefore"), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var retry) ? retry : null,
 +                Failures = (int)(Number(root, "failures") ?? 0), RejectedToken = Text(root, "rejectedToken"), ResetRejectedToken = Text(root, "resetRejectedToken"), SuccessfulObservation = Boolean(root, "successfulObservation") };
++            schedule.ColdFailures = (int)Math.Clamp(Number(root, "coldFailures") ?? 0, 0, 4);
 +            // Cache schema failures do not discard the independent request schedule.
 +            if (Number(root, "snapshotVersion") == 1 && Text(root, "snapshotAccountKey") == accountKey)
 +            {
@@ -521,6 +539,7 @@ index 0000000000000000000000000000000000000000..96949fa9e2188e01ee5db91dea61983a
 +                if (schedule.NextAllowedAt is { } next) writer.WriteString("nextAllowedAt", next);
 +                if (schedule.RetryNotBefore is { } retry) writer.WriteString("retryNotBefore", retry);
 +                writer.WriteNumber("failures", schedule.Failures);
++                writer.WriteNumber("coldFailures", schedule.ColdFailures);
 +                if (schedule.RejectedToken != null) writer.WriteString("rejectedToken", schedule.RejectedToken);
 +                if (schedule.ResetRejectedToken != null) writer.WriteString("resetRejectedToken", schedule.ResetRejectedToken);
 +                if (schedule.SuccessfulObservation is { } success) writer.WriteBoolean("successfulObservation", success);
@@ -883,10 +902,10 @@ index 491527f379fca71e3ba8a068182ee410dccf5abc..704ba04ac9d99ae54e7d241b8c6377bc
          if (string.IsNullOrWhiteSpace(path))
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..334403745d5341bf62ced946b2e868b6318f2296
+index 0000000000000000000000000000000000000000..323817ba3a9fffbd57452c84881ac36273f92f7b
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,42 @@
 +using AgentSpeed.Core;
 +
 +namespace AgentSpeed.Presentation.Settings;
@@ -914,9 +933,11 @@ index 0000000000000000000000000000000000000000..334403745d5341bf62ced946b2e868b6
 +        // deadline without counting a second failure; cache hydration never calls this.
 +        if (!(before.NextAllowedAt is { } next && next > startedAt && result.NextAllowedAt == next))
 +            _failures = Math.Min(_failures + 1, 5);
-+        DueAt = result.NextAllowedAt is { } deadline
-+            ? (deadline > now ? deadline : now.AddSeconds(1))
-+            : now.AddSeconds(Math.Min(60 * (1 << (_failures - 1)), 900));
++        var cold = result.ObservedAt is null;
++        var seconds = cold ? Math.Min(5 * (1 << Math.Max(0, _failures - 1)), 30)
++            : Math.Min(60 * (1 << Math.Max(0, _failures - 1)), 900);
++        DueAt = result.NextAllowedAt is { } deadline && deadline > now
++            ? deadline : now.AddSeconds(seconds);
 +    }
 +}
 +
@@ -4605,10 +4626,10 @@ index 59a8461b7f6fdd74dcf196403b19e0a8fac70fc9..74b7b7f38b4a41b19c62165d2fbcfe83
          </Setter>
 diff --git a/windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs b/windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..56b37eb46fd859a1b111419878a2b945b3ff0892
+index 0000000000000000000000000000000000000000..b217fa338257d31788d6ae6833688afc7c7adbb7
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
-@@ -0,0 +1,727 @@
+@@ -0,0 +1,755 @@
 +using System.Net;
 +using System.Net.Http.Headers;
 +
@@ -5265,6 +5286,34 @@ index 0000000000000000000000000000000000000000..56b37eb46fd859a1b111419878a2b945
 +        Assert.Null(provider.ReadCachedSnapshot().ObservedAt);
 +    }
 +
++    [Theory]
++    [InlineData(HttpStatusCode.TooManyRequests)]
++    [InlineData(HttpStatusCode.ServiceUnavailable)]
++    public async Task OptionalResetServerGuidanceRemainsBindingWithoutDiscardingUsableObservation(HttpStatusCode status)
++    {
++        using var context = new Context();
++        context.Handler.ResetStatus = status;
++        context.Handler.ResetRetry = TimeSpan.FromMinutes(40);
++        using (var provider = context.Provider())
++        {
++            var good = await provider.RefreshStartupAsync();
++            Assert.Equal(QuotaStatus.Ok, good.Status);
++            Assert.Equal(Time, good.ObservedAt);
++            Assert.Equal(Time.AddMinutes(40), good.NextAllowedAt);
++        }
++        using var restarted = context.Provider();
++        context.Clock = Time.AddMinutes(40).AddTicks(-1);
++        Assert.Equal(Time, restarted.ReadCachedSnapshot().ObservedAt);
++        await restarted.RefreshStartupAsync();
++        Assert.Equal(1, context.Handler.UsageCalls);
++        Assert.Equal(1, context.Handler.ResetCalls);
++        context.Clock = Time.AddMinutes(40);
++        context.Handler.ResetStatus = HttpStatusCode.OK;
++        Assert.Equal(QuotaStatus.Ok, (await restarted.RefreshAsync()).Status);
++        Assert.Equal(2, context.Handler.UsageCalls);
++        Assert.Equal(2, context.Handler.ResetCalls);
++    }
++
 +    private sealed class Context : IDisposable
 +    {
 +        private readonly string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -5332,6 +5381,223 @@ index 0000000000000000000000000000000000000000..56b37eb46fd859a1b111419878a2b945
 +            if (Retry != null) response.Headers.RetryAfter = new RetryConditionHeaderValue(Retry.Value);
 +            if (RetryDate != null) response.Headers.RetryAfter = new RetryConditionHeaderValue(RetryDate.Value);
 +            if (Status == HttpStatusCode.Redirect) response.Headers.Location = new Uri("https://untrusted.invalid/usage");
++            return response;
++        }
++    }
++}
+diff --git a/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs b/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
+new file mode 100644
+index 0000000000000000000000000000000000000000..48778a2e56d6247900591ecd2e2fe12ba06bec44
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
+@@ -0,0 +1,211 @@
++using System.Net;
++using System.Net.Http.Headers;
++using System.Text.Json;
++using System.Text.Json.Nodes;
++
++namespace AgentSpeed.Core.Tests;
++
++public sealed class QuotaColdStartTests
++{
++    private static readonly DateTimeOffset Time = new(2026, 11, 15, 0, 0, 0, TimeSpan.Zero);
++
++    [Theory]
++    [InlineData("codex", "network")]
++    [InlineData("codex", "server")]
++    [InlineData("codex", "decode")]
++    public async Task ColdTransientDeadlinesGateActualHttpAcrossRestartsAndSuccessRestoresWarmPolicy(string id, string failure)
++    {
++        using var fixture = new Fixture(id);
++        fixture.Handler.Failure = failure;
++        QuotaSnapshot result;
++        using (var provider = fixture.Provider()) result = await provider.RefreshStartupAsync();
++        var calls = 1;
++        foreach (var seconds in new[] { 5, 10, 20, 30, 30, 30 })
++        {
++            Assert.Equal(QuotaStatus.Error, result.Status);
++            Assert.Null(result.ObservedAt);
++            var deadline = fixture.Clock.AddSeconds(seconds);
++            Assert.Equal(deadline, result.NextAllowedAt);
++            using var restarted = fixture.Provider();
++            Assert.Null(restarted.ReadCachedSnapshot().ObservedAt);
++            Assert.Equal(calls, fixture.Handler.UsageCalls);
++            fixture.Clock = deadline.AddTicks(-1);
++            await restarted.RefreshStartupAsync();
++            await restarted.RefreshAsync();
++            Assert.Equal(calls, fixture.Handler.UsageCalls);
++            fixture.Clock = deadline;
++            result = await restarted.RefreshAsync();
++            Assert.Equal(++calls, fixture.Handler.UsageCalls);
++        }
++        fixture.Clock = result.NextAllowedAt!.Value;
++        fixture.Handler.Failure = null;
++        using (var provider = fixture.Provider())
++        {
++            var good = await provider.RefreshAsync();
++            Assert.Equal(QuotaStatus.Ok, good.Status);
++            Assert.Equal(fixture.Clock, good.ObservedAt);
++            Assert.Equal(++calls, fixture.Handler.UsageCalls);
++        }
++        var schedule = JsonNode.Parse(File.ReadAllText(Assert.Single(Directory.GetFiles(fixture.Schedule))))!;
++        Assert.Equal(0, schedule["coldFailures"]!.GetValue<int>());
++        fixture.Clock = fixture.Clock.AddMinutes(5);
++        fixture.Handler.Failure = failure;
++        using (var provider = fixture.Provider())
++        {
++            var cached = provider.ReadCachedSnapshot();
++            Assert.Equal(QuotaStatus.Stale, cached.Status);
++            Assert.NotNull(cached.ObservedAt);
++            for (var attempt = 0; attempt < 2; attempt++)
++            {
++                var stale = await provider.RefreshAsync();
++                Assert.Equal(cached.ObservedAt, stale.ObservedAt);
++                Assert.Equal(QuotaStatus.Stale, stale.Status);
++                Assert.Equal(fixture.Clock.AddSeconds(attempt == 0 ? 60 : 120), stale.NextAllowedAt);
++                Assert.Equal(++calls, fixture.Handler.UsageCalls);
++                fixture.Clock = stale.NextAllowedAt!.Value;
++            }
++        }
++        fixture.Handler.Failure = null;
++        using (var provider = fixture.Provider()) Assert.Equal(QuotaStatus.Ok, (await provider.RefreshAsync()).Status);
++        fixture.Clock = fixture.Clock.AddMinutes(5);
++        fixture.Handler.Failure = failure;
++        using (var provider = fixture.Provider())
++            Assert.Equal(fixture.Clock.AddSeconds(60), (await provider.RefreshAsync()).NextAllowedAt);
++    }
++
++    [Theory]
++    [InlineData("codex", 429, -1, false, 60)]
++    [InlineData("codex", 429, 5, false, 60)]
++    [InlineData("codex", 429, 2400, false, 2400)]
++    [InlineData("codex", 503, 2400, true, 2400)]
++    public async Task ColdServerFloorsRemainAuthoritativeAcrossRestart(string id, int status, int retry, bool date, int expected)
++    {
++        using var fixture = new Fixture(id);
++        fixture.Handler.Status = status;
++        fixture.Handler.Retry = retry;
++        fixture.Handler.RetryDate = date;
++        var deadline = Time.AddSeconds(expected);
++        using (var provider = fixture.Provider()) Assert.Equal(deadline, (await provider.RefreshAsync()).NextAllowedAt);
++        using var restarted = fixture.Provider();
++        fixture.Clock = deadline.AddTicks(-1);
++        Assert.Equal(deadline, (await restarted.RefreshStartupAsync()).NextAllowedAt);
++        Assert.Equal(1, fixture.Handler.UsageCalls);
++        fixture.Handler.Status = 200;
++        fixture.Clock = deadline;
++        Assert.Equal(QuotaStatus.Ok, (await restarted.RefreshAsync()).Status);
++        Assert.Equal(2, fixture.Handler.UsageCalls);
++    }
++
++    [Theory]
++    [InlineData("codex")]
++    public async Task RateLimitDoesNotConsumeColdTransientSequence(string id)
++    {
++        using var fixture = new Fixture(id);
++        using var provider = fixture.Provider();
++        fixture.Handler.Status = 429;
++        Assert.Equal(Time.AddSeconds(60), (await provider.RefreshAsync()).NextAllowedAt);
++        fixture.Clock = Time.AddSeconds(60);
++        fixture.Handler.Status = 503;
++        Assert.Equal(fixture.Clock.AddSeconds(5), (await provider.RefreshAsync()).NextAllowedAt);
++        Assert.Equal(2, fixture.Handler.UsageCalls);
++    }
++
++    [Theory]
++    [InlineData("codex")]
++    public async Task LegacyUnknownFutureDeadlineCannotBeShortenedByColdPolicy(string id)
++    {
++        using var fixture = new Fixture(id);
++        using (var initial = fixture.Provider()) await initial.RefreshAsync();
++        var path = Assert.Single(Directory.GetFiles(fixture.Schedule));
++        var schedule = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
++        schedule.Remove("snapshot");
++        schedule.Remove("coldFailures");
++        schedule.Remove("retryNotBefore");
++        schedule["successfulObservation"] = true; // Not proof of validated usable data.
++        schedule["nextAllowedAt"] = Time.AddMinutes(40).ToString("O");
++        File.WriteAllText(path, schedule.ToJsonString());
++        using var provider = fixture.Provider();
++        fixture.Clock = Time.AddMinutes(39);
++        fixture.Handler.Status = 503;
++        Assert.Null(provider.ReadCachedSnapshot().ObservedAt);
++        Assert.Equal(Time.AddMinutes(40), (await provider.RefreshStartupAsync()).NextAllowedAt);
++        Assert.Equal(1, fixture.Handler.UsageCalls);
++        fixture.Clock = Time.AddMinutes(40);
++        Assert.Equal(fixture.Clock.AddSeconds(5), (await provider.RefreshAsync()).NextAllowedAt);
++        Assert.Equal(2, fixture.Handler.UsageCalls);
++    }
++
++    [Theory]
++    [InlineData("codex", false)]
++    [InlineData("codex", true)]
++    public async Task CanceledOrReplacedSourceCannotPersistColdFailureDeadline(string id, bool changeAccount)
++    {
++        using var fixture = new Fixture(id);
++        using var provider = fixture.Provider();
++        fixture.Handler.Failure = "server";
++        fixture.Handler.Block = new(TaskCreationOptions.RunContinuationsAsynchronously);
++        var pending = provider.RefreshAsync();
++        Assert.Equal(1, fixture.Handler.UsageCalls);
++        if (changeAccount) fixture.Credentials("replacement"); else provider.Cancel();
++        fixture.Handler.Block.TrySetResult();
++        Assert.Null((await pending).ObservedAt);
++        Assert.False(Directory.Exists(fixture.Schedule));
++        fixture.Handler.Block = null;
++        Assert.Equal(fixture.Clock.AddSeconds(5), (await provider.RefreshAsync()).NextAllowedAt);
++        Assert.Equal(2, fixture.Handler.UsageCalls);
++    }
++
++    private sealed class Fixture : IDisposable
++    {
++        private readonly string root = Path.Combine(Path.GetTempPath(), "quota-cold-" + Guid.NewGuid().ToString("N"));
++        private readonly string id;
++        public readonly Handler Handler;
++        public DateTimeOffset Clock = Time;
++        public string Schedule => Path.Combine(root, "schedule");
++        private string Auth => Path.Combine(root, "auth.json");
++        public Fixture(string id)
++        {
++            this.id = id;
++            Handler = new(id, () => Clock);
++            Directory.CreateDirectory(root);
++            Credentials("fixture");
++        }
++        public void Credentials(string identity) => File.WriteAllText(Auth, id switch
++        {
++            "codex" => JsonSerializer.Serialize(new { tokens = new { access_token = identity, account_id = identity } }),
++            _ => throw new InvalidOperationException("Unsupported quota fixture source")
++        });
++        public CodexQuotaProvider Provider() => id switch
++        {
++            "codex" => new CodexQuotaProvider(Auth, Schedule, new HttpClient(Handler, false), () => Clock),
++            _ => throw new InvalidOperationException("Unsupported quota fixture source")
++        };
++        public void Dispose() { Handler.Dispose(); Directory.Delete(root, true); }
++    }
++
++    private sealed class Handler(string id, Func<DateTimeOffset> now) : HttpMessageHandler
++    {
++        public int UsageCalls;
++        public int Status = 200, Retry = -1;
++        public bool RetryDate;
++        public string? Failure;
++        public TaskCompletionSource? Block;
++        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
++        {
++            if (request.RequestUri!.AbsolutePath.EndsWith("/rate-limit-reset-credits", StringComparison.Ordinal))
++                return new(HttpStatusCode.OK) { Content = new StringContent("{\"available_count\":2}") };
++            UsageCalls++;
++            if (Block is { } block) await block.Task.WaitAsync(cancellationToken);
++            if (Failure == "network") throw new HttpRequestException("Synthetic unavailable transport");
++            var body = Failure == "decode" ? "not json" : id switch
++            {
++                "codex" => "{\"rate_limit\":{\"primary_window\":{\"used_percent\":25,\"limit_window_seconds\":18000}}}",
++                _ => throw new InvalidOperationException("Unsupported quota fixture source")
++            };
++            var response = new HttpResponseMessage((HttpStatusCode)(Failure == "server" ? 503 : Status)) { Content = new StringContent(body) };
++            if (Retry >= 0) response.Headers.RetryAfter = RetryDate
++                ? new RetryConditionHeaderValue(now().AddSeconds(Retry)) : new RetryConditionHeaderValue(TimeSpan.FromSeconds(Retry));
 +            return response;
 +        }
 +    }
@@ -5445,10 +5711,10 @@ index a287b4835bc7fdf6ee181bd4c581b5f2fc15bfb3..5f7e162df96c195104d2485c8ccbc64b
      [Fact]
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFailureRetryTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFailureRetryTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2f36a6653572d2cbb3042575694f8839a7f3e094
+index 0000000000000000000000000000000000000000..61eccdcca3a08513f53f59bd783ab8259eaf7877
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFailureRetryTests.cs
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,112 @@
 +using AgentSpeed.Core;
 +using AgentSpeed.Presentation.Settings;
 +
@@ -5480,7 +5746,7 @@ index 0000000000000000000000000000000000000000..2f36a6653572d2cbb3042575694f8839
 +        var retry = new QuotaFailureRetry();
 +        var now = Now;
 +        var failure = Snapshot();
-+        foreach (var seconds in new[] { 60, 120, 240, 480, 900, 900 })
++        foreach (var seconds in new[] { 5, 10, 20, 30, 30, 30 })
 +        {
 +            retry.Complete(failure, failure, now, now);
 +            Assert.Equal(now.AddSeconds(seconds), retry.DueAt);
@@ -5489,7 +5755,7 @@ index 0000000000000000000000000000000000000000..2f36a6653572d2cbb3042575694f8839
 +        retry.Complete(failure, Snapshot(QuotaStatus.Ok), now, now);
 +        Assert.Null(retry.DueAt);
 +        retry.Complete(failure, failure, now, now);
-+        Assert.Equal(now.AddSeconds(60), retry.DueAt);
++        Assert.Equal(now.AddSeconds(5), retry.DueAt);
 +    }
 +
 +    [Fact]
@@ -5500,7 +5766,7 @@ index 0000000000000000000000000000000000000000..2f36a6653572d2cbb3042575694f8839
 +        for (var i = 0; i < 8; i++) retry.Complete(waiting, waiting, Now, Now);
 +        Assert.Equal(waiting.NextAllowedAt, retry.DueAt);
 +        retry.Complete(Snapshot(), Snapshot(), Now, Now);
-+        Assert.Equal(Now.AddSeconds(60), retry.DueAt);
++        Assert.Equal(Now.AddSeconds(5), retry.DueAt);
 +    }
 +
 +    [Theory]
@@ -5523,9 +5789,29 @@ index 0000000000000000000000000000000000000000..2f36a6653572d2cbb3042575694f8839
 +        retry.Complete(Snapshot(), Snapshot(waiting: true, deadline: Now.AddMinutes(5)), Now, Now);
 +        Assert.Null(retry.DueAt);
 +        retry.Complete(Snapshot(), Snapshot(deadline: Now.AddSeconds(-30)), Now, Now);
-+        Assert.Equal(Now.AddSeconds(1), retry.DueAt);
++        Assert.Equal(Now.AddSeconds(5), retry.DueAt);
++        retry.Complete(Snapshot(), Snapshot(deadline: Now.AddSeconds(-30)), Now, Now);
++        Assert.Equal(Now.AddSeconds(10), retry.DueAt);
 +        retry.Clear();
 +        Assert.Null(retry.DueAt);
++    }
++
++    [Fact]
++    public void ValidCachedObservationKeepsWarmFallbackAfterRepeatedErrors()
++    {
++        var retry = new QuotaFailureRetry();
++        var warm = Snapshot(QuotaStatus.Stale) with { ObservedAt = Now.AddDays(-1) };
++        var now = Now;
++        foreach (var seconds in new[] { 60, 120, 240, 480, 900, 900 })
++        {
++            retry.Complete(warm, warm, now, now);
++            Assert.Equal(now.AddSeconds(seconds), retry.DueAt);
++            now = retry.DueAt!.Value;
++        }
++        retry.Complete(warm, Snapshot(QuotaStatus.Ok) with { ObservedAt = now }, now, now);
++        Assert.Null(retry.DueAt);
++        retry.Complete(warm, warm, now, now);
++        Assert.Equal(now.AddSeconds(60), retry.DueAt);
 +    }
 +
 +    [Fact]
@@ -5535,7 +5821,7 @@ index 0000000000000000000000000000000000000000..2f36a6653572d2cbb3042575694f8839
 +        var remote = new QuotaFailureRetry();
 +        local.Complete(Snapshot(), Snapshot(), Now, Now);
 +        remote.Complete(Snapshot(), Snapshot(QuotaStatus.Stale, Now.AddSeconds(130)), Now, Now);
-+        Assert.Equal(Now.AddSeconds(60), local.DueAt);
++        Assert.Equal(Now.AddSeconds(5), local.DueAt);
 +        Assert.Equal(Now.AddSeconds(130), remote.DueAt);
 +        local.Clear();
 +        Assert.Equal(Now.AddSeconds(130), remote.DueAt);
@@ -7838,14 +8124,15 @@ index 0000000000000000000000000000000000000000..9af2cdb1841382abaf7a45dc5d8a3704
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e101b36de922832f5da74941f369931d39ad9cbc
+index 0000000000000000000000000000000000000000..be4d0544b2f6096ef10ea153d5f323495d03a0b0
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
-@@ -0,0 +1,103 @@
+@@ -0,0 +1,151 @@
 +using System.IO;
 +using System.Net;
 +using System.Net.Http;
 +using System.Net.Http.Headers;
++using System.Reflection;
 +using System.Runtime.ExceptionServices;
 +using System.Windows.Threading;
 +using AgentSpeed.Core;
@@ -7858,6 +8145,53 @@ index 0000000000000000000000000000000000000000..e101b36de922832f5da74941f369931d
 +
 +public sealed class QuotaSurfaceRetryTests
 +{
++    [Theory]
++    [InlineData("codex")]
++    public void FirstTransientProviderFailureMakesActualHttpAtFiveSecondsInsteadOfNormalTick(string id)
++    {
++        RunSta(() =>
++        {
++            var directory = Path.Combine(Path.GetTempPath(), "quota-cold-controller-" + Guid.NewGuid().ToString("N"));
++            Directory.CreateDirectory(directory);
++            try
++            {
++                var auth = Path.Combine(directory, "auth.json");
++                File.WriteAllText(auth, id switch
++                {
++                    "codex" => """{"tokens":{"access_token":"fixture","account_id":"fixture"}}""",
++                    _ => throw new InvalidOperationException("Unsupported quota fixture source")
++                });
++                var now = new DateTimeOffset(2026, 11, 15, 12, 0, 0, TimeSpan.Zero);
++                using var settings = new SettingsService(Dispatcher.CurrentDispatcher);
++                settings.MakeEphemeral();
++                settings.Update(s => s with { ShowQuotaNotch = false, NetworkEnabled = true, AutoRefreshQuota = true,
++                    QuotaAllSources = false, QuotaSources = [id] });
++                var scheduler = new ControlledScheduler();
++                using var handler = new First429Handler(HttpStatusCode.ServiceUnavailable);
++                var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
++                CodexQuotaProvider Provider() => id switch
++                {
++                    "codex" => new CodexQuotaProvider(auth, Path.Combine(directory, "schedule"), new HttpClient(handler, false), () => now),
++                    _ => throw new InvalidOperationException("Unsupported quota fixture source")
++                };
++                using var surface = new QuotaSurface(settings, loc, false, Provider,
++                    refreshInterval: TimeSpan.FromHours(1), now: () => now, retryScheduler: scheduler);
++                Drain();
++                Assert.Equal(1, handler.UsageCalls);
++                Assert.Equal(TimeSpan.FromSeconds(5), scheduler.Pending[id].Delay);
++                now = now.AddSeconds(4);
++                scheduler.Fire(id);
++                Assert.Equal(1, handler.UsageCalls);
++                now = now.AddSeconds(1);
++                scheduler.Fire(id);
++                Drain();
++                Assert.Equal(2, handler.UsageCalls);
++                Assert.Empty(scheduler.Pending);
++            }
++            finally { Directory.Delete(directory, recursive: true); }
++        });
++    }
++
 +    [Fact]
 +    public void FirstProvider429WakesAtRetryAfterRatherThanFiveMinuteTick()
 +    {
@@ -7897,21 +8231,21 @@ index 0000000000000000000000000000000000000000..e101b36de922832f5da74941f369931d
 +        });
 +    }
 +
-+    private sealed class First429Handler : HttpMessageHandler
++    private sealed class First429Handler(HttpStatusCode firstStatus = HttpStatusCode.TooManyRequests) : HttpMessageHandler
 +    {
 +        public int UsageCalls;
 +        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
 +        {
-+            var usage = request.RequestUri!.AbsolutePath.EndsWith("/usage", StringComparison.Ordinal);
++            var usage = !request.RequestUri!.AbsolutePath.EndsWith("/rate-limit-reset-credits", StringComparison.Ordinal);
 +            if (usage && ++UsageCalls == 1)
 +            {
-+                var limited = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
-+                limited.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(75));
++                var limited = new HttpResponseMessage(firstStatus);
++                if (firstStatus == HttpStatusCode.TooManyRequests)
++                    limited.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(75));
 +                return Task.FromResult(limited);
 +            }
-+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(usage
-+                ? """{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}}}"""
-+                : """{"available_count":2}""") });
++            var body = !usage ? """{"available_count":2}""" : """{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}}}""";
++            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
 +        }
 +    }
 +
