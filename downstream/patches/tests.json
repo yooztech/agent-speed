@@ -393,7 +393,7 @@
     "regression": [
       {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests'"},
       {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~OpenCodeGoQuotaProviderTests|FullyQualifiedName~CodexQuotaProviderTests'"},
-      {"platform": "macos", "run": "swift test --package-path macos --filter 'OpenCodeGoQuotaProviderTests|CodexQuotaProviderTests'"}
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'OpenCodeGoQuotaProviderTests|CodexQuotaProviderTests|QuotaTests'"}
     ],
     "related": [
       {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~Quota|FullyQualifiedName~SettingsSerializerTests'"},

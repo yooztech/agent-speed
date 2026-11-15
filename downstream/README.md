@@ -223,6 +223,21 @@ existing quota surface includes all available windows for each displayed account
 there is no aggregate allowance and no headline-only substitute. Source-specific
 credential stores, account isolation and persisted backoff remain independent.
 
+The multi-window/OpenCode Go feature is carried by
+`0022-Add-multi-window-quota-and-OpenCode-Go-provider.patch`. Focused Linux-hosted
+verification passed 110 Codex/Go Core tests and 299 quota/settings Presentation
+tests. The subsequent Go pacing alignment passed all 26 Go tests again; Codex
+was unchanged. Windows native tests cross-compile with no warnings/errors and a
+self-contained Windows x64 development build publishes successfully. A temporary
+Swift 6.2 package ran the actual portable quota models/providers and their 24
+tests using SQLite and swift-crypto; seven changed native Swift files also pass
+syntax parsing, which is not an AppKit/SwiftUI SDK build. A browser-inspected
+production-geometry probe covers two three-window sources on all four edges,
+but is not WPF font/pixel/input proof. The current environment has neither local
+OpenCode credentials nor an authenticated Console session: no real subscription
+request or native desktop acceptance has been claimed. These checks are not a
+Release and do not authorize publication.
+
 The floating surface is drawn directly with cached WPF paths, glyphs and text.
 The main surface uses a bounded, stable animation canvas and the details card
 uses a separate tightly sized HWND; both are nonactivating. For one Codex source,
