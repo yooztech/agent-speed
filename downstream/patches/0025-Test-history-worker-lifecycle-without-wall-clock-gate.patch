@@ -1,4 +1,4 @@
-From 830164983a71cbcc6798575272185d6601a48a1d Mon Sep 17 00:00:00 2001
+From e7137a57c23aa3e118c397328a45283690c8d7aa Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:11:00 +0800
 Subject: [PATCH] Test history worker lifecycle without wall clock gate

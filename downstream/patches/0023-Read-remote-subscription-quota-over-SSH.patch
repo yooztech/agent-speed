@@ -1,4 +1,4 @@
-From e6ddf8b53da1d6981dc5436d70b8dd536eedc683 Mon Sep 17 00:00:00 2001
+From c601e99e2192c54af26835db1ff7a6a6ef148665 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:11 +0800
 Subject: [PATCH] Read remote subscription quota over SSH
@@ -1837,7 +1837,7 @@ index 2bd429c8f321dfaa2165f962aee8fe436d4b5d49..ed8e603231f7e7200332a0b26b5c43e5
          reader.task?.cancel()
          reader.task = nil
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index 01ec078ec56c4ffee4363ed6c7f805f0b3de0b59..b46ca44762dc6bc66a9dc759d2f35f440d3747f4 100644
+index b5f90b7317153eee6e3a39934ed568fa089365b9..ae7566507a4e286fc439e83b0ef7bbad8131d13b 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 @@ -12,6 +12,7 @@ struct QuotaNotchReading {
@@ -1848,7 +1848,7 @@ index 01ec078ec56c4ffee4363ed6c7f805f0b3de0b59..b46ca44762dc6bc66a9dc759d2f35f44
      let windows: [QuotaWindow]
      let readings: [String]
      let labels: [String]
-@@ -23,9 +24,10 @@ struct QuotaNotchReading {
+@@ -25,9 +26,10 @@ struct QuotaNotchReading {
      var outerDiameter: CGFloat { NotchLayout.outerDiameter(windows.count) }
      var cellMetrics: QuotaNotchCellMetrics { QuotaNotchCellMetrics(width: readingWidth, readingHeight: readingHeight, diameter: outerDiameter) }
  
@@ -1860,7 +1860,7 @@ index 01ec078ec56c4ffee4363ed6c7f805f0b3de0b59..b46ca44762dc6bc66a9dc759d2f35f44
          windows = QuotaWindow.ordered(snapshot?.windows ?? [])
          let multiple = windows.count > 1
          let windowLabels = windows.map { quotaCompactWindowLabel($0, l10n, providerName: snapshot?.displayName) }
-@@ -63,7 +65,7 @@ struct QuotaNotchReading {
+@@ -68,7 +70,7 @@ struct QuotaNotchReading {
          !networkEnabled || snapshot?.status == .stale || snapshot?.observedAt.map { now.timeIntervalSince($0) > 900 } == true
      }
      func status(at now: Date) -> String { quotaDisplayStatus(snapshot, l10n, networkEnabled: networkEnabled, now: now) }
@@ -1869,7 +1869,7 @@ index 01ec078ec56c4ffee4363ed6c7f805f0b3de0b59..b46ca44762dc6bc66a9dc759d2f35f44
  
      func resetText(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
          let seconds = date.timeIntervalSince(now)
-@@ -461,7 +463,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
+@@ -466,7 +468,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
          visible = state.0; reducedMotion = state.1
          dark = state.2 == .dark || (state.2 == .auto && NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
          readings = state.4.map { provider in
@@ -2990,7 +2990,7 @@ index b7ceeb7c51764959dd8d4a4960353ad3b95144a2..e5c11991c6a7212f6889f0096f571018
 +See [`QUOTA.md`](QUOTA.md) for provider parsing, cache isolation and wire details.
 +
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 3219a14906edc451b2e6a4d60abdae505f819914..dbd9dc40d316f591edb0ea65d98e671957a2eb14 100644
+index 5fd945739a9082e6693d8b553cac9e48c3878013..7e4051f97b4327f037c620fd789af24c57155fd2 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,31 @@
@@ -3662,7 +3662,7 @@ index a2585fcd0d93fbf00c09d4bb4fee6df5fca16188..5b468fd9686566fd9740fff69d0ad8f2
      }
  
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index 26e50809dd174f17a7e5910b8bdf64e38134fb09..49b9107c6a61519b3937e72411002f42ce7c2c44 100644
+index 8029f9186f40ae7d013b0a439cbdfc776b0f927e..fa33edf27c96f6afab2cf7f70c5a1a078638985d 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -120,7 +120,7 @@ internal sealed class QuotaNotchView : FrameworkElement

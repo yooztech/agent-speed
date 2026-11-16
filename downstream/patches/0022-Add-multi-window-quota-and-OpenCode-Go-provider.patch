@@ -1,4 +1,4 @@
-From bd70b0792cd8fdc38c5eb27e32ff72311f186a2b Mon Sep 17 00:00:00 2001
+From 0a17dd2fc98f372373e2f76c78cbeb67a3d43620 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:10 +0800
 Subject: [PATCH] Add multi-window quota and OpenCode Go provider
@@ -7,7 +7,7 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  macos/Package.swift                           |   5 +-
  macos/Resources/Codenotch-LICENSE.txt         |   2 +-
  macos/Resources/strings.macos.json            |   4 +-
- macos/Sources/AgentSpeed/App/QuotaNotch.swift |  67 ++-
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift |  74 ++-
  .../AgentSpeed/App/QuotaNotchShape.swift      |   8 +-
  .../App/QuotaNotchVisualHarness.swift         |   8 +-
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +-
@@ -46,7 +46,7 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
  .../QuotaSurfaceTests.cs                      | 129 ++++-
- 42 files changed, 2420 insertions(+), 227 deletions(-)
+ 42 files changed, 2426 insertions(+), 228 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -115,21 +115,23 @@ index 4cf47a4b4cf3b99be25b7052fc500c892ff15761..e4b85a13e09185f61bc9b1ff63aa3d8d
    "mac.quota.noAllowance": {"zh-Hant":"此帳戶沒有可用的 %@ 訂閱額度","zh-Hans":"此账户没有可用的 %@ 订阅额度","en":"No %@ subscription allowance on this account","ja":"このアカウントに %@ の利用枠はありません"},
    "mac.quota.limitReached": {"zh-Hant":"已達額度限制","zh-Hans":"已达额度限制","en":"Allowance reached","ja":"利用枠の上限に達しました"},
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index d2e1aaff963eb347aea7c7216d25d47e162982fd..01ec078ec56c4ffee4363ed6c7f805f0b3de0b59 100644
+index d2e1aaff963eb347aea7c7216d25d47e162982fd..b5f90b7317153eee6e3a39934ed568fa089365b9 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -14,6 +14,10 @@ struct QuotaNotchReading {
+@@ -14,6 +14,12 @@ struct QuotaNotchReading {
      let l10n: Localizer
      let windows: [QuotaWindow]
      let readings: [String]
 +    let labels: [String]
 +    let values: [String]
 +    let rowHeights: [CGFloat]
++    let font: NSFont
++    let labelWidth: CGFloat
 +    let valueWidth: CGFloat
      let readingWidth: CGFloat
      let readingHeight: CGFloat
      var outerDiameter: CGFloat { NotchLayout.outerDiameter(windows.count) }
-@@ -24,15 +28,36 @@ struct QuotaNotchReading {
+@@ -24,15 +30,39 @@ struct QuotaNotchReading {
          self.snapshot = snapshot; self.networkEnabled = networkEnabled; self.l10n = l10n
          windows = QuotaWindow.ordered(snapshot?.windows ?? [])
          let multiple = windows.count > 1
@@ -141,28 +143,32 @@ index d2e1aaff963eb347aea7c7216d25d47e162982fd..01ec078ec56c4ffee4363ed6c7f805f0
                  : window.remainingFraction.map { quotaPercent($0, locale: l10n.locale) } ?? l10n("mac.quota.unknown")
 -            return (multiple ? quotaCompactWindowLabel(window, l10n, providerName: snapshot?.displayName) + " " : "") + remaining
          }
-+        labels = windowLabels; values = windowValues
-+        readings = windowValues.enumerated().map { index, value in multiple ? windowLabels[index] + " " + value : value }
-         let font = NSFont.systemFont(ofSize: multiple ? 11 : 15, weight: .semibold)
+-        let font = NSFont.systemFont(ofSize: multiple ? 11 : 15, weight: .semibold)
 -        readingWidth = readings.reduce(CGFloat(0)) { $0 + ceil(($1 as NSString).size(withAttributes: [.font: font]).width) }
 -            + (multiple ? CGFloat(readings.count * 9 + max(0, readings.count - 1) * 9) : 0)
 -        readingHeight = ceil(font.ascender - font.descender + font.leading)
-+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
++        labels = windowLabels; values = windowValues
++        readings = windowValues.enumerated().map { index, value in multiple ? windowLabels[index] + " " + value : value }
++        let readingFont = NSFont.systemFont(ofSize: multiple ? 11 : 15, weight: .semibold)
++        font = readingFont
++        let attributes: [NSAttributedString.Key: Any] = [.font: readingFont]
 +        func width(_ text: String) -> CGFloat { ceil((text as NSString).size(withAttributes: attributes).width) }
 +        func height(_ text: String, width: CGFloat) -> CGFloat {
 +            ceil((text as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
 +                 options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes).height)
 +        }
 +        if multiple {
-+            let columnWidth = min(CGFloat(44), max(CGFloat(24), windowValues.map(width).max() ?? 24))
-+            let labelWidth = 90 - columnWidth - 13
-+            let heights = zip(windowLabels, windowValues).map { max(height($0, width: labelWidth), height($1, width: columnWidth)) }
++            let columnWidth = windowValues.map(width).max() ?? 0
++            let measuredLabelWidth = windowLabels.map(width).max() ?? 0
++            labelWidth = measuredLabelWidth
++            let heights = zip(windowLabels, windowValues).map { max(height($0, width: max(1, measuredLabelWidth)), height($1, width: max(1, columnWidth))) }
 +            valueWidth = columnWidth
-+            readingWidth = 90
++            readingWidth = 9 + measuredLabelWidth + 6 + columnWidth
 +            rowHeights = heights
 +            readingHeight = heights.reduce(0, +) + CGFloat(max(0, heights.count - 1)) * 2
 +        } else {
-+            let columnWidth = min(CGFloat(90), windowValues.map(width).max() ?? 0)
++            let columnWidth = windowValues.map(width).max() ?? 0
++            labelWidth = 0
 +            let heights = windowValues.map { height($0, width: max(1, columnWidth)) }
 +            valueWidth = 0
 +            readingWidth = columnWidth
@@ -172,7 +178,7 @@ index d2e1aaff963eb347aea7c7216d25d47e162982fd..01ec078ec56c4ffee4363ed6c7f805f0
      }
      func stale(at now: Date) -> Bool {
          !networkEnabled || snapshot?.status == .stale || snapshot?.observedAt.map { now.timeIntervalSince($0) > 900 } == true
-@@ -208,13 +233,13 @@ private struct QuotaNotchCell: View {
+@@ -208,13 +238,13 @@ private struct QuotaNotchCell: View {
              ZStack {
                  Circle().fill(dark ? Color(white: 42 / 255) : .white)
                      .overlay(Circle().stroke(dark ? Color(white: 57 / 255) : Color(white: 214 / 255), lineWidth: 0.5))
@@ -189,7 +195,7 @@ index d2e1aaff963eb347aea7c7216d25d47e162982fd..01ec078ec56c4ffee4363ed6c7f805f0
                      let unknown = window.usedFraction == nil || reading.snapshot?.status == .needsAuth
                      let color = NotchLayout.periodColor(window)
                      Circle().stroke(color.opacity(unknown ? 0.38 : 0.22), style: StrokeStyle(lineWidth: NotchLayout.ringStroke, dash: unknown ? [1, 4] : []))
-@@ -225,19 +250,27 @@ private struct QuotaNotchCell: View {
+@@ -225,19 +255,27 @@ private struct QuotaNotchCell: View {
                              .frame(width: diameter, height: diameter)
                      }
                  }
@@ -208,18 +214,18 @@ index d2e1aaff963eb347aea7c7216d25d47e162982fd..01ec078ec56c4ffee4363ed6c7f805f0
 +            if reading.windows.count > 1 {
 +                VStack(spacing: 2) {
 +                    ForEach(reading.readings.indices, id: \.self) { index in
-+                        HStack(alignment: .top, spacing: 4) {
-+                            Circle().fill(NotchLayout.periodColor(reading.windows[index])).frame(width: 5, height: 5).padding(.top, 4)
-+                            Text(reading.labels[index]).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
-+                            Text(reading.values[index]).fixedSize(horizontal: false, vertical: true).frame(width: reading.valueWidth, alignment: .trailing)
++                        HStack(alignment: .top, spacing: 0) {
++                            Circle().fill(NotchLayout.periodColor(reading.windows[index])).frame(width: 5, height: 5).padding(.top, 4).padding(.trailing, 4)
++                            Text(reading.labels[index]).fixedSize().frame(width: reading.labelWidth, alignment: .leading).padding(.trailing, 6)
++                            Text(reading.values[index]).fixedSize().frame(width: reading.valueWidth, alignment: .trailing)
 +                        }
 +                        .frame(width: reading.readingWidth, height: reading.rowHeights[index], alignment: .top)
                      }
 -                }
 -            }.font(.system(size: reading.windows.count > 1 ? 11 : 15, weight: .semibold))
-+                }.font(.system(size: 11, weight: .semibold))
++                }.font(Font(reading.font))
 +            } else {
-+                Text(reading.values[0]).font(.system(size: 15, weight: .semibold))
++                Text(reading.values[0]).font(Font(reading.font)).fixedSize()
 +                    .frame(width: reading.readingWidth, height: reading.readingHeight)
 +            }
          }
@@ -1337,7 +1343,7 @@ index 2182d48108eb65631dfe4b49019442274de81689..460bec0d382ddb13b639b0efcf09cb83
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index aaa82803af9fb0307dc4deb7fc80225ad7a23826..3219a14906edc451b2e6a4d60abdae505f819914 100644
+index 0f68a1ce413fb1e9cd3569800fde384d96271243..5fd945739a9082e6693d8b553cac9e48c3878013 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,4 +1,4 @@
@@ -1346,7 +1352,7 @@ index aaa82803af9fb0307dc4deb7fc80225ad7a23826..3219a14906edc451b2e6a4d60abdae50
  
  This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
  
-@@ -47,7 +47,7 @@ Along the edge, use each account’s own measured ring-and-reading extent with e
+@@ -49,7 +49,7 @@ Measure complete, unwrapped reading strings with the same native font used to re
  
  Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any qualifying tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
  
@@ -1355,7 +1361,7 @@ index aaa82803af9fb0307dc4deb7fc80225ad7a23826..3219a14906edc451b2e6a4d60abdae50
  
  Windows and macOS Subscription follow the approved account-card layout using their native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
  
-@@ -90,7 +90,9 @@ Pointer entry during the arc's initial emergence also retains its exact last-pai
+@@ -92,7 +92,9 @@ Pointer entry during the arc's initial emergence also retains its exact last-pai
  
  Subscription Settings no longer exposes runtime diagnostics or a credential-storage footnote. Safe initialization/placement stage and exception type/HResult state may remain internal to the native host for tests; no page callback or hidden replacement diagnostic UI is retained. Pointer events and finite transitions drive the panel lifecycle; it has no continuous cursor, browser bridge, or bitmap polling loop. Provider refresh and backoff remain independent of this rendering lifecycle.
  
@@ -1366,7 +1372,7 @@ index aaa82803af9fb0307dc4deb7fc80225ad7a23826..3219a14906edc451b2e6a4d60abdae50
  
  The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
  
-@@ -134,6 +136,18 @@ On both platforms, each successful usage poll also queries `GET https://chatgpt.
+@@ -136,6 +138,18 @@ On both platforms, each successful usage poll also queries `GET https://chatgpt.
  Synthetic, credential-free examples: [`fixtures/codex-quota.json`](fixtures/codex-quota.json) shows main windows, an extra, a code-review window with unknown usage, and spend control; [`fixtures/codex-credit-quota.json`](fixtures/codex-credit-quota.json) shows missing rolling windows and a known zero balance. Their timestamps are examples, not current reset predictions. These are illustrative endpoint payloads, not captures of a real account.
  Both endpoint fixtures are raw provider responses, not snapshots; parsing either produces snapshot fidelity `official`.
  
@@ -1992,7 +1998,7 @@ index b38e173683618666a2b50aaddd78c3cbaab2df2d..81069553fe2a9e7b5ca548db20f2885d
  
  }
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
-index c41ad4816f19223657f20163f9c499c101ce8dd4..ecc384e042b44773a7468479085ab15e6880053a 100644
+index badc78513fdd64bc8fb83025b9956d0bdf40be83..cdc8e437e2b962939333c773f5b398c1657d5442 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
 @@ -14,7 +14,10 @@ public static class QuotaNotchGeometry
@@ -2019,7 +2025,7 @@ index 90f5dd481e9b9b721a9bc2c155b4cd306be15a94..03cb5d84f864bbdbb53020349431c3b2
  
  MIT License
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..26e50809dd174f17a7e5910b8bdf64e38134fb09 100644
+index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..8029f9186f40ae7d013b0a439cbdfc776b0f927e 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -24,6 +24,9 @@ internal sealed class QuotaNotchView : FrameworkElement
@@ -2057,10 +2063,10 @@ index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..26e50809dd174f17a7e5910b8bdf64e3
 +            var windows = QuotaFormat.OrderedWindows(snapshot);
 +            bool multiple = windows.Count > 1;
 +            var labels = multiple ? windows.Select(window => Text(QuotaFormat.CompactWindowLabel(_loc, window, snapshot?.DisplayName),
-+                11, Semibold, ink, 80)).ToArray() : [];
++                11, Semibold, ink)).ToArray() : [];
 +            var readings = windows.Count == 0 ? new[] { Text("—", 15, Semibold, ink) }
 +                : windows.Select(window => Text(snapshot?.Status == QuotaStatus.NeedsAuth ? _loc["win.quota.unknown"] : QuotaFormat.RemainingText(_loc, window),
-+                    multiple ? 11 : 15, Semibold, ink, 72)).ToArray();
++                    multiple ? 11 : 15, Semibold, ink)).ToArray();
 +            double labelWidth = multiple ? labels.Max(text => text.WidthIncludingTrailingWhitespace) : 0;
 +            double valueWidth = readings.Max(text => text.WidthIncludingTrailingWhitespace);
 +            double rowHeight = Math.Max(readings.Max(text => text.Height), multiple ? labels.Max(text => text.Height) : 0);

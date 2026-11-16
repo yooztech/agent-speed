@@ -1,4 +1,4 @@
-From f2a4f41adc236e49d00ea3f8beca4931c08dd256 Mon Sep 17 00:00:00 2001
+From 9365c855dad718bbcaab52be964dd86c792bc257 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:08 +0800
 Subject: [PATCH] Add macOS Codex quota monitoring
@@ -34,10 +34,10 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  .../QuotaLifecycleTests.swift                 | 191 ++++
  .../AgentSpeedCoreTests/QuotaTests.swift      |  48 +
  macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 | 131 +++
+ spec/QUOTA.md                                 | 133 +++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 33 files changed, 5253 insertions(+), 2 deletions(-)
+ 33 files changed, 5255 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -1305,7 +1305,7 @@ index 0000000000000000000000000000000000000000..d2e1aaff963eb347aea7c7216d25d47e
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift b/macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..74fc14b07e9a09769bfcaea3b019b8cbd072680c
+index 0000000000000000000000000000000000000000..9beebd4906924b2e3de470677b4ac60b8805e4a1
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift
 @@ -0,0 +1,45 @@
@@ -1344,8 +1344,8 @@ index 0000000000000000000000000000000000000000..74fc14b07e9a09769bfcaea3b019b8cb
 +        }
 +        self.offsets = offsets
 +        length = max(80, cells.isEmpty ? 2 * Self.padding : along - Self.cellGap + Self.padding)
-+        // Preserve the existing cross-edge footprint, not a uniform maximum-height cell pitch.
-+        depth = horizontal ? max(98, max(80, diameter + Self.readingGap + readingHeight) + 18) : max(70, width + 14)
++        // Keep ring and reading extents intact; trim only the vertical-edge side insets.
++        depth = horizontal ? max(98, max(80, diameter + Self.readingGap + readingHeight) + 18) : max(70, width + 8)
 +    }
 +
 +    func center(index: Int, bodyStart: CGFloat, bodyDepth: CGFloat, bottom: Bool) -> CGPoint {
@@ -5458,10 +5458,10 @@ index 300ed6d282427f140ca0021e3bcebb8221ec7efb..5ee4c0474e1c1884e3fe8e371dc6edcc
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..fe85b860cce2ed9696ff3a70c43e48d558d9d41b
+index 0000000000000000000000000000000000000000..754485eeeaf5a5d9fc5ff84f5406b5086a18478e
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,133 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -5507,7 +5507,9 @@ index 0000000000000000000000000000000000000000..fe85b860cce2ed9696ff3a70c43e48d5
 +
 +## Desktop presentation
 +
-+Along the edge, use each account’s own measured ring-and-reading extent with eight-unit outer padding and eight-unit inter-account gaps; a single-window or unknown account never reserves another account’s taller multi-window cell. Keep the four-unit ring-to-reading gap, existing font sizes, all reading rows and the cross-edge width policy. Paint, hit rectangles, tooltip targets, native window extents and placement share these per-account positions for every enabled source.
++Along the edge, use each account’s own measured ring-and-reading extent with eight-unit outer padding and eight-unit inter-account gaps; a single-window or unknown account never reserves another account’s taller multi-window cell. Keep the four-unit ring-to-reading gap, existing font sizes and row spacing, and all reading rows. On left/right edges the body depth is the larger of 70 logical units and the widest account content plus four-unit side insets; top/bottom depth and along-edge padding remain unchanged. Each account’s width is the larger of its unchanged outer ring diameter and its actual native-font reading width. Paint, hit rectangles, tooltip targets, native window extents and placement consume this same content layout on all four edges.
++
++Measure complete, unwrapped reading strings with the same native font used to render them: AppKit NSFont on macOS and WPF FormattedText on Windows. Multi-window rows share the widest period/scope label and value columns within their account, with a five-unit period dot, four-unit dot-to-label gap and six-unit label-to-value gap. Do not reserve a fixed 90-unit reading width, cap the value column, round away percentage precision, shrink text, truncate long scopes/durations, or force values such as `92.53%` or `96.04%` to wrap to hit a width target. Unknown, authentication and over-limit readings use the same measurement policy; long content may legitimately widen the panel. No additional native measurement work belongs in animation frames.
 +
 +Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any qualifying tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
 +

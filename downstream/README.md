@@ -275,6 +275,10 @@ delete; responses never contain secrets or key fragments. Saving and supplier
 verification are distinct operations, and verification respects network consent
 and provider backoff. The UI masks entry and never reads a saved remote key back.
 No key is included in ordinary settings, quota observations, logs or exports.
+On both desktops, the key editor closes automatically only after the save and
+quota verification both succeed. Save-only, network-consent/backoff and failure
+outcomes keep the editor open with their existing messages; key removal does not
+close it.
 This key channel deliberately extends the OAuth-only pinned Codenotch reader;
 the official Code documentation confirms subscription key/region support, and
 CodexBar documents key-authenticated `/usages` reads. See the prepared
@@ -516,6 +520,28 @@ The complete 24-patch queue replays from the pin; all 3,151 replayed source file
 match the compact prepared tree byte-for-byte, including retained concurrent Kimi
 changes. The compact implementation belongs to 0020/0021, with only necessary
 multi-window integration in 0022 and later patches rebased onto that layout.
+The width refinement trims horizontal chrome and bases both native reading rows
+on measured content instead of reserving a fixed macOS multi-window text width.
+It preserves ring/mark sizes, reading fonts and complete percentages, including
+two-decimal Kimi values; the widest enabled account still determines the shared
+shell. Long readings may legitimately require more width. It does not change
+vertical compact spacing, quota refresh or grip behavior. No new visual, pixel,
+geometry-coordinate, glyph or supplier-count tests are added, and width snapshots
+are not acceptance gates. Native appearance remains a manual acceptance item.
+For left/right attachment, horizontal body insets change from seven to four
+logical units per side; the minimum depth remains 70. Top/bottom depth rules,
+eight-unit along-edge padding/account gaps and ring-to-reading spacing stay as
+before. Both platforms measure complete label/value strings without the former
+macOS fixed reading width or native text-width caps, so long content keeps its
+natural required width rather than wrapping or truncating to force a target.
+This refinement adds or modifies no test files or assertions.
+The Windows application cross-build passes with zero warnings/errors. Both
+changed Swift files pass syntax parsing, and the shared production layout file
+passes Swift 6.2.4 type checking. These are compilation checks, not native
+AppKit/WPF rendering or text-measurement acceptance; no drawing tests, CI run,
+package or Release is used to validate this visual adjustment.
+All 25 patches replay successfully, with all 3,146 tracked source files matching
+the checked width-refinement prepared tree byte-for-byte.
 
 The multi-window/OpenCode Go feature is carried by
 `0022-Add-multi-window-quota-and-OpenCode-Go-provider.patch`. Focused Linux-hosted

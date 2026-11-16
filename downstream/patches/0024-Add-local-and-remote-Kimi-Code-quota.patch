@@ -1,4 +1,4 @@
-From 1349ae9d932abd8ea27cac6e929e579abd55d7ce Mon Sep 17 00:00:00 2001
+From 354252b20aeaae534348defdcda1d30b28744f97 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:12 +0800
 Subject: [PATCH] Add local and remote Kimi Code quota
@@ -22,7 +22,7 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  14 +-
  .../AgentSpeed/App/RemoteQuotaProvider.swift  |  83 ++++
  .../AgentSpeed/Localization/StringTable.swift |  25 ++
- .../SettingsWindow/Panes/KimiKeyEditor.swift  | 134 ++++++
+ .../SettingsWindow/Panes/KimiKeyEditor.swift  | 141 ++++++
  .../SettingsWindow/Panes/QuotaPane.swift      |  30 +-
  .../AgentSpeedCore/KimiAPIKeyStore.swift      |  99 +++++
  .../AgentSpeedCore/KimiCredentials.swift      |  60 +++
@@ -32,14 +32,14 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../AgentSpeedCore/QuotaPersistence.swift     |   5 +
  .../Sources/AgentSpeedCore/RemoteQuota.swift  |  11 +-
  .../KimiCredentialTransportTests.swift        | 109 +++++
- .../KimiKeyControllerTests.swift              | 109 +++++
+ .../KimiKeyControllerTests.swift              | 125 ++++++
  .../QuotaPresentationTests.swift              |  16 +
  .../RemoteQuotaTransportTests.swift           |  44 +-
  .../AgentSpeedCoreTests/KimiAPIKeyTests.swift | 156 +++++++
  .../KimiQuotaProviderTests.swift              | 286 +++++++++++++
  .../QuotaColdStartTests.swift                 |  19 +-
  .../RemoteQuotaTests.swift                    |  18 +
- spec/QUOTA.md                                 |  34 +-
+ spec/QUOTA.md                                 |  36 +-
  .../AgentSpeed.Core/KimiCredentialStore.cs    | 176 ++++++++
  .../src/AgentSpeed.Core/KimiQuotaProvider.cs  | 400 ++++++++++++++++++
  windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   4 +-
@@ -50,7 +50,7 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../Settings/QuotaFormat.cs                   |  28 +-
  .../Services/RemoteConnectionManager.cs       |  24 ++
  .../AgentSpeed/Services/RemoteSshWorker.cs    |   4 +
- .../src/AgentSpeed/Settings/KimiKeyDialog.cs  | 133 ++++++
+ .../src/AgentSpeed/Settings/KimiKeyDialog.cs  | 134 ++++++
  .../Settings/QuotaNotch.LICENSE.txt           |   2 +-
  .../src/AgentSpeed/Settings/QuotaNotchView.cs |   3 +
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  37 +-
@@ -63,11 +63,11 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../QuotaFormatTests.cs                       |  45 ++
  .../RemoteQuotaSourcesTests.cs                |   9 +-
  .../SettingsSerializerTests.cs                |   2 +-
- .../KimiKeySettingsTests.cs                   | 140 ++++++
+ .../KimiKeySettingsTests.cs                   | 193 +++++++++
  .../QuotaNotchViewTests.cs                    |   1 +
  .../QuotaSettingsPageTests.cs                 |  30 +-
  .../QuotaSurfaceRetryTests.cs                 |  16 +-
- 62 files changed, 4430 insertions(+), 138 deletions(-)
+ 62 files changed, 4509 insertions(+), 138 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/KimiCredentialResponse.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
  create mode 100644 macos/Sources/AgentSpeedCore/KimiAPIKeyStore.swift
@@ -1629,10 +1629,10 @@ index ed8e603231f7e7200332a0b26b5c43e530a71db9..f412d962d49bdc82ce323403cfdec64e
          if startup { startupAttempted.insert(reader.provider.id) }
          // Supersede a cache-only load without allowing its late result to overwrite a live read.
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index b46ca44762dc6bc66a9dc759d2f35f440d3747f4..c8e0cf26f3a9ec25e71d748e05ec7b2b62b46be6 100644
+index ae7566507a4e286fc439e83b0ef7bbad8131d13b..9680131d44228a7ba2888a5c6455076ac9943e9c 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -102,7 +102,12 @@ struct QuotaNotchReading {
+@@ -107,7 +107,12 @@ struct QuotaNotchReading {
          } else { label = l10n("mac.quota.window") }
      }
      if quotaIsProviderLabel(window.label, providerName: providerName) { return label }
@@ -1918,10 +1918,10 @@ index 5772750f3ff0496f72bd14aeea6e6f33d14c9b52..4613cf8f7b7c58c9a7992f5880320aa6
          "a11y.board": Entry("排行看板，%@：每秒 %@ 個 token，%@", "排行看板，%@：每秒 %@ 个 token，%@", "Leaderboard, %@: %@ tokens per second, %@", "ランキングボード、%@：毎秒 %@ トークン、%@"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..1032518745f99f05c6ce47377fa440374a5ce2d7
+index 0000000000000000000000000000000000000000..1cbacbd3f5f9a202b2ea6e430af86db9a4ecb47b
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,141 @@
 +import AgentSpeedCore
 +import SwiftUI
 +
@@ -2016,11 +2016,7 @@ index 0000000000000000000000000000000000000000..1032518745f99f05c6ce47377fa44037
 +            switch result {
 +            case .success(let outcome):
 +                metadata = KimiKeyMetadata(configured: true, region: selectedRegion)
-+                switch outcome {
-+                case .verified: message = "mac.quota.kimi.verified"
-+                case .savedOffline: message = "mac.quota.kimi.savedOffline"
-+                case .savedVerificationFailed: message = "mac.quota.kimi.savedVerificationFailed"
-+                }
++                message = completeKimiSave(outcome, dismiss: close)
 +            case .failure(let error): message = kimiCredentialMessage(error)
 +            }
 +            operation = nil
@@ -2045,6 +2041,17 @@ index 0000000000000000000000000000000000000000..1032518745f99f05c6ce47377fa44037
 +    }
 +
 +    private func close() { apiKey = ""; operation?.cancel(); operation = nil; dismiss() }
++}
++
++@MainActor
++func completeKimiSave(_ outcome: QuotaController.KimiSaveOutcome, dismiss: () -> Void) -> String? {
++    switch outcome {
++    case .verified:
++        dismiss()
++        return nil
++    case .savedOffline: return "mac.quota.kimi.savedOffline"
++    case .savedVerificationFailed: return "mac.quota.kimi.savedVerificationFailed"
++    }
 +}
 +
 +func kimiCredentialMessage(_ error: KimiCredentialFailure) -> String {
@@ -2804,10 +2811,10 @@ index 0000000000000000000000000000000000000000..d4eca66c178c81bb92c8dbee94426152
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/KimiKeyControllerTests.swift b/macos/Tests/AgentSpeedAppTests/KimiKeyControllerTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..860d378f3fb081a264a3199f3bd52586d08b320c
+index 0000000000000000000000000000000000000000..96cca8ea896bc7ae701f0227572be26302955a6b
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/KimiKeyControllerTests.swift
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,125 @@
 +import Foundation
 +import Testing
 +#if canImport(FoundationNetworking)
@@ -2866,6 +2873,22 @@ index 0000000000000000000000000000000000000000..860d378f3fb081a264a3199f3bd52586
 +@Suite("Kimi key settings controller")
 +@MainActor
 +struct KimiKeyControllerTests {
++    @Test func verifiedSaveDismissesEditorExactlyOnceWithoutAnInlineSuccessMessage() {
++        var dismissals = 0
++        let message = completeKimiSave(.verified) { dismissals += 1 }
++        #expect(dismissals == 1)
++        #expect(message == nil)
++    }
++
++    @Test func savedButUnverifiedKeepsEditorOpenWithTheSpecificMessage() {
++        var dismissals = 0
++        let offline = completeKimiSave(.savedOffline) { dismissals += 1 }
++        let failed = completeKimiSave(.savedVerificationFailed) { dismissals += 1 }
++        #expect(dismissals == 0)
++        #expect(offline == "mac.quota.kimi.savedOffline")
++        #expect(failed == "mac.quota.kimi.savedVerificationFailed")
++    }
++
 +    @Test func savingWithoutNetworkConsentPersistsMetadataButDoesNotVerify() async throws {
 +        let fixture = try KeyControllerFixture(); defer { fixture.clean() }
 +        let result = try (await fixture.controller.saveKimi(sourceID: "kimi", region: .international, apiKey: "secret-local")).get()
@@ -3614,7 +3637,7 @@ index 53b36147b6fdeda67b5dd10083053b2f5bc67d0b..2eec8f8076aae543f8158c217d9fe3c2
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index dbd9dc40d316f591edb0ea65d98e671957a2eb14..eb192ac9ab2749462589ebafc4f05a86670c5e56 100644
+index 7e4051f97b4327f037c620fd789af24c57155fd2..14d8fe10e92212dbaf94bf7c8410a4272012f71a 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,20 +1,20 @@
@@ -3651,7 +3674,7 @@ index dbd9dc40d316f591edb0ea65d98e671957a2eb14..eb192ac9ab2749462589ebafc4f05a86
  
  
  ## Snapshot
-@@ -70,7 +70,7 @@ Along the edge, use each account’s own measured ring-and-reading extent with e
+@@ -72,7 +72,7 @@ Measure complete, unwrapped reading strings with the same native font used to re
  
  Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any qualifying tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
  
@@ -3660,7 +3683,7 @@ index dbd9dc40d316f591edb0ea65d98e671957a2eb14..eb192ac9ab2749462589ebafc4f05a86
  
  Windows and macOS Subscription follow the approved account-card layout using their native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
  
-@@ -171,6 +171,28 @@ Follow the reference's distinction between missing Go entitlement and sign-out:
+@@ -173,6 +173,30 @@ Follow the reference's distinction between missing Go entitlement and sign-out:
  
  Go follows the pinned provider's polling semantics: successful requests do not create a hard minimum request interval, so a manual refresh may request again after the previous request completes. Automatic application polling remains five minutes; concurrent refreshes are coalesced, and persisted rate-limit/failure retry deadlines remain binding. This does not change Codex's existing successful-request floor or startup rules.
  
@@ -3675,6 +3698,8 @@ index dbd9dc40d316f591edb0ea65d98e671957a2eb14..eb192ac9ab2749462589ebafc4f05a86
 +### Kimi Code API key settings and remote provisioning
 +
 +Subscription Settings on both desktops offers a masked Kimi Code API key editor for the local source and each enabled SSH host. It works without a detected CLI account or an enabled quota source. Users choose China or International, enter a Code subscription key from the corresponding console, and save/verify or remove it; they never edit a remote file or run provisioning commands. The editor shows stored-key presence and region, never the saved secret, and keeps typed text out of periodic page-state snapshots. Clear input after submission, closing or source changes. Disconnected destinations cannot claim a successful save. Saving configuration does not authorize supplier requests when network consent is disabled; distinguish successful persistence from successful quota verification.
++
++After a successful save and successful quota verification, the editor dismisses automatically on both desktops. Persistence alone, disabled network consent, provider backoff, rejected keys and verification/storage/network failures keep it open with the corresponding message; metadata reads and removal do not dismiss it.
 +
 +This is a deliberate extension beyond the pinned Codenotch OAuth reader. [Kimi's official documentation](https://www.kimi.com/code/docs/en/#api-access) provides subscription Code keys and the regional API hosts. [CodexBar's Kimi adapter documentation](https://github.com/steipete/CodexBar/blob/main/docs/kimi.md#method-1-kimi-code-api-key-recommended) demonstrates using those keys for the same `/usages` query. China keys use `https://api.kimi.com/coding/v1/usages`, International keys use `https://api.kimi.ai/coding/v1/usages`. Never guess key region, cross-probe hosts, allow arbitrary endpoint overrides or send CLI OAuth credentials to the International host.
 +
@@ -4617,10 +4642,10 @@ index 5b468fd9686566fd9740fff69d0ad8f2a66cb555..f9fa250aea3809b86385c7ba8c227681
          try { await SendCommandAsync(request, CancellationToken.None).ConfigureAwait(false); }
 diff --git a/windows/src/AgentSpeed/Settings/KimiKeyDialog.cs b/windows/src/AgentSpeed/Settings/KimiKeyDialog.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7a15bdc5ed6d5d3f9dca95a16e4532e6266873ec
+index 0000000000000000000000000000000000000000..3fdb9bfcc6f758fe2a7efc9e56b81e084bb11490
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/KimiKeyDialog.cs
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,134 @@
 +using System.Windows;
 +using System.Windows.Controls;
 +using AgentSpeed.Core;
@@ -4737,6 +4762,7 @@ index 0000000000000000000000000000000000000000..7a15bdc5ed6d5d3f9dca95a16e4532e6
 +            if (closed || cancellation.IsCancellationRequested || current is null || current.Id != source.Id || current.Destination != source.Destination) return;
 +            regions.SelectedIndex = result.Metadata.Region == "international" ? 1 : 0;
 +            status.Text = T(result.MessageKey);
++            if (operation == "set" && result.MessageKey == "kimiSavedVerified") Close();
 +        }
 +        catch (OperationCanceledException) { }
 +        catch (TimeoutException) { if (!closed && !cancellation.IsCancellationRequested) status.Text = T("kimiRemoteTimeout"); }
@@ -4765,7 +4791,7 @@ index 03cb5d84f864bbdbb53020349431c3b2381b0037..49533722dc0593bbf1b889a1c57e6d60
  revision 835550a342871779135b6484d6899161c5222f7c:
  
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index 49b9107c6a61519b3937e72411002f42ce7c2c44..a2c4f339cd1bf911f7da0619f57dab233a834ddf 100644
+index fa33edf27c96f6afab2cf7f70c5a1a078638985d..8bec550b8ca36ec875a17ed1d9597709b1dd2414 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -27,6 +27,8 @@ internal sealed class QuotaNotchView : FrameworkElement
@@ -5883,10 +5909,10 @@ index b52734682ace2b2bab4729a3f5fda5a6708fed8c..984adecb9762b3e06fab245aaba90bf9
          Assert.Same(AppSettings.Default.QuotaSources, legacy.QuotaSources);
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/KimiKeySettingsTests.cs b/windows/tests/AgentSpeed.Windows.Tests/KimiKeySettingsTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b103676813c5433ef680b53845a1c21cab304247
+index 0000000000000000000000000000000000000000..e7e1a57269e8e724557b99b22e616ced4d11aae5
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/KimiKeySettingsTests.cs
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,193 @@
 +using System.IO;
 +using System.Windows;
 +using System.Windows.Controls;
@@ -5976,6 +6002,59 @@ index 0000000000000000000000000000000000000000..b103676813c5433ef680b53845a1c21c
 +        Assert.Equal("", password.Password);
 +        password.Password = "clear-on-close";
 +        dialog.Close(); Assert.Equal("", password.Password);
++    });
++
++    [Theory]
++    [InlineData(false, "kimiSavedVerified", true)]
++    [InlineData(true, "kimiSavedVerified", true)]
++    [InlineData(false, "kimiSavedUnverified", false)]
++    [InlineData(true, "kimiSavedUnverified", false)]
++    [InlineData(false, "kimiSavedRejected", false)]
++    [InlineData(true, "kimiSavedRejected", false)]
++    public void EditorDismissesOnlyAfterSuccessfulSaveAndVerification(bool remote, string message, bool shouldClose) => RunSta(() =>
++    {
++        var source = new KimiKeySource("kimi", "Source", remote ? "host" : null, true);
++        var operations = new List<string>();
++        var dialog = new KimiKeyDialog(Loc(), [source], (_, operation, _, _, _) =>
++        {
++            operations.Add(operation);
++            return Task.FromResult(new KimiKeyResult(new(true, "china"), operation == "set" ? message : "kimiConfigured"));
++        });
++        var closed = false;
++        dialog.Closed += (_, _) => closed = true;
++        var panel = Assert.IsType<StackPanel>(dialog.Content);
++        var password = Assert.Single(panel.Children.OfType<PasswordBox>());
++        password.Password = "new-key";
++        var buttons = Assert.Single(panel.Children.OfType<StackPanel>());
++        Assert.IsType<Button>(buttons.Children[0]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
++        Assert.Equal(new[] { "get", "set" }, operations);
++        Assert.Equal(shouldClose, closed);
++        Assert.Equal("", password.Password);
++        if (!shouldClose)
++        {
++            Assert.Contains(panel.Children.OfType<TextBlock>(), item => item.Text == Loc()["win.quota." + message]);
++            dialog.Close();
++        }
++    });
++
++    [Theory]
++    [InlineData("invalid", "kimiKeyInvalid")]
++    [InlineData("storage", "kimiKeyStorage")]
++    [InlineData("timeout", "kimiRemoteTimeout")]
++    public void EditorKeepsValidationAndStorageOrNetworkFailuresVisible(string failure, string message) => RunSta(() =>
++    {
++        var dialog = new KimiKeyDialog(Loc(), [new("kimi", "Local", null, true)], (_, operation, _, _, _) =>
++            operation == "get" ? Task.FromResult(new KimiKeyResult(new(false, null), "kimiNotConfigured")) :
++            Task.FromException<KimiKeyResult>(failure == "timeout" ? new TimeoutException() : new KimiCredentialException()));
++        var closed = false;
++        dialog.Closed += (_, _) => closed = true;
++        var panel = Assert.IsType<StackPanel>(dialog.Content);
++        Assert.Single(panel.Children.OfType<PasswordBox>()).Password = failure == "invalid" ? "" : "new-key";
++        var buttons = Assert.Single(panel.Children.OfType<StackPanel>());
++        Assert.IsType<Button>(buttons.Children[0]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
++        Assert.False(closed);
++        Assert.Contains(panel.Children.OfType<TextBlock>(), item => item.Text == Loc()["win.quota." + message]);
++        dialog.Close();
 +    });
 +
 +    [Fact]

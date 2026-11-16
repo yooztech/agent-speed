@@ -1,4 +1,4 @@
-From f471df212dd6a76df3612794ef845c0f06e463f9 Mon Sep 17 00:00:00 2001
+From c75efcf0161a7f1c36cfcaeaccf80dbfa08a2fac Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:09 +0800
 Subject: [PATCH] Add Windows Codex quota monitoring
@@ -91,7 +91,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index fe85b860cce2ed9696ff3a70c43e48d558d9d41b..aaa82803af9fb0307dc4deb7fc80225ad7a23826 100644
+index 754485eeeaf5a5d9fc5ff84f5406b5086a18478e..0f68a1ce413fb1e9cd3569800fde384d96271243 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,8 @@
@@ -123,7 +123,7 @@ index fe85b860cce2ed9696ff3a70c43e48d558d9d41b..aaa82803af9fb0307dc4deb7fc80225a
  
  ## Desktop presentation
  
-@@ -49,15 +49,15 @@ Quota is presented in the existing Settings window as source-neutral account car
+@@ -51,15 +51,15 @@ Quota is presented in the existing Settings window as source-neutral account car
  
  Subscription is a source-neutral account list and settings group, with the real Codex adapter; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
  
@@ -142,7 +142,7 @@ index fe85b860cce2ed9696ff3a70c43e48d558d9d41b..aaa82803af9fb0307dc4deb7fc80225a
  
  Automatic polling schedules per-source retries when a refresh returns a transiently unavailable observation (`error` or `stale`), rather than waiting for the next ordinary five-minute tick. Cold start means the current account/source has no validated successful observation; an available account-bound cached observation is displayed stale immediately and is not cold. Before the first successful observation, genuine transport, service and decoding failures retry after 5, 10, 20 and then at most 30 seconds per attempt. Both the native scheduler and the credential-owning provider enforce this short cadence: a five-second UI wake blocked by a hidden sixty-second provider floor does not satisfy the contract. Remote connection readiness triggers the existing immediate selected-source startup read. The first successful observation clears cold-start pacing and restores normal polling; failures with an already available observation retain the ordinary backoff policy.
  
-@@ -68,11 +68,15 @@ For migration, a legacy schedule without a validated version-1 account snapshot
+@@ -70,11 +70,15 @@ For migration, a legacy schedule without a validated version-1 account snapshot
  
  Both floating panels retain full-strength provider logos, allowance rings and numerical readings when showing an old observation, including after a refresh failure, with network access disabled or when the observation is more than fifteen minutes old. Stale status, the original observation time and details remain visible; full brightness never marks old data as fresh. Ring background tracks, unknown-reading styling and the normal expansion/collapse fade are independent and unchanged.
  
@@ -161,7 +161,7 @@ index fe85b860cce2ed9696ff3a70c43e48d558d9d41b..aaa82803af9fb0307dc4deb7fc80225a
  
  The outlined resting arc has 8.49 DIP of true radial clearance from the outlined circular body flare; the temporary full disc has 17.23 DIP. Neutral outlined dot paint spans X 21.7–55.7 and Y `BodyEnd + 35.95`–`BodyEnd + 57.45`, a 34-by-21.5-DIP envelope; settled hover paint is 36.4 by 23.9 DIP. Hit padding, radial bridge, activation fan and liquid core/neck consumers use the actual production dot/grid geometry, not independently enlarged SVGs or a blanket input rectangle. `GripPaintClearance` measures the actual quarter curve including its endpoints, not the full circle or a bounding rectangle; `ArcGripPaintClearance` measures the retained outlined arc against all six outlined dots, including hover. These production methods drive regressions and the frame probe. The animation canvas still conservatively reserves 32.97 DIP beyond the flare for transient disc/filter bounds, without making that envelope interactive or moving the screen anchor.
  
-@@ -88,6 +92,10 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
+@@ -90,6 +94,10 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
  
  The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
  
@@ -172,7 +172,7 @@ index fe85b860cce2ed9696ff3a70c43e48d558d9d41b..aaa82803af9fb0307dc4deb7fc80225a
  The existing transient menu-bar popover or tray flyout may show a compact quota summary when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers, but include every available quota window within each displayed provider; open the existing Settings quota page for details.
  
  Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
-@@ -103,7 +111,7 @@ swift test --package-path macos --filter QuotaNotchTests
+@@ -105,7 +113,7 @@ swift test --package-path macos --filter QuotaNotchTests
  swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native
  ```
  
@@ -181,7 +181,7 @@ index fe85b860cce2ed9696ff3a70c43e48d558d9d41b..aaa82803af9fb0307dc4deb7fc80225a
  
  The optional captures use fixed synthetic frames and credential-free observations, not live requests or substitute browser graphics. They exercise folded, resting arc, emerging arc, temporary disc, dividing drops, six drops, held, stale, offline, aged, unknown and authentication states. Stale, offline and aged renders are compared with matching fresh native controls so the logo, rings and readings retain full brightness without pinning layout coordinates. The harness also checks tight native bounds, opaque paint against the shared input mask, the resting arc's transparent hole and every revealed drop's draggable target. Its four localized details captures cover English, Simplified Chinese, Traditional Chinese and Japanese.
  
-@@ -121,7 +129,7 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
+@@ -123,7 +131,7 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
  `GET https://chatgpt.com/backend-api/wham/usage` uses the local Codex session's bearer access token and `ChatGPT-Account-Id`; `Accept: application/json` requests JSON. Never place either credential in fixtures or logs. `plan_type` is the plan when supplied. The main `rate_limit.primary_window` and `rate_limit.secondary_window` are independent; parse each without discarding a valid sibling because another is null or malformed. A window's numeric `used_percent` converts to `usedFraction` by dividing by 100 without clamping. `limit_window_seconds` gives duration. `reset_at` is Unix epoch seconds; when absent, `reset_after_seconds` is relative to the observation time. Null or omitted data stays unknown. A non-null 0 percentage is a valid measurement.
  `additional_rate_limits` is an array of feature-scoped rate-limit objects (`limit_name`, `metered_feature`, `rate_limit`), not a replacement for the main account windows. `code_review_rate_limit` may contain another pair. Preserve source scope when representing these windows. A malformed extra must not destroy usable main data. `spend_control.individual_limit` is a separate credit-backed allowance: its `limit` and `used` can be decimal strings, `used_percent` is a percentage, and `reset_at` is epoch seconds. The response's `credits` balance is distinct from that allowance and from unused reset credits at the separate `/wham/rate-limit-reset-credits` endpoint; none is interchangeable with another.
  
@@ -1067,7 +1067,7 @@ index 0000000000000000000000000000000000000000..b38e173683618666a2b50aaddd78c3cb
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c41ad4816f19223657f20163f9c499c101ce8dd4
+index 0000000000000000000000000000000000000000..badc78513fdd64bc8fb83025b9956d0bdf40be83
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
 @@ -0,0 +1,306 @@
@@ -1120,9 +1120,9 @@ index 0000000000000000000000000000000000000000..c41ad4816f19223657f20163f9c499c1
 +                readingHeight = Math.Max(readingHeight, cell.ReadingHeight);
 +            }
 +            Length = Math.Max(80, cells.Length == 0 ? 2 * ContentPadding : along - CellGap + ContentPadding);
-+            // Keep the existing cross-edge footprint; compact only the space along the edge.
++            // Keep ring and reading extents intact; trim only the vertical-edge side insets.
 +            Depth = horizontal ? Math.Max(98, Math.Max(80, diameter + ReadingGap + readingHeight) + 18)
-+                : Math.Max(BodyDepth, width + 14);
++                : Math.Max(BodyDepth, width + 8);
 +        }
 +
 +        public Point Center(Main main, int index, bool bottom = false)
