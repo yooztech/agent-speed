@@ -1,6 +1,6 @@
-From b716bd407d8eb7f634921445e1e3fb4315502600 Mon Sep 17 00:00:00 2001
+From 0825683750b695ba83490e5fadde0b4d26746754 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 23:41:48 +0800
+Date: Mon, 16 Nov 2026 11:02:46 +0800
 Subject: [PATCH] Read remote subscription quota over SSH
 
 ---
@@ -8,12 +8,13 @@ Subject: [PATCH] Read remote subscription quota over SSH
  README.zh-CN.md                               |   1 +
  linux/collector/CMakeLists.txt                |   5 +-
  linux/collector/daemon.cpp                    |  13 +-
+ linux/collector/publisher.cpp                 |   2 +-
  linux/collector/quota.LICENSE.txt             |  26 +
- linux/collector/quota.cpp                     | 556 ++++++++++++++++++
- linux/collector/quota.hpp                     |  73 +++
+ linux/collector/quota.cpp                     | 625 +++++++++++++++++
+ linux/collector/quota.hpp                     |  78 +++
  linux/tests/CMakeLists.txt                    |   1 +
- linux/tests/collector_daemon_test.cpp         |  35 +-
- linux/tests/quota_test.cpp                    | 473 +++++++++++++++
+ linux/tests/collector_daemon_test.cpp         |  78 ++-
+ linux/tests/quota_test.cpp                    | 644 ++++++++++++++++++
  macos/Sources/AgentSpeed/App/AppModel.swift   |   6 +
  .../AgentSpeed/App/QuotaController.swift      |  42 +-
  macos/Sources/AgentSpeed/App/QuotaNotch.swift |   8 +-
@@ -21,19 +22,21 @@ Subject: [PATCH] Read remote subscription quota over SSH
  .../Sources/AgentSpeed/App/QuotaSources.swift |  13 +
  macos/Sources/AgentSpeed/App/RemoteHost.swift |  25 +
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  65 +-
- .../AgentSpeed/App/RemoteQuotaProvider.swift  | 185 ++++++
+ .../AgentSpeed/App/RemoteQuotaProvider.swift  | 185 +++++
  .../SettingsWindow/Panes/QuotaPane.swift      |  16 +-
- .../Sources/AgentSpeedCore/RemoteQuota.swift  |  71 +++
+ macos/Sources/AgentSpeedCore/Quota.swift      |  11 +-
+ .../AgentSpeedCore/QuotaPersistence.swift     |   3 +-
+ .../Sources/AgentSpeedCore/RemoteQuota.swift  |  71 ++
  .../QuotaControllerTests.swift                |  50 ++
  .../QuotaPresentationTests.swift              |  15 +
- .../RemoteQuotaTransportTests.swift           | 283 +++++++++
- .../RemoteQuotaTests.swift                    |  49 ++
- spec/NETWORK.md                               |  36 ++
- spec/QUOTA.md                                 |  16 +-
- windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |  20 +
- .../AgentSpeed.Core/RemoteQuotaProvider.cs    | 101 ++++
- .../src/AgentSpeed.Core/RemoteQuotaSession.cs | 142 +++++
- .../src/AgentSpeed.Core/RemoteQuotaStore.cs   | 105 ++++
+ .../RemoteQuotaTransportTests.swift           | 283 ++++++++
+ .../RemoteQuotaTests.swift                    |  78 +++
+ spec/NETWORK.md                               |  36 +
+ spec/QUOTA.md                                 |  27 +-
+ windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |  24 +-
+ .../AgentSpeed.Core/RemoteQuotaProvider.cs    | 101 +++
+ .../src/AgentSpeed.Core/RemoteQuotaSession.cs | 146 ++++
+ .../src/AgentSpeed.Core/RemoteQuotaStore.cs   | 105 +++
  .../Settings/AppSettings.cs                   |   5 +-
  .../Settings/QuotaFormat.cs                   |   2 +-
  .../Settings/QuotaSources.cs                  |  20 +
@@ -44,14 +47,14 @@ Subject: [PATCH] Read remote subscription quota over SSH
  .../AgentSpeed/Settings/QuotaNotchWindow.cs   |   7 +-
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  15 +-
  .../src/AgentSpeed/Settings/QuotaSurface.cs   |  83 ++-
- .../RemoteQuotaPersistenceTests.cs            | 105 ++++
- .../AgentSpeed.Core.Tests/RemoteQuotaTests.cs | 126 ++++
+ .../RemoteQuotaPersistenceTests.cs            | 105 +++
+ .../AgentSpeed.Core.Tests/RemoteQuotaTests.cs | 160 +++++
  .../RemoteQuotaSourcesTests.cs                |  45 ++
  .../QuotaNotchViewTests.cs                    |  31 +
  .../QuotaSettingsPageTests.cs                 |  21 +
  .../QuotaSurfaceProviderCollectionTests.cs    |  85 +++
- .../QuotaSurfaceRetryTests.cs                 | 274 +++++++++
- 47 files changed, 3233 insertions(+), 94 deletions(-)
+ .../QuotaSurfaceRetryTests.cs                 | 274 ++++++++
+ 50 files changed, 3615 insertions(+), 98 deletions(-)
  create mode 100644 linux/collector/quota.LICENSE.txt
  create mode 100644 linux/collector/quota.cpp
  create mode 100644 linux/collector/quota.hpp
@@ -180,6 +183,19 @@ index d9f3465e0cc52bd375072d1c8ccac0e2edfd68c9..29b1caba88b424624ac3718bf9302aef
                      }
                  }
              }
+diff --git a/linux/collector/publisher.cpp b/linux/collector/publisher.cpp
+index 7381629d6259ba79983b211d2bfa4dc0a5264385..9c3b3448996bdb8733cdb05115a17fe1c432daf8 100644
+--- a/linux/collector/publisher.cpp
++++ b/linux/collector/publisher.cpp
+@@ -312,7 +312,7 @@ std::vector<std::string> Publisher::control(const std::string& line, std::uint64
+     if (type == "capabilities") {
+         if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 || !text(request, 128)) return {};
+         return {J::object({{"version", J::of(1)}, {"type", J::of("capabilities")},
+-            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("live_activity_continuity_v1"), J::of("shared_collector_v1"), J::of("widget_statistics_v2")})},
++            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("live_activity_continuity_v1"), J::of("shared_collector_v1"), J::of("widget_statistics_v2"), J::of("quota_accounts_v1")})},
+             {"controlVersion", J::of(2)}, {"subscribeTimeoutMs", J::of(75000)},
+             {"activityMaxLeaseSeconds", J::of(2592000)},
+             {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)},
 diff --git a/linux/collector/quota.LICENSE.txt b/linux/collector/quota.LICENSE.txt
 new file mode 100644
 index 0000000000000000000000000000000000000000..1db9e6d86a905777f8a847977499c6e876f34e66
@@ -214,10 +230,10 @@ index 0000000000000000000000000000000000000000..1db9e6d86a905777f8a847977499c6e8
 +SOFTWARE.
 diff --git a/linux/collector/quota.cpp b/linux/collector/quota.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b33a513b25
+index 0000000000000000000000000000000000000000..40fc425e7d3baea26e2f648513c4e997b2ce9239
 --- /dev/null
 +++ b/linux/collector/quota.cpp
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,625 @@
 +// Provider integration adapted from Codenotch, MIT, commit
 +// 835550a342871779135b6484d6899161c5222f7c. See quota.LICENSE.txt.
 +#include "quota.hpp"
@@ -225,6 +241,7 @@ index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b3
 +#include "agentspeed/rfc3339.hpp"
 +#include <curl/curl.h>
 +#include <openssl/evp.h>
++#include <openssl/rand.h>
 +#include <sqlite3.h>
 +#include <algorithm>
 +#include <array>
@@ -239,11 +256,13 @@ index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b3
 +#include <ctime>
 +#include <deque>
 +#include <fcntl.h>
++#include <linux/fs.h>
 +#include <map>
 +#include <mutex>
 +#include <set>
 +#include <stdexcept>
 +#include <sys/stat.h>
++#include <sys/syscall.h>
 +#include <thread>
 +#include <unistd.h>
 +
@@ -468,6 +487,53 @@ index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b3
 +    Fd app(privateDirectory(root.value, ".agent-speed"));
 +    return app.value < 0 ? -1 : privateDirectory(app.value, "quota");
 +}
++std::optional<AccountIdentity> accountIdentity(const std::string& home, const std::string& key) {
++    // Only Codex supplies a reliable nonsecret account_id. This private mapping is
++    // independent of usage caches and tokens: token rotation/relogin to the same
++    // account preserves it; deleting quota-accounts deliberately resets bindings.
++    // Never publish the private logical-account digest, even as an ID suffix.
++    Fd root(open(home.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
++    if (root.value < 0) return std::nullopt;
++    Fd app(privateDirectory(root.value, ".agent-speed"));
++    if (app.value < 0) return std::nullopt;
++    Fd directory(privateDirectory(app.value, "quota-accounts"));
++    if (directory.value < 0) return std::nullopt;
++    const auto name = "codex-" + key + ".id";
++    auto value = fileAt(directory.value, name, true);
++    if (!value) {
++        // Do not repair unsafe/corrupt existing mappings or follow their links.
++        struct stat st{};
++        if (fstatat(directory.value, name.c_str(), &st, AT_SYMLINK_NOFOLLOW) == 0 || errno != ENOENT) return std::nullopt;
++        std::array<unsigned char, 16> random{};
++        if (RAND_bytes(random.data(), static_cast<int>(random.size())) != 1) return std::nullopt;
++        std::string generated = "qa1_"; generated.reserve(36);
++        constexpr char hex[] = "0123456789abcdef";
++        for (auto byte : random) { generated += hex[byte >> 4]; generated += hex[byte & 15]; }
++        const auto temporary = generated + ".tmp";
++        Fd fd(openat(directory.value, temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
++        if (fd.value < 0) return std::nullopt;
++        std::size_t pos = 0;
++        while (pos < generated.size()) {
++            auto n = ::write(fd.value, generated.data() + pos, generated.size() - pos);
++            if (n > 0) pos += static_cast<std::size_t>(n);
++            else if (n < 0 && errno == EINTR) continue;
++            else break;
++        }
++        // Publish a completely written file without replacing another process's
++        // winner. Consumers see a stable ID only after private persistence works.
++        bool durable = pos == generated.size() && fsync(fd.value) == 0;
++        if (durable && syscall(SYS_renameat2, directory.value, temporary.c_str(), directory.value, name.c_str(), RENAME_NOREPLACE) != 0 && errno != EEXIST) durable = false;
++        if (unlinkat(directory.value, temporary.c_str(), 0) != 0 && errno != ENOENT) durable = false;
++        if (fsync(directory.value) != 0) durable = false;
++        if (!durable) return std::nullopt;
++        value = fileAt(directory.value, name, true);
++    }
++    if (!value || value->size() != 36 || value->compare(0, 4, "qa1_") != 0 ||
++        !std::all_of(value->begin() + 4, value->end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) return std::nullopt;
++    // No trustworthy human label is present in the CLI file. A safe random
++    // suffix distinguishes local bindings without disclosing account claims.
++    return AccountIdentity{*value, "Codex account " + value->substr(28)};
++}
 +void saveFile(int directory, const std::string& name, const std::string& body) {
 +    if (directory < 0 || body.size() > kFile) return;
 +    static std::atomic<std::uint64_t> sequence{0};
@@ -500,7 +566,7 @@ index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b3
 +}
 +} // namespace
 +
-+bool Credential::operator==(const Credential& c) const { return token == c.token && account == c.account && organization == c.organization && context == c.context && console == c.console && oauth == c.oauth && expires == c.expires; }
++bool Credential::operator==(const Credential& c) const { return token == c.token && account == c.account && organization == c.organization && context == c.context && console == c.console && oauth == c.oauth && accountIdentityReliable == c.accountIdentityReliable && expires == c.expires; }
 +Paths paths(const std::string& home) {
 +    const char* codex = std::getenv("CODEX_HOME"), *xdg = std::getenv("XDG_DATA_HOME"), *db = std::getenv("OPENCODE_DB");
 +    Paths p{home, std::string(codex && *codex ? codex : home + "/.codex") + "/auth.json", std::string(xdg && *xdg ? xdg : home + "/.local/share") + "/opencode", ""};
@@ -513,6 +579,13 @@ index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b3
 +        auto data = fileAt(AT_FDCWD, p.codexAuth); Document doc;
 +        if (!data || !doc.parse(*data)) return std::nullopt;
 +        Credential c; c.token = text(doc.root()["tokens"]["access_token"]).value_or(""); c.account = text(doc.root()["tokens"]["account_id"]).value_or("");
++        // Keep legacy quota behavior, but do not identify stale ChatGPT tokens
++        // alongside a currently selected API/PAT/Bedrock credential as an account.
++        auto root = doc.root(), mode = root["auth_mode"];
++        const bool legacy = !mode.valid() || mode.isNull();
++        c.accountIdentityReliable = legacy || mode.equals("chatgpt") || mode.equals("chatgptAuthTokens");
++        if (legacy) for (auto name : {"OPENAI_API_KEY", "personal_access_token", "bedrock_api_key", "bedrock_access_keys"})
++            if (root[name].valid() && !root[name].isNull()) c.accountIdentityReliable = false;
 +        return header(c.token) && header(c.account) ? std::optional<Credential>(std::move(c)) : std::nullopt;
 +    }
 +    bool selected = false; auto stored = databaseCredential(p.goDatabase, selected);
@@ -529,7 +602,9 @@ index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b3
 +    for (const auto& w : windows) windowsJson.push_back(Json::object({{"id", Json::of(w.id)}, {"label", Json::of(w.label)}, {"usedFraction", num(w.usedFraction)}, {"remaining", num(w.remaining)}, {"used", num(w.used)}, {"resetAt", stamp(w.resetAt)}, {"duration", num(w.duration)}}));
 +    Json credit;
 +    if (credits) credit = Json::object({{"hasCredits", bit(credits->hasCredits)}, {"unlimited", bit(credits->unlimited)}, {"limit", num(credits->limit)}, {"used", num(credits->used)}, {"usedFraction", num(credits->usedFraction)}, {"resetAt", stamp(credits->resetAt)}, {"balance", str(credits->balance)}});
-+    return Json::object({{"id", Json::of(id)}, {"displayName", Json::of(id == "codex" ? "Codex" : "OpenCode Go")}, {"fidelity", Json::of("official")}, {"status", Json::of(status)}, {"windows", Json::array(std::move(windowsJson))}, {"headlineId", str(headlineId)}, {"block", str(block)}, {"account", str(account)}, {"plan", str(plan)}, {"observedAt", stamp(observedAt)}, {"source", Json::of(id == "codex" ? "wham/usage" : "go/v1/usage")}, {"credits", std::move(credit)}, {"nextAllowedAt", stamp(nextAllowedAt)}, {"waitingForRefresh", Json::of(waitingForRefresh)}, {"resetCreditsAvailable", integer(resetCreditsAvailable)}, {"resetCreditsNextExpiry", stamp(resetCreditsNextExpiry)}});
++    Json identity;
++    if (accountIdentity) identity = Json::object({{"id", Json::of(accountIdentity->id)}, {"displayName", Json::of(accountIdentity->displayName)}});
++    return Json::object({{"id", Json::of(id)}, {"displayName", Json::of(id == "codex" ? "Codex" : "OpenCode Go")}, {"fidelity", Json::of("official")}, {"status", Json::of(status)}, {"windows", Json::array(std::move(windowsJson))}, {"headlineId", str(headlineId)}, {"block", str(block)}, {"account", str(account)}, {"accountIdentity", std::move(identity)}, {"plan", str(plan)}, {"observedAt", stamp(observedAt)}, {"source", Json::of(id == "codex" ? "wham/usage" : "go/v1/usage")}, {"credits", std::move(credit)}, {"nextAllowedAt", stamp(nextAllowedAt)}, {"waitingForRefresh", Json::of(waitingForRefresh)}, {"resetCreditsAvailable", integer(resetCreditsAvailable)}, {"resetCreditsNextExpiry", stamp(resetCreditsNextExpiry)}});
 +}
 +Snapshot parseCodex(const std::string& json, std::int64_t now) {
 +    Document doc; if (json.size() > kBody || !doc.parse(json) || !doc.root().isObject()) throw std::runtime_error("quota response");
@@ -641,7 +716,17 @@ index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b3
 +        next = observed + std::min(kMaxDate - observed, std::max(floor, delay)); retry = next;
 +    }
 +    Snapshot read(bool refresh) {
-+        auto c = credentials(id, paths); if (!c) { snapshot.reset(); key.clear(); return empty(id, "needsAuth"); }
++        auto current = credentials(id, paths);
++        auto result = readUsage(refresh, current);
++        // Discovery is independent of a successful usage observation. Never turn
++        // token/session/cache context into an account, or bind rejected auth.
++        if (id == "codex" && current && current->accountIdentityReliable && result.status != "needsAuth" && directory.value >= 0)
++            result.accountIdentity = accountIdentity(paths.home, key);
++        if (credentials(id, paths) != current) return read(false);
++        return result;
++    }
++    Snapshot readUsage(bool refresh, const std::optional<Credential>& c) {
++        if (!c) { snapshot.reset(); key.clear(); return empty(id, "needsAuth"); }
 +        load(accountKey(*c)); const auto token = digest(c->token);
 +        // Refuse network work if the private, persistent pacing store is unavailable.
 +        if (refresh && directory.value < 0) return empty(id);
@@ -776,10 +861,10 @@ index 0000000000000000000000000000000000000000..b731a9ab5f393c89d4e60ca3e8d8e7b3
 +} // namespace collector::quota
 diff --git a/linux/collector/quota.hpp b/linux/collector/quota.hpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..72ed6fadc49b73dd65e07819a9372077c5df0c6d
+index 0000000000000000000000000000000000000000..364a0448c7e3b4873025f62feff3abf8b699ccef
 --- /dev/null
 +++ b/linux/collector/quota.hpp
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,78 @@
 +#pragma once
 +
 +#include "agentspeed/report_json.hpp"
@@ -796,6 +881,7 @@ index 0000000000000000000000000000000000000000..72ed6fadc49b73dd65e07819a9372077
 +struct Credential {
 +    std::string token, account, organization, context, console = "https://opencode.ai/console";
 +    bool oauth = false;
++    bool accountIdentityReliable = false;
 +    std::optional<std::int64_t> expires;
 +    bool operator==(const Credential& other) const;
 +    bool operator!=(const Credential& other) const { return !(*this == other); }
@@ -817,10 +903,14 @@ index 0000000000000000000000000000000000000000..72ed6fadc49b73dd65e07819a9372077
 +    std::optional<std::int64_t> resetAt;
 +    std::optional<std::string> balance;
 +};
++struct AccountIdentity {
++    std::string id, displayName;
++};
 +struct Snapshot {
 +    std::string id, status = "error";
 +    std::vector<Window> windows;
 +    std::optional<std::string> headlineId, block, account, plan;
++    std::optional<AccountIdentity> accountIdentity;
 +    std::optional<std::int64_t> observedAt, nextAllowedAt, resetCreditsNextExpiry;
 +    std::optional<Credits> credits;
 +    std::optional<std::int64_t> resetCreditsAvailable;
@@ -866,10 +956,18 @@ index c06bb1e99b65bb1ee990ac7fa11e20dc646281c6..7c5d6fa95d0d5ab3ebd7b55be15b4379
      widget_statistics_test.cpp
      sampling_test.cpp
 diff --git a/linux/tests/collector_daemon_test.cpp b/linux/tests/collector_daemon_test.cpp
-index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a74068333339b69 100644
+index d594f955fec57f53c7c9ea40ac48838a274db02c..462b8e27882bc63bf334f4b27d4d51b6d97250f7 100644
 --- a/linux/tests/collector_daemon_test.cpp
 +++ b/linux/tests/collector_daemon_test.cpp
-@@ -85,7 +85,7 @@ public:
+@@ -11,6 +11,7 @@
+ #include <fcntl.h>
+ #include <filesystem>
+ #include <fstream>
++#include <optional>
+ #include <poll.h>
+ #include <string>
+ #include <sys/socket.h>
+@@ -85,7 +86,7 @@ public:
  
  class Bridge {
  public:
@@ -878,7 +976,7 @@ index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a740683
          int in[2], out[2];
          if (pipe2(in, O_CLOEXEC)) return;
          if (pipe2(out, O_CLOEXEC)) { close(in[0]); close(in[1]); return; }
-@@ -94,6 +94,11 @@ public:
+@@ -94,6 +95,11 @@ public:
              dup2(in[0], STDIN_FILENO); dup2(out[1], STDOUT_FILENO);
              close(in[0]); close(in[1]); close(out[0]); close(out[1]);
              setenv("HOME", home.c_str(), 1);
@@ -890,7 +988,7 @@ index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a740683
              unsetenv("PI_CODING_AGENT_DIR"); unsetenv("PI_CONFIG_DIR");
              execl(executable.c_str(), executable.c_str(), static_cast<char*>(nullptr));
              _exit(127);
-@@ -141,7 +146,7 @@ public:
+@@ -141,7 +147,7 @@ public:
                  std::string line = buffer.substr(0, newline); buffer.erase(0, newline + 1);
                  agentspeed::json::Document doc;
                  if (doc.parse(line) && doc.root()["type"].string() == type &&
@@ -899,7 +997,7 @@ index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a740683
                  continue;
              }
              auto left = std::chrono::duration_cast<std::chrono::milliseconds>(end - Clock::now()).count();
-@@ -190,6 +195,7 @@ public:
+@@ -190,6 +196,7 @@ public:
      int input = -1, output = -1, status = 0;
      std::string timezone;
      std::string buffer;
@@ -907,7 +1005,7 @@ index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a740683
  };
  
  class DaemonProcessTest : public ::testing::Test {
-@@ -372,4 +378,29 @@ TEST_F(DaemonProcessTest, SlowReaderDoesNotPreventHealthyClientProgress) {
+@@ -372,4 +379,71 @@ TEST_F(DaemonProcessTest, SlowReaderDoesNotPreventHealthyClientProgress) {
          EXPECT_TRUE(healthy.capabilities("healthy-" + std::to_string(i)));
      }
  }
@@ -916,6 +1014,11 @@ index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a740683
 +    std::ofstream(home.path / ".codex/auth.json") << R"({"tokens":{"access_token":"synthetic-never-transmitted","account_id":"synthetic-account"}})";
 +    Bridge first(home.path, AGENTSPEED_COLLECTOR_PATH, true), second(home.path, AGENTSPEED_COLLECTOR_PATH, true);
 +    ASSERT_GT(first.pid, 0); ASSERT_GT(second.pid, 0);
++    ASSERT_TRUE(first.capabilities("account-capabilities"));
++    agentspeed::json::Document capabilities; ASSERT_TRUE(capabilities.parse(first.lastLine));
++    bool accounts = false;
++    for (auto capability : capabilities.root()["capabilities"].elements()) accounts |= capability.equals("quota_accounts_v1");
++    EXPECT_TRUE(accounts);
 +    // No version field: this is exactly the desktop quota wire contract.
 +    ASSERT_TRUE(first.send("{\"type\":\"quota\",\"requestId\":\"first\",\"providers\":[\"codex\",\"opencode-go\"],\"refresh\":false}\n"));
 +    ASSERT_TRUE(second.send("{\"type\":\"quota\",\"requestId\":\"second\",\"providers\":[\"codex\"],\"refresh\":false}\n"));
@@ -928,6 +1031,11 @@ index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a740683
 +    EXPECT_TRUE(one.root()["snapshots"].at(1)["status"].equals("needsAuth"));
 +    EXPECT_EQ(first.lastLine.find("synthetic"), std::string::npos); EXPECT_EQ(second.lastLine.find("synthetic"), std::string::npos);
 +    EXPECT_TRUE(one.root()["snapshots"].at(0)["observedAt"].isNull());
++    auto identity = one.root()["snapshots"].at(0)["accountIdentity"];
++    ASSERT_TRUE(identity.isObject()); ASSERT_TRUE(identity["id"].string());
++    EXPECT_EQ(identity["id"].string(), two.root()["snapshots"].at(0)["accountIdentity"]["id"].string());
++    EXPECT_TRUE(identity["displayName"].string()); EXPECT_TRUE(one.root()["snapshots"].at(0)["account"].isNull());
++    EXPECT_TRUE(one.root()["snapshots"].at(1)["accountIdentity"].isNull());
 +    first.closeInput(); ASSERT_TRUE(first.wait(5000));
 +    EXPECT_TRUE(second.capabilities("after-quota-eof"));
 +    ASSERT_TRUE(second.send("{\"type\":\"quota\",\"requestId\":\"surviving\",\"providers\":[\"opencode-go\"],\"refresh\":false}\n"));
@@ -936,18 +1044,51 @@ index d594f955fec57f53c7c9ea40ac48838a274db02c..07147dc8c549b11982ec1be38a740683
 +    EXPECT_TRUE(surviving.root()["requestId"].equals("surviving")); EXPECT_TRUE(second.lineType("snapshot", 8000));
 +}
 +
++TEST_F(DaemonProcessTest, AccountIdentitySurvivesDaemonRestartAndTracksCacheOnlyAccountSwitch) {
++    fs::create_directories(home.path / ".codex");
++    auto auth = [&](const std::string& token, const std::string& account) {
++        std::ofstream(home.path / ".codex/auth.json") << "{\"tokens\":{\"access_token\":\"" << token << "\",\"account_id\":\"" << account << "\"}}";
++    };
++    auto identity = [&](Bridge& bridge) {
++        EXPECT_TRUE(bridge.send("{\"type\":\"quota\",\"requestId\":\"account\",\"providers\":[\"codex\"],\"refresh\":false}\n"));
++        EXPECT_TRUE(bridge.lineType("quota", 5000));
++        agentspeed::json::Document doc;
++        if (!doc.parse(bridge.lastLine)) { ADD_FAILURE() << "invalid quota response"; return std::optional<std::string>{}; }
++        auto snapshot = doc.root()["snapshots"].at(0);
++        EXPECT_TRUE(snapshot["account"].isNull()); EXPECT_TRUE(snapshot["observedAt"].isNull());
++        EXPECT_EQ(snapshot["windows"].size(), 0u);
++        return snapshot["accountIdentity"]["id"].string();
++    };
++    auth("synthetic-token", "synthetic-account-a"); std::optional<std::string> first;
++    {
++        Bridge bridge(home.path, AGENTSPEED_COLLECTOR_PATH, true); ASSERT_GT(bridge.pid, 0);
++        first = identity(bridge); ASSERT_TRUE(first);
++        bridge.closeInput(); ASSERT_TRUE(bridge.wait(5000));
++    }
++    auto deadline = Clock::now() + std::chrono::seconds(5);
++    while (fs::exists(home.runtime() / "collector.sock") && Clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(20));
++    ASSERT_FALSE(fs::exists(home.runtime() / "collector.sock"));
++    auth("synthetic-rotated-token", "synthetic-account-a");
++    Bridge restarted(home.path, AGENTSPEED_COLLECTOR_PATH, true); ASSERT_GT(restarted.pid, 0);
++    EXPECT_EQ(identity(restarted), first);
++    auth("synthetic-other-token", "synthetic-account-b"); auto other = identity(restarted); ASSERT_TRUE(other); EXPECT_NE(other, first);
++    fs::remove(home.path / ".codex/auth.json"); EXPECT_FALSE(identity(restarted));
++    auth("synthetic-login-again", "synthetic-account-a"); EXPECT_EQ(identity(restarted), first);
++}
++
  } // namespace
 diff --git a/linux/tests/quota_test.cpp b/linux/tests/quota_test.cpp
 new file mode 100644
-index 0000000000000000000000000000000000000000..52bc3d6920f9e4b1c08fa64201547db18ffee3a8
+index 0000000000000000000000000000000000000000..b01908719532cc489e56ed6de0f40d420c1e7483
 --- /dev/null
 +++ b/linux/tests/quota_test.cpp
-@@ -0,0 +1,473 @@
+@@ -0,0 +1,644 @@
 +#include <gtest/gtest.h>
 +#include "../collector/quota.hpp"
 +#include "agentspeed/json.hpp"
 +#include "agentspeed/rfc3339.hpp"
 +#include <sqlite3.h>
++#include <openssl/evp.h>
 +#include <atomic>
 +#include <chrono>
 +#include <condition_variable>
@@ -1001,6 +1142,27 @@ index 0000000000000000000000000000000000000000..52bc3d6920f9e4b1c08fa64201547db1
 +}
 +std::string command(const std::string& id, bool refresh, const std::string& providers = "\"codex\",\"opencode-go\"") {
 +    return "{\"type\":\"quota\",\"requestId\":\"" + id + "\",\"providers\":[" + providers + "],\"refresh\":" + (refresh ? "true}" : "false}");
++}
++std::optional<std::string> publicIdentity(const q::Snapshot& snapshot) {
++    Document doc;
++    if (!doc.parse(snapshot.json().compact())) { ADD_FAILURE() << "invalid quota JSON"; return std::nullopt; }
++    EXPECT_TRUE(doc.root()["account"].isNull()); // Legacy decoders still expect null/string.
++    auto value = doc.root()["accountIdentity"];
++    EXPECT_TRUE(value.valid());
++    if (value.isNull()) return std::nullopt;
++    EXPECT_TRUE(value.isObject()); EXPECT_EQ(value.size(), 2u);
++    auto id = value["id"].string(), label = value["displayName"].string();
++    if (!id || !label) { ADD_FAILURE() << "invalid account identity"; return std::nullopt; }
++    EXPECT_EQ(id->size(), 36u); EXPECT_EQ(id->substr(0, 4), "qa1_");
++    EXPECT_EQ(*label, "Codex account " + id->substr(28));
++    return id;
++}
++std::string sha256(const std::string& value) {
++    unsigned char hash[EVP_MAX_MD_SIZE]; unsigned int size = 0;
++    if (EVP_Digest(value.data(), value.size(), hash, &size, EVP_sha256(), nullptr) != 1) return {};
++    std::string result; constexpr char hex[] = "0123456789abcdef";
++    for (unsigned int i = 0; i < size; ++i) { result += hex[hash[i] >> 4]; result += hex[hash[i] & 15]; }
++    return result;
 +}
 +
 +TEST(CollectorQuotaCredentials, ResolvesCodexHomeXdgAndRelativeDatabaseWithoutCreatingStores) {
@@ -1076,6 +1238,155 @@ index 0000000000000000000000000000000000000000..52bc3d6920f9e4b1c08fa64201547db1
 +    home.codexAuth("fake"); EXPECT_TRUE(q::credentials("codex", p));
 +    put(p.codexAuth, std::string(1024 * 1024 + 1, 'x')); EXPECT_FALSE(q::credentials("codex", p));
 +}
++TEST(CollectorQuotaAccounts, CacheOnlyDiscoversBeforeUsageAndPersistsAcrossRestartAndRotation) {
++    Home home; home.codexAuth(); int calls = 0;
++    auto transport = [&](const auto&, const auto&, bool) { ++calls; return q::HttpReply{503, "", ""}; };
++    std::optional<std::string> first;
++    {
++        q::Provider provider("codex", home.paths(), transport, [] { return now; });
++        auto cold = provider.read(false); first = publicIdentity(cold);
++        ASSERT_TRUE(first); EXPECT_EQ(cold.status, "error"); EXPECT_FALSE(cold.observedAt); EXPECT_TRUE(cold.windows.empty()); EXPECT_EQ(calls, 0);
++        auto failure = provider.read(true); EXPECT_EQ(publicIdentity(failure), first); EXPECT_EQ(failure.nextAllowedAt, now + 5000);
++    }
++    home.codexAuth("rotated-access-token");
++    q::Provider restarted("codex", home.paths(), transport, [] { return now; });
++    EXPECT_EQ(publicIdentity(restarted.read(false)), first); EXPECT_EQ(publicIdentity(restarted.read(true)), first); EXPECT_EQ(calls, 1);
++    fs::remove(home.paths().codexAuth); EXPECT_FALSE(publicIdentity(restarted.read(false)));
++    home.codexAuth("new-login-same-account"); EXPECT_EQ(publicIdentity(restarted.read(false)), first);
++    home.codexAuth("new-login-other-account", "account-b");
++    auto other = publicIdentity(restarted.read(false)); ASSERT_TRUE(other); EXPECT_NE(other, first);
++    home.codexAuth(); EXPECT_EQ(publicIdentity(restarted.read(false)), first);
++    Home secondHost; secondHost.codexAuth();
++    q::Provider independent("codex", secondHost.paths(), transport, [] { return now; });
++    auto hostIdentity = publicIdentity(independent.read(false)); ASSERT_TRUE(hostIdentity); EXPECT_NE(hostIdentity, first);
++    EXPECT_EQ(calls, 1);
++}
++
++TEST(CollectorQuotaAccounts, MappingResetChangesBindingWithoutChangingRetainedUsageOrPacing) {
++    Home home; home.codexAuth();
++    q::Provider provider("codex", home.paths(), success, [] { return now; });
++    auto observed = provider.read(true); auto first = publicIdentity(observed); ASSERT_TRUE(first);
++    fs::path cache;
++    for (const auto& entry : fs::directory_iterator(home.root + "/.agent-speed/quota")) cache = entry.path();
++    std::ifstream input(cache); std::string content((std::istreambuf_iterator<char>(input)), {});
++    const std::string field = "\"accountIdentity\":null";
++    auto pos = content.find(field); ASSERT_NE(pos, std::string::npos);
++    content.replace(pos, field.size(), R"("accountIdentity":{"id":"forged","displayName":"from cached usage"})"); put(cache, content);
++    fs::remove_all(home.root + "/.agent-speed/quota-accounts");
++    q::Provider restarted("codex", home.paths(), success, [] { return now; });
++    auto retained = restarted.read(false); auto replacement = publicIdentity(retained); ASSERT_TRUE(replacement); EXPECT_NE(replacement, first);
++    EXPECT_EQ(retained.status, "stale"); EXPECT_EQ(retained.windows.size(), observed.windows.size());
++    EXPECT_EQ(retained.observedAt, observed.observedAt); EXPECT_EQ(retained.nextAllowedAt, observed.nextAllowedAt);
++    EXPECT_EQ(publicIdentity(provider.read(false)), replacement);
++}
++
++TEST(CollectorQuotaAccounts, RejectedUnavailableAndUnsupportedCodexAuthKindsAreUnbindable) {
++    Home home; home.codexAuth();
++    q::Provider rejected("codex", home.paths(), [](const auto&, const auto&, bool) { return q::HttpReply{401, "", ""}; }, [] { return now; });
++    auto first = publicIdentity(rejected.read(false)); ASSERT_TRUE(first);
++    EXPECT_FALSE(publicIdentity(rejected.read(true))); EXPECT_FALSE(publicIdentity(rejected.read(false)));
++    q::Provider restarted("codex", home.paths(), success, [] { return now; }); EXPECT_FALSE(publicIdentity(restarted.read(false)));
++    home.codexAuth("rotated-token"); EXPECT_EQ(publicIdentity(restarted.read(false)), first);
++    for (const auto* mode : {"apikey", "headers", "agentIdentity", "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys", "unknown"}) {
++        put(home.paths().codexAuth, std::string("{\"auth_mode\":\"") + mode + "\",\"tokens\":{\"access_token\":\"mode-token\",\"account_id\":\"account-a\"}}");
++        EXPECT_TRUE(q::credentials("codex", home.paths()));
++        auto value = restarted.read(false); EXPECT_EQ(value.status, "error"); EXPECT_FALSE(publicIdentity(value));
++    }
++    for (const auto* field : {"OPENAI_API_KEY", "personal_access_token", "bedrock_api_key", "bedrock_access_keys"}) {
++        put(home.paths().codexAuth, std::string("{\"") + field + "\":\"selected-secret\",\"tokens\":{\"access_token\":\"mode-token\",\"account_id\":\"account-a\"}}");
++        EXPECT_FALSE(publicIdentity(restarted.read(false)));
++    }
++    for (const auto* mode : {"chatgpt", "chatgptAuthTokens"}) {
++        put(home.paths().codexAuth, std::string("{\"auth_mode\":\"") + mode + "\",\"tokens\":{\"access_token\":\"mode-token\",\"account_id\":\"account-a\"}}");
++        EXPECT_EQ(publicIdentity(restarted.read(false)), first);
++    }
++    for (const auto* invalid : {"{}", "[", R"({"tokens":{"access_token":"token-only"}})", R"({"OPENAI_API_KEY":"api-only"})"}) {
++        put(home.paths().codexAuth, invalid); EXPECT_FALSE(publicIdentity(restarted.read(false)));
++    }
++}
++
++TEST(CollectorQuotaAccounts, PrivateStorageFailuresNeverPublishEphemeralOrUnsafeIds) {
++    for (int failure = 0; failure < 6; ++failure) {
++        SCOPED_TRACE(failure); Home home; home.codexAuth();
++        q::Provider provider("codex", home.paths(), success, [] { return now; });
++        ASSERT_TRUE(publicIdentity(provider.read(false)));
++        const fs::path directory = home.root + "/.agent-speed/quota-accounts";
++        fs::path mapping; for (const auto& entry : fs::directory_iterator(directory)) mapping = entry.path();
++        ASSERT_FALSE(mapping.empty());
++        if (failure == 0) chmod(directory.c_str(), 0755);
++        else if (failure == 1) chmod(mapping.c_str(), 0644);
++        else if (failure == 2) { fs::remove(mapping); fs::create_symlink(home.paths().codexAuth, mapping); }
++        else if (failure == 3) { fs::remove_all(directory); put(directory, "not a directory"); }
++        else if (failure == 4) put(mapping, "qa1_invalid");
++        else fs::create_hard_link(mapping, directory / "shared.id");
++        EXPECT_FALSE(publicIdentity(provider.read(false)));
++        q::Provider restarted("codex", home.paths(), success, [] { return now; }); EXPECT_FALSE(publicIdentity(restarted.read(false)));
++    }
++    Home unavailable; unavailable.codexAuth(); put(unavailable.root + "/.agent-speed", "blocked"); int calls = 0;
++    q::Provider provider("codex", unavailable.paths(), [&](const auto&, const auto&, bool) { ++calls; return q::HttpReply{}; }, [] { return now; });
++    EXPECT_FALSE(publicIdentity(provider.read(false))); EXPECT_FALSE(publicIdentity(provider.read(true))); EXPECT_EQ(calls, 0);
++}
++
++TEST(CollectorQuotaAccounts, ConcurrentMappingCreationUsesOnePersistentWinner) {
++    Home home; home.codexAuth();
++    q::Provider one("codex", home.paths(), success, [] { return now; }), two("codex", home.paths(), success, [] { return now; });
++    q::Snapshot first, second;
++    std::thread a([&] { first = one.read(false); }), b([&] { second = two.read(false); }); a.join(); b.join();
++    auto id = publicIdentity(first); ASSERT_TRUE(id); EXPECT_EQ(publicIdentity(second), id);
++    q::Provider restarted("codex", home.paths(), success, [] { return now; }); EXPECT_EQ(publicIdentity(restarted.read(false)), id);
++}
++
++TEST(CollectorQuotaAccounts, SwitchedAccountInflightRepliesUseCurrentIdentityWithoutOldUsage) {
++    for (long status : {200L, 401L, 503L}) {
++        SCOPED_TRACE(status); Home home; home.codexAuth();
++        q::Provider discovery("codex", home.paths(), success, [] { return now; });
++        auto old = publicIdentity(discovery.read(false)); ASSERT_TRUE(old);
++        home.codexAuth("other-token", "account-b"); auto current = publicIdentity(discovery.read(false)); ASSERT_TRUE(current); EXPECT_NE(current, old);
++        home.codexAuth();
++        q::Service service(home.paths(), [&](const std::string& url, const q::Credential& c, bool reset) {
++            if (reset) return success(url, c, reset);
++            EXPECT_EQ(c.account, "account-a"); home.codexAuth("other-token", "account-b"); return q::HttpReply{status, codex, "1200"};
++        }, [] { return now; });
++        ASSERT_TRUE(service.control(command("switched", true, "\"codex\""), 1));
++        auto out = replies(service, 1); ASSERT_EQ(out.size(), 1u); Document doc; ASSERT_TRUE(doc.parse(out[0].second));
++        auto value = doc.root()["snapshots"].at(0);
++        EXPECT_EQ(value["accountIdentity"]["id"].string(), current); EXPECT_TRUE(value["account"].isNull());
++        EXPECT_TRUE(value["observedAt"].isNull()); EXPECT_EQ(value["windows"].size(), 0u); EXPECT_TRUE(value["nextAllowedAt"].isNull());
++        EXPECT_EQ(out[0].second.find(*old), std::string::npos);
++    }
++}
++
++TEST(CollectorQuotaAccounts, PublicRepliesNeverContainSecretsPrivateDigestsOrRawAccountClaims) {
++    Home home; home.codexAuth("sensitive-token", "private-account");
++    q::Service service(home.paths(), success, [] { return now; });
++    for (bool refresh : {false, true}) {
++        ASSERT_TRUE(service.control(command("secrets", refresh, "\"codex\""), 1));
++        auto out = replies(service, 1); ASSERT_EQ(out.size(), 1u); const auto& line = out[0].second;
++        Document doc; ASSERT_TRUE(doc.parse(line)); ASSERT_TRUE(doc.root()["snapshots"].at(0)["accountIdentity"].isObject());
++        for (const auto& secret : {std::string("sensitive-token"), std::string("private-account"), sha256("sensitive-token"), sha256("private-account"), sha256("codex\nprivate-account")})
++            EXPECT_EQ(line.find(secret), std::string::npos);
++        EXPECT_EQ(line.find("Authorization"), std::string::npos);
++    }
++    for (const auto& entry : fs::directory_iterator(home.root + "/.agent-speed/quota-accounts")) {
++        struct stat st{}; ASSERT_EQ(stat(entry.path().c_str(), &st), 0); EXPECT_EQ(st.st_mode & 07777, 0600); EXPECT_EQ(st.st_nlink, 1u);
++        std::ifstream input(entry.path()); std::string content((std::istreambuf_iterator<char>(input)), {});
++        EXPECT_EQ(content.find("sensitive-token"), std::string::npos); EXPECT_EQ(content.find("private-account"), std::string::npos);
++    }
++}
++
++TEST(CollectorQuotaAccounts, GoKeysOAuthOrganizationsAndSavedRowsDoNotIdentifyAccounts) {
++    Home home;
++    for (const auto* auth : {R"({"opencode-go":{"type":"api","key":"api-key","metadata":{"orgID":"org-a"}}})",
++            R"({"opencode":{"type":"oauth","access":"oauth-token","metadata":{"orgID":"org-a"}}})"}) {
++        home.goAuth(auth); q::Provider provider("opencode-go", home.paths(), success, [] { return now; });
++        EXPECT_FALSE(publicIdentity(provider.read(false))); EXPECT_FALSE(publicIdentity(provider.read(true)));
++    }
++    sqlite3* db = nullptr; ASSERT_EQ(sqlite3_open(home.paths().goDatabase.c_str(), &db), SQLITE_OK);
++    ASSERT_EQ(sqlite3_exec(db, "CREATE TABLE credential(id TEXT,integration_id TEXT,value TEXT,active INTEGER); INSERT INTO credential VALUES('cred-row','opencode-go','{\"type\":\"key\",\"key\":\"saved-key\",\"metadata\":{\"orgID\":\"org-a\"}}',1);", nullptr, nullptr, nullptr), SQLITE_OK);
++    sqlite3_close(db); q::Provider saved("opencode-go", home.paths(), success, [] { return now; });
++    EXPECT_FALSE(publicIdentity(saved.read(false))); EXPECT_FALSE(publicIdentity(saved.read(true)));
++}
++
 +TEST(CollectorQuotaProvider, CacheOnlyNeverRequestsAndCodexFloorFailurePersistsPrivately) {
 +    Home home; home.codexAuth(); auto time = now; int calls = 0;
 +    auto transport = [&](const std::string& url, const q::Credential& c, bool reset) { ++calls; return success(url, c, reset); };
@@ -1526,10 +1837,10 @@ index 2bd429c8f321dfaa2165f962aee8fe436d4b5d49..ed8e603231f7e7200332a0b26b5c43e5
          reader.task?.cancel()
          reader.task = nil
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index 761b5dda5f8330cad497d9d4316887a963c44beb..5e30d58465ffcbad4d04f82a86425aa50f97b5c1 100644
+index 647e01839b0d4b6109723c0e9d159b35167aa309..79ac2d06ec3710f2ce85ff9782a7824373779404 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -16,6 +16,7 @@
+@@ -16,6 +16,7 @@ struct QuotaNotchReading {
      let snapshot: QuotaSnapshot?
      let networkEnabled: Bool
      let l10n: Localizer
@@ -1537,9 +1848,9 @@ index 761b5dda5f8330cad497d9d4316887a963c44beb..5e30d58465ffcbad4d04f82a86425aa5
      let windows: [QuotaWindow]
      let readings: [String]
      let labels: [String]
-@@ -26,9 +27,10 @@
-     let readingHeight: CGFloat
+@@ -27,9 +28,10 @@ struct QuotaNotchReading {
      var outerDiameter: CGFloat { NotchLayout.outerDiameter(windows.count) }
+     var cellMetrics: QuotaNotchCellMetrics { QuotaNotchCellMetrics(width: readingWidth, readingHeight: readingHeight, diameter: outerDiameter) }
  
 -    init(providerID: String? = nil, snapshot: QuotaSnapshot?, networkEnabled: Bool, l10n: Localizer) {
 +    init(providerID: String? = nil, snapshot: QuotaSnapshot?, networkEnabled: Bool, l10n: Localizer, sourceName: String? = nil) {
@@ -1549,7 +1860,7 @@ index 761b5dda5f8330cad497d9d4316887a963c44beb..5e30d58465ffcbad4d04f82a86425aa5
          windows = QuotaWindow.ordered(snapshot?.windows ?? [])
          let multiple = windows.count > 1
          let windowLabels = windows.map { quotaCompactWindowLabel($0, l10n, providerName: snapshot?.displayName) }
-@@ -66,7 +68,7 @@
+@@ -67,7 +69,7 @@ struct QuotaNotchReading {
          !networkEnabled || snapshot?.status == .stale || snapshot?.observedAt.map { now.timeIntervalSince($0) > 900 } == true
      }
      func status(at now: Date) -> String { quotaDisplayStatus(snapshot, l10n, networkEnabled: networkEnabled, now: now) }
@@ -1558,15 +1869,15 @@ index 761b5dda5f8330cad497d9d4316887a963c44beb..5e30d58465ffcbad4d04f82a86425aa5
  
      func resetText(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
          let seconds = date.timeIntervalSince(now)
-@@ -450,7 +452,7 @@
+@@ -494,7 +496,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
          visible = state.0; reducedMotion = state.1
          dark = state.2 == .dark || (state.2 == .auto && NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
          readings = state.4.map { provider in
 -            QuotaNotchReading(providerID: provider.id, snapshot: state.3.first { $0.id == provider.id }, networkEnabled: state.6, l10n: model.l10n)
 +            QuotaNotchReading(providerID: provider.id, snapshot: state.3.first { $0.id == provider.id }, networkEnabled: state.6, l10n: model.l10n, sourceName: provider.name)
          }
-         ringSize = readings.map(\.outerDiameter).max() ?? 52
-         cellSize = CGSize(width: max(ringSize, readings.map(\.readingWidth).max() ?? 52), height: max(80, ringSize + 4 + (readings.map(\.readingHeight).max() ?? 20)))
+         let cells = readings.map(\.cellMetrics)
+         verticalLayout = QuotaNotchContentLayout(cells: cells, horizontal: false)
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 index 621a9b30254dba40ed5a8591577c5b7ef86271fa..1e07a20b9b60bf3113367f032ef1ece3e979d43f 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
@@ -2036,9 +2347,63 @@ index f35df7a4dd9eb105a0319cfcf0364c67d3a053a2..0398cf2715c3b655ecd79a04f7fbed39
      case .error: l10n("mac.quota.status.error")
      }
  }
+diff --git a/macos/Sources/AgentSpeedCore/Quota.swift b/macos/Sources/AgentSpeedCore/Quota.swift
+index 5cd7e03b7eb705b116dfe37ba787cf1e73db8a95..a5aebf08d35d51c73a49847bd044ee24b8fbe178 100644
+--- a/macos/Sources/AgentSpeedCore/Quota.swift
++++ b/macos/Sources/AgentSpeedCore/Quota.swift
+@@ -35,6 +35,12 @@ public struct QuotaCredits: Sendable, Equatable, Codable {
+     public let balance: String?
+ }
+ 
++/// Opaque collector-local account identifier and a safe human-readable label.
++public struct QuotaAccountIdentity: Sendable, Equatable, Codable {
++    public let id: String
++    public let displayName: String
++}
++
+ public struct QuotaSnapshot: Sendable, Equatable, Codable {
+     public let id: String
+     public let displayName: String
+@@ -53,12 +59,14 @@ public struct QuotaSnapshot: Sendable, Equatable, Codable {
+     public let waitingForRefresh: Bool
+     public let resetCreditsAvailable: Int?
+     public let resetCreditsNextExpiry: Date?
++    public let accountIdentity: QuotaAccountIdentity?
+ 
+     public init(id: String, displayName: String, fidelity: String, status: QuotaStatus,
+                 windows: [QuotaWindow], headlineId: String?, block: String?, account: String?,
+                 plan: String?, observedAt: Date?, source: String, credits: QuotaCredits?,
+                 nextAllowedAt: Date?, waitingForRefresh: Bool,
+-                resetCreditsAvailable: Int? = nil, resetCreditsNextExpiry: Date? = nil) {
++                resetCreditsAvailable: Int? = nil, resetCreditsNextExpiry: Date? = nil,
++                accountIdentity: QuotaAccountIdentity? = nil) {
+         self.id = id
+         self.displayName = displayName
+         self.fidelity = fidelity
+@@ -75,6 +83,7 @@ public struct QuotaSnapshot: Sendable, Equatable, Codable {
+         self.waitingForRefresh = waitingForRefresh
+         self.resetCreditsAvailable = resetCreditsAvailable
+         self.resetCreditsNextExpiry = resetCreditsNextExpiry
++        self.accountIdentity = accountIdentity
+     }
+ }
+ 
+diff --git a/macos/Sources/AgentSpeedCore/QuotaPersistence.swift b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
+index 25c2bf286ad2a10d815de699a2589dde2208a99a..948e28c44a40e7e4f8ce6ff614f53e9ea31dfe9d 100644
+--- a/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
++++ b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
+@@ -77,6 +77,7 @@ extension QuotaSnapshot {
+                       windows: windows, headlineId: headlineId, block: block, account: account,
+                       plan: plan, observedAt: observedAt, source: source, credits: credits,
+                       nextAllowedAt: next, waitingForRefresh: false,
+-                      resetCreditsAvailable: resetCreditsAvailable, resetCreditsNextExpiry: resetCreditsNextExpiry)
++                      resetCreditsAvailable: resetCreditsAvailable, resetCreditsNextExpiry: resetCreditsNextExpiry,
++                      accountIdentity: accountIdentity)
+     }
+ }
 diff --git a/macos/Sources/AgentSpeedCore/RemoteQuota.swift b/macos/Sources/AgentSpeedCore/RemoteQuota.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..ac08cf374784cde0218e126e3faa6630f79c6849
+index 0000000000000000000000000000000000000000..305ee12bfc4c9a584a770df656bf3662592c1bb1
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/RemoteQuota.swift
 @@ -0,0 +1,71 @@
@@ -2110,7 +2475,7 @@ index 0000000000000000000000000000000000000000..ac08cf374784cde0218e126e3faa6630
 +                      windows: windows, headlineId: headlineId, block: block, account: account, plan: plan,
 +                      observedAt: observedAt, source: source, credits: credits, nextAllowedAt: nextAllowedAt,
 +                      waitingForRefresh: waitingForRefresh, resetCreditsAvailable: resetCreditsAvailable,
-+                      resetCreditsNextExpiry: resetCreditsNextExpiry)
++                      resetCreditsNextExpiry: resetCreditsNextExpiry, accountIdentity: accountIdentity)
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
@@ -2491,10 +2856,10 @@ index 0000000000000000000000000000000000000000..619fa13a6a2f022f5c6f1858737b1d15
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift b/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..717b1b6d86a32596231f58b87309c8d73c1db588
+index 0000000000000000000000000000000000000000..53b36147b6fdeda67b5dd10083053b2f5bc67d0b
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,78 @@
 +import Foundation
 +import Testing
 +@testable import AgentSpeedCore
@@ -2526,6 +2891,35 @@ index 0000000000000000000000000000000000000000..717b1b6d86a32596231f58b87309c8d7
 +        #expect(stale.windows == raw.windows)
 +        #expect(stale.withRemoteHostName("renamed").displayName == "Codex · renamed")
 +        #expect(raw.scopedToRemote(hostID: UUID(), hostName: "build").id != scoped.id)
++    }
++
++    @Test func optionalAccountIdentitySurvivesCopiesAndPersistence() throws {
++        let old = reading.replacingOccurrences(of: "\"account\":\"same@example.test\"", with: "\"account\":null")
++            .replacingOccurrences(of: "\"duration\":18000}]", with: "\"duration\":18000},{\"id\":\"daily\",\"label\":\"Daily\",\"usedFraction\":0.5,\"remaining\":null,\"used\":null,\"resetAt\":\"2026-11-16T00:00:00Z\",\"duration\":86400}]")
++        func decode(_ row: String) throws -> QuotaSnapshot {
++            let data = Data("{\"type\":\"quota\",\"requestId\":\"one\",\"snapshots\":[\(row)]}".utf8)
++            return try #require(RemoteQuotaResponse.decode(data)?.snapshots.first)
++        }
++        #expect(try decode(old).accountIdentity == nil)
++        let nullIdentity = old.replacingOccurrences(of: "\"account\":null", with: "\"account\":null,\"accountIdentity\":null")
++        #expect(try decode(nullIdentity).accountIdentity == nil)
++        let identified = old.replacingOccurrences(of: "\"account\":null", with: "\"account\":null,\"accountIdentity\":{\"id\":\"opaque-id\",\"displayName\":\"Work\"}")
++        let snapshot = try decode(identified)
++        #expect(snapshot.account == nil)
++        #expect(snapshot.accountIdentity?.id == "opaque-id")
++        #expect(snapshot.accountIdentity?.displayName == "Work")
++        #expect(snapshot.windows == (try decode(old)).windows)
++        #expect(snapshot.windows.count == 2)
++        #expect(snapshot.windows[1].duration == 86400)
++        #expect(snapshot.windows[1].resetAt != nil)
++        #expect(snapshot.resetCreditsAvailable == 2)
++        #expect(snapshot.resetCreditsNextExpiry != nil)
++        let scoped = snapshot.scopedToRemote(hostID: host, hostName: "build")
++        #expect(scoped.accountIdentity == snapshot.accountIdentity)
++        #expect(scoped.withRemoteStatus(.stale).withRemoteHostName("new").accountIdentity == snapshot.accountIdentity)
++        #expect(scoped.copying(status: .stale, next: nil).accountIdentity == snapshot.accountIdentity)
++        let restored = try JSONDecoder().decode(QuotaSnapshot.self, from: JSONEncoder().encode(scoped))
++        #expect(restored == scoped)
 +    }
 +
 +    @Test func boundedEnvelopeRejectsWrongTypesDuplicateProvidersAndInvalidCorrelation() {
@@ -2596,16 +2990,15 @@ index b7ceeb7c51764959dd8d4a4960353ad3b95144a2..e5c11991c6a7212f6889f0096f571018
 +See [`QUOTA.md`](QUOTA.md) for provider parsing, cache isolation and wire details.
 +
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 395deaf23d0342116527fe64ede922d7969a2715..86f5715114496b29ea89ef5ca6a0b6eb28883a09 100644
+index 3219a14906edc451b2e6a4d60abdae505f819914..dbd9dc40d316f591edb0ea65d98e671957a2eb14 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
-@@ -1,8 +1,20 @@
+@@ -1,8 +1,31 @@
  # Subscription quota contract (macOS and Windows)
  
 -This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
 +Subscription quota is an account-level observation, distinct from token usage and spend derived from session logs. Local providers read the local application's session; remote providers read the corresponding session on an enabled SSH host and query the supplier there. Credentials never cross the SSH quota protocol, enter logs or get written back. The endpoints and fields below are observed provider behavior, not guarantees of stable public APIs.
- 
--On macOS and Windows, the provider reads `auth.json` from a non-empty `CODEX_HOME` directory when set. Otherwise, it reads `~/.codex/auth.json` on macOS or `%USERPROFILE%\.codex\auth.json` on Windows. The file is read-only; credentials are used only for the local account request. Both platforms follow the same snapshot, endpoint, status, freshness, and backoff semantics described below.
++
 +On macOS and Windows, the local Codex provider reads `auth.json` from a non-empty `CODEX_HOME` directory when set. Otherwise, it reads `~/.codex/auth.json` on macOS or `%USERPROFILE%\.codex\auth.json` on Windows. The Linux collector follows the same `CODEX_HOME` / `~/.codex/auth.json` convention on the remote host. Files are read-only; credentials are used only for requests made on their owning host. Local and remote sources follow the same snapshot, endpoint, status, freshness and backoff semantics below.
 +
 +## Remote subscription sources
@@ -2619,14 +3012,40 @@ index 395deaf23d0342116527fe64ede922d7969a2715..86f5715114496b29ea89ef5ca6a0b6eb
 +Quota work runs outside sampling and subscriber-output locks. Coalesced requests cannot block metrics, another subscriber, relay publication or widget publication. Desktop requests time out after 45 seconds; an older collector that ignores quota commands produces an honest unavailable state, not an endless refresh. Disconnects invalidate in-flight correlation, retain previous successful readings as stale with their original observation time and never invent zero allowance. Removing/disabling a host or excluding a provider removes its active source and invalidates late responses. Revoking network consent prevents new supplier requests and late results from restoring a revoked observation. Reconnection uses a new request generation.
 +
 +Remote credentials and account-isolated supplier caches remain on the remote machine. The desktop may persist only structured remote observations, scoped to the configured host and connection destination; restored readings are stale, preserve their original timestamps and are invalidated when that destination changes or the host is removed. Codex and Go use their own installed credential stores, endpoint selection, authentication/entitlement rules and persisted retry deadlines. A missing login is `needsAuth`, not evidence that a source does not exist. A changed or rejected identity cannot expose another account's supplier cache. Remote acquisition does not alter token-rate/history aggregation or relay authorization.
++
++### Current CLI account discovery
++
++Collectors advertising `quota_accounts_v1` add `accountIdentity` to each quota snapshot. It is either `null` (no safely bindable identity) or an object with `id` and `displayName` strings. The existing nullable-string `account` label, provider `id`, quota windows, reset credits, timestamps and retry deadlines keep their existing meanings. A cache-only quota request (`refresh: false`) discovers the current CLI account without supplier HTTP, including before a first quota observation. The capability is independent of the collector control/identity version and does not promise bindable accounts for every provider.
++
++Only the currently selected CLI account per provider is exposed. Clients bind by configured host identity, provider ID and `accountIdentity.id`, never provider alone, the display label, an endpoint, a window or an observation's `source`. A different or null identity must not replace an old account binding; retain that binding offline until its exact identity returns. Login, account switching and credential renewal remain owned by the supplier CLI. Discovery requires no remote private-file reads by a client.
++
++Codex uses its explicit `tokens.account_id` only on the credential-owning host to select a private persistent random identity. Neither that raw claim, tokens, token hashes, cache context keys nor raw supplier payloads are returned. A safe generated display label identifies the opaque account, not an inferred email/name. Token rotation with the same Codex account claim preserves the ID; a different account claim selects a different ID, including during an in-flight refresh. Missing or rejected credentials are not bindable. Loss of the private identity store changes the identity namespace; an unavailable or unsafe store yields null rather than a transient invented ID. IDs are host-installation scoped, not globally comparable supplier identities.
++
++The inspected OpenCode Go credentials establish only credential/session context and optional organization, not a stable user-account claim. It therefore returns `accountIdentity: null`; its quota, status and pacing remain available, but consumers must not offer persistent account binding. Session secrets, their hashes, saved credential-row IDs and organization IDs are not substitute account identities. Adding support requires a verified nonsecret account claim, not changing this null into a session-derived identifier.
+ 
+-On macOS and Windows, the provider reads `auth.json` from a non-empty `CODEX_HOME` directory when set. Otherwise, it reads `~/.codex/auth.json` on macOS or `%USERPROFILE%\.codex\auth.json` on Windows. The file is read-only; credentials are used only for the local account request. Both platforms follow the same snapshot, endpoint, status, freshness, and backoff semantics described below.
  
  ## Snapshot
  
 diff --git a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
-index 3be921ebca29447323dc0bc73e0f26f1eaefc310..080e8986032e7668008f2ce0b3374a2025f286c7 100644
+index 3be921ebca29447323dc0bc73e0f26f1eaefc310..4d9962cb6a52205cdb21da6aa0a0b1d2c99b3fca 100644
 --- a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 +++ b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
-@@ -19,6 +19,26 @@ public static class QuotaProviders
+@@ -4,10 +4,12 @@ public enum QuotaStatus { Ok, Stale, NeedsAuth, AccessDenied, Unsupported, Error
+ 
+ public sealed record QuotaWindow(string Id, string Label, double? UsedFraction, double? Remaining, double? Used, DateTimeOffset? ResetAt, TimeSpan? Duration);
+ public sealed record QuotaCredits(bool? HasCredits, bool? Unlimited, double? Limit, double? Used, double? UsedFraction, DateTimeOffset? ResetAt, string? Balance);
++/// <summary>Opaque collector-local account identifier and a safe human-readable label.</summary>
++public sealed record QuotaAccountIdentity(string Id, string DisplayName);
+ public sealed record QuotaSnapshot(string Id, string DisplayName, string Fidelity, QuotaStatus Status,
+     IReadOnlyList<QuotaWindow> Windows, string? HeadlineId, string? Block, string? Account, string? Plan,
+     DateTimeOffset? ObservedAt, string Source, QuotaCredits? Credits, DateTimeOffset? NextAllowedAt, bool WaitingForRefresh,
+-    int? ResetCreditsAvailable = null, DateTimeOffset? ResetCreditsNextExpiry = null);
++    int? ResetCreditsAvailable = null, DateTimeOffset? ResetCreditsNextExpiry = null, QuotaAccountIdentity? AccountIdentity = null);
+ 
+ public sealed record QuotaProviderDefinition(string Id, string DisplayName, string Badge, string Source, bool Experimental = false);
+ 
+@@ -19,6 +21,26 @@ public static class QuotaProviders
          new("opencode-go", "OpenCode Go", "OC", "opencode · local credentials"),
      ]);
  
@@ -2762,10 +3181,10 @@ index 0000000000000000000000000000000000000000..cc4edf542720ca273d37c068dbd692e2
 +}
 diff --git a/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs b/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..02f7acc0f75b8835f88852a3809a57d405bee6d7
+index 0000000000000000000000000000000000000000..1ab654a5c03d28e615056fbf75aaed6ba3f1db95
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,146 @@
 +using System.Buffers;
 +using System.Text;
 +using System.Text.Json;
@@ -2883,13 +3302,17 @@ index 0000000000000000000000000000000000000000..02f7acc0f75b8835f88852a3809a57d4
 +            credits = new(Boolean(c, "hasCredits"), Boolean(c, "unlimited"), Number(c, "limit"), Number(c, "used"),
 +                Number(c, "usedFraction"), Date(c, "resetAt"), Text(c, "balance"));
 +        var resetCredits = value.TryGetProperty("resetCreditsAvailable", out var reset) && reset.ValueKind == JsonValueKind.Number && reset.TryGetInt32(out var count) ? count : (int?)null;
++        QuotaAccountIdentity? accountIdentity = null;
++        if (value.TryGetProperty("accountIdentity", out var identity) && identity.ValueKind == JsonValueKind.Object &&
++            Text(identity, "id") is { } accountId && Text(identity, "displayName") is { } accountName)
++            accountIdentity = new(accountId, accountName);
 +        // Authentication rejection must never retain values belonging to an earlier account.
 +        var rejected = status is QuotaStatus.NeedsAuth or QuotaStatus.AccessDenied;
 +        return new(Text(value, "id")!, Text(value, "displayName") ?? "", Text(value, "fidelity") ?? "unknown", status,
 +            rejected ? [] : windows, rejected ? null : Text(value, "headlineId"), Text(value, "block"),
 +            rejected ? null : Text(value, "account"), rejected ? null : Text(value, "plan"), rejected ? null : Date(value, "observedAt"),
 +            Text(value, "source") ?? "", rejected ? null : credits, Date(value, "nextAllowedAt"), Boolean(value, "waitingForRefresh") ?? false,
-+            rejected ? null : resetCredits, rejected ? null : Date(value, "resetCreditsNextExpiry"));
++            rejected ? null : resetCredits, rejected ? null : Date(value, "resetCreditsNextExpiry"), rejected ? null : accountIdentity);
 +    }
 +
 +    private static string? Text(JsonElement value, string name) => value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() : null;
@@ -3239,10 +3662,10 @@ index a2585fcd0d93fbf00c09d4bb4fee6df5fca16188..5b468fd9686566fd9740fff69d0ad8f2
      }
  
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index e38b40a58d2995ca796838aacedc07a3511e0686..35ffaa773911e7891c89ecf996327026893fa28c 100644
+index 26e50809dd174f17a7e5910b8bdf64e38134fb09..49b9107c6a61519b3937e72411002f42ce7c2c44 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-@@ -108,7 +108,7 @@
+@@ -120,7 +120,7 @@ internal sealed class QuotaNotchView : FrameworkElement
          _cellSnapshots = _state.Snapshots; _cellSources = _state.EnabledSources;
          _cellLanguage = _loc.LanguageCode; _cellDpi = _lastDpi; _cellDark = _state.Dark;
          var ink = Brush(_state.Dark ? "#e8e8ea" : "#1d1d1f");
@@ -3251,7 +3674,7 @@ index e38b40a58d2995ca796838aacedc07a3511e0686..35ffaa773911e7891c89ecf996327026
          {
              var snapshot = _state.Snapshots.FirstOrDefault(item => item.Id == id);
              var windows = QuotaFormat.OrderedWindows(snapshot);
-@@ -319,10 +319,10 @@
+@@ -354,10 +354,10 @@ internal sealed class QuotaNotchView : FrameworkElement
      private void BuildCard(DrawingContext dc)
      {
          _source = _state.ActiveSource;
@@ -3264,7 +3687,7 @@ index e38b40a58d2995ca796838aacedc07a3511e0686..35ffaa773911e7891c89ecf996327026
          var ink = Brush(_state.Dark ? "#e8e8ea" : "#1d1d1f");
          var muted = Brush(_state.Dark ? "#808080" : "#6b6b6b");
          var fill = Brush(_state.Dark ? "#0a0a0a" : "#ffffff");
-@@ -332,7 +332,7 @@
+@@ -367,7 +367,7 @@ internal sealed class QuotaNotchView : FrameworkElement
          using (var c = content.Open())
          {
              DrawSourceGlyph(c, provider.Id, new Point(24, y + 8), 16, _state.Dark ? Brushes.White : ink);
@@ -3273,7 +3696,7 @@ index e38b40a58d2995ca796838aacedc07a3511e0686..35ffaa773911e7891c89ecf996327026
              c.DrawText(title, new Point(40, y)); y += Math.Max(18, title.Height) + 4;
              if (!string.IsNullOrWhiteSpace(snapshot?.Account)) { var t = Text(snapshot.Account, 11, Regular, muted, inner); c.DrawText(t, new Point(16, y)); y += t.Height + 4; }
              if (snapshot?.ObservedAt is { } at && (!_state.Network || snapshot.Status == QuotaStatus.Stale || (_state.DisplayNow ?? DateTimeOffset.UtcNow) - at > TimeSpan.FromMinutes(15)))
-@@ -464,6 +464,7 @@
+@@ -499,6 +499,7 @@ internal sealed class QuotaNotchView : FrameworkElement
  
      private static void DrawSourceGlyph(DrawingContext dc, string source, Point center, double size, Brush color)
      {
@@ -3282,10 +3705,10 @@ index e38b40a58d2995ca796838aacedc07a3511e0686..35ffaa773911e7891c89ecf996327026
          if (source != "opencode-go") throw new InvalidOperationException("Missing registered quota source vector.");
          dc.PushTransform(new MatrixTransform(size / 20, 0, 0, size / 20, center.X - size * .4, center.Y - size / 2));
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
-index 87db0a2250122d3454c8ae10ce20a4304ceee498..93811d6b1e5c224db558263fa033d68e7f8177dc 100644
+index f018456abac56b12a132b917eca29e711250503b..72086fa93bffcdc5aa40c51487f48209c7cc3bbb 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
-@@ -39,7 +39,6 @@ internal sealed class QuotaNotchWindow : Window
+@@ -40,7 +40,6 @@ internal sealed class QuotaNotchWindow : Window
      private QuotaNotchBounds? _bounds, _cardBounds;
      private IReadOnlyList<QuotaSnapshot> _snapshots = [];
      private IReadOnlyList<string> _enabledSources = [];
@@ -3293,7 +3716,7 @@ index 87db0a2250122d3454c8ae10ce20a4304ceee498..93811d6b1e5c224db558263fa033d68e
      private QuotaNotchRenderState? _mainState, _cardState;
      private QuotaNotchHit _hover, _pressed;
      private string? _activeSource;
-@@ -215,10 +214,10 @@ internal sealed class QuotaNotchWindow : Window
+@@ -216,10 +215,10 @@ internal sealed class QuotaNotchWindow : Window
              _monitor = Monitors.All().FirstOrDefault(m => m.DeviceName == settings.QuotaNotchMonitor) ?? Monitors.Primary();
              if (_monitor is null) throw new InvalidOperationException();
              _stage = "main.sources";
@@ -3660,11 +4083,12 @@ index 0000000000000000000000000000000000000000..f2c771d4a2fe10e513261ad88e112f7d
 +}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a452dcc5ebd87237b75d4e8f7d89880e3674d1b8
+index 0000000000000000000000000000000000000000..4e305138e8a1b6e469998551799460b46951769c
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,160 @@
 +using System.Text.Json;
++using System.Text.Json.Nodes;
 +using AgentSpeed.Core;
 +
 +namespace AgentSpeed.Core.Tests;
@@ -3690,9 +4114,39 @@ index 0000000000000000000000000000000000000000..a452dcc5ebd87237b75d4e8f7d89880e
 +        Assert.Equal(1.25, Assert.Single(snapshot.Windows).UsedFraction);
 +        Assert.Equal(TimeSpan.FromDays(7), snapshot.Windows[0].Duration);
 +        Assert.Null(snapshot.ResetCreditsAvailable);
++        Assert.Null(snapshot.AccountIdentity);
 +        Assert.Equal(Observed, snapshot.ObservedAt);
 +        Assert.True(session.Receive(Response(commands[0], "codex")));
 +        Assert.Equal("codex", (await codex).Id);
++    }
++
++    [Theory]
++    [InlineData(false)]
++    [InlineData(true)]
++    public async Task OptionalAccountIdentityPreservesLegacyAccountAndQuotaData(bool hasIdentity)
++    {
++        string command = "";
++        using var session = new RemoteQuotaSession((line, _) => { command = line; return Task.FromResult(true); });
++        var request = session.RequestAsync("codex", false, CancellationToken.None);
++        var response = JsonNode.Parse(Response(command, "codex"))!;
++        var row = response["snapshots"]![0]!;
++        row["account"] = null;
++        if (hasIdentity) row["accountIdentity"] = new JsonObject { ["id"] = "opaque-id", ["displayName"] = "Work" };
++        else row["accountIdentity"] = null;
++        row["resetCreditsAvailable"] = 2;
++        row["resetCreditsNextExpiry"] = "2026-11-16T12:00:00Z";
++        row["windows"]!.AsArray().Add(JsonNode.Parse("{\"id\":\"daily\",\"label\":\"Daily\",\"usedFraction\":0.5,\"resetAt\":\"2026-11-16T00:00:00Z\",\"duration\":86400}"));
++        Assert.True(session.Receive(response.ToJsonString()));
++        var snapshot = await request;
++        Assert.Null(snapshot.Account);
++        Assert.Equal(hasIdentity ? new QuotaAccountIdentity("opaque-id", "Work") : null, snapshot.AccountIdentity);
++        Assert.Equal(2, snapshot.Windows.Count);
++        Assert.Equal(1.25, snapshot.Windows[0].UsedFraction);
++        Assert.Equal(TimeSpan.FromDays(1), snapshot.Windows[1].Duration);
++        Assert.Equal(DateTimeOffset.Parse("2026-11-16T00:00:00Z"), snapshot.Windows[1].ResetAt);
++        Assert.Equal(2, snapshot.ResetCreditsAvailable);
++        Assert.Equal(DateTimeOffset.Parse("2026-11-16T12:00:00Z"), snapshot.ResetCreditsNextExpiry);
++        Assert.Equal(snapshot.AccountIdentity, (snapshot with { Id = "remote" }).AccountIdentity);
 +    }
 +
 +    [Fact]
@@ -3724,7 +4178,9 @@ index 0000000000000000000000000000000000000000..a452dcc5ebd87237b75d4e8f7d89880e
 +        string command = "";
 +        using var session = new RemoteQuotaSession((line, _) => { command = line; return Task.FromResult(true); });
 +        var request = session.RequestAsync("codex", true, CancellationToken.None);
-+        session.Receive(Response(command, "codex", "needsAuth"));
++        var response = JsonNode.Parse(Response(command, "codex", "needsAuth"))!;
++        response["snapshots"]![0]!["accountIdentity"] = new JsonObject { ["id"] = "opaque-id", ["displayName"] = "Work" };
++        session.Receive(response.ToJsonString());
 +        var rejected = await request;
 +        Assert.Equal(QuotaStatus.NeedsAuth, rejected.Status);
 +        Assert.Empty(rejected.Windows);
@@ -3732,6 +4188,7 @@ index 0000000000000000000000000000000000000000..a452dcc5ebd87237b75d4e8f7d89880e
 +        Assert.Null(rejected.Account);
 +        Assert.Null(rejected.Plan);
 +        Assert.Null(rejected.Credits);
++        Assert.Null(rejected.AccountIdentity);
 +    }
 +
 +    [Fact]
@@ -3842,7 +4299,7 @@ index 0000000000000000000000000000000000000000..b0f99956a3e7735e92e9d3ca015bc9f3
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index 5ffacd35388561c920e6b6775294068d0060100f..3de207a0e2a9c3a2f04eb1bb7b7baf20007335c6 100644
+index 9fda4750b804e393868ec7ecf1aad2775d7978da..859a34091ccafaf2b83c4f67f89b845ee1305ff5 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 @@ -11,6 +11,37 @@ namespace AgentSpeed.Windows.Tests;

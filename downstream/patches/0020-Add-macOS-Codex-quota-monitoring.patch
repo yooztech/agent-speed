@@ -1,6 +1,6 @@
-From efcdd52609492a9ca24e5ffa8f5f25cda8e8868c Mon Sep 17 00:00:00 2001
+From 91246268115167c110e43b521e52f5edf41df039 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 23:00:25 +0800
+Date: Mon, 16 Nov 2026 11:02:37 +0800
 Subject: [PATCH] Add macOS Codex quota monitoring
 
 ---
@@ -11,9 +11,10 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  .../AgentSpeed/App/LaunchOptions.swift        |   6 +
  .../AgentSpeed/App/QuotaController.swift      | 253 +++++++
  .../AgentSpeed/App/QuotaGlyphOutline.swift    | 102 +++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 644 ++++++++++++++++++
- .../AgentSpeed/App/QuotaNotchShape.swift      | 451 ++++++++++++
- .../App/QuotaNotchVisualHarness.swift         | 164 ++++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 701 ++++++++++++++++++
+ .../App/QuotaNotchContentLayout.swift         |  45 ++
+ .../AgentSpeed/App/QuotaNotchShape.swift      | 573 ++++++++++++++
+ .../App/QuotaNotchVisualHarness.swift         | 163 ++++
  .../App/QuotaRefreshScheduler.swift           |  94 +++
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
  .../AgentSpeed/Dashboard/DashboardView.swift  |  72 ++
@@ -21,26 +22,27 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  .../SettingsWindow/Panes/QuotaPane.swift      | 294 ++++++++
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
  .../AgentSpeed/Support/MenuFactory.swift      |   1 +
- .../AgentSpeedCore/CodexQuotaProvider.swift   | 360 ++++++++++
+ .../AgentSpeedCore/CodexQuotaProvider.swift   | 360 +++++++++
  macos/Sources/AgentSpeedCore/Quota.swift      | 138 ++++
- .../AgentSpeedCore/QuotaPersistence.swift     |  82 +++
- .../QuotaControllerTests.swift                | 585 ++++++++++++++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 280 ++++++++
+ .../AgentSpeedCore/QuotaPersistence.swift     |  82 ++
+ .../QuotaControllerTests.swift                | 585 +++++++++++++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 456 ++++++++++++
  .../QuotaPresentationTests.swift              | 172 +++++
- macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift | 93 ++++++++++++++++++++
- .../CodexQuotaProviderTests.swift             | 236 +++++++
- .../QuotaColdStartTests.swift                 | 202 ++++++
- .../QuotaLifecycleTests.swift                 | 191 ++++++
+ .../QuotaWarmStartupTests.swift               |  93 +++
+ .../CodexQuotaProviderTests.swift             | 236 ++++++
+ .../QuotaColdStartTests.swift                 | 202 +++++
+ .../QuotaLifecycleTests.swift                 | 191 +++++
  .../AgentSpeedCoreTests/QuotaTests.swift      |  48 ++
  macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 | 129 ++++
+ spec/QUOTA.md                                 | 131 ++++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 32 files changed, 4821 insertions(+), 2 deletions(-)
+ 33 files changed, 5222 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotch.swift
+ create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
@@ -52,6 +54,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
+ create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
  create mode 100644 macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
@@ -59,7 +62,6 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  create mode 100644 spec/QUOTA.md
  create mode 100644 spec/fixtures/codex-credit-quota.json
  create mode 100644 spec/fixtures/codex-quota.json
- create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift
 
 diff --git a/macos/Resources/Codenotch-LICENSE.txt b/macos/Resources/Codenotch-LICENSE.txt
 new file mode 100644
@@ -627,10 +629,10 @@ index 0000000000000000000000000000000000000000..b1a81438ef6eaf22f55adac0355ea9aa
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f14b1d7ed
+index 0000000000000000000000000000000000000000..13c0dd38cf38d331bf32fd7f3b905080d170d050
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,644 @@
+@@ -0,0 +1,701 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -654,6 +656,7 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +    let readingWidth: CGFloat
 +    let readingHeight: CGFloat
 +    var outerDiameter: CGFloat { NotchLayout.outerDiameter(windows.count) }
++    var cellMetrics: QuotaNotchCellMetrics { QuotaNotchCellMetrics(width: readingWidth, readingHeight: readingHeight, diameter: outerDiameter) }
 +
 +    init(providerID: String? = nil, snapshot: QuotaSnapshot?, networkEnabled: Bool, l10n: Localizer) {
 +        self.providerID = providerID ?? snapshot?.id ?? "codex"
@@ -763,33 +766,64 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +}
 +
 +
++enum QuotaGripLayer {
++    case vector(Path, clip: Path)
++    case raster(QuotaGripRaster, clip: Path)
++}
++
 +struct QuotaGripPaint {
-+    var contours: [Path] = []
++    var layers: [QuotaGripLayer] = []
++    var paint = Path()
 +    var hit = Path()
 +    var routes = Path()
 +
-+    init(geometry: QuotaNotchGeometry, frame: QuotaGripFrame, filter: QuotaGripFilter, scale: CGFloat) {
++    init(geometry: QuotaNotchGeometry, frame: QuotaGripFrame, filter: QuotaGripFilter, scale: CGFloat, acquired: Path? = nil, dark: Bool = true) {
 +        guard geometry.expansion >= 1 else { return }
 +        let center = geometry.orbCenter
-+        let clip = Path(ellipseIn: CGRect(x: center.x - 39.2, y: center.y - 39.2, width: 78.4, height: 78.4))
-+        var shapes: [QuotaOrbShape] = []
-+        if frame.entryArc > 0.001 { shapes.append(QuotaGripGeometry.goo(center, separation: frame.entryArc, returning: frame.entryReturning, quick: frame.entryQuick)) }
-+        if frame.disc > 0.001 || frame.reveal > 0.01 { shapes.append(QuotaGripGeometry.goo(center, separation: 1, returning: false, quick: false)) }
-+        shapes.append(QuotaGripGeometry.orb(center, frame: frame))
-+        for shape in shapes where !shape.source.isEmpty {
-+            let path = filter.contour(shape, scale: scale).intersection(clip).applying(geometry.transform)
-+            contours.append(path)
-+            hit = hit.union(path).union(quotaStrokeOutline(path, width: 1))
++        let clip = Path(ellipseIn: CGRect(x: center.x - 39.2, y: center.y - 39.2, width: 78.4, height: 78.4)).applying(geometry.transform)
++        if frame.entryArc > 0.001 {
++            append(QuotaGripGeometry.goo(center, separation: frame.entryArc, returning: frame.entryReturning, quick: frame.entryQuick),
++                   geometry: geometry, clip: clip, filter: filter, scale: scale, dark: dark)
 +        }
++        if frame.disc > 0.001 || frame.reveal > 0.01 {
++            append(QuotaGripGeometry.goo(center, separation: 1, returning: false, quick: false),
++                   geometry: geometry, clip: clip, filter: filter, scale: scale, dark: dark)
++        }
++        append(QuotaGripGeometry.orb(center, frame: frame), geometry: geometry, clip: clip, filter: filter, scale: scale, dark: dark)
 +        if frame.reveal > 0.01 {
 +            let drops = QuotaGripGeometry.drops(center, frame: frame)
-+            let path = filter.contour(drops.shape, scale: scale).applying(geometry.transform)
-+            contours.append(path)
-+            hit = hit.union(path).union(quotaStrokeOutline(path, width: 1))
++            let canvas = Path(CGRect(origin: .zero, size: geometry.size))
++            if drops.shape.liquid {
++                append(drops.shape, geometry: geometry, clip: canvas, filter: filter, scale: scale, dark: dark)
++            } else {
++                for index in 0..<6 {
++                    let dot = QuotaGripGeometry.drop(center, frame: frame, index: index)
++                    let path = Path(ellipseIn: CGRect(x: dot.center.x - dot.radius, y: dot.center.y - dot.radius, width: dot.radius * 2, height: dot.radius * 2))
++                    append(QuotaOrbShape(source: path), geometry: geometry, clip: canvas, filter: filter, scale: scale, dark: dark)
++                }
++            }
 +            routes = drops.hit.applying(geometry.transform)
 +        }
 +        routes = routes.union(QuotaGripGeometry.routes(center, frame: frame).applying(geometry.transform))
++        if let acquired { routes = routes.union(acquired) }
 +        hit = hit.union(routes)
++    }
++
++    private mutating func append(_ shape: QuotaOrbShape, geometry: QuotaNotchGeometry, clip: Path,
++                                 filter: QuotaGripFilter, scale: CGFloat, dark: Bool) {
++        guard !shape.source.isEmpty else { return }
++        let footprint: Path
++        if shape.liquid {
++            let raster = filter.render(shape, transform: geometry.transform, scale: scale, dark: dark)
++            layers.append(.raster(raster, clip: clip))
++            footprint = raster.input.intersection(clip)
++        } else {
++            let path = shape.source.applying(geometry.transform)
++            layers.append(.vector(path, clip: clip))
++            footprint = path.union(quotaStrokeOutline(path, width: 1)).intersection(clip)
++        }
++        paint = paint.union(footprint)
++        hit = hit.union(footprint)
 +    }
 +}
 +
@@ -808,13 +842,23 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +                geometry.bodyPath.stroke(edge, lineWidth: 1)
 +                ForEach(Array(readings.enumerated()), id: \.element.providerID) { index, reading in
 +                    QuotaNotchCell(reading: reading, dark: dark)
-+                        .position(x: geometry.centers[index].x, y: geometry.centers[index].y + reading.readingHeight / 2 + 2)
++                        .position(x: geometry.centers[index].x, y: geometry.centers[index].y + reading.readingHeight / 2 + QuotaNotchContentLayout.readingGap / 2)
 +                        .opacity(Double(geometry.expansion))
 +                }
 +                .mask(geometry.bodyPath.fill(.white))
 +            }
-+            ForEach(grip.contours.indices, id: \.self) { index in
-+                grip.contours[index].fill(fill).overlay(grip.contours[index].stroke(edge, lineWidth: 1))
++            ForEach(grip.layers.indices, id: \.self) { index in
++                switch grip.layers[index] {
++                case let .vector(path, clip):
++                    path.fill(fill).overlay(path.stroke(edge, lineWidth: 1)).clipShape(clip)
++                case let .raster(raster, clip):
++                    Image(decorative: raster.image, scale: 1)
++                        .resizable().interpolation(.none)
++                        .frame(width: raster.bounds.width, height: raster.bounds.height)
++                        .position(x: raster.bounds.midX, y: raster.bounds.midY)
++                        .frame(width: geometry.size.width, height: geometry.size.height)
++                        .clipShape(clip)
++                }
 +            }
 +            grip.routes.fill(Color.black.opacity(1 / 255))
 +        }
@@ -828,7 +872,7 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +    let reading: QuotaNotchReading
 +    let dark: Bool
 +    var body: some View {
-+        VStack(spacing: 4) {
++        VStack(spacing: QuotaNotchContentLayout.readingGap) {
 +            ZStack {
 +                Circle().fill(dark ? Color(white: 42 / 255) : .white)
 +                    .overlay(Circle().stroke(dark ? Color(white: 57 / 255) : Color(white: 214 / 255), lineWidth: 0.5))
@@ -980,13 +1024,15 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +    private var geometry: QuotaNotchGeometry?
 +    private var gripPaint: QuotaGripPaint?
 +    private var motion = QuotaGripMotion(), expansion = QuotaMotionTrack()
++    private var gripIntent = QuotaGripIntent()
++    private var gripEnvelope: Path?
 +    private var animation: Task<Void, Never>?, clock: Task<Void, Never>?
 +    private var displayNow = Date()
 +    private var edge: NotchEdge
 +    private var along: CGFloat
 +    private var displayID: UInt32?
-+    private var cellSize = CGSize(width: 56, height: 80)
-+    private var ringSize: CGFloat = 56
++    private var verticalLayout = QuotaNotchContentLayout(cells: [], horizontal: false)
++    private var horizontalLayout = QuotaNotchContentLayout(cells: [], horizontal: true)
 +    private var stopped = false, visible = false, reducedMotion = false, dark = true
 +    private var pressPoint: CGPoint?, pressedRegion = QuotaNotchHover.Region.outside
 +    private var pendingDrag = false, dragging = false
@@ -1052,8 +1098,9 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +        readings = state.4.map { provider in
 +            QuotaNotchReading(providerID: provider.id, snapshot: state.3.first { $0.id == provider.id }, networkEnabled: state.6, l10n: model.l10n)
 +        }
-+        ringSize = readings.map(\.outerDiameter).max() ?? 52
-+        cellSize = CGSize(width: max(ringSize, readings.map(\.readingWidth).max() ?? 52), height: max(80, ringSize + 4 + (readings.map(\.readingHeight).max() ?? 20)))
++        let cells = readings.map(\.cellMetrics)
++        verticalLayout = QuotaNotchContentLayout(cells: cells, horizontal: false)
++        horizontalLayout = QuotaNotchContentLayout(cells: cells, horizontal: true)
 +        hover.keepExpanded = state.5
 +        cardMeasureDirty = true
 +        if let active = hover.activeSource, !readings.contains(where: { $0.providerID == active }) { hover.dismissCard() }
@@ -1070,7 +1117,7 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +        let time = now, target: CGFloat = hover.expanded ? 1 : 0
 +        if expansion.target != target { expansion.to(target, now: time, duration: 0.22) }
 +        let expanded = target == 1 && (reducedMotion || expansion.value >= 1)
-+        motion.setTargets(expanded: expanded, reveal: expanded && (hover.region == .grip || hover.held), hover: hover.region == .grip,
++        motion.setTargets(expanded: expanded, reveal: expanded && (gripIntent.acquired || hover.held), hover: gripIntent.acquired,
 +                          held: hover.held, now: time, reducedMotion: reducedMotion)
 +        if reducedMotion { expansion.snap(target); animation?.cancel(); animation = nil }
 +        render()
@@ -1082,7 +1129,7 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +                    let time = self.now
 +                    self.expansion.sample(time); self.motion.sample(time)
 +                    self.motion.setTargets(expanded: self.expansion.target == 1 && self.expansion.value >= 1,
-+                                           reveal: self.hover.region == .grip || self.hover.held, hover: self.hover.region == .grip,
++                                           reveal: self.gripIntent.acquired || self.hover.held, hover: self.gripIntent.acquired,
 +                                           held: self.hover.held, now: time, reducedMotion: false)
 +                    self.render(); self.pointerMoved(NSEvent.mouseLocation)
 +                    if !self.expansion.active && !self.motion.active { self.animation = nil; return }
@@ -1094,9 +1141,9 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +    private func render() {
 +        guard visible && !stopped, let screen else { return }
 +        displayID = Self.id(screen)
-+        let geometry = QuotaNotchGeometry(edge: edge, expansion: expansion.value, count: readings.count, cellSize: cellSize, ringSize: ringSize)
++        let geometry = QuotaNotchGeometry(edge: edge, expansion: expansion.value, layout: edge.isVertical ? verticalLayout : horizontalLayout)
 +        self.geometry = geometry
-+        let grip = QuotaGripPaint(geometry: geometry, frame: motion.frame, filter: filter, scale: screen.backingScaleFactor)
++        let grip = QuotaGripPaint(geometry: geometry, frame: motion.frame, filter: filter, scale: screen.backingScaleFactor, acquired: gripEnvelope, dark: dark)
 +        gripPaint = grip
 +        let frame = geometry.panelFrame(on: screen.visibleFrame, along: along)
 +        if panel.frame != frame { panel.setFrame(frame, display: true) }
@@ -1188,7 +1235,7 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +        if card.isVisible && cardHosting.input.contains(local(point, in: card)) { return .tooltip }
 +        guard let geometry else { return .outside }
 +        let point = local(point, in: panel)
-+        if gripPaint?.hit.contains(point) == true { return .grip }
++        if gripIntent.acquired { return .grip }
 +        guard geometry.bodyPath.contains(point) else { return .outside }
 +        if expansion.value > 0 {
 +            for (index, rect) in geometry.cellRects.enumerated() where rect.contains(point) { return .cell(readings[index].providerID) }
@@ -1197,17 +1244,28 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +    }
 +    private func pointerMoved(_ point: CGPoint) {
 +        guard visible && !stopped else { return }
-+        updateInterception(point)
-+        guard !pointer.isForeignDragActive && !dragging && !pendingDrag else { return }
++        guard !pointer.isForeignDragActive && !dragging && !pendingDrag else { updateInterception(point); return }
++        let localPoint = local(point, in: panel)
++        let wasAcquired = gripIntent.acquired
++        let acquired = gripIntent.update(point, entry: gripPaint?.hit.contains(localPoint) == true,
++                                         envelope: gripEnvelope?.contains(localPoint) == true, held: hover.held)
++        if acquired && !wasAcquired, let geometry, let gripPaint {
++            gripEnvelope = QuotaGripGeometry.activation(geometry.orbCenter).applying(geometry.transform).union(gripPaint.hit)
++        }
++        else if !acquired { gripEnvelope = nil }
 +        let next = region(point)
 +        if case .cell = next, hover.region != next { displayNow = Date(); cardMeasureDirty = true }
++        let regionChanged = hover.region != next
 +        hover.move(to: next)
++        if wasAcquired != acquired && !regionChanged { interactionChanged() }
++        updateInterception(point)
 +    }
 +
 +    private func press(_ event: NSEvent) {
 +        guard visible, let geometry else { return }
 +        let point = NSEvent.mouseLocation
-+        pressedRegion = region(point); pressPoint = point
++        pressedRegion = gripPaint?.hit.contains(local(point, in: panel)) == true ? .grip : region(point)
++        pressPoint = point
 +        pendingDrag = pressedRegion == .grip || (pressedRegion == .bar && event.modifierFlags.contains(.option))
 +        let pointInPanel = local(point, in: panel)
 +        grabOffset = (edge.isVertical ? pointInPanel.y : pointInPanel.x) - geometry.bodyCenterAlong
@@ -1239,7 +1297,7 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +            model.settings.storage.set(displayID, forKey: "quota.notchMonitor")
 +        } else if pressedRegion == region(point), case .cell = pressedRegion { model.quota.refresh() }
 +        pressPoint = nil; pendingDrag = false; dragging = false; pressedRegion = .outside; hover.held = false
-+        hover.move(to: region(point)); if hover.region == .outside { hover.startGrace() }; interactionChanged()
++        pointerMoved(point); if hover.region == .outside { hover.startGrace() }; interactionChanged()
 +    }
 +    private func showMenu(_ event: NSEvent, view: NSView?) {
 +        guard let view, !dragging, !hover.menuOpen else { return }
@@ -1265,6 +1323,7 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +    private func stopInteraction() {
 +        animation?.cancel(); animation = nil; clock?.cancel(); clock = nil
 +        hover.reset(); expansion.snap(0); motion = QuotaGripMotion()
++        gripIntent.reset(); gripEnvelope = nil
 +        pressPoint = nil; pendingDrag = false; dragging = false; pressedRegion = .outside
 +        panel.ignoresMouseEvents = true; card.ignoresMouseEvents = true; card.orderOut(nil)
 +    }
@@ -1275,12 +1334,63 @@ index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f
 +        QuotaGlyphOutline.path.applying(CGAffineTransform(a: rect.width, b: 0, c: 0, d: rect.height, tx: rect.minX, ty: rect.minY))
 +    }
 +}
+diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift b/macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..74fc14b07e9a09769bfcaea3b019b8cbd072680c
+--- /dev/null
++++ b/macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift
+@@ -0,0 +1,45 @@
++import Foundation
++
++/// Upright measured content, independent of native paint and provider identity.
++struct QuotaNotchCellMetrics {
++    let width: CGFloat
++    let readingHeight: CGFloat
++    let diameter: CGFloat
++    var size: CGSize { CGSize(width: max(diameter, width), height: diameter + QuotaNotchContentLayout.readingGap + readingHeight) }
++}
++
++/// Cached when readings change; animation only projects these offsets onto the current body.
++struct QuotaNotchContentLayout {
++    static let padding: CGFloat = 8
++    static let cellGap: CGFloat = 8
++    static let readingGap: CGFloat = 4
++    let cells: [QuotaNotchCellMetrics]
++    let horizontal: Bool
++    let offsets: [CGFloat]
++    let length: CGFloat
++    let depth: CGFloat
++
++    init(cells: [QuotaNotchCellMetrics], horizontal: Bool) {
++        self.cells = cells; self.horizontal = horizontal
++        var offsets: [CGFloat] = []
++        offsets.reserveCapacity(cells.count)
++        var along = Self.padding, width: CGFloat = 52, diameter: CGFloat = 52, readingHeight: CGFloat = 20
++        for cell in cells {
++            offsets.append(along)
++            along += (horizontal ? cell.size.width : cell.size.height) + Self.cellGap
++            width = max(width, cell.size.width)
++            diameter = max(diameter, cell.diameter)
++            readingHeight = max(readingHeight, cell.readingHeight)
++        }
++        self.offsets = offsets
++        length = max(80, cells.isEmpty ? 2 * Self.padding : along - Self.cellGap + Self.padding)
++        // Preserve the existing cross-edge footprint, not a uniform maximum-height cell pitch.
++        depth = horizontal ? max(98, max(80, diameter + Self.readingGap + readingHeight) + 18) : max(70, width + 14)
++    }
++
++    func center(index: Int, bodyStart: CGFloat, bodyDepth: CGFloat, bottom: Bool) -> CGPoint {
++        let cell = cells[index]
++        let x = horizontal ? (bottom ? bodyDepth - 6 - cell.diameter / 2 : 6 + cell.diameter / 2) : bodyDepth / 2
++        return CGPoint(x: x, y: bodyStart + offsets[index] + (horizontal ? cell.size.width : cell.diameter) / 2)
++    }
++}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a71888dcc5b26
+index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08ce52b95b1
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
-@@ -0,0 +1,451 @@
+@@ -0,0 +1,573 @@
 +import AgentSpeedCore
 +import AppKit
 +import SwiftUI
@@ -1387,6 +1497,20 @@ index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a7188
 +    mutating func snap(_ target: CGFloat) { value = target; velocity = 0 }
 +}
 +
++/// Intent follows physical pointer entry, never animation moving under a pointer.
++struct QuotaGripIntent {
++    private(set) var acquired = false
++    private var previous: CGPoint?
++    mutating func update(_ point: CGPoint, entry: Bool, envelope: Bool, held: Bool = false) -> Bool {
++        let moved = previous != nil && previous != point
++        previous = point
++        if acquired { acquired = held || envelope }
++        else if moved && entry { acquired = true }
++        return acquired
++    }
++    mutating func reset() { acquired = false; previous = nil }
++}
++
 +struct QuotaGripMotion {
 +    private var arc = QuotaMotionTrack(), disc = QuotaMotionTrack(), reveal = QuotaMotionTrack()
 +    private var hover = QuotaGripSpring(response: 0.22, damping: 0.55)
@@ -1461,14 +1585,11 @@ index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a7188
 +    let centers: [CGPoint]
 +    let cellRects: [CGRect]
 +    let expansion: CGFloat
-+    let cellSize: CGSize
-+    let ringSize: CGFloat
 +
-+    init(edge: NotchEdge, expansion: CGFloat, count: Int, cellSize: CGSize, ringSize: CGFloat) {
-+        self.edge = edge; self.expansion = expansion; self.cellSize = cellSize; self.ringSize = ringSize
-+        let horizontal = !edge.isVertical
-+        let length = max(80, 24 + CGFloat(max(1, count)) * (horizontal ? cellSize.width : cellSize.height) + CGFloat(max(0, count - 1)) * 14)
-+        let openDepth = horizontal ? max(98, cellSize.height + 18) : max(70, cellSize.width + 14)
++    init(edge: NotchEdge, expansion: CGFloat, layout: QuotaNotchContentLayout) {
++        self.edge = edge; self.expansion = expansion
++        let horizontal = layout.horizontal
++        let length = layout.length, openDepth = layout.depth
 +        let envelopeDepth = openDepth + 0.5
 +        let envelopeLength = 2 * NotchLayout.curlRadius + length + NotchLayout.discRadius + 12
 +        bodyCenterAlong = NotchLayout.curlRadius + length / 2 + 0.5
@@ -1506,12 +1627,13 @@ index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a7188
 +        }
 +        bodyPath = path.applying(transform)
 +        orbCenter = CGPoint(x: NotchLayout.curlRadius, y: (start + end) / 2 + length / 2 + NotchLayout.curlRadius)
-+        let ringX = horizontal ? (edge == .bottom ? depth - 6 - ringSize / 2 : 6 + ringSize / 2) : depth / 2
-+        let ringY = start + 12 + (horizontal ? cellSize.width : ringSize) / 2
-+        let pitch = (horizontal ? cellSize.width : cellSize.height) + 14
 +        let edgeTransform = transform
-+        centers = (0..<count).map { CGPoint(x: ringX, y: ringY + CGFloat($0) * pitch).applying(edgeTransform) }
-+        cellRects = centers.map { CGRect(x: $0.x - cellSize.width / 2, y: $0.y - ringSize / 2, width: cellSize.width, height: cellSize.height) }
++        let positions = layout.cells.indices.map { layout.center(index: $0, bodyStart: start, bodyDepth: depth, bottom: edge == .bottom).applying(edgeTransform) }
++        centers = positions
++        cellRects = layout.cells.indices.map { index in
++            let cell = layout.cells[index], center = positions[index]
++            return CGRect(x: center.x - cell.size.width / 2, y: center.y - cell.diameter / 2, width: cell.size.width, height: cell.size.height)
++        }
 +    }
 +
 +    func panelFrame(on screen: CGRect, along: CGFloat) -> CGRect {
@@ -1573,7 +1695,7 @@ index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a7188
 +        guard width >= 0.4 else { return QuotaOrbShape() }
 +        let half = max(0.004, unrolled / 2), liquid = blur > 0.2
 +        var source = stroke(quarter(center, radius: radius, from: unrolled >= 0.999 ? 0 : 0.5 - half,
-+                                    to: unrolled >= 0.999 ? 1 : 0.5 + half, shift: s * slide), width + (liquid ? blur * 0.4 : 0))
++                                    to: unrolled >= 0.999 ? 1 : 0.5 + half, shift: s * slide), width + (liquid ? blur * 0.4 + 2 : 0))
 +        if liquid {
 +            let neck = returning ? (quick ? 0 : fill * 1.1 * quotaSmooth((0.94 - t) / 0.1)) : fill * 1.1 * (1 - quotaSmooth((t - 0.2) / 0.5))
 +            if neck > fill * 0.18 {
@@ -1618,6 +1740,15 @@ index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a7188
 +        }
 +        return goo(center, separation: frame.arc, returning: frame.returning, quick: frame.quick)
 +    }
++    static func drop(_ center: CGPoint, frame: QuotaGripFrame, index: Int) -> (center: CGPoint, radius: CGFloat) {
++        let t = min(max(frame.reveal, 0), 1)
++        let moved = CGPoint(x: center.x, y: center.y + 8 * quotaSmooth(t / 0.6) + 1.44 * sin(.pi * min(t / 0.8, 1)))
++        let spread = quotaSmooth((t - 0.32 - 0.015 * CGFloat(index)) / 0.4)
++        let pitch = NotchLayout.gripPitch * spread * (1 - 0.18 * frame.squeeze)
++        let radius = 4 * (1 + 0.3 * frame.hover) * (1 - 0.3 * frame.squeeze) * (1 + 1.9 * (1 - spread)) * quotaSmooth(t / 0.12)
++        return (CGPoint(x: moved.x + CGFloat(index % 3 - 1) * pitch, y: moved.y + CGFloat(index / 3 * 2 - 1) * pitch / 2), radius)
++    }
++
 +    static func drops(_ center: CGPoint, frame: QuotaGripFrame) -> (shape: QuotaOrbShape, hit: Path) {
 +        let t = min(max(frame.reveal, 0), 1), blur = 2.7 * (1 - quotaSmooth((t - 0.42) / 0.36))
 +        let liquid = t > 0.01 && blur > 0.27
@@ -1628,11 +1759,8 @@ index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a7188
 +        let neck = 20.5 * 0.55 * (1 - quotaSmooth((t - 0.25) / 0.35))
 +        if liquid && neck > 0.45 { source = source.union(strand(center, moved, basis: 20.5 * 0.4, pinch: neck / 2, top: 20.5 * 0.25)) }
 +        for index in 0..<6 {
-+            let spread = quotaSmooth((t - 0.32 - 0.015 * CGFloat(index)) / 0.4)
-+            let pitch = NotchLayout.gripPitch * spread * (1 - 0.18 * frame.squeeze)
-+            let radius = 4 * (1 + 0.3 * frame.hover) * (1 - 0.3 * frame.squeeze) * (1 + 1.9 * (1 - spread)) * quotaSmooth(t / 0.12)
-+            let point = CGPoint(x: moved.x + CGFloat(index % 3 - 1) * pitch, y: moved.y + CGFloat(index / 3 * 2 - 1) * pitch / 2)
-+            let rect = CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)
++            let dot = drop(center, frame: frame, index: index)
++            let rect = CGRect(x: dot.center.x - dot.radius, y: dot.center.y - dot.radius, width: dot.radius * 2, height: dot.radius * 2)
 +            source = source.union(Path(ellipseIn: rect)); box = box.union(rect)
 +        }
 +        var hit = Path()
@@ -1650,16 +1778,12 @@ index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a7188
 +        if frame.disc > 0.001 || frame.reveal > 0.01 {
 +            let drops = drops(center, frame: frame).hit.boundingRect
 +            // Straight narrow routes from the visible arc endpoints/midpoint to current drops.
-+            let t = min(max(frame.reveal, 0), 1)
-+            let moved = CGPoint(x: center.x, y: center.y + 8 * quotaSmooth(t / 0.6) + 1.44 * sin(.pi * min(t / 0.8, 1)))
 +            if !drops.isNull {
 +                for anchor in 0..<3 {
 +                    let angle = CGFloat.pi + CGFloat(anchor) * .pi / 4
 +                    let a = CGPoint(x: center.x + NotchLayout.arcRadius * cos(angle), y: center.y + NotchLayout.arcRadius * sin(angle))
 +                    for index in 0..<6 {
-+                        let spread = quotaSmooth((t - 0.32 - 0.015 * CGFloat(index)) / 0.4)
-+                        let pitch = NotchLayout.gripPitch * spread * (1 - 0.18 * frame.squeeze)
-+                        let b = CGPoint(x: moved.x + CGFloat(index % 3 - 1) * pitch, y: moved.y + CGFloat(index / 3 * 2 - 1) * pitch / 2)
++                        let b = drop(center, frame: frame, index: index).center
 +                        path = path.union(strand(a, b, basis: 4, pinch: 4, top: 4))
 +                    }
 +                }
@@ -1667,77 +1791,185 @@ index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a7188
 +        }
 +        return path
 +    }
++
++    /// Fixed acquired intent covers the original disc, final dots and narrow
++    /// connecting routes. None of this envelope is input before real grip entry.
++    static func activation(_ center: CGPoint) -> Path {
++        let frame = QuotaGripFrame(reveal: 1, hover: 1.3, arc: 1)
++        let radius = NotchLayout.discRadius + 0.5
++        let disc = Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
++        return routes(center, frame: frame).union(drops(center, frame: frame).hit)
++            .union(stroke(quarter(center, radius: NotchLayout.arcRadius), NotchLayout.arcFill + 2))
++            .union(disc)
++    }
 +}
 +
-+/// The filtered outline is painted and hit-tested as the same path. No rectangular
-+/// orb fallback or continuously running Canvas/timeline is involved.
-+final class QuotaGripFilter {
-+    private var alpha: [UInt8] = []
-+    private var horizontal: [CGFloat] = []
-+    private var blurred: [CGFloat] = []
-+    private var kernel: [CGFloat] = []
++/// Windows GaussianBlur → clamp(18 * alpha - 8.5) → square erosion.
++/// Float convolution and ties-to-even byte conversion match the portable reference.
++/// Buffers grow only when necessary; no per-pixel allocation or binary re-thresholding.
++final class QuotaGripAlphaFilter {
++    private(set) var outer: [UInt8] = []
++    private(set) var inner: [UInt8] = []
++    private var working: [Float] = [], horizontal: [Float] = [], kernel: [Float] = []
++    private var minimum: [UInt8] = []
 +
-+    func contour(_ shape: QuotaOrbShape, scale: CGFloat) -> Path {
-+        guard shape.liquid && shape.blur > 0.2 else { return shape.source }
-+        let sigma = shape.blur * scale
-+        let radius = max(1, Int(ceil(sigma * 3)))
-+        let bounds = shape.source.boundingRect.insetBy(dx: -CGFloat(radius) / scale, dy: -CGFloat(radius) / scale).integral
-+        let width = max(1, Int(ceil(bounds.width * scale))), height = max(1, Int(ceil(bounds.height * scale))), count = width * height
-+        if alpha.count < count { alpha = [UInt8](repeating: 0, count: count); horizontal = [CGFloat](repeating: 0, count: count); blurred = [CGFloat](repeating: 0, count: count) }
-+        let source = shape.source.cgPath
++    static func threshold(_ value: Float) -> UInt8 {
++        UInt8(min(max(18 * value - 8.5 * 255, 0), 255).rounded(.toNearestOrEven))
++    }
++
++    /// Premultiplied BGRA, exactly the Windows QuotaNotchGoo composition contract.
++    static func composite(outer: UInt8, inner: UInt8, rim: SIMD3<UInt8>, fill: SIMD3<UInt8>) -> SIMD4<UInt8> {
++        let outside = Double(outer) / 255, inside = Double(inner) / 255
++        let under = outside * (1 - inside)
++        func byte(_ value: Double) -> UInt8 { UInt8(min(max(value.rounded(.toNearestOrEven), 0), 255)) }
++        return SIMD4(byte(Double(fill.z) * inside + Double(rim.z) * under),
++                     byte(Double(fill.y) * inside + Double(rim.y) * under),
++                     byte(Double(fill.x) * inside + Double(rim.x) * under),
++                     byte((inside + under) * 255))
++    }
++
++    func apply(width: Int, height: Int, sigma: Double, scale: Double, source: [UInt8]) {
++        let count = width * height, deviation = sigma * scale
++        let radius = Int(ceil(3 * deviation)), erosion = Int(ceil(scale))
++        if outer.count < count {
++            outer = [UInt8](repeating: 0, count: count)
++            inner = [UInt8](repeating: 0, count: count); minimum = [UInt8](repeating: 0, count: count)
++            working = [Float](repeating: 0, count: count); horizontal = [Float](repeating: 0, count: count)
++        }
++        if radius == 0 {
++            for index in 0..<count { outer[index] = Self.threshold(Float(source[index])) }
++        } else {
++            let kernelSize = 2 * radius + 1
++            if kernel.count < kernelSize { kernel = [Float](repeating: 0, count: kernelSize) }
++            var total: Double = 0
++            for offset in -radius...radius {
++                let value = exp(-0.5 * Double(offset * offset) / (deviation * deviation))
++                kernel[offset + radius] = Float(value); total += value
++            }
++            for index in 0..<kernelSize { kernel[index] = Float(Double(kernel[index]) / total) }
++            for index in 0..<count { working[index] = Float(source[index]) }
++            for y in 0..<height {
++                let row = y * width
++                for x in 0..<width {
++                    var sum: Float = 0
++                    for offset in max(-radius, -x)...min(radius, width - 1 - x) {
++                        let product = working[row + x + offset] * kernel[offset + radius]
++                        sum += product
++                    }
++                    horizontal[row + x] = sum
++                }
++            }
++            for y in 0..<height {
++                for x in 0..<width {
++                    var sum: Float = 0
++                    for offset in max(-radius, -y)...min(radius, height - 1 - y) {
++                        let product = horizontal[(y + offset) * width + x] * kernel[offset + radius]
++                        sum += product
++                    }
++                    outer[y * width + x] = Self.threshold(sum)
++                }
++            }
++        }
++        if erosion >= width - erosion || erosion >= height - erosion {
++            for index in 0..<count { inner[index] = 0 }
++            return
++        }
++        for y in 0..<height {
++            for x in 0..<width {
++                var value: UInt8 = 0
++                if x >= erosion && x < width - erosion {
++                    value = 255
++                    for offset in -erosion...erosion { value = min(value, outer[y * width + x + offset]) }
++                }
++                minimum[y * width + x] = value
++            }
++        }
++        for y in 0..<height {
++            for x in 0..<width {
++                var value: UInt8 = 0
++                if x >= erosion && x < width - erosion && y >= erosion && y < height - erosion {
++                    value = 255
++                    for offset in -erosion...erosion { value = min(value, minimum[(y + offset) * width + x]) }
++                }
++                inner[y * width + x] = value
++            }
++        }
++    }
++}
++
++struct QuotaGripRaster {
++    let image: CGImage
++    let bounds: CGRect
++    let input: Path
++}
++
++/// Paint and native input share the outer alpha mask. Liquid paint is not stroked
++/// a second time: its one-DIP rim is the eroded-inner/outer raster composition.
++final class QuotaGripFilter {
++    private let filter = QuotaGripAlphaFilter()
++    private var source: [UInt8] = [], pixels: [UInt8] = []
++    private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
++
++    func render(_ shape: QuotaOrbShape, transform: CGAffineTransform, scale: CGFloat, dark: Bool) -> QuotaGripRaster {
++        let scale = max(scale, 1)
++        let path = shape.source.applying(transform).cgPath
++        let extent = path.boundingBoxOfPath
++        let padding = ceil(3 * shape.blur * scale + scale)
++        let left = floor(extent.minX * scale) - padding, top = floor(extent.minY * scale) - padding
++        let width = Int(ceil(extent.maxX * scale) - left + padding)
++        let height = Int(ceil(extent.maxY * scale) - top + padding), count = width * height
++        if source.count < count { source = [UInt8](repeating: 0, count: count) }
++        if pixels.count < count * 4 { pixels = [UInt8](repeating: 0, count: count * 4) }
 +        for y in 0..<height {
 +            for x in 0..<width {
 +                var coverage = 0
 +                for subY in 0..<2 {
 +                    for subX in 0..<2 {
-+                        let dx = (CGFloat(subX) + 0.5) / 2, dy = (CGFloat(subY) + 0.5) / 2
-+                        if source.contains(CGPoint(x: bounds.minX + (CGFloat(x) + dx) / scale,
-+                                                   y: bounds.minY + (CGFloat(y) + dy) / scale)) { coverage += 1 }
++                        if path.contains(CGPoint(x: (left + CGFloat(x) + (CGFloat(subX) + 0.5) / 2) / scale,
++                                                 y: (top + CGFloat(y) + (CGFloat(subY) + 0.5) / 2) / scale)) { coverage += 1 }
 +                    }
 +                }
-+                alpha[y * width + x] = UInt8(coverage * 255 / 4)
++                source[y * width + x] = UInt8(coverage * 255 / 4)
 +            }
 +        }
-+        if kernel.count < 2 * radius + 1 { kernel = [CGFloat](repeating: 0, count: 2 * radius + 1) }
-+        var sum: CGFloat = 0
-+        for offset in -radius...radius {
-+            let value = exp(-CGFloat(offset * offset) / (2 * sigma * sigma))
-+            kernel[offset + radius] = value; sum += value
++        filter.apply(width: width, height: height, sigma: Double(shape.blur), scale: Double(scale), source: source)
++        let rim: SIMD3<UInt8> = dark ? SIMD3(repeating: 46) : SIMD3(210, 210, 215)
++        let fill: SIMD3<UInt8> = dark ? SIMD3(repeating: 0) : SIMD3(245, 245, 247)
++        for index in 0..<count {
++            let color = QuotaGripAlphaFilter.composite(outer: filter.outer[index], inner: filter.inner[index], rim: rim, fill: fill)
++            let pixel = index * 4
++            pixels[pixel] = color.x; pixels[pixel + 1] = color.y; pixels[pixel + 2] = color.z; pixels[pixel + 3] = color.w
 +        }
-+        for y in 0..<height {
-+            for x in 0..<width {
-+                var value: CGFloat = 0
-+                for k in -radius...radius where x + k >= 0 && x + k < width { value += CGFloat(alpha[y * width + x + k]) * kernel[k + radius] }
-+                horizontal[y * width + x] = value / sum
-+            }
-+        }
-+        for y in 0..<height {
-+            for x in 0..<width {
-+                var value: CGFloat = 0
-+                for k in -radius...radius where y + k >= 0 && y + k < height { value += horizontal[(y + k) * width + x] * kernel[k + radius] }
-+                blurred[y * width + x] = value / sum
-+            }
-+        }
-+        var path = Path()
++        // The immutable image must own its bytes; scratch remains reusable next frame.
++        let data = pixels.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: count * 4) }
++        let provider = CGDataProvider(data: data as CFData)!
++        let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
++                            bytesPerRow: width * 4, space: colorSpace,
++                            bitmapInfo: CGBitmapInfo.byteOrder32Little.union(CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)),
++                            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
++        var input = Path()
 +        for y in 0..<height {
 +            var x = 0
 +            while x < width {
-+                if blurred[y * width + x] < 127.5 { x += 1; continue }
++                while x < width && filter.outer[y * width + x] == 0 { x += 1 }
 +                let start = x
-+                while x < width && blurred[y * width + x] >= 127.5 { x += 1 }
-+                path.addRect(CGRect(x: bounds.minX + CGFloat(start) / scale, y: bounds.minY + CGFloat(y) / scale,
-+                                    width: CGFloat(x - start) / scale, height: 1 / scale))
++                while x < width && filter.outer[y * width + x] != 0 { x += 1 }
++                if start < x {
++                    input.addRect(CGRect(x: (left + CGFloat(start)) / scale, y: (top + CGFloat(y)) / scale,
++                                         width: CGFloat(x - start) / scale, height: 1 / scale))
++                }
 +            }
 +        }
-+        return path.normalized(eoFill: false)
++        return QuotaGripRaster(image: image, bounds: CGRect(x: left / scale, y: top / scale,
++                                                           width: CGFloat(width) / scale, height: CGFloat(height) / scale), input: input)
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..475fc7862d1f90eb776c6cfe7c94cbbe64a3f4ce
+index 0000000000000000000000000000000000000000..98ef66f4cb7bcdbb2687b1b18390abbbb88ffe2e
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,163 @@
 +#if DEBUG
 +import AgentSpeedCore
 +import AppKit
@@ -1818,10 +2050,9 @@ index 0000000000000000000000000000000000000000..475fc7862d1f90eb776c6cfe7c94cbbe
 +                for scale in [CGFloat(1), 2] {
 +                    for (state, frame) in states {
 +                        let readings = [reading("codex", state: state)]
-+                        let ring = readings.map(\.outerDiameter).max() ?? 56
-+                        let cell = CGSize(width: max(ring, readings.map(\.readingWidth).max() ?? 56), height: max(80, ring + 4 + (readings.map(\.readingHeight).max() ?? 20)))
-+                        let geometry = QuotaNotchGeometry(edge: edge, expansion: state == "folded" ? 0 : 1, count: readings.count, cellSize: cell, ringSize: ring)
-+                        let grip = QuotaGripPaint(geometry: geometry, frame: frame, filter: filter, scale: scale)
++                        let layout = QuotaNotchContentLayout(cells: readings.map(\.cellMetrics), horizontal: !edge.isVertical)
++                        let geometry = QuotaNotchGeometry(edge: edge, expansion: state == "folded" ? 0 : 1, layout: layout)
++                        let grip = QuotaGripPaint(geometry: geometry, frame: frame, filter: filter, scale: scale, dark: dark)
 +                        let view = QuotaNotchView(readings: readings, geometry: geometry, grip: grip, dark: dark)
 +                        let bitmap = try render(view, scale: scale)
 +                        let name = "native-notch-\(edge.rawValue)-\(dark ? "dark" : "light")-\(state)@\(Int(scale))x.png"
@@ -3744,10 +3975,10 @@ index 0000000000000000000000000000000000000000..ead924c28ea2ac140b1ce2b78be43130
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..bc218bd73e1ee9d3824d85efff8affd520a771fb
+index 0000000000000000000000000000000000000000..e5a66013c38e9e6c00888bda629d2ee8667a64f5
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,456 @@
 +import AppKit
 +import SwiftUI
 +import Testing
@@ -3773,7 +4004,7 @@ index 0000000000000000000000000000000000000000..bc218bd73e1ee9d3824d85efff8affd5
 +        QuotaNotchReading(snapshot: snapshot, networkEnabled: enabled, l10n: Localizer(preference: .en))
 +    }
 +    private func geometry(_ edge: NotchEdge, expanded: Bool = true, count: Int = 2) -> QuotaNotchGeometry {
-+        QuotaNotchGeometry(edge: edge, expansion: expanded ? 1 : 0, count: count, cellSize: CGSize(width: 300, height: 108), ringSize: NotchLayout.outerDiameter(3))
++        QuotaNotchGeometry(edge: edge, expansion: expanded ? 1 : 0, layout: QuotaNotchContentLayout(cells: Array(repeating: QuotaNotchCellMetrics(width: 300, readingHeight: 40, diameter: NotchLayout.outerDiameter(3)), count: count), horizontal: !edge.isVertical))
 +    }
 +
 +    private final class Clock: PerfCardScheduling {
@@ -3845,6 +4076,28 @@ index 0000000000000000000000000000000000000000..bc218bd73e1ee9d3824d85efff8affd5
 +        #expect(value.resetText(start.addingTimeInterval(7 * 86_400), now: start, calendar: calendar) == "Resets Jan 22")
 +    }
 +
++    @Test func mixedMeasuredCellsUseTheirOwnExtentOnEveryEdge() {
++        let values = [reading(), reading(snapshot()), reading(snapshot("opencode-go"))]
++        for edge in NotchEdge.allCases {
++            let layout = QuotaNotchContentLayout(cells: values.map(\.cellMetrics), horizontal: !edge.isVertical)
++            let shape = QuotaNotchGeometry(edge: edge, expansion: 1, layout: layout)
++            for index in values.indices {
++                let rect = shape.cellRects[index]
++                #expect(rect.size == values[index].cellMetrics.size)
++                #expect(CGRect(origin: .zero, size: shape.size).contains(rect))
++                #expect(shape.bodyPath.contains(CGPoint(x: rect.midX, y: rect.midY)))
++                if index == 0 { continue }
++                let previous = shape.cellRects[index - 1]
++                let gap = edge.isVertical ? rect.minY - previous.maxY : rect.minX - previous.maxX
++                #expect(abs(gap - QuotaNotchContentLayout.cellGap) < 0.000_001)
++            }
++            let expected = layout.cells.reduce(2 * QuotaNotchContentLayout.padding) { $0 + (edge.isVertical ? $1.size.height : $1.size.width) }
++                + CGFloat(max(0, layout.cells.count - 1)) * QuotaNotchContentLayout.cellGap
++            #expect(abs(layout.length - max(80, expected)) < 0.000_001)
++        }
++    }
++
++
 +    @Test func allCellsAndUprightLabelsFitEveryEdge() {
 +        let monitor = CGRect(x: -1_920, y: -1_080, width: 1_920, height: 1_080)
 +        for edge in NotchEdge.allCases {
@@ -3873,7 +4126,7 @@ index 0000000000000000000000000000000000000000..bc218bd73e1ee9d3824d85efff8affd5
 +            #expect(closed.bodyPath.contains(CGPoint(x: bounds.midX, y: bounds.midY)))
 +            #expect(!closed.bodyPath.contains(CGPoint(x: 1, y: 1)))
 +            let grip = QuotaGripPaint(geometry: closed, frame: QuotaGripFrame(arc: 1), filter: QuotaGripFilter(), scale: 2)
-+            #expect(grip.hit.isEmpty && grip.contours.isEmpty)
++            #expect(grip.hit.isEmpty && grip.paint.isEmpty)
 +        }
 +    }
 +
@@ -3895,7 +4148,7 @@ index 0000000000000000000000000000000000000000..bc218bd73e1ee9d3824d85efff8affd5
 +                let angle = -.pi + CGFloat(step) * .pi / 16
 +                let point = CGPoint(x: shape.orbCenter.x + NotchLayout.arcRadius * cos(angle), y: shape.orbCenter.y + NotchLayout.arcRadius * sin(angle)).applying(shape.transform)
 +                #expect(grip.hit.contains(point))
-+                #expect(grip.contours.contains { $0.contains(point) })
++                #expect(grip.paint.contains(point))
 +                #expect(!shape.bodyPath.contains(point))
 +                #expect(host.hitTest(host.convert(point, to: container)) != nil)
 +            }
@@ -3910,8 +4163,29 @@ index 0000000000000000000000000000000000000000..bc218bd73e1ee9d3824d85efff8affd5
 +                let point = CGPoint(x: shape.orbCenter.x + CGFloat(index % 3 - 1) * 12.5,
 +                                    y: shape.orbCenter.y + 8 + CGFloat(index / 3 * 2 - 1) * 6.25).applying(shape.transform)
 +                #expect(grip.hit.contains(point))
-+                #expect(grip.contours.contains { $0.contains(point) })
++                #expect(grip.paint.contains(point))
 +                #expect(!shape.bodyPath.contains(point))
++            }
++            let gap = CGPoint(x: shape.orbCenter.x, y: shape.orbCenter.y + 8).applying(shape.transform)
++            #expect(!grip.paint.contains(gap), "The completed burst must retain the visible gap between its two rows")
++            #expect(grip.hit.contains(gap), "The intentional control route remains draggable through that gap")
++        }
++    }
++
++    @Test func acquiredDiscEnvelopeRemainsStableThroughBurstAndReturn() {
++        let frames = [QuotaGripFrame(arc: 1, disc: 0.5), QuotaGripFrame(arc: 1, disc: 1),
++                      QuotaGripFrame(reveal: 0.4, arc: 1, disc: 0.4), QuotaGripFrame(reveal: 1, arc: 1),
++                      QuotaGripFrame(reveal: 1, squeeze: 1, arc: 1), QuotaGripFrame(arc: 1)]
++        for edge in NotchEdge.allCases {
++            let shape = geometry(edge), filter = QuotaGripFilter()
++            let initial = QuotaGripPaint(geometry: shape, frame: QuotaGripFrame(arc: 1), filter: filter, scale: 1)
++            let point = CGPoint(x: shape.orbCenter.x + NotchLayout.discRadius - 1, y: shape.orbCenter.y).applying(shape.transform)
++            #expect(!initial.hit.contains(point), "A future disc must not acquire hover or intercept before real entry")
++            let envelope = QuotaGripGeometry.activation(shape.orbCenter).applying(shape.transform).union(initial.hit)
++            for frame in frames {
++                let paint = QuotaGripPaint(geometry: shape, frame: frame, filter: filter, scale: 1, acquired: envelope)
++                #expect(paint.hit.contains(point), "The acquired disc boundary must not withdraw as animation changes phase")
++                #expect(!paint.hit.contains(CGPoint(x: -100, y: -100)))
 +            }
 +        }
 +    }
@@ -3935,6 +4209,139 @@ index 0000000000000000000000000000000000000000..bc218bd73e1ee9d3824d85efff8affd5
 +        #expect(motion.frame.reveal == 0)
 +        motion.sample(20)
 +        #expect(motion.frame.disc == 0 && motion.frame.arc == 1 && !motion.active)
++    }
++
++    @Test func discBurstReversalAndPressPreserveThePaintedPose() {
++        var motion = QuotaGripMotion()
++        motion.setTargets(expanded: true, reveal: false, hover: false, held: false, now: 0, reducedMotion: true)
++        motion.setTargets(expanded: true, reveal: true, hover: false, held: false, now: 1, reducedMotion: false)
++        motion.sample(1.4)
++        let opening = motion.frame
++        #expect(opening.reveal > 0 && opening.reveal < 1)
++        motion.setTargets(expanded: true, reveal: false, hover: false, held: false, now: 1.4, reducedMotion: false)
++        #expect(motion.frame == opening)
++        motion.sample(1.43)
++        let returning = motion.frame
++        #expect(returning.reveal < opening.reveal)
++        motion.setTargets(expanded: true, reveal: true, hover: false, held: false, now: 1.43, reducedMotion: false)
++        #expect(motion.frame == returning)
++        motion.sample(1.48)
++        let painted = motion.frame
++        #expect(painted.reveal > returning.reveal)
++        motion.setTargets(expanded: true, reveal: true, hover: true, held: true, now: 1.5, reducedMotion: false)
++        #expect(motion.frame.reveal == painted.reveal && motion.frame.disc == painted.disc)
++        motion.sample(10)
++        #expect(motion.frame.reveal == painted.reveal && motion.frame.disc == painted.disc)
++        motion.setTargets(expanded: true, reveal: true, hover: true, held: false, now: 11, reducedMotion: false)
++        motion.sample(20)
++        #expect(motion.frame.reveal == 1 && motion.frame.disc == 0 && !motion.active)
++    }
++
++    @Test func liquidThresholdRetainsFractionalAlphaAndErodedInnerAtBothScales() {
++        #expect(QuotaGripAlphaFilter.threshold(120) == 0)
++        #expect(QuotaGripAlphaFilter.threshold(127.5) == 128)
++        #expect(QuotaGripAlphaFilter.threshold(128) == 136)
++        #expect(QuotaGripAlphaFilter.threshold(140) == 255)
++        let filter = QuotaGripAlphaFilter()
++        let solid = [UInt8](repeating: 255, count: 81)
++        for scale in [Double(1), 2] {
++            filter.apply(width: 9, height: 9, sigma: 0, scale: scale, source: solid)
++            let erosion = Int(scale)
++            for y in 0..<9 {
++                for x in 0..<9 {
++                    #expect(filter.outer[y * 9 + x] == 255)
++                    let inside = x >= erosion && x < 9 - erosion && y >= erosion && y < 9 - erosion
++                    #expect(filter.inner[y * 9 + x] == (inside ? 255 : 0))
++                }
++            }
++            filter.apply(width: 3, height: 3, sigma: 0.000_001, scale: scale, source: [UInt8](repeating: 0, count: 9))
++            #expect(filter.outer.prefix(9).allSatisfy { $0 == 0 })
++            #expect(filter.inner.prefix(9).allSatisfy { $0 == 0 })
++        }
++        let edge = QuotaGripAlphaFilter.composite(outer: 128, inner: 0, rim: SIMD3(255, 0, 0), fill: SIMD3(repeating: 0))
++        #expect(edge == SIMD4(0, 0, 128, 128), "The fractional rim is premultiplied BGRA, not a new opaque vector stroke")
++    }
++
++    @Test func liquidBurstRasterAndNativeInputShareEveryNonzeroPixel() throws {
++        let filter = QuotaGripFilter()
++        for edge in NotchEdge.allCases {
++            let shape = geometry(edge)
++            let burst = QuotaGripGeometry.drops(shape.orbCenter, frame: QuotaGripFrame(reveal: 0.4, arc: 1, disc: 0.4)).shape
++            for scale in [CGFloat(1), 2] {
++                let raster = filter.render(burst, transform: shape.transform, scale: scale, dark: true)
++                let bitmap = NSBitmapImageRep(cgImage: raster.image)
++                var fractional = false, opaque = false, clear = false
++                for y in 0..<bitmap.pixelsHigh {
++                    for x in 0..<bitmap.pixelsWide {
++                        let alpha = try #require(bitmap.colorAt(x: x, y: y)).alphaComponent
++                        let point = CGPoint(x: raster.bounds.minX + (CGFloat(x) + 0.5) / scale,
++                                            y: raster.bounds.minY + (CGFloat(y) + 0.5) / scale)
++                        #expect(raster.input.contains(point) == (alpha > 0))
++                        fractional = fractional || (alpha > 0 && alpha < 1)
++                        opaque = opaque || alpha == 1
++                        clear = clear || alpha == 0
++                    }
++                }
++                #expect(fractional && opaque && clear)
++            }
++        }
++    }
++
++    @Test func stationaryEmergingPaintEdgeKeepsAcquiredRoutesOnEveryEdge() throws {
++        for edge in NotchEdge.allCases {
++            let shape = geometry(edge)
++            let filter = QuotaGripFilter()
++            var motion = QuotaGripMotion(), intent = QuotaGripIntent()
++            motion.setTargets(expanded: true, reveal: false, hover: false, held: false, now: 0, reducedMotion: false)
++            motion.sample(0.815)
++            let initial = QuotaGripPaint(geometry: shape, frame: motion.frame, filter: filter, scale: 1)
++            let rest = QuotaGripPaint(geometry: shape, frame: QuotaGripFrame(arc: 1), filter: filter, scale: 1)
++            let bounds = initial.hit.boundingRect
++            var touched: CGPoint?
++            for y in stride(from: bounds.minY, through: bounds.maxY, by: CGFloat(0.5)) {
++                for x in stride(from: bounds.minX, through: bounds.maxX, by: CGFloat(0.5)) {
++                    let point = CGPoint(x: x, y: y)
++                    if initial.paint.contains(point) && !rest.hit.contains(point) && !shape.bodyPath.contains(point) {
++                        touched = point; break
++                    }
++                }
++                if touched != nil { break }
++            }
++            let point = try #require(touched, "An emerging painted edge must leave its old footprint")
++            let envelope = QuotaGripGeometry.activation(shape.orbCenter).applying(shape.transform).union(initial.hit)
++            #expect(!intent.update(CGPoint(x: -100, y: -100), entry: false, envelope: false))
++            #expect(intent.update(point, entry: initial.hit.contains(point), envelope: envelope.contains(point)))
++            motion.setTargets(expanded: true, reveal: true, hover: true, held: false, now: 0.815, reducedMotion: false)
++            for tick in 1...80 {
++                motion.sample(0.815 + Double(tick) / 50)
++                let paint = QuotaGripPaint(geometry: shape, frame: motion.frame, filter: filter, scale: 1, acquired: envelope)
++                #expect(intent.update(point, entry: paint.hit.contains(point), envelope: envelope.contains(point)))
++                #expect(paint.hit.contains(point))
++            }
++            let departure = CGPoint(x: -100, y: -100)
++            #expect(!intent.update(departure, entry: false, envelope: envelope.contains(departure)))
++            // A paint-only classification change at the same screen position is not intent.
++            for _ in 0..<20 { #expect(!intent.update(departure, entry: true, envelope: true)) }
++            #expect(intent.update(point, entry: initial.hit.contains(point), envelope: envelope.contains(point)))
++            #expect(intent.update(departure, entry: false, envelope: false, held: true))
++            #expect(!intent.update(departure, entry: false, envelope: false))
++        }
++    }
++
++    @Test func stationaryPointerCannotAcquireAsArcPaintArrives() {
++        for edge in NotchEdge.allCases {
++            let shape = geometry(edge), filter = QuotaGripFilter()
++            let center = shape.orbCenter
++            let point = CGPoint(x: center.x - NotchLayout.arcRadius, y: center.y).applying(shape.transform)
++            var intent = QuotaGripIntent(), motion = QuotaGripMotion()
++            #expect(!intent.update(point, entry: false, envelope: false))
++            motion.setTargets(expanded: true, reveal: false, hover: false, held: false, now: 0, reducedMotion: false)
++            for tick in 1...100 {
++                motion.sample(Double(tick) / 50)
++                let paint = QuotaGripPaint(geometry: shape, frame: motion.frame, filter: filter, scale: 1)
++                #expect(!intent.update(point, entry: paint.hit.contains(point), envelope: false))
++            }
++        }
 +    }
 +
 +    @Test func pressRetainsPaintedPoseAndReducedMotionSettlesWithoutFrames() {
@@ -5020,10 +5427,10 @@ index 300ed6d282427f140ca0021e3bcebb8221ec7efb..5ee4c0474e1c1884e3fe8e371dc6edcc
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..dc709600aaf8baaa625e5d9d1466243d512cd782
+index 0000000000000000000000000000000000000000..fe85b860cce2ed9696ff3a70c43e48d558d9d41b
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,131 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -5068,6 +5475,8 @@ index 0000000000000000000000000000000000000000..dc709600aaf8baaa625e5d9d1466243d
 +macOS persists the last successfully parsed, structured account snapshot and hydrate it at application startup, including with networking disabled. Restored observations retain their original `observedAt`, unknown values and reported reset instants, and are visibly stale until a new successful response; an elapsed reset never synthesizes a full allowance. Cache data is private, versioned and partitioned by the current authenticated account's digest, with no tokens, request headers or raw responses. Missing, corrupt, unsupported-version or mismatched-account cache entries are cache misses, not zero readings. An absent or rejected local identity must not expose another account's cached observation. Actual 429, decoding, network and service failures remain errors or stale observations, never successful waiting states. Legacy schedules without a usable observation may still produce `waitingForRefresh` until their preserved deadline.
 +
 +## Desktop presentation
++
++Along the edge, use each account’s own measured ring-and-reading extent with eight-unit outer padding and eight-unit inter-account gaps; a single-window or unknown account never reserves another account’s taller multi-window cell. Keep the four-unit ring-to-reading gap, existing font sizes, all reading rows and the cross-edge width policy. Paint, hit rectangles, tooltip targets, native window extents and placement share these per-account positions for every enabled source.
 +
 +Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any qualifying tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
 +

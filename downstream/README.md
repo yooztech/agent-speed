@@ -171,9 +171,11 @@ Local and enabled SSH-host Codex/OpenCode Go/Kimi Code accounts share the Subscr
 source selector, cards, floating quota panel and qualifying summaries. Remote
 sources are identified by host UUID plus provider, not host label; All sources
 includes enabled remote hosts, while explicit selections remain host-scoped.
-The remote collector reads its own host's credentials without modifying them,
-queries the supplier there and returns only structured quota observations over
-the existing SSH connection. Authentication secrets never travel to the desktop.
+The remote collector reads credentials on its host, queries the supplier there
+and returns only structured quota observations over the existing SSH connection.
+Borrowed tool sessions remain read-only; remote secrets are never read back to
+the desktop. The explicit Kimi key setup action described below sends a newly
+entered key from desktop Settings to the selected host over encrypted SSH stdin.
 Quota polling is independent of speed sampling and obeys the existing network
 consent, automatic/manual selection and persisted provider retry deadlines.
 Disconnects retain successful observations as stale with their original time;
@@ -186,6 +188,23 @@ polling and credential-isolation contract is in the prepared tree's
 `spec/QUOTA.md`. Native desktop and real-account acceptance must be reported
 separately from portable checks; this feature does not authorize packaging,
 Actions or Release publication.
+
+Collectors advertising `quota_accounts_v1` additionally expose nullable
+`accountIdentity: {id, displayName}` in quota snapshots, including cache-only
+discovery. The legacy nullable-string `account` field remains unchanged for
+older native clients. Only the current CLI account per provider is discoverable;
+clients bind by host, provider and opaque account ID, retaining old bindings
+offline rather than following a host's replacement account. Codex has an explicit
+account claim and receives a private, persistent random mapping; token rotation
+for that claim preserves the ID. Missing/rejected credentials or an unsafe or
+unavailable identity store are not bindable. Deleting the store resets its
+identity namespace. OpenCode Go and Kimi expose no verified stable user-account
+claim in their credential stores and return null rather than treating a token,
+session digest, credential row or organization as an account. Their ordinary
+quota behavior remains available. No raw account claim, token or token hash is
+sent to clients. Generic identity protocol and Windows/macOS consumer integration
+belong to 0023; Kimi-specific null-identity coverage belongs to 0024.
+
 
 Focused remote-quota checks passed on Linux: 16 collector/provider/real-stdio
 regressions, 10 Windows Core wire/persistence tests, 173 selected Presentation
@@ -223,14 +242,12 @@ its evidence instead of silently mixing versions. Preserve the MIT notice when
 porting reference code and distinguish synthetic checks from live-account proof.
 
 Kimi Code is added for local Windows/macOS accounts and enabled SSH Linux hosts
-by `0024-Add-local-and-remote-Kimi-Code-quota.patch`. It follows the pinned
-Codenotch `KimiCredentials.swift`, `KimiProvider.swift` and `KimiUsage.swift`:
-read-only `credentials/kimi-code.json` under `KIMI_CODE_HOME` or the current
-user's `~/.kimi-code`, then bearer-authenticated
-`GET https://api.kimi.com/coding/v1/usages` on the credential-owning host.
-The managed OAuth session is distinct from a Moonshot Platform API key.
-Kimi Code CLI owns login and token renewal; expired sessions require CLI renewal
-and are not refreshed or modified by Agent Speed. Remote credentials never cross SSH.
+by `0024-Add-local-and-remote-Kimi-Code-quota.patch`. Its original OAuth path
+follows the pinned Codenotch `KimiCredentials.swift`, `KimiProvider.swift` and
+`KimiUsage.swift`: read-only `credentials/kimi-code.json` under `KIMI_CODE_HOME`
+or the current user's `~/.kimi-code`. Kimi Code CLI owns OAuth login and renewal;
+Agent Speed never refreshes or modifies its session. The Kimi Code subscription
+API key is distinct from a Moonshot Platform pay-as-you-go key.
 The adapter preserves five-hour, weekly, monthly-total and monthly-code windows
 when reported, preferring precise `used_ratio` values over legacy rounded counts.
 Unknown readings remain unknown; an absent plan is not zero allowance.
@@ -238,6 +255,30 @@ Automatic polling uses the existing five-minute cadence, while successful Kimi
 requests impose no hard manual-refresh floor. Persisted retry/backoff and
 account-isolated structured caches remain binding. See `spec/QUOTA.md` in the
 prepared tree for the wire, credential, parser and status contract.
+
+Both native Subscription settings let users configure a Kimi Code subscription
+key and region for the local source or any enabled remote host, without a local
+CLI login or manual remote configuration. Keys take precedence over borrowed
+OAuth; an invalid or inaccessible configured key never silently falls back to a
+different CLI account. China and International use their corresponding fixed
+`api.kimi.com` and `api.kimi.ai` Code usage endpoints. API keys do not share the
+CLI access token's fifteen-minute expiry. The CLI renewal limitation remains
+when no key has been configured.
+
+Local keys use current-user DPAPI on Windows and Keychain on macOS. For a remote
+source, the desktop sends the newly entered key through the existing no-PTY SSH
+stdin channel, never argv or shell interpolation; the collector automatically
+stores region and key in an owned private `~/.agent-speed/quota/kimi.json`
+(`0600` under private `0700` directories). Users do not create or edit this file.
+The separate correlated `kimi_credentials` control supports metadata, set and
+delete; responses never contain secrets or key fragments. Saving and supplier
+verification are distinct operations, and verification respects network consent
+and provider backoff. The UI masks entry and never reads a saved remote key back.
+No key is included in ordinary settings, quota observations, logs or exports.
+This key channel deliberately extends the OAuth-only pinned Codenotch reader;
+the official Code documentation confirms subscription key/region support, and
+CodexBar documents key-authenticated `/usages` reads. See the prepared
+`spec/QUOTA.md` for the complete storage, wire and account-isolation contract.
 
 Focused Linux-hosted Kimi checks passed: 26 collector/provider/real-stdio
 regressions (including cache-only three-provider replies, expiry and continued
@@ -248,6 +289,29 @@ cross-compiles; five changed macOS presentation files pass syntax parsing.
 These are not native macOS SDK or Windows/macOS desktop checks, and no live
 authenticated Kimi account was queried. All 24 patches replay successfully from
 the pinned upstream baseline. No package, Actions or Release was made.
+
+The regional key/provisioning extension passed 43 focused collector and real-stdio
+regressions, 106 Windows Core key/provider/transport tests, 72 selected Presentation
+tests, and 28 portable Swift 6.2.4 provider/transport/controller tests. The Windows
+application and native test assembly cross-compile, and eight changed macOS native
+integration/settings files pass syntax parsing. A throwaway production Windows
+Core consumer drove the actual isolated collector test executable over stdin/stdout:
+regional key set/get/delete, private `0600` persistence, cache-only quota, expired
+CLI rediscovery, continued snapshots and no secret echo passed without supplier HTTP.
+The collector test executable's private temporary HOME is not a deployed production
+collector or an SSH acceptance test. Combined key/account-identity integration also
+passed 21 Windows wire tests and 12 portable Swift wire/controller tests. Real Kimi
+key/account access, actual Keychain/DPAPI execution and native desktop interaction
+remain unverified on this Linux host. No package, Actions or Release was created.
+The merged collector checks also passed nine Codex account-identity regressions.
+A same-key delete/recreate race exposed filesystem revision reuse; managed keys
+now persist a fresh random internal revision on every save. The repaired ABA,
+regional persistence, unchanged-key backoff and protocol-isolation checks pass.
+Revision nonces are not returned to clients and do not reset supplier cooldowns.
+The complete 24-patch queue, including regional keys and the concurrent safe
+account-identity/native-geometry changes, replays successfully from the upstream
+pin. Key provisioning remains in owning feature patch 0024; generic account
+discovery remains in 0023.
 
 The quota persistence regression gives each provider actor its own `UserDefaults`
 instance for the same suite, avoiding non-Sendable instance sharing under Swift 6.
@@ -320,6 +384,31 @@ task begins. Its three behavior tests use controlled time for the unchanged
 scheduler and three tests pass together under Linux Swift 6.2.4; all three
 changed Swift files pass syntax parsing. These checks do not execute AppKit or
 establish that the macOS Release gate passes.
+The six-dot grip retains its original arc-to-disc-to-six-drops transition on both
+platforms. The intermediate disc is intentional, not a defect to remove. macOS
+liquid rendering follows the existing Windows fractional-alpha threshold,
+eroded inner fill and premultiplied raster composition rather than a binary
+contour followed by a separate stroke. Windows retains its original visual
+effect; no corresponding Windows flicker has been reproduced.
+Grip hover is acquired by physical pointer movement into the control, not by
+animation moving underneath a stationary pointer. Once acquired, its initial
+input contour and fixed final-pose routes retain ownership until real departure,
+without retaining duplicate paint or intercepting the rest of the transparent
+window. Held drag and reduced-motion behavior use the same interaction contract.
+These base corrections belong to macOS patch 0020 and Windows patch 0021.
+Focused Linux-hosted checks passed 52 Windows grip-motion/geometry/filter
+regressions. The unchanged extracted Swift alpha filter matches the production
+Windows filter exactly across eight fixtures and 42,140 mask bytes, including
+352 fractional-alpha pixels. Eight additional Swift 6.2.4 motion/intent scenarios
+pass 11,046 assertions, including 660 continuity samples and 1,099 stationary
+samples for the restored disc/drop sequence. The Windows application/native test
+assembly cross-compiles; four changed macOS native files pass syntax parsing. All 24
+patches replay successfully, and all 3,151 replayed source files match both the
+repaired source and reconstructed tree byte-for-byte. These checks do not execute
+AppKit/WPF desktop input, macOS raster orientation/clipping or actual animation;
+native visual acceptance remains unverified. No package, Actions or Release was
+created.
+
 The redesigned native surfaces and real-login behavior remain unverified on
 Windows and macOS. Portable geometry checks and SVG previews validate shared
 shape calculations, not native window placement, hit testing, font rasterization
@@ -357,6 +446,28 @@ in Simplified Chinese details. Distinct feature scopes and arbitrary supplier
 durations remain identifiable, and no windows or over-limit numeric values are
 hidden. Painted bounds, placement and input geometry share the same four-edge
 metrics. Source-specific credentials, account isolation and backoff stay separate.
+The compact follow-up preserves these existing ring, center-disk and mark sizes:
+the three-ring group is already 64 logical units across, with a 24-unit disk,
+16-unit mark and four-unit clearance to the innermost ring. It does not shrink
+production rings from the earlier preview's erroneous 76-unit baseline. Instead,
+each account receives its own ring-and-reading extent, avoiding a single-ring
+account inheriting the tallest multi-window account's blank space. Body padding
+and inter-account spacing are tightened without reducing reading fonts or hiding
+windows. Native font measurements still determine the final envelope; preview
+dimensions are not a pixel-size contract.
+Focused compact-layout checks pass 121 quota Presentation cases; the Windows
+application and native test assembly cross-compile with zero warnings/errors.
+All five changed Swift source/test files pass syntax parsing, and the actual
+portable Swift layout implementation executes the varying-cell layout proof.
+A throwaway C# probe links the production geometry and projects 20 growing-source
+layouts across all four edges to browser-inspected SVGs. Its reading measurements
+are synthetic: neither these projections nor portable checks establish native
+font rasterization, desktop hit testing or Windows/macOS visual acceptance.
+No package, Actions or Release is created for this change.
+The complete 24-patch queue replays from the pin; all 3,151 replayed source files
+match the compact prepared tree byte-for-byte, including retained concurrent Kimi
+changes. The compact implementation belongs to 0020/0021, with only necessary
+multi-window integration in 0022 and later patches rebased onto that layout.
 
 The multi-window/OpenCode Go feature is carried by
 `0022-Add-multi-window-quota-and-OpenCode-Go-provider.patch`. Focused Linux-hosted

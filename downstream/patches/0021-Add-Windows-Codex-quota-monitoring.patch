@@ -1,6 +1,6 @@
-From 9af0aa0ad381da0357d7fc17f54676cda2de46b4 Mon Sep 17 00:00:00 2001
+From 4584423f68c9129d21149cb060529d4d30c8ffea Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Sun, 15 Nov 2026 23:00:26 +0800
+Date: Mon, 16 Nov 2026 11:02:39 +0800
 Subject: [PATCH] Add Windows Codex quota monitoring
 
 ---
@@ -15,11 +15,11 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../Settings/AppSettings.cs                   |  30 +
  .../Settings/QuotaFailureRetry.cs             |  42 +
  .../Settings/QuotaFormat.cs                   | 121 +++
- .../Settings/QuotaNotchGeometry.cs            | 276 +++++++
+ .../Settings/QuotaNotchGeometry.cs            | 306 +++++++
  .../Settings/QuotaNotchGeometryFilter.cs      | 190 +++++
- .../Settings/QuotaNotchGeometryOrb.cs         |  99 +++
+ .../Settings/QuotaNotchGeometryOrb.cs         | 100 +++
  .../Settings/QuotaNotchGeometryRaster.cs      |  69 ++
- .../Settings/QuotaNotchGripMotion.cs          | 141 ++++
+ .../Settings/QuotaNotchGripMotion.cs          | 158 ++++
  .../Settings/QuotaNotchLayout.cs              |  79 ++
  .../Settings/SettingsSerializer.cs            |  38 +
  windows/src/AgentSpeed/AgentSpeed.csproj      |   6 +
@@ -32,10 +32,10 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../Settings/QuotaNotch.LICENSE.txt           |  49 ++
  .../src/AgentSpeed/Settings/QuotaNotchGoo.cs  |  95 +++
  .../AgentSpeed/Settings/QuotaNotchRegion.cs   | 118 +++
- .../src/AgentSpeed/Settings/QuotaNotchView.cs | 418 ++++++++++
- .../AgentSpeed/Settings/QuotaNotchWindow.cs   | 759 ++++++++++++++++++
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs | 477 +++++++++++
+ .../AgentSpeed/Settings/QuotaNotchWindow.cs   | 776 ++++++++++++++++++
  .../Settings/QuotaRetryScheduler.cs           |  35 +
- .../AgentSpeed/Settings/QuotaSettingsPage.cs  | 315 ++++++++
+ .../AgentSpeed/Settings/QuotaSettingsPage.cs  | 315 +++++++
  .../src/AgentSpeed/Settings/QuotaSurface.cs   | 394 +++++++++
  .../AgentSpeed/Settings/SettingsViewModel.cs  |   1 +
  .../AgentSpeed/Settings/SettingsWindow.xaml   |  12 +-
@@ -48,20 +48,20 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../QuotaFormatTests.cs                       | 251 ++++++
  .../QuotaNotchFilterParityTests.cs            | 209 +++++
  .../QuotaNotchGeometryFilterTests.cs          |  35 +
- .../QuotaNotchGeometryOrbTests.cs             | 139 ++++
+ .../QuotaNotchGeometryOrbTests.cs             | 138 ++++
  .../QuotaNotchGeometryRasterTests.cs          |  29 +
- .../QuotaNotchGeometryTests.cs                | 156 ++++
- .../QuotaNotchGripMotionTests.cs              | 137 ++++
+ .../QuotaNotchGeometryTests.cs                | 209 +++++
+ .../QuotaNotchGripMotionTests.cs              | 214 +++++
  .../QuotaNotchLayoutTests.cs                  | 241 ++++++
  .../Reporting/ReportMenuTests.cs              |  11 +-
  .../SettingsSerializerTests.cs                | 109 +++
  .../QuotaDisplayClockTests.cs                 |  63 ++
- .../QuotaNotchViewTests.cs                    | 290 +++++++
+ .../QuotaNotchViewTests.cs                    | 405 +++++++++
  .../QuotaSettingsPageTests.cs                 | 386 +++++++++
  .../QuotaSurfaceRetryTests.cs                 | 151 ++++
- .../QuotaSurfaceTests.cs                      | 501 ++++++++++++
- windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs | 101 ++++++++++++++++++++
- 57 files changed, 7863 insertions(+), 53 deletions(-)
+ .../QuotaSurfaceTests.cs                      | 501 +++++++++++
+ .../QuotaWarmStartupTests.cs                  | 101 +++
+ 57 files changed, 8231 insertions(+), 53 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
@@ -101,7 +101,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index dc709600aaf8baaa625e5d9d1466243d512cd782..ab297787e3dd335b42ee6e4b7b5e2fd23b132855 100644
+index fe85b860cce2ed9696ff3a70c43e48d558d9d41b..aaa82803af9fb0307dc4deb7fc80225ad7a23826 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,8 @@
@@ -115,7 +115,7 @@ index dc709600aaf8baaa625e5d9d1466243d512cd782..ab297787e3dd335b42ee6e4b7b5e2fd2
  
  ## Snapshot
  
-@@ -23,7 +23,7 @@
+@@ -23,7 +23,7 @@ A snapshot has the following logical fields. Optional values are nullable; a mis
  | `nextAllowedAt` | Nullable earliest next permitted refresh time, if the provider is backing off. |
  | `waitingForRefresh` | True only when a persisted successful polling interval prevents a refresh and no observation is available in this process. Status remains `error` for compatibility; display this condition as waiting, not a failed request. |
  | `credits` | Nullable credit information: `hasCredits` and `unlimited` are nullable booleans, `balance` is a nullable decimal string. `limit` and `used` are nullable numeric absolute amounts in provider-reported spend units, with no inferred currency; `usedFraction` and `resetAt` describe the individual spend-control allowance. A balance of `"0"` is known zero, not unknown. The allowance's `usedFraction` is not clamped and may exceed 1. |
@@ -124,7 +124,7 @@ index dc709600aaf8baaa625e5d9d1466243d512cd782..ab297787e3dd335b42ee6e4b7b5e2fd2
  
  A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`, and `duration`. `id` is stable and unique within a snapshot; `label` is display text. For Codex windows, `usedFraction` and `used` are the reported percentage divided by 100, and `remaining` is 1 minus that fraction. These nullable fractions are not absolute counts and are not clamped: usage may exceed 1 and remaining may be negative. Zero is known zero, not unknown. `resetAt` is a nullable absolute instant and `duration` is a nullable window length in seconds. Unknown fields remain null, including an unknown fraction on an otherwise valid window.
  
-@@ -39,7 +39,7 @@
+@@ -39,7 +39,7 @@ A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`,
  * `error`: a network, decoding, service, or other failure that does not establish a more specific state.
  
  An authentication failure must not be represented as zero usage. If old data is retained, it must be visibly stale; a previous timestamp must never be advanced on an unsuccessful refresh. Rate limiting is a transient failure, not an empty successful observation. Respect server retry guidance and avoid repeatedly querying the endpoint while it is rate-limited.
@@ -133,7 +133,7 @@ index dc709600aaf8baaa625e5d9d1466243d512cd782..ab297787e3dd335b42ee6e4b7b5e2fd2
  
  ## Desktop presentation
  
-@@ -47,15 +47,15 @@
+@@ -49,15 +49,15 @@ Quota is presented in the existing Settings window as source-neutral account car
  
  Subscription is a source-neutral account list and settings group, with the real Codex adapter; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
  
@@ -152,7 +152,7 @@ index dc709600aaf8baaa625e5d9d1466243d512cd782..ab297787e3dd335b42ee6e4b7b5e2fd2
  
  Automatic polling schedules per-source retries when a refresh returns a transiently unavailable observation (`error` or `stale`), rather than waiting for the next ordinary five-minute tick. Cold start means the current account/source has no validated successful observation; an available account-bound cached observation is displayed stale immediately and is not cold. Before the first successful observation, genuine transport, service and decoding failures retry after 5, 10, 20 and then at most 30 seconds per attempt. Both the native scheduler and the credential-owning provider enforce this short cadence: a five-second UI wake blocked by a hidden sixty-second provider floor does not satisfy the contract. Remote connection readiness triggers the existing immediate selected-source startup read. The first successful observation clears cold-start pacing and restores normal polling; failures with an already available observation retain the ordinary backoff policy.
  
-@@ -66,11 +66,15 @@
+@@ -68,11 +68,15 @@ For migration, a legacy schedule without a validated version-1 account snapshot
  
  Both floating panels retain full-strength provider logos, allowance rings and numerical readings when showing an old observation, including after a refresh failure, with network access disabled or when the observation is more than fifteen minutes old. Stale status, the original observation time and details remain visible; full brightness never marks old data as fresh. Ring background tracks, unknown-reading styling and the normal expansion/collapse fade are independent and unchanged.
  
@@ -171,18 +171,18 @@ index dc709600aaf8baaa625e5d9d1466243d512cd782..ab297787e3dd335b42ee6e4b7b5e2fd2
  
  The outlined resting arc has 8.49 DIP of true radial clearance from the outlined circular body flare; the temporary full disc has 17.23 DIP. Neutral outlined dot paint spans X 21.7–55.7 and Y `BodyEnd + 35.95`–`BodyEnd + 57.45`, a 34-by-21.5-DIP envelope; settled hover paint is 36.4 by 23.9 DIP. Hit padding, radial bridge, activation fan and liquid core/neck consumers use the actual production dot/grid geometry, not independently enlarged SVGs or a blanket input rectangle. `GripPaintClearance` measures the actual quarter curve including its endpoints, not the full circle or a bounding rectangle; `ArcGripPaintClearance` measures the retained outlined arc against all six outlined dots, including hover. These production methods drive regressions and the frame probe. The animation canvas still conservatively reserves 32.97 DIP beyond the flare for transient disc/filter bounds, without making that envelope interactive or moving the screen anchor.
  
-@@ -85,6 +89,10 @@
- Subscription Settings no longer exposes runtime diagnostics or a credential-storage footnote. Safe initialization/placement stage and exception type/HResult state may remain internal to the native host for tests; no page callback or hidden replacement diagnostic UI is retained. Pointer events and finite transitions drive the panel lifecycle; it has no continuous cursor, browser bridge, or bitmap polling loop. Provider refresh and backoff remain independent of this rendering lifecycle.
+@@ -88,6 +92,10 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
  
  The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
-+
+ 
 +The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
 +
 +Windows startup regressions use the real `QuotaSurface` → `Window.Show` → `SourceInitialized` path with ephemeral settings, networking and automatic polling disabled, and no credentials. They require a visible HWND, nonzero placement, an opaque black collapsed bar in both themes, transparent unused canvas, and a nonempty installed native region that includes only the painted bar on all four edges. Deterministic pointer/card/grace and menu/drag-state regressions exercise real paint and installed input regions with reduced motion, while finite animation runs are advanced to their terminal samples without sleeps. The body-to-grip route is sampled through the production pointer handlers, visible pixels and installed native region, with grace expiration driven between samples to represent arbitrarily slow movement. Both grip and Alt-body presses must acquire real mouse capture, remain pending below threshold, move the anchor above threshold, resample a different edge on release, persist the result and release capture; another physical monitor is used when available. An explicitly expanded injected first-render failure must be hidden and retain a safe stage/type/HResult/inner-exception diagnostic in the native runtime state. These are Windows-only regressions, not claims based on a portable geometry check.
- 
++
  The existing transient menu-bar popover or tray flyout may show a compact quota summary when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers, but include every available quota window within each displayed provider; open the existing Settings quota page for details.
  
-@@ -101,7 +109,7 @@
+ Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
+@@ -103,7 +111,7 @@ swift test --package-path macos --filter QuotaNotchTests
  swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native
  ```
  
@@ -191,7 +191,7 @@ index dc709600aaf8baaa625e5d9d1466243d512cd782..ab297787e3dd335b42ee6e4b7b5e2fd2
  
  The optional captures use fixed synthetic frames and credential-free observations, not live requests or substitute browser graphics. They exercise folded, resting arc, emerging arc, temporary disc, dividing drops, six drops, held, stale, offline, aged, unknown and authentication states. Stale, offline and aged renders are compared with matching fresh native controls so the logo, rings and readings retain full brightness without pinning layout coordinates. The harness also checks tight native bounds, opaque paint against the shared input mask, the resting arc's transparent hole and every revealed drop's draggable target. Its four localized details captures cover English, Simplified Chinese, Traditional Chinese and Japanese.
  
-@@ -119,7 +127,7 @@
+@@ -121,7 +129,7 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
  `GET https://chatgpt.com/backend-api/wham/usage` uses the local Codex session's bearer access token and `ChatGPT-Account-Id`; `Accept: application/json` requests JSON. Never place either credential in fixtures or logs. `plan_type` is the plan when supplied. The main `rate_limit.primary_window` and `rate_limit.secondary_window` are independent; parse each without discarding a valid sibling because another is null or malformed. A window's numeric `used_percent` converts to `usedFraction` by dividing by 100 without clamping. `limit_window_seconds` gives duration. `reset_at` is Unix epoch seconds; when absent, `reset_after_seconds` is relative to the observation time. Null or omitted data stays unknown. A non-null 0 percentage is a valid measurement.
  `additional_rate_limits` is an array of feature-scoped rate-limit objects (`limit_name`, `metered_feature`, `rate_limit`), not a replacement for the main account windows. `code_review_rate_limit` may contain another pair. Preserve source scope when representing these windows. A malformed extra must not destroy usable main data. `spend_control.individual_limit` is a separate credit-backed allowance: its `limit` and `used` can be decimal strings, `used_percent` is a percentage, and `reset_at` is epoch seconds. The response's `credits` balance is distinct from that allowance and from unused reset credits at the separate `/wham/rate-limit-reset-credits` endpoint; none is interchangeable with another.
  
@@ -1077,10 +1077,10 @@ index 0000000000000000000000000000000000000000..b38e173683618666a2b50aaddd78c3cb
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6793e5635ed739f26e61324e514cd62169e17d09
+index 0000000000000000000000000000000000000000..c41ad4816f19223657f20163f9c499c101ce8dd4
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,306 @@
 +using System.Globalization;
 +using System.Text;
 +
@@ -1090,7 +1090,7 @@ index 0000000000000000000000000000000000000000..6793e5635ed739f26e61324e514cd621
 +/// Paths are WPF/SVG-compatible and use invariant decimal notation.</summary>
 +public static class QuotaNotchGeometry
 +{
-+    public const double Fillet = 38.7, BodyDepth = 70, Corner = 20, Ring = 44;
++    public const double Fillet = 38.7, BodyDepth = 70;
 +    public const double TailLength = 28.2, TailWidth = 32.72, TailGap = 10.5;
 +    // Reference-scale arc/disc; the larger dot grid is sized independently.
 +    public const double GripScale = .9, ArcRadius = 28.5 * GripScale, ArcFill = 6.8 * GripScale;
@@ -1098,9 +1098,61 @@ index 0000000000000000000000000000000000000000..6793e5635ed739f26e61324e514cd621
 +    public const double GripDot = 8, GripPitch = 12.5;
 +    public const double GripReach = 8, GripPadding = 2, GripCorridorWidth = 8;
 +    public const double CenterDiameter = 36, GlyphDiameter = 22, RingWidth = 4, RingDiameter = 52;
++    public const double ContentPadding = 8, CellGap = 8, ReadingGap = 4;
++    public readonly record struct Cell(double Width, double ReadingHeight, double Diameter)
++    {
++        public double ContentWidth => Math.Max(Diameter, Width);
++        public double ContentHeight => Diameter + ReadingGap + ReadingHeight;
++    }
++
++    /// <summary>Measured upright content. Cache when readings or edge orientation change, not per animation frame.</summary>
++    public sealed class ContentLayout
++    {
++        public bool Horizontal { get; }
++        public IReadOnlyList<Cell> Cells { get; }
++        public double[] Offsets { get; }
++        public double Length { get; }
++        public double Depth { get; }
++
++        public ContentLayout(bool horizontal, params Cell[] cells)
++        {
++            Horizontal = horizontal;
++            Cells = cells;
++            Offsets = new double[cells.Length];
++            double along = ContentPadding, width = 52, diameter = 52, readingHeight = 20;
++            for (int i = 0; i < cells.Length; i++)
++            {
++                var cell = cells[i];
++                Offsets[i] = along;
++                along += (horizontal ? cell.ContentWidth : cell.ContentHeight) + CellGap;
++                width = Math.Max(width, cell.ContentWidth);
++                diameter = Math.Max(diameter, cell.Diameter);
++                readingHeight = Math.Max(readingHeight, cell.ReadingHeight);
++            }
++            Length = Math.Max(80, cells.Length == 0 ? 2 * ContentPadding : along - CellGap + ContentPadding);
++            // Keep the existing cross-edge footprint; compact only the space along the edge.
++            Depth = horizontal ? Math.Max(98, Math.Max(80, diameter + ReadingGap + readingHeight) + 18)
++                : Math.Max(BodyDepth, width + 14);
++        }
++
++        public Point Center(Main main, int index, bool bottom = false)
++        {
++            var cell = Cells[index];
++            double x = Horizontal ? (bottom ? main.BodyDepth - 6 - cell.Diameter / 2 : 6 + cell.Diameter / 2) : main.BodyDepth / 2;
++            return new(x, main.BodyStart + Offsets[index] + (Horizontal ? cell.ContentWidth : cell.Diameter) / 2);
++        }
++
++        public Box Bounds(Main main, Affine transform, int index, bool bottom = false)
++        {
++            var cell = Cells[index];
++            var center = transform.Apply(Center(main, index, bottom));
++            return new(center.X - cell.ContentWidth / 2, center.Y - cell.Diameter / 2,
++                cell.ContentWidth, cell.ContentHeight);
++        }
++    }
 +    public readonly record struct Point(double X, double Y);
 +    public readonly record struct Main(double Depth, double Length, double BodyDepth, double BodyStart, double BodyEnd,
-+        double RingCenterX, double RingCenterY, Point Grip, string BodyPath);
++        Point Grip, string BodyPath);
 +    public readonly record struct Envelope(double Depth, double Length, double BodyCenterAlong)
 +    {
 +        public double Offset(Main shape) => BodyCenterAlong - (shape.BodyStart + shape.BodyEnd) / 2;
@@ -1125,30 +1177,24 @@ index 0000000000000000000000000000000000000000..6793e5635ed739f26e61324e514cd621
 +        "bottom" => new(0, -1, 1, 0, alongOffset, depth),
 +        _ => new(-1, 0, 0, 1, depth, alongOffset)
 +    };
-+    /// <summary>Stable canvas encloses the body and compact grip, including bounded hover overshoot.
-+    /// Only current paint and the small moving control/corridor belong to the native input region.</summary>
-+    public static Envelope CreateEnvelope(int count, bool horizontal = false)
-+    {
-+        double length = OpenLength(count, horizontal);
-+        return new((horizontal ? 98 : BodyDepth) + .5,
-+            2 * Fillet + length + DiscRadius + 12, Fillet + length / 2 + .5);
-+    }
-+    private static double OpenLength(int count, bool horizontal) => Math.Max(80, 36 + Math.Max(1, count) * (horizontal ? 44 : 68) + Math.Max(0, count - 1) * 14);
++
++    /// <summary>Stable canvas and grip anchor; input still follows the current painted outline.</summary>
++    public static Envelope CreateEnvelope(ContentLayout layout) => new(layout.Depth + .5,
++        2 * Fillet + layout.Length + DiscRadius + 12, Fillet + layout.Length / 2 + .5);
 +    private static string F(double value) => value.ToString("0.####", CultureInfo.InvariantCulture);
 +
-+    public static Main CreateMain(double expansion, int count, bool horizontal = false, bool bottom = false)
++    public static Main CreateMain(double expansion, ContentLayout layout)
 +    {
 +        double t = Math.Clamp(expansion, 0, 1);
-+        double openLength = OpenLength(count, horizontal);
-+        double depth = 10 + ((horizontal ? 98 : 70) - 10) * t, bodyLength = 79 + (openLength - 79) * t;
++        double openLength = layout.Length;
++        double depth = 10 + (layout.Depth - 10) * t, bodyLength = 79 + (openLength - 79) * t;
 +        double flare = Fillet * t, start = flare, end = start + bodyLength;
 +        double radius = 6 + 14 * t;
 +        string body = $"M 0 0 A {F(flare)} {F(flare)} 0 0 0 {F(flare)} {F(start)} L {F(depth-radius)} {F(start)} A {F(radius)} {F(radius)} 0 0 1 {F(depth)} {F(start+radius)} L {F(depth)} {F(end-radius)} A {F(radius)} {F(radius)} 0 0 1 {F(depth-radius)} {F(end)} L {F(flare)} {F(end)} A {F(flare)} {F(flare)} 0 0 0 0 {F(end+flare)} Z";
 +        if (t == 0) body = "M 0 0 L 4 0 A 6 6 0 0 1 10 6 L 10 73 A 6 6 0 0 1 4 79 L 0 79 Z";
-+        double ringX = horizontal ? (bottom ? depth - 34 : 34) : depth - 35;
 +        // The handle anchor is stable in screen space throughout body expansion.
 +        double anchorAlong = (start + end) / 2 + openLength / 2 + Fillet;
-+        return new(depth, end + flare, depth, start, end, ringX, start + 18 + 22,
++        return new(depth, end + flare, depth, start, end,
 +            new Point(Fillet, anchorAlong + GripReach), body);
 +    }
 +
@@ -1336,26 +1382,10 @@ index 0000000000000000000000000000000000000000..6793e5635ed739f26e61324e514cd621
 +    public static double RemainingFill(double used) => Math.Clamp(1 - used, 0, 1);
 +    public static int Tone(double used) => used >= .7 ? 2 : used >= .5 ? 1 : 0;
 +
-+    /// <summary>Reference display halves: remaining derives from rounded used, with small values preserved.</summary>
-+    public static (string Used, string Remaining) PercentHalves(double used)
-+    {
-+        double value = used * 100;
-+        if ((value > 0 && value < 1) || (value > 99 && value < 100))
-+        {
-+            static string Small(double n)
-+            {
-+                if (n <= 0) return "0";
-+                double rounded = Math.Floor(n * 10 + .5) / 10;
-+                if (rounded < .1) return "<0.1";
-+                if (rounded > 99.9) return ">99.9";
-+                return rounded.ToString("0.0", CultureInfo.InvariantCulture);
-+            }
-+            double remaining = Math.Max(0, 100 - value);
-+            return (Small(value), remaining > 99.9 ? ">99.9" : Small(remaining));
-+        }
-+        double whole = Math.Floor(value + .5);
-+        return (F(whole), F(Math.Max(0, 100 - whole)));
-+    }
++    /// <summary>Actual measured percentages; graphical fills alone clamp to the ring bounds.</summary>
++    public static (string Used, string Remaining) PercentHalves(double used) =>
++        ((used * 100).ToString("0.##", CultureInfo.InvariantCulture),
++         ((1 - used) * 100).ToString("0.##", CultureInfo.InvariantCulture));
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryFilter.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryFilter.cs
 new file mode 100644
@@ -1555,10 +1585,10 @@ index 0000000000000000000000000000000000000000..3079346a9580f842724f5c924c8b3a2b
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryOrb.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryOrb.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..001b4362e00cf0ef3d7dd3653240c0943e41dd54
+index 0000000000000000000000000000000000000000..8525bdb058ee5e3e204ecb432a821959edfb827c
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryOrb.cs
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,100 @@
 +using System.Globalization;
 +using static AgentSpeed.Presentation.Settings.QuotaNotchGeometry;
 +
@@ -1657,6 +1687,7 @@ index 0000000000000000000000000000000000000000..001b4362e00cf0ef3d7dd3653240c094
 +        return p <= .001 ? new(null, 0, null, 0, null, new(center, DiscRadius - .5), 0, false)
 +            : new(path, width, null, 0, null, default, 0, false);
 +    }
++
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryRaster.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryRaster.cs
 new file mode 100644
@@ -1735,10 +1766,10 @@ index 0000000000000000000000000000000000000000..e23cdd1423d41b0628a62177db44357f
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGripMotion.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGripMotion.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b9debe10051a0322bcafeba875a8975cec1fe0ad
+index 0000000000000000000000000000000000000000..a96c768aeadc97ae6e1859fa25aaef43ae5b701b
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGripMotion.cs
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,158 @@
 +using AgentSpeed.Presentation.Motion;
 +
 +namespace AgentSpeed.Presentation.Settings;
@@ -1879,6 +1910,23 @@ index 0000000000000000000000000000000000000000..b9debe10051a0322bcafeba875a8975c
 +        }
 +        return 3 * t * t * (1 - t) + t * t * t;
 +    }
++}
++
++/// <summary>Acquisition requires physical pointer movement through current input.
++/// Paint-only samples cannot re-acquire after departure or withdraw an owned route.</summary>
++public sealed class QuotaNotchGripIntent
++{
++    private QuotaNotchGeometry.Point? _previous;
++    public bool Acquired { get; private set; }
++    public bool Update(QuotaNotchGeometry.Point point, bool entry, bool envelope, bool held = false)
++    {
++        bool moved = _previous is not null && _previous != point;
++        _previous = point;
++        if (Acquired) Acquired = held || envelope;
++        else if (moved && entry) Acquired = true;
++        return Acquired;
++    }
++    public void Reset() { Acquired = false; _previous = null; }
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchLayout.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchLayout.cs
 new file mode 100644
@@ -2534,10 +2582,10 @@ index 0000000000000000000000000000000000000000..13d3dadf6b30b0731d7aae6421ff4417
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990d1d15ab3
+index 0000000000000000000000000000000000000000..54e1c9da9b69940d03201912c3e9f1e29dc053d6
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-@@ -0,0 +1,418 @@
+@@ -0,0 +1,477 @@
 +using System.Globalization;
 +using System.Reflection;
 +using System.Text.RegularExpressions;
@@ -2555,7 +2603,7 @@ index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990
 +internal readonly record struct QuotaNotchRenderState(IReadOnlyList<QuotaSnapshot> Snapshots,
 +    IReadOnlyList<string> EnabledSources, bool Network, bool Dark, string Edge,
 +    double Expansion, string? ActiveSource = null, double? CardAlongPosition = null,
-+    QuotaNotchGeometry.GripFrame Grip = default, DateTimeOffset? DisplayNow = null);
++    QuotaNotchGeometry.GripFrame Grip = default, DateTimeOffset? DisplayNow = null, bool GripAcquired = false);
 +
 +/// <summary>Native vector rendering of Codenotch revision 835550a; see QuotaNotch.LICENSE.txt.</summary>
 +internal sealed class QuotaNotchView : FrameworkElement
@@ -2578,9 +2626,23 @@ index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990
 +    private QuotaNotchGeometry.Envelope _envelope;
 +    private Matrix _matrix;
 +    private string? _source;
++    private sealed record CellPresentation(string Id, QuotaSnapshot? Snapshot, QuotaWindow? Headline, FormattedText Reading);
++    private CellPresentation[] _cells = [];
++    private IReadOnlyList<QuotaSnapshot>? _cellSnapshots;
++    private IReadOnlyList<string>? _cellSources;
++    private string? _cellLanguage;
++    private double _cellDpi;
++    private bool _cellDark;
++    private QuotaNotchGeometry.ContentLayout _verticalLayout = new(false);
++    private QuotaNotchGeometry.ContentLayout _horizontalLayout = new(true);
++    internal QuotaNotchGeometry.ContentLayout ContentLayout => QuotaNotchLayout.Vertical(_state.Edge) ? _verticalLayout : _horizontalLayout;
 +    public Size Extent { get; private set; }
 +    public double BodyCenterAlong => _envelope.BodyCenterAlong;
 +    public Geometry InputGeometry { get; private set; } = Geometry.Empty;
++    public Geometry GripInputGeometry { get; private set; } = Geometry.Empty;
++    public Geometry GripActivationGeometry { get; private set; } = Geometry.Empty;
++    private Geometry _entryInput = Geometry.Empty;
++    private (QuotaNotchGeometry.Main Main, Matrix Matrix, Geometry Entry)? _activationKey;
 +    public Point CardTip { get; private set; }
 +    public bool HasCard { get; private set; }
 +
@@ -2594,6 +2656,8 @@ index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990
 +    {
 +        double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
 +        if (_hasState && _state == state && _lastLanguage == _loc.LanguageCode && _lastDpi == dpi) return;
++        if (state.GripAcquired && !_state.GripAcquired) _entryInput = GripInputGeometry;
++        else if (!state.GripAcquired) _entryInput = Geometry.Empty;
 +        _hasState = true;
 +        _lastLanguage = _loc.LanguageCode;
 +        _lastDpi = dpi;
@@ -2611,6 +2675,10 @@ index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990
 +            union = new CombinedGeometry(GeometryCombineMode.Union, union, shape);
 +        if (union.CanFreeze) union.Freeze();
 +        InputGeometry = union;
++        GripInputGeometry = Geometry.Empty;
++        foreach (var (shape, hit) in _targets)
++            if (hit.Target == QuotaNotchTarget.Grip) GripInputGeometry = Union(GripInputGeometry, shape);
++        if (GripInputGeometry.CanFreeze) GripInputGeometry.Freeze();
 +        InvalidateMeasure(); InvalidateVisual();
 +    }
 +
@@ -2624,17 +2692,37 @@ index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990
 +    }
 +    public Point GetCardTarget(string sourceId)
 +    {
-+        int index = Math.Max(0, _state.EnabledSources.IndexOfValue(sourceId));
++        int index = Math.Max(0, Array.FindIndex(_cells, cell => cell.Id == sourceId));
 +        return _matrix.Transform(new Point(_main.BodyDepth + QuotaNotchGeometry.TailGap,
-+            _main.RingCenterY + index * 82));
++            ContentLayout.Center(_main, index, _state.Edge == "bottom").Y));
++    }
++
++    private void PrepareCells()
++    {
++        if (ReferenceEquals(_cellSnapshots, _state.Snapshots) && ReferenceEquals(_cellSources, _state.EnabledSources) &&
++            _cellLanguage == _loc.LanguageCode && _cellDpi == _lastDpi && _cellDark == _state.Dark) return;
++        _cellSnapshots = _state.Snapshots; _cellSources = _state.EnabledSources;
++        _cellLanguage = _loc.LanguageCode; _cellDpi = _lastDpi; _cellDark = _state.Dark;
++        var ink = Brush(_state.Dark ? "#e8e8ea" : "#1d1d1f");
++        _cells = _state.EnabledSources.Where(id => QuotaProviders.Supported.Any(p => p.Id == id)).Select(id =>
++        {
++            var snapshot = _state.Snapshots.FirstOrDefault(item => item.Id == id);
++            var headline = QuotaFormat.Headline(snapshot);
++            string text = headline?.UsedFraction is { } value && snapshot?.Status != QuotaStatus.NeedsAuth
++                ? QuotaNotchGeometry.PercentHalves(value).Remaining + "%" : "—";
++            return new CellPresentation(id, snapshot, headline, Text(text, 15, Semibold, ink));
++        }).ToArray();
++        var sizes = _cells.Select(cell => new QuotaNotchGeometry.Cell(cell.Reading.WidthIncludingTrailingWhitespace, cell.Reading.Height, QuotaNotchGeometry.RingDiameter)).ToArray();
++        _verticalLayout = new(false, sizes);
++        _horizontalLayout = new(true, sizes);
 +    }
 +
 +    private void BuildMain(DrawingContext dc)
 +    {
-+        var ids = _state.EnabledSources.Where(id => QuotaProviders.Supported.Any(p => p.Id == id)).ToArray();
++        PrepareCells();
 +        bool vertical = _state.Edge is "left" or "right";
-+        _main = QuotaNotchGeometry.CreateMain(_state.Expansion, ids.Length, !vertical, _state.Edge == "bottom");
-+        _envelope = QuotaNotchGeometry.CreateEnvelope(ids.Length, !vertical);
++        _main = QuotaNotchGeometry.CreateMain(_state.Expansion, ContentLayout);
++        _envelope = QuotaNotchGeometry.CreateEnvelope(ContentLayout);
 +        Extent = vertical ? new Size(_envelope.Depth, _envelope.Length) : new Size(_envelope.Length, _envelope.Depth);
 +        var transform = QuotaNotchGeometry.EdgeTransform(_state.Edge, _envelope.Depth, _envelope.Offset(_main));
 +        _matrix = new Matrix(transform.M11, transform.M12, transform.M21, transform.M22, transform.X, transform.Y);
@@ -2653,12 +2741,15 @@ index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990
 +        dc.DrawGeometry(pill, bodyPen, body);
 +        dc.PushOpacity(Math.Clamp(_state.Expansion, 0, 1));
 +        dc.PushClip(body);
-+        for (int i = 0; i < ids.Length; i++)
++        for (int i = 0; i < _cells.Length; i++)
 +        {
-+            var center = _matrix.Transform(new Point(_main.RingCenterX, _main.RingCenterY + i * 82));
-+            var cell = new CombinedGeometry(GeometryCombineMode.Intersect, new EllipseGeometry(center, 22, 22), body); Add(cell, new(QuotaNotchTarget.Cell, ids[i]));
-+            var snap = _state.Snapshots.FirstOrDefault(s => s.Id == ids[i]);
-+            var headline = QuotaFormat.Headline(snap);
++            var cell = _cells[i];
++            var localCenter = ContentLayout.Center(_main, i, _state.Edge == "bottom");
++            var center = _matrix.Transform(new Point(localCenter.X, localCenter.Y));
++            var content = ContentLayout.Bounds(_main, transform, i, _state.Edge == "bottom");
++            Add(new CombinedGeometry(GeometryCombineMode.Intersect,
++                new RectangleGeometry(new Rect(content.X, content.Y, content.Width, content.Height)), body), new(QuotaNotchTarget.Cell, cell.Id));
++            var headline = cell.Headline;
 +            dc.DrawEllipse(Brush(_state.Dark ? "#2a2a2a" : "#ffffff"), null, center,
 +                QuotaNotchGeometry.CenterDiameter / 2, QuotaNotchGeometry.CenterDiameter / 2);
 +            double radius = (QuotaNotchGeometry.RingDiameter - QuotaNotchGeometry.RingWidth) / 2;
@@ -2668,10 +2759,9 @@ index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990
 +            if (headline?.UsedFraction >= 1) dc.PushOpacity(.55);
 +            DrawGlyph(dc, Codex, center, QuotaNotchGeometry.GlyphDiameter, ink);
 +            if (headline?.UsedFraction >= 1) dc.Pop();
-+            string text = headline?.UsedFraction is { } value && snap?.Status != QuotaStatus.NeedsAuth
-+                ? QuotaNotchGeometry.PercentHalves(value).Remaining + "%" : "—";
-+            var label = Text(text, 15, Semibold, ink);
-+            dc.DrawText(label, new Point(center.X - label.Width / 2, center.Y + 28));
++            var label = cell.Reading;
++            dc.DrawText(label, new Point(center.X - label.Width / 2,
++                center.Y + QuotaNotchGeometry.RingDiameter / 2 + QuotaNotchGeometry.ReadingGap));
 +        }
 +        dc.Pop(); // Internal content stays clipped; the original grip lives outside the body.
 +        dc.Pop();
@@ -2705,6 +2795,29 @@ index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990
 +        DrawOrb(dc, QuotaNotchGeometry.CreateOrbEntry(_main, frame), pill, edge, clip);
 +        DrawOrb(dc, QuotaNotchGeometry.CreateOrb(_main, frame), pill, edge, clip);
 +        if (frame.Reveal > .01) DrawGrip(dc, pill, edge);
++
++        // Fixed intent routes retain the touched input independently of the
++        // original orb, carried arc and drop animation phases.
++        var key = (_main, _matrix, _entryInput);
++        if (_activationKey != key)
++        {
++            _activationKey = key;
++            var final = new QuotaNotchGeometry.GripFrame(1, 1.3, Arc: 1);
++            var arc = Transform(Geometry.Parse(QuotaNotchGeometry.GetOrbEntryPath(_main)), _matrix)
++                .GetWidenedPathGeometry(Pen(edge, QuotaNotchGeometry.ArcOutline, true));
++            var fan = Transform(Geometry.Parse("F1 " + QuotaNotchGeometry.GetControlFanPath(_main, final)!), _matrix);
++            var bridge = Transform(Geometry.Parse(QuotaNotchGeometry.GetControlBridgePath(_main, final)!), _matrix);
++            var control = GripBox(QuotaNotchGeometry.GetGripHitBox(_main, final), _matrix);
++            var corridor = GripBox(QuotaNotchGeometry.GetGripCorridor(_main, final), _matrix);
++            var disc = GripDot(new(center, QuotaNotchGeometry.DiscRadius + .5));
++            GripActivationGeometry = Union(_entryInput, Union(disc, Union(arc, Union(fan, Union(bridge, Union(control, corridor))))));
++            if (GripActivationGeometry.CanFreeze) GripActivationGeometry.Freeze();
++        }
++        if (_state.GripAcquired)
++        {
++            Add(GripActivationGeometry, new(QuotaNotchTarget.Grip));
++            dc.DrawGeometry(padding, null, GripActivationGeometry);
++        }
 +    }
 +
 +    private void DrawOrb(DrawingContext dc, QuotaNotchGeometry.OrbShape orb, Brush pill, Brush edge, Geometry clip)
@@ -2950,18 +3063,12 @@ index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990
 +        var geometry = Geometry.Parse("F0 " + path); geometry.Freeze(); return geometry;
 +    }
 +}
-+
-+internal static class QuotaNotchSourceIndex
-+{
-+    public static int IndexOfValue(this IReadOnlyList<string> source, string value)
-+    { for (int i = 0; i < source.Count; i++) if (source[i] == value) return i; return -1; }
-+}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..87db0a2250122d3454c8ae10ce20a4304ceee498
+index 0000000000000000000000000000000000000000..f018456abac56b12a132b917eca29e711250503b
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
-@@ -0,0 +1,759 @@
+@@ -0,0 +1,776 @@
 +using System.ComponentModel;
 +using System.Diagnostics;
 +using System.Windows;
@@ -2996,6 +3103,7 @@ index 0000000000000000000000000000000000000000..87db0a2250122d3454c8ae10ce20a430
 +    private readonly QuotaDisplayClock _displayClock;
 +    private DateTimeOffset _displayNow = DateTimeOffset.UtcNow;
 +    private readonly QuotaNotchGripMotion _gripMotion = new();
++    private readonly QuotaNotchGripIntent _gripIntent = new();
 +    private Point _pointerLocal;
 +    private HwndSource? _source, _cardSource;
 +    private nint _hwnd, _cardHwnd;
@@ -3197,7 +3305,7 @@ index 0000000000000000000000000000000000000000..87db0a2250122d3454c8ae10ce20a430
 +        try
 +        {
 +            var state = new QuotaNotchRenderState(_snapshots, _enabledSources, _network, _dark, _edge,
-+                _expansion, _activeSource, Grip: _gripMotion.Frame, DisplayNow: _displayNow);
++                _expansion, _activeSource, Grip: _gripMotion.Frame, DisplayNow: _displayNow, GripAcquired: _gripIntent.Acquired);
 +            if (_mainState != state)
 +            {
 +                _stage = "main.view";
@@ -3303,9 +3411,9 @@ index 0000000000000000000000000000000000000000..87db0a2250122d3454c8ae10ce20a430
 +
 +    private void PointerLeave(Point local)
 +    {
-+        // Installing a new contour can itself emit leave. Reclassify the same local
-+        // point against the frame that was actually installed before withdrawing it.
-+        if (_view.HitTestTarget(local).Target == QuotaNotchTarget.Grip)
++        // A contour-generated leave does not withdraw an acquired intent route.
++        bool held = _pressed.Target == QuotaNotchTarget.Grip && (_pendingDrag || _dragging);
++        if (ResolveGrip(local, _view.PointToScreen(local), held))
 +        {
 +            PointerEnter(local);
 +            return;
@@ -3410,7 +3518,14 @@ index 0000000000000000000000000000000000000000..87db0a2250122d3454c8ae10ce20a430
 +            _expansionRun.Start(_expansion, expansion, MotionNow, 220);
 +        }
 +        bool held = _pressed.Target == QuotaNotchTarget.Grip && (_pendingDrag || _dragging);
-+        bool hoverGrip = _mainInside && _view.HitTestTarget(_pointerLocal).Target == QuotaNotchTarget.Grip;
++        bool hoverGrip = _gripIntent.Acquired;
++        if (visible && _hwnd != 0 && User32.GetCursorPos(out var cursor))
++        {
++            var screen = new Point(cursor.X, cursor.Y);
++            _pointerLocal = _view.PointFromScreen(screen);
++            hoverGrip = ResolveGrip(_pointerLocal, screen, held);
++            _mainInside = hoverGrip || _view.HitTestTarget(_pointerLocal).Target != QuotaNotchTarget.None;
++        }
 +        bool expanded = visible && _toExpansion == 1 && (_reduceMotion || _expansion >= 1);
 +        bool reveal = expanded && (held || hoverGrip);
 +        _gripMotion.SetTargets(expanded, reveal, hoverGrip, held, MotionNow, _reduceMotion);
@@ -3445,6 +3560,14 @@ index 0000000000000000000000000000000000000000..87db0a2250122d3454c8ae10ce20a430
 +    }
 +
 +    private static double MotionNow => Stopwatch.GetTimestamp() * (1000d / Stopwatch.Frequency);
++
++    private bool ResolveGrip(Point local, Point screen, bool held)
++    {
++        bool acquired = _gripIntent.Update(new(screen.X, screen.Y),
++            _view.HitTestTarget(local).Target == QuotaNotchTarget.Grip,
++            _view.GripActivationGeometry.FillContains(local), held);
++        return acquired;
++    }
 +
 +    private struct MotionRun
 +    {
@@ -3640,6 +3763,7 @@ index 0000000000000000000000000000000000000000..87db0a2250122d3454c8ae10ce20a430
 +        HideCard();
 +        _expansion = _toExpansion = 0;
 +        _gripMotion.Reset();
++        _gripIntent.Reset();
 +        _expansionRun = default;
 +        UpdateTargets();
 +    }
@@ -6321,10 +6445,10 @@ index 0000000000000000000000000000000000000000..beecab3bb911212f29a82490ff5a233d
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryOrbTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryOrbTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..14ab261b1f2e169c70c7cdd33b204caf25803e91
+index 0000000000000000000000000000000000000000..d9d6c324e757bc62731d3b4c9fdae6f80db1e040
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryOrbTests.cs
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,138 @@
 +using System.Globalization;
 +using AgentSpeed.Presentation.Settings;
 +
@@ -6332,10 +6456,11 @@ index 0000000000000000000000000000000000000000..14ab261b1f2e169c70c7cdd33b204caf
 +
 +public class QuotaNotchGeometryOrbTests
 +{
++
 +    [Fact]
 +    public void DiscToArcEndpointsAreSourceDiscAndExactRestingQuarter()
 +    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var center = QuotaNotchGeometry.GetOrbCenter(main);
 +        var first = QuotaNotchGeometryOrb.DiscToArc(center, 0);
 +        Assert.Null(first.ArcPath);
@@ -6349,9 +6474,23 @@ index 0000000000000000000000000000000000000000..14ab261b1f2e169c70c7cdd33b204caf
 +    }
 +
 +    [Fact]
++    public void PickupDrawsShrinkingDiscIntoFlareOnReferenceNeck()
++    {
++        var center = QuotaNotchGeometry.GetOrbCenter(QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52))));
++        var start = QuotaNotchGeometryOrb.DiscMerge(center, 0, QuotaNotchGeometry.DiscRadius);
++        var middle = QuotaNotchGeometryOrb.DiscMerge(center, .5, QuotaNotchGeometry.DiscRadius);
++        var end = QuotaNotchGeometryOrb.DiscMerge(center, 1, QuotaNotchGeometry.DiscRadius);
++        Assert.Equal(center, start.Disc.Center);
++        Assert.True(middle.Liquid);
++        Assert.NotNull(middle.NeckPath);
++        Assert.NotNull(middle.BandPath);
++        Assert.True(end.Disc.Center.X < center.X && end.Disc.Center.Y < center.Y);
++        Assert.True(end.Disc.Radius < middle.Disc.Radius && middle.Disc.Radius < start.Disc.Radius);
++    }
++    [Fact]
 +    public void ArcSeparationUsesLiquidNeckAndReturnsToPlainQuarter()
 +    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var center = QuotaNotchGeometry.GetOrbCenter(main);
 +        Assert.Equal(default, QuotaNotchGeometryOrb.GooArc(center, 0, false, false));
 +        var middle = QuotaNotchGeometryOrb.GooArc(center, .5, false, false);
@@ -6368,25 +6507,11 @@ index 0000000000000000000000000000000000000000..14ab261b1f2e169c70c7cdd33b204caf
 +        Assert.False(rest.Liquid);
 +    }
 +
-+    [Fact]
-+    public void PickupDrawsShrinkingDiscIntoFlareOnReferenceNeck()
-+    {
-+        var center = QuotaNotchGeometry.GetOrbCenter(QuotaNotchGeometry.CreateMain(1, 1));
-+        var start = QuotaNotchGeometryOrb.DiscMerge(center, 0, QuotaNotchGeometry.DiscRadius);
-+        var middle = QuotaNotchGeometryOrb.DiscMerge(center, .5, QuotaNotchGeometry.DiscRadius);
-+        var end = QuotaNotchGeometryOrb.DiscMerge(center, 1, QuotaNotchGeometry.DiscRadius);
-+        Assert.Equal(center, start.Disc.Center);
-+        Assert.True(middle.Liquid);
-+        Assert.NotNull(middle.NeckPath);
-+        Assert.NotNull(middle.BandPath);
-+        Assert.True(end.Disc.Center.X < center.X && end.Disc.Center.Y < center.Y);
-+        Assert.True(end.Disc.Radius < middle.Disc.Radius && middle.Disc.Radius < start.Disc.Radius);
-+    }
 +
 +    [Fact]
 +    public void FinalDropsRetainVisibleEntryWithoutPermanentDiscOrLiquid()
 +    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var final = new QuotaNotchGeometry.GripFrame(1, Arc: 1);
 +        var entry = QuotaNotchGeometry.CreateOrbEntry(main, final);
 +        Assert.Equal(QuotaNotchGeometry.GetOrbEntryPath(main), entry.ArcPath);
@@ -6400,7 +6525,7 @@ index 0000000000000000000000000000000000000000..14ab261b1f2e169c70c7cdd33b204caf
 +    [Fact]
 +    public void EveryMorphKeepsRetainedEntryAndDeterministicNarrowRoutes()
 +    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var expected = QuotaNotchGeometry.GetOrbEntryPath(main);
 +        for (int sample = 1; sample <= 100; sample++)
 +        {
@@ -6408,7 +6533,7 @@ index 0000000000000000000000000000000000000000..14ab261b1f2e169c70c7cdd33b204caf
 +            var frame = new QuotaNotchGeometry.GripFrame(progress, Arc: 1, Disc: 1 - progress);
 +            Assert.Equal(expected, QuotaNotchGeometry.CreateOrbEntry(main, frame).ArcPath);
 +            Assert.NotNull(QuotaNotchGeometry.GetControlBridgePath(main, frame));
-+            Assert.Equal(QuotaNotchGeometry.CreateOrb(main, frame), QuotaNotchGeometry.CreateOrb(main, frame));
++            Assert.Equal(QuotaNotchGeometry.ArcFill, QuotaNotchGeometry.CreateOrbEntry(main, frame).ArcWidth, 6);
 +            if (progress > .01)
 +                Assert.Equal(QuotaNotchGeometry.GripCorridorWidth, QuotaNotchGeometry.GetGripCorridor(main, frame).Width);
 +        }
@@ -6417,7 +6542,7 @@ index 0000000000000000000000000000000000000000..14ab261b1f2e169c70c7cdd33b204caf
 +    [Fact]
 +    public void ActivatedFanContainsAllEighteenStraightArcToDotTrajectoriesWithinPocket()
 +    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var frame = new QuotaNotchGeometry.GripFrame(1, Arc: 1);
 +        Assert.Null(QuotaNotchGeometry.GetControlFanPath(main, new(Arc: 1)));
 +        string path = QuotaNotchGeometry.GetControlFanPath(main, frame)!;
@@ -6460,8 +6585,6 @@ index 0000000000000000000000000000000000000000..14ab261b1f2e169c70c7cdd33b204caf
 +                }
 +            }
 +        }
-+        string coincident = QuotaNotchGeometry.GetControlFanPath(main, new(Arc: 1, Disc: 1))!;
-+        Assert.Equal(3, coincident.Count(c => c == 'M'));
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryRasterTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryRasterTests.cs
@@ -6501,10 +6624,10 @@ index 0000000000000000000000000000000000000000..add993bfba906f1037e12ef3509f258e
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..6a0fc51377d6b528b7adcf4c732d4bc465090fcf
+index 0000000000000000000000000000000000000000..d7c987eac9f24377dc1b345de774bf8efdab52d9
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,209 @@
 +using AgentSpeed.Presentation.Settings;
 +
 +namespace AgentSpeed.Presentation.Tests;
@@ -6512,12 +6635,26 @@ index 0000000000000000000000000000000000000000..6a0fc51377d6b528b7adcf4c732d4bc4
 +public class QuotaNotchGeometryTests
 +{
 +
-+    [Fact]
-+    public void FlatEdgesKeepUprightCellWithinDeeperBody()
++    [Theory]
++    [InlineData("left")]
++    [InlineData("right")]
++    [InlineData("top")]
++    [InlineData("bottom")]
++    public void UprightCellFitsInsideExpandedBodyOnEveryEdge(string edge)
 +    {
-+        var top = QuotaNotchGeometry.CreateMain(1, 1, horizontal: true);
-+        var bottom = QuotaNotchGeometry.CreateMain(1, 1, horizontal: true, bottom: true);
-+        Assert.Equal(top.BodyDepth - top.RingCenterX, bottom.RingCenterX);
++        bool horizontal = edge is "top" or "bottom";
++        var cell = new QuotaNotchGeometry.Cell(52, 24, 52);
++        var layout = new QuotaNotchGeometry.ContentLayout(horizontal, cell);
++        var main = QuotaNotchGeometry.CreateMain(1, layout);
++        var envelope = QuotaNotchGeometry.CreateEnvelope(layout);
++        var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(main));
++        var content = layout.Bounds(main, transform, 0, edge == "bottom");
++        var corners = new[] { transform.Apply(new(0, main.BodyStart)), transform.Apply(new(main.BodyDepth, main.BodyStart)),
++            transform.Apply(new(0, main.BodyEnd)), transform.Apply(new(main.BodyDepth, main.BodyEnd)) };
++        double left = corners.Min(p => p.X), right = corners.Max(p => p.X);
++        double top = corners.Min(p => p.Y), bottom = corners.Max(p => p.Y);
++        Assert.InRange(content.X, left, right - content.Width);
++        Assert.InRange(content.Y, top, bottom - content.Height);
 +    }
 +
 +    [Theory]
@@ -6540,12 +6677,12 @@ index 0000000000000000000000000000000000000000..6a0fc51377d6b528b7adcf4c732d4bc4
 +    public void EnvelopeKeepsBodyAnchoredThroughoutMorph(string edge)
 +    {
 +        bool horizontal = edge is "top" or "bottom";
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1, horizontal);
-+        var expanded = QuotaNotchGeometry.CreateMain(1, 1, horizontal, edge == "bottom");
++        var envelope = QuotaNotchGeometry.CreateEnvelope(new QuotaNotchGeometry.ContentLayout(horizontal, new QuotaNotchGeometry.Cell(52, 24, 52)));
++        var expanded = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(horizontal, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var fixedGrip = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(expanded)).Apply(expanded.Grip);
 +        foreach (double progress in new[] { 0d, .3, 1d })
 +        {
-+            var shape = QuotaNotchGeometry.CreateMain(progress, 1, horizontal, edge == "bottom");
++            var shape = QuotaNotchGeometry.CreateMain(progress, new QuotaNotchGeometry.ContentLayout(horizontal, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +            var point = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(shape))
 +                .Apply(new(0, (shape.BodyStart + shape.BodyEnd) / 2));
 +            Assert.Equal(envelope.BodyCenterAlong, horizontal ? point.X : point.Y, 4);
@@ -6571,7 +6708,7 @@ index 0000000000000000000000000000000000000000..6a0fc51377d6b528b7adcf4c732d4bc4
 +    [Fact]
 +    public void GripCorridorConnectsToHitBoxInsideBodyDepth()
 +    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var hit = QuotaNotchGeometry.GetGripHitBox(main);
 +        var crossing = QuotaNotchGeometry.GetGripCorridor(main);
 +        Assert.Equal(hit.Y + hit.Height, crossing.Y + crossing.Height, 6);
@@ -6582,7 +6719,7 @@ index 0000000000000000000000000000000000000000..6a0fc51377d6b528b7adcf4c732d4bc4
 +    [Fact]
 +    public void ReferenceDropSeparatesInOrderAndHasNoLiquidAtRest()
 +    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var middle = QuotaNotchGeometry.CreateGrip(main, new(.4));
 +        Assert.True(middle.Liquid);
 +        Assert.NotNull(middle.NeckPath);
@@ -6598,8 +6735,8 @@ index 0000000000000000000000000000000000000000..6a0fc51377d6b528b7adcf4c732d4bc4
 +    [Fact]
 +    public void EveryDropAndHoverFrameFitsStableCanvasWithoutInterceptingUnusedSpace()
 +    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
++        var envelope = QuotaNotchGeometry.CreateEnvelope(new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        for (int step = 1; step <= 100; step++)
 +            foreach (double hover in new[] { 0d, 1.2 })
 +            {
@@ -6620,11 +6757,11 @@ index 0000000000000000000000000000000000000000..6a0fc51377d6b528b7adcf4c732d4bc4
 +    public void ArcAndDotsUseOneStableScreenAnchorAndEdgeRotatesTheGrid(string edge)
 +    {
 +        bool horizontal = edge is "top" or "bottom";
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1, horizontal);
++        var envelope = QuotaNotchGeometry.CreateEnvelope(new QuotaNotchGeometry.ContentLayout(horizontal, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        QuotaNotchGeometry.Point? fixedCenter = null;
 +        foreach (double expansion in new[] { 0d, .3, 1d })
 +        {
-+            var main = QuotaNotchGeometry.CreateMain(expansion, 1, horizontal, edge == "bottom");
++            var main = QuotaNotchGeometry.CreateMain(expansion, new QuotaNotchGeometry.ContentLayout(horizontal, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +            var matrix = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(main));
 +            var center = matrix.Apply(QuotaNotchGeometry.GetOrbCenter(main));
 +            if (fixedCenter.HasValue)
@@ -6660,13 +6797,52 @@ index 0000000000000000000000000000000000000000..6a0fc51377d6b528b7adcf4c732d4bc4
 +        Assert.Equal(remaining, QuotaNotchGeometry.RemainingFill(used), 6);
 +        Assert.Equal(tone, QuotaNotchGeometry.Tone(used));
 +    }
++    [Theory]
++    [InlineData("left")]
++    [InlineData("right")]
++    [InlineData("top")]
++    [InlineData("bottom")]
++    public void MixedMeasuredCellsUseTheirOwnExtentAndKeepStableGrip(string edge)
++    {
++        bool horizontal = edge is "top" or "bottom";
++        QuotaNotchGeometry.Cell[] cells = [new(52, 19, 52), new(91, 31, 58), new(90, 47, 64), new(128, 83, 88)];
++        for (int count = 1; count <= cells.Length; count++)
++        {
++            var layout = new QuotaNotchGeometry.ContentLayout(horizontal, cells[..count]);
++            var envelope = QuotaNotchGeometry.CreateEnvelope(layout);
++            QuotaNotchGeometry.Point? grip = null;
++            foreach (double expansion in new[] { 0d, .3, 1d })
++            {
++                var main = QuotaNotchGeometry.CreateMain(expansion, layout);
++                var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(main));
++                var anchor = transform.Apply(main.Grip);
++                if (grip is { } previous) { Assert.Equal(previous.X, anchor.X, 6); Assert.Equal(previous.Y, anchor.Y, 6); }
++                grip = anchor;
++                if (expansion != 1) continue;
++                for (int i = 0; i < layout.Cells.Count; i++)
++                {
++                    var box = layout.Bounds(main, transform, i, edge == "bottom");
++                    Assert.Equal(layout.Cells[i].ContentWidth, box.Width);
++                    Assert.Equal(layout.Cells[i].ContentHeight, box.Height);
++                    Assert.InRange(box.X, 0, (horizontal ? envelope.Length : envelope.Depth) - box.Width);
++                    Assert.InRange(box.Y, 0, (horizontal ? envelope.Depth : envelope.Length) - box.Height);
++                    if (i == 0) continue;
++                    var previousBox = layout.Bounds(main, transform, i - 1, edge == "bottom");
++                    Assert.Equal(QuotaNotchGeometry.CellGap, horizontal ? box.X - previousBox.X - previousBox.Width : box.Y - previousBox.Y - previousBox.Height, 6);
++                }
++                var expected = 2 * QuotaNotchGeometry.ContentPadding + layout.Cells.Sum(cell => horizontal ? cell.ContentWidth : cell.ContentHeight)
++                    + (layout.Cells.Count - 1) * QuotaNotchGeometry.CellGap;
++                Assert.Equal(Math.Max(80, expected), main.BodyEnd - main.BodyStart, 6);
++            }
++        }
++    }
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGripMotionTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGripMotionTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c5a1bb59a00d0c23ead48250d6cb48b5916c33f0
+index 0000000000000000000000000000000000000000..5d711281222a5b0942a2fcda33fc24394ac0c9d4
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGripMotionTests.cs
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,214 @@
 +using AgentSpeed.Presentation.Settings;
 +
 +namespace AgentSpeed.Presentation.Tests;
@@ -6679,12 +6855,16 @@ index 0000000000000000000000000000000000000000..c5a1bb59a00d0c23ead48250d6cb48b5
 +        var motion = new QuotaNotchGripMotion();
 +        motion.SetTargets(true, false, false, false, 0, false);
 +        Assert.True(motion.Active);
-+        Assert.Equal(0, motion.Sample(340).Arc);
-+        Assert.InRange(motion.Sample(815).Arc, .60, .80);
-+        var rest = motion.Sample(1290);
-+        Assert.Equal(new QuotaNotchGeometry.GripFrame(Arc: 1), rest);
++        bool emerged = false;
++        for (int time = 1; time < 10000 && motion.Active; time += 10)
++        {
++            var frame = motion.Sample(time);
++            emerged |= frame.Arc > 0 && frame.Arc < 1;
++        }
++        Assert.True(emerged);
++        Assert.Equal(new QuotaNotchGeometry.GripFrame(Arc: 1), motion.Frame);
 +        Assert.False(motion.Active);
-+        Assert.Equal(rest, motion.Sample(10000));
++        Assert.Equal(motion.Frame, motion.Sample(10000));
 +    }
 +
 +    [Fact]
@@ -6713,7 +6893,7 @@ index 0000000000000000000000000000000000000000..c5a1bb59a00d0c23ead48250d6cb48b5
 +        Assert.InRange(motion.Sample(120).Hover, 1, 1.3);
 +        motion.Sample(1000);
 +        Assert.False(motion.Active);
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var pose = motion.Frame;
 +        motion.SetTargets(true, true, true, true, 1010, false);
 +        Assert.Equal(pose.Reveal, motion.Frame.Reveal);
@@ -6784,7 +6964,7 @@ index 0000000000000000000000000000000000000000..c5a1bb59a00d0c23ead48250d6cb48b5
 +    public void EnteringEmergingArcRetainsExactPaintedSourceUntilFamilyReturnCompletes()
 +    {
 +        var motion = new QuotaNotchGripMotion();
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        motion.SetTargets(true, false, false, false, 0, false);
 +        var painted = motion.Sample(815);
 +        var touchedSource = QuotaNotchGeometry.CreateOrb(main, painted);
@@ -6803,10 +6983,83 @@ index 0000000000000000000000000000000000000000..c5a1bb59a00d0c23ead48250d6cb48b5
 +        Assert.Equal(0, motion.Sample(2800).EntryArc);
 +        Assert.Equal(default, QuotaNotchGeometry.CreateOrbCarry(main, motion.Frame));
 +    }
++
++    [Theory]
++    [InlineData("left")]
++    [InlineData("right")]
++    [InlineData("top")]
++    [InlineData("bottom")]
++    public void StationaryPaintEdgeRetainsIntentUntilPhysicalDeparture(string edge)
++    {
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(edge is "top" or "bottom", new QuotaNotchGeometry.Cell(52, 24, 52)));
++        var canvas = QuotaNotchGeometry.CreateEnvelope(new QuotaNotchGeometry.ContentLayout(edge is "top" or "bottom", new QuotaNotchGeometry.Cell(52, 24, 52)));
++        var transform = QuotaNotchGeometry.EdgeTransform(edge, canvas.Depth, canvas.Offset(main));
++        var motion = new QuotaNotchGripMotion();
++        var intent = new QuotaNotchGripIntent();
++        var dot = QuotaNotchGeometry.GetGripDot(main, new(1, 1), 5);
++        var local = new QuotaNotchGeometry.Point(dot.Center.X + dot.Radius, dot.Center.Y);
++        var pointer = transform.Apply(local);
++        var hit = QuotaNotchGeometry.GetGripHitBox(main, new(1, 1.3));
++        bool Contains(QuotaNotchGeometry.Point p) => p.X >= hit.X && p.X <= hit.X + hit.Width &&
++            p.Y >= hit.Y && p.Y <= hit.Y + hit.Height;
++        Assert.True(Contains(local));
++        Assert.False(intent.Update(transform.Apply(new(-20, -20)), false, false));
++        Assert.True(intent.Update(pointer, true, Contains(local)));
++        motion.SetTargets(true, true, true, false, 0, true);
++        motion.SetTargets(true, true, false, false, 1, false);
++        bool paintDeparted = false;
++        for (int time = 2; time < 1000; time++)
++        {
++            var frame = motion.Sample(time);
++            var current = QuotaNotchGeometry.GetGripDot(main, frame, 5);
++            double dx = local.X - current.Center.X, dy = local.Y - current.Center.Y;
++            bool entry = dx * dx + dy * dy <= current.Radius * current.Radius;
++            paintDeparted |= !entry;
++            Assert.True(intent.Update(pointer, entry, Contains(local)));
++        }
++        Assert.True(paintDeparted, "The stationary painted edge must outlive shrinking hover paint.");
++        var departed = transform.Apply(new(hit.X + hit.Width + 10, hit.Y));
++        Assert.False(intent.Update(departed, false, false));
++        for (int i = 0; i < 100; i++) Assert.False(intent.Update(departed, true, true));
++        Assert.True(intent.Update(pointer, true, Contains(local)));
++        Assert.True(intent.Update(departed, false, false, held: true));
++        Assert.False(intent.Update(departed, false, false));
++        intent.Reset();
++        Assert.False(intent.Acquired);
++    }
++
++    [Fact]
++    public void DiscBurstReversalAndPressPreserveThePaintedPose()
++    {
++        var motion = new QuotaNotchGripMotion();
++        motion.SetTargets(true, false, false, false, 0, true);
++        motion.SetTargets(true, true, false, false, 1000, false);
++        var opening = motion.Sample(1400);
++        Assert.InRange(opening.Reveal, .01, .99);
++        motion.SetTargets(true, false, false, false, 1400, false);
++        Assert.Equal(opening, motion.Frame);
++        var returning = motion.Sample(1430);
++        Assert.True(returning.Reveal < opening.Reveal);
++        motion.SetTargets(true, true, false, false, 1430, false);
++        Assert.Equal(returning, motion.Frame);
++        var painted = motion.Sample(1480);
++        Assert.True(painted.Reveal > returning.Reveal);
++        motion.SetTargets(true, true, true, true, 1500, false);
++        Assert.Equal(painted.Reveal, motion.Frame.Reveal);
++        Assert.Equal(painted.Disc, motion.Frame.Disc);
++        var held = motion.Sample(10000);
++        Assert.Equal(painted.Reveal, held.Reveal);
++        Assert.Equal(painted.Disc, held.Disc);
++        motion.SetTargets(true, true, true, false, 11000, false);
++        var end = motion.Sample(20000);
++        Assert.Equal(1, end.Reveal);
++        Assert.Equal(0, end.Disc);
++        Assert.False(motion.Active);
++    }
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..27db5c22e030d762f146df568a7c2b369a3d0b91
+index 0000000000000000000000000000000000000000..d4f752a0823a4cf50907452c1756b6ad010b92c7
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs
 @@ -0,0 +1,241 @@
@@ -6985,8 +7238,8 @@ index 0000000000000000000000000000000000000000..27db5c22e030d762f146df568a7c2b36
 +        var area = new RectD(0, 0, 1920, 1080);
 +        var vertical = QuotaNotchLayout.Vertical(edge);
 +        const double scale = 1.5;
-+        var model = QuotaNotchGeometry.CreateMain(1, 1, !vertical, edge == "bottom");
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1, !vertical);
++        var model = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(!vertical, new QuotaNotchGeometry.Cell(52, 24, 52)));
++        var envelope = QuotaNotchGeometry.CreateEnvelope(new QuotaNotchGeometry.ContentLayout(!vertical, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var local = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(model)).Apply(model.Grip);
 +        var width = vertical ? envelope.Depth : envelope.Length;
 +        var height = vertical ? envelope.Length : envelope.Depth;
@@ -7271,10 +7524,10 @@ index 0000000000000000000000000000000000000000..dac1a0803df48bb89c2d5f8b9d8afb14
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..7ba258722e081f90155bd240e0a0460f1ccdff03
+index 0000000000000000000000000000000000000000..d4916638ab0516f9f2663dba508a6dfb4b416d96
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,405 @@
 +using System.Runtime.ExceptionServices;
 +using System.Windows;
 +using System.Windows.Media;
@@ -7300,8 +7553,8 @@ index 0000000000000000000000000000000000000000..7ba258722e081f90155bd240e0a0460f
 +        var frame = new QuotaNotchGeometry.GripFrame(1, Arc: 1);
 +        view.Update(new(Array.Empty<QuotaSnapshot>(), ["codex"], true, true, edge, 1, Grip: frame));
 +        bool flat = edge is "top" or "bottom";
-+        var model = QuotaNotchGeometry.CreateMain(1, 1, flat, edge == "bottom");
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1, flat);
++        var model = QuotaNotchGeometry.CreateMain(1, view.ContentLayout);
++        var envelope = QuotaNotchGeometry.CreateEnvelope(view.ContentLayout);
 +        var matrix = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(model));
 +        view.Measure(view.Extent); view.Arrange(new Rect(view.Extent));
 +        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width), (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
@@ -7354,8 +7607,9 @@ index 0000000000000000000000000000000000000000..7ba258722e081f90155bd240e0a0460f
 +    public void ExpandedAffordanceIsVisibleBeforeHoverAndThroughoutDiscAndDropFrames(string edge, bool dark) => OnSta(() =>
 +    {
 +        var view = new QuotaNotchView(new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En));
-+        var main = QuotaNotchGeometry.CreateMain(1, 1, edge is "top" or "bottom", edge == "bottom");
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
++        view.Update(new(Array.Empty<QuotaSnapshot>(), ["codex"], true, dark, edge, 1));
++        var main = QuotaNotchGeometry.CreateMain(1, view.ContentLayout);
++        var envelope = QuotaNotchGeometry.CreateEnvelope(view.ContentLayout);
 +        var transform = QuotaNotchGeometry.EdgeTransform(edge, envelope.Depth, envelope.Offset(main));
 +        var center = QuotaNotchGeometry.GetOrbCenter(main);
 +        var arc = transform.Apply(new(center.X - QuotaNotchGeometry.ArcRadius * Math.Sqrt(.5),
@@ -7373,6 +7627,33 @@ index 0000000000000000000000000000000000000000..7ba258722e081f90155bd240e0a0460f
 +            Assert.Equal(255, AlphaAt(bitmap, point));
 +            Assert.Equal(QuotaNotchTarget.Grip, view.HitTestTarget(point).Target);
 +            Assert.True(view.InputGeometry.FillContains(point));
++        }
++    });
++
++    [Theory]
++    [InlineData("left")]
++    [InlineData("right")]
++    [InlineData("top")]
++    [InlineData("bottom")]
++    public void AcquiredDiscEnvelopeRemainsStableThroughBurstAndReturn(string edge) => OnSta(() =>
++    {
++        var view = new QuotaNotchView(new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En));
++        var state = new QuotaNotchRenderState([], ["codex"], true, true, edge, 1, Grip: new(Arc: 1));
++        view.Update(state);
++        var main = QuotaNotchGeometry.CreateMain(1, view.ContentLayout);
++        var bounds = QuotaNotchGeometry.CreateEnvelope(view.ContentLayout);
++        var transform = QuotaNotchGeometry.EdgeTransform(edge, bounds.Depth, bounds.Offset(main));
++        var center = QuotaNotchGeometry.GetOrbCenter(main);
++        var transformed = transform.Apply(new(center.X + QuotaNotchGeometry.DiscRadius - 1, center.Y));
++        var point = new Point(transformed.X, transformed.Y);
++        Assert.False(view.InputGeometry.FillContains(point));
++        QuotaNotchGeometry.GripFrame[] frames = [new(Arc: 1, Disc: .5), new(Arc: 1, Disc: 1),
++            new(.4, Arc: 1, Disc: .4), new(1, Arc: 1), new(1, Squeeze: 1, Arc: 1), new(Arc: 1)];
++        foreach (var frame in frames)
++        {
++            view.Update(state with { Grip = frame, GripAcquired = true });
++            Assert.True(view.InputGeometry.FillContains(point));
++            Assert.False(view.InputGeometry.FillContains(new Point(-100, -100)));
 +        }
 +    });
 +
@@ -7419,8 +7700,8 @@ index 0000000000000000000000000000000000000000..7ba258722e081f90155bd240e0a0460f
 +            view.Update(state);
 +            Size extent = view.Extent;
 +            double bodyCenter = view.BodyCenterAlong;
-+            var expanded = QuotaNotchGeometry.CreateMain(1, 1, edge is "top" or "bottom", edge == "bottom");
-+            var expandedEnvelope = QuotaNotchGeometry.CreateEnvelope(1, edge is "top" or "bottom");
++            var expanded = QuotaNotchGeometry.CreateMain(1, view.ContentLayout);
++            var expandedEnvelope = QuotaNotchGeometry.CreateEnvelope(view.ContentLayout);
 +            var expandedTransform = QuotaNotchGeometry.EdgeTransform(edge, expandedEnvelope.Depth, expandedEnvelope.Offset(expanded));
 +            var external = expandedTransform.Apply(expanded.Grip);
 +            view.Update(state with { Expansion = .5 });
@@ -7450,7 +7731,7 @@ index 0000000000000000000000000000000000000000..7ba258722e081f90155bd240e0a0460f
 +    public void FinalOutlinedGripHasModerateClearanceFromActualPaintedCurve(string edge) => OnSta(() =>
 +    {
 +        bool flat = edge is "top" or "bottom";
-+        var main = QuotaNotchGeometry.CreateMain(1, 1, flat, edge == "bottom");
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(flat, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var body = Geometry.Parse(main.BodyPath).GetFlattenedPathGeometry(.001, ToleranceType.Absolute);
 +        foreach (double hover in new[] { 0d, 1d, 1.2 })
 +        {
@@ -7493,8 +7774,8 @@ index 0000000000000000000000000000000000000000..7ba258722e081f90155bd240e0a0460f
 +        view.Measure(view.Extent); view.Arrange(new Rect(view.Extent));
 +        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width), (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
 +        bitmap.Render(view);
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
-+        var envelope = QuotaNotchGeometry.CreateEnvelope(1);
++        var main = QuotaNotchGeometry.CreateMain(1, view.ContentLayout);
++        var envelope = QuotaNotchGeometry.CreateEnvelope(view.ContentLayout);
 +        var box = QuotaNotchGeometry.GetGripHitBox(main, frame);
 +        var point = new Point(box.X + box.Width / 2, box.Y + envelope.Offset(main) + box.Height / 2);
 +        Assert.Equal(QuotaNotchTarget.Grip, view.HitTestTarget(point).Target);
@@ -7514,7 +7795,7 @@ index 0000000000000000000000000000000000000000..7ba258722e081f90155bd240e0a0460f
 +    [InlineData(2)]
 +    public void LiquidFrameImageAndInputMaskContainExactlyTheSameDevicePixels(double scale) => OnSta(() =>
 +    {
-+        var main = QuotaNotchGeometry.CreateMain(1, 1);
++        var main = QuotaNotchGeometry.CreateMain(1, new QuotaNotchGeometry.ContentLayout(false, new QuotaNotchGeometry.Cell(52, 24, 52)));
 +        var frame = new QuotaNotchGeometry.GripFrame(.4, Arc: 1, Disc: .4);
 +        var grip = QuotaNotchGeometry.CreateGrip(main, frame);
 +        Geometry source = new EllipseGeometry(new Point(grip.Core.Center.X, grip.Core.Center.Y), grip.Core.Radius, grip.Core.Radius);
@@ -7540,6 +7821,93 @@ index 0000000000000000000000000000000000000000..7ba258722e081f90155bd240e0a0460f
 +                if (painted) opaque++; else clear++;
 +            }
 +        Assert.True(opaque > 0 && clear > 0);
++    });
++
++    [Theory]
++    [InlineData("left")]
++    [InlineData("right")]
++    [InlineData("top")]
++    [InlineData("bottom")]
++    public void AcquiredEmergingPaintRetainsStationaryPointerWithoutClaimingUnusedCanvas(string edge) => OnSta(() =>
++    {
++        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
++        var view = new QuotaNotchView(loc);
++        var rest = new QuotaNotchView(loc);
++        var motion = new QuotaNotchGripMotion();
++        var intent = new QuotaNotchGripIntent();
++        motion.SetTargets(true, false, false, false, 0, false);
++        motion.Sample(815);
++        var state = new QuotaNotchRenderState([], ["codex"], true, true, edge, 1, Grip: motion.Frame);
++        view.Update(state);
++        rest.Update(state with { Grip = new(Arc: 1) });
++        view.Measure(view.Extent); view.Arrange(new Rect(view.Extent));
++        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(view.Extent.Width), (int)Math.Ceiling(view.Extent.Height), 96, 96, PixelFormats.Pbgra32);
++        bitmap.Render(view);
++        Point? touched = null;
++        var bounds = view.GripInputGeometry.Bounds;
++        for (int y = Math.Max(0, (int)bounds.Top); y < Math.Min(bitmap.PixelHeight, bounds.Bottom) && touched is null; y++)
++            for (int x = Math.Max(0, (int)bounds.Left); x < Math.Min(bitmap.PixelWidth, bounds.Right); x++)
++            {
++                var point = new Point(x + .5, y + .5);
++                if (AlphaAt(bitmap, point) > 128 && view.GripInputGeometry.FillContains(point) && !rest.InputGeometry.FillContains(point))
++                { touched = point; break; }
++            }
++        Assert.NotNull(touched);
++        var pointer = touched!.Value;
++        Assert.False(intent.Update(new(-100, -100), false, false));
++        Assert.True(intent.Update(new(pointer.X, pointer.Y), view.GripInputGeometry.FillContains(pointer), false));
++        motion.SetTargets(true, true, true, false, 815, false);
++        view.Update(state with { Grip = motion.Frame, GripAcquired = true });
++        var envelope = view.GripActivationGeometry.Bounds;
++        for (int frame = 1; frame <= 80; frame++)
++        {
++            motion.Sample(815 + frame * 20);
++            view.Update(state with { Grip = motion.Frame, GripAcquired = true });
++            Assert.Equal(envelope, view.GripActivationGeometry.Bounds);
++            Assert.True(view.InputGeometry.FillContains(pointer));
++            Assert.True(intent.Update(new(pointer.X, pointer.Y), view.GripInputGeometry.FillContains(pointer),
++                view.GripActivationGeometry.FillContains(pointer)));
++            Assert.False(view.InputGeometry.FillContains(new Point(view.Extent.Width - 1, view.Extent.Height - 1)));
++        }
++        var departed = new Point(-100, -100);
++        Assert.False(intent.Update(new(departed.X, departed.Y), view.GripInputGeometry.FillContains(departed),
++            view.GripActivationGeometry.FillContains(departed)));
++        motion.SetTargets(true, false, false, false, 2500, false);
++        for (int frame = 1; frame <= 40; frame++)
++        {
++            motion.Sample(2500 + frame * 20);
++            view.Update(state with { Grip = motion.Frame });
++            Assert.False(intent.Update(new(departed.X, departed.Y), view.GripInputGeometry.FillContains(departed),
++                view.GripActivationGeometry.FillContains(departed)));
++        }
++    });
++
++    [Theory]
++    [InlineData("left")]
++    [InlineData("right")]
++    [InlineData("top")]
++    [InlineData("bottom")]
++    public void ArcArrivingUnderStationaryPointerCannotAcquireIntent(string edge) => OnSta(() =>
++    {
++        var view = new QuotaNotchView(new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En));
++        var state = new QuotaNotchRenderState([], ["codex"], true, true, edge, 1, Grip: new(Arc: 1));
++        view.Update(state);
++        var pointer = view.GripInputGeometry.Bounds.TopLeft;
++        var bounds = view.GripInputGeometry.Bounds;
++        for (double y = bounds.Top; y <= bounds.Bottom; y += .5)
++            for (double x = bounds.Left; x <= bounds.Right; x += .5)
++                if (view.GripInputGeometry.FillContains(new Point(x, y))) pointer = new(x, y);
++        var intent = new QuotaNotchGripIntent();
++        var motion = new QuotaNotchGripMotion();
++        Assert.False(intent.Update(new(pointer.X, pointer.Y), false, false));
++        motion.SetTargets(true, false, false, false, 0, false);
++        for (int frame = 0; frame <= 100; frame++)
++        {
++            motion.Sample(frame * 20);
++            view.Update(state with { Grip = motion.Frame });
++            Assert.False(intent.Update(new(pointer.X, pointer.Y), view.GripInputGeometry.FillContains(pointer), false));
++        }
++        Assert.True(view.GripInputGeometry.FillContains(pointer));
 +    });
 +
 +    private static double SegmentDistance(Point p, Point a, Point b)
