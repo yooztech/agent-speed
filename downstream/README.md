@@ -68,12 +68,27 @@ The editor includes alternate connections retained by machine/source deduplicati
 each connection remains independently selectable, while readings count a machine's
 source only once after applying exclusions. Duplicate host labels are disambiguated
 by connection information. On both platforms, an orb-opened dashboard follows that
-orb's current selection without waiting for a new sample; global entries remain
-global. Hiding or deleting the associated orb closes its dashboard rather than
-silently displaying all sources. These corrections belong to feature patch 0011;
-native desktop behavior still requires Windows/macOS acceptance, not a Linux-only
-test or syntax check.
-Focused Linux-hosted checks for this correction passed 100 orb settings/feed/context
+orb's current selection without waiting for a new sample. Tray/taskbar, menu-bar
+and other global dashboard entries use a separate, persisted host/source selection;
+they do not inherit any orb's selection or change monitoring/collection settings.
+Global dashboard source controls live in General settings and update the open
+dashboard without waiting for a new sample. Each orb remains independently
+configurable. Hiding or deleting the associated orb closes its dashboard rather
+than silently displaying all sources. These changes belong to feature patch 0011;
+its remote traffic row integration belongs to 0015. Native desktop behavior
+requires Windows/macOS acceptance, not a Linux-only test or syntax check.
+For the independent global selection, focused Linux-hosted checks passed 135
+Presentation tests and 10 OrbSubset Core tests. The Windows application
+cross-compiles with zero warnings/errors, and the changed Swift files pass
+syntax parsing. Native Windows interaction, macOS SDK type checking and macOS
+behavior tests remain unverified. The Linux portable Swift projection probe
+could not use the unchanged production dependency closure: it depends on Apple's
+`os`/`OSAllocatedUnfairLock` and `CryptoKit`. No substitute models or visual
+assertions were used, and no package, Actions or Release was created.
+All 25 patches replay successfully from the pinned baseline; all 3,147 non-build
+files in the replayed tree match the checked prepared tree byte-for-byte.
+
+For the earlier orb-bound correction, focused Linux-hosted checks passed 100 orb settings/feed/context
 Presentation tests and nine OrbSubset Core tests. The Windows WPF application and
 native test assembly also cross-compile with zero warnings/errors; these checks
 do not execute a Windows desktop or prove native popup interaction.

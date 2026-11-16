@@ -1,7 +1,7 @@
-From 0a8975ae68b32c486e0a7e43f42bd6d0a871b510 Mon Sep 17 00:00:00 2001
+From 0fc255dcaa013e12d20d760255100638e5079de0 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
-Subject: [PATCH 15/19] Integrate remote network traffic by host and source
+Subject: [PATCH 15/25] Integrate remote network traffic by host and source
 
 ---
  README.md                                     |   2 +
@@ -59,10 +59,10 @@ Subject: [PATCH 15/19] Integrate remote network traffic by host and source
  create mode 100644 windows/src/AgentSpeed.Core/RemoteTraffic.cs
 
 diff --git a/README.md b/README.md
-index 9f9eee7e..51ccd86c 100644
+index c16c9bbf..8e4f0063 100644
 --- a/README.md
 +++ b/README.md
-@@ -153,6 +153,8 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
+@@ -159,6 +159,8 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
  Remote sources and agents appear alongside local sources in the native dashboard and history when available. Remote
  data does not include categorized today's token totals, project paths or a continuous live chart; unavailable
  values, including missing price data, remain unknown. Network traffic is reported when the collector can observe it.
@@ -331,7 +331,7 @@ index 7cde87b7..3ce43154 100644
 +    EXPECT_EQ(toolClass->root, rootKey);
 +}
 diff --git a/macos/Sources/AgentSpeed/App/AppDelegate.swift b/macos/Sources/AgentSpeed/App/AppDelegate.swift
-index bb27bede..fa300736 100644
+index 739be582..b6b512f8 100644
 --- a/macos/Sources/AgentSpeed/App/AppDelegate.swift
 +++ b/macos/Sources/AgentSpeed/App/AppDelegate.swift
 @@ -239,6 +239,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
@@ -348,7 +348,7 @@ index bb27bede..fa300736 100644
          model?.orbs.masterVisible = visible
      }
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index a3ee4ecf..9cc19883 100644
+index 871c2c9d..0df8e8ba 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -13,6 +13,7 @@ protocol AppCommands: AnyObject {
@@ -414,10 +414,10 @@ index 314d935e..a7bd9238 100644
          })
          listener = model.store.addEventListener { [weak self] event in
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index a397855e..e7733308 100644
+index 000a5b08..1484778c 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-@@ -190,6 +190,7 @@ struct RemoteMessage: Decodable, Sendable {
+@@ -201,6 +201,7 @@ struct RemoteMessage: Decodable, Sendable {
      let todayUnpricedRequests: Int?
      let partialHistory: Bool?
      let sources: [RemoteSource]?
@@ -425,7 +425,7 @@ index a397855e..e7733308 100644
      let todayRequests: Int?
      let todayAverage: Double?
      let liveOutput: Double?
-@@ -235,9 +236,18 @@ struct RemoteHostState {
+@@ -246,9 +247,18 @@ struct RemoteHostState {
      var completions: [RemoteCompletion] = []
      var error: String?
      var seenCompletionIDs: Set<String> = []
@@ -445,7 +445,7 @@ index a397855e..e7733308 100644
              online = true
              error = nil
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-index 8ea864af..c7b00c86 100644
+index 29426e0c..ff6c41b0 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 @@ -9,7 +9,7 @@ struct RemoteCapabilities {
@@ -457,7 +457,7 @@ index 8ea864af..c7b00c86 100644
      let todayBreakdown = false
      let chart = false
      let agentProject = false
-@@ -211,6 +211,7 @@ extension RemoteHostState {
+@@ -251,6 +251,7 @@ extension RemoteHostState {
              result.peak = snapshot.peakToday != nil
              result.cost = snapshot.todayCostMicroUsd != nil && snapshot.todayUnpricedRequests != nil
              result.todayStart = snapshot.todayStartMs != nil
@@ -544,7 +544,7 @@ index 00000000..ed10116f
 +    let history: [RemoteTrafficHistoryRow]?
 +}
 diff --git a/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift b/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
-index aa3f2078..41d921d6 100644
+index aa3f2078..9d8c2aee 100644
 --- a/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
 +++ b/macos/Sources/AgentSpeed/Dashboard/Traffic/TrafficSection.swift
 @@ -17,7 +17,13 @@ struct TrafficSection: View {
@@ -552,7 +552,7 @@ index aa3f2078..41d921d6 100644
          let text = TrafficText(model: model)
          let includeTools = model.settings.trafficIncludeTools
 -        let rows = Self.rows(snapshot, includeTools: includeTools)
-+        let selected = context?.orbID == nil ? nil : context?.snapshot.sourceInstances
++        let selected = context?.snapshot.sourceInstances
 +        let instances = selected ?? model.store.snapshot.sourceInstances
 +        let enabled = selected.map { SourceSet($0.filter { $0.hostID == nil && $0.status.enabled }.map { $0.status.kind }) }
 +            ?? SourceSet(model.settings.enabledSources)
@@ -856,10 +856,10 @@ index f2ee5a2c..2011ca72 100644
                  HStack(spacing: Spacing.s) {
                      if model.remoteHistoryStale { Text(model.l10n("history.remoteStale")) }
 diff --git a/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
-index 3f078baf..cf1a4be5 100644
+index 33ba70e1..b5c96f87 100644
 --- a/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
-@@ -77,6 +77,10 @@ struct OrbDashboardContextTests {
+@@ -80,6 +80,10 @@ struct OrbDashboardContextTests {
          #expect(TodayCostSummary(model: model, snapshot: changed).total.costMicroUsd == 27)
          #expect(changed.history.first?.measured.output == 27)
          #expect(!changed.peakTodayAvailable && changed.averageToday == nil)
@@ -987,7 +987,7 @@ index 00000000..fdaa60b8
 +    }
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 1ea8f918..e02d042a 100644
+index 3c9ad5ae..09841984 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -240,8 +240,8 @@ and outputs, and absolute working paths do not. SSH credentials are not embedded
@@ -1450,10 +1450,10 @@ index a313e907..abd87d2d 100644
              return null;
          }
 diff --git a/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs b/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
-index b4a2fa1e..7794ab20 100644
+index 15a252be..3828d018 100644
 --- a/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
 +++ b/windows/src/AgentSpeed.Presentation/Orb/OrbDashboardContext.cs
-@@ -35,6 +35,9 @@ public sealed class OrbDashboardContext
+@@ -51,6 +51,9 @@ public sealed class OrbDashboardContext
                  .ToDictionary(pair => pair.Key, pair => pair.Value),
              Agents = snapshot.Agents.Where(pair => agents.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value),
          };
@@ -1508,7 +1508,7 @@ index 5f811c2d..f3cb7d1a 100644
      public static OrbTraffic Parse(string? key) => key switch
      {
 diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
-index b5c8887b..e3ad71c4 100644
+index 852c0daa..e7636162 100644
 --- a/windows/src/AgentSpeed/App/AppController.cs
 +++ b/windows/src/AgentSpeed/App/AppController.cs
 @@ -137,6 +137,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
@@ -1528,9 +1528,9 @@ index b5c8887b..e3ad71c4 100644
          _speed.EventRaised += (_, e) => OnSpeedEvent(e);
          _settings.Changed += (_, e) => OnSettingsChanged(e.Previous, e.Current);
          _theme.Changed += (_, _) => OnThemeChanged();
-@@ -952,14 +953,14 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
-             _dashboard = new DashboardWindow(_dashboardModel, () => _speed.Now) { Language = AppFonts.XmlLanguageFor(_loc.LanguageCode) };
-             _dashboard.SettingsRequested += (_, _) => OpenSettings();
+@@ -957,14 +958,14 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+                 else OpenSettings("general");
+             };
              _dashboard.SourcesRequested += (_, _) => OpenSettings("sources");
 -            _dashboard.HistoryRequested += (_, source) => ShowHistory(source?.Kind);
 +            _dashboard.HistoryRequested += (_, source) => ShowHistory(source?.Kind, hostId: source?.HostId);
@@ -1545,7 +1545,7 @@ index b5c8887b..e3ad71c4 100644
              _dashboard.TrafficSettingsRequested += (_, _) => OpenSettings("traffic");
              _dashboard.BoardsMenuRequested += (_, _) => ShowDashboardBoardsMenu();
              AttachReporting(_dashboard);
-@@ -1030,7 +1031,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -1035,7 +1036,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
      // ---- Usage history ----
  
      /// <param name="traffic">Open on the traffic metric (a row of the dashboard's Network section, DESIGN 10).</param>
@@ -1554,7 +1554,7 @@ index b5c8887b..e3ad71c4 100644
      {
          if (_quitting)
          {
-@@ -1039,7 +1040,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -1044,7 +1045,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
  
          _dashboard?.Dismiss();
          StartHistory();
@@ -1606,7 +1606,7 @@ index 5012b3d2..f55db2da 100644
              }
  
 diff --git a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
-index 5df810b0..477a6c25 100644
+index 2ce4e868..04dc9ae7 100644
 --- a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
 +++ b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
 @@ -117,7 +117,7 @@ internal sealed partial class DashboardWindow : Window
@@ -1741,10 +1741,10 @@ index de55ad97..153700b4 100644
  
      public (string FileName, byte[] Bytes) ExportModesCsv()
 diff --git a/windows/src/AgentSpeed/Orb/OrbManager.cs b/windows/src/AgentSpeed/Orb/OrbManager.cs
-index 05a22c04..1668fc65 100644
+index b3d18b21..d374a4d7 100644
 --- a/windows/src/AgentSpeed/Orb/OrbManager.cs
 +++ b/windows/src/AgentSpeed/Orb/OrbManager.cs
-@@ -373,9 +373,12 @@ internal sealed class OrbManager : IDisposable
+@@ -377,9 +377,12 @@ internal sealed class OrbManager : IDisposable
          OrbLinesSample? sample = mode switch
          {
              OrbTraffic.Intelligence => IntelligenceSample(entry.Feed.Reading),
@@ -1968,10 +1968,10 @@ index d5135123..57447251 100644
 +    }
  }
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
-index 149d5102..23e70285 100644
+index d9adf923..5cae8b32 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
-@@ -72,6 +72,7 @@ public sealed class OrbDashboardContextTests
+@@ -75,6 +75,7 @@ public sealed class OrbDashboardContextTests
          var bTraffic = HostTraffic(HostB, 2000);
          var traffic = aTraffic with
          {
@@ -1979,7 +1979,7 @@ index 149d5102..23e70285 100644
              Agents = aTraffic.Agents.Concat(bTraffic.Agents).ToDictionary(pair => pair.Key, pair => pair.Value),
          };
          var feed = new OrbFeed("a");
-@@ -106,7 +107,10 @@ public sealed class OrbDashboardContextTests
+@@ -109,7 +110,10 @@ public sealed class OrbDashboardContextTests
              var projectedTraffic = context.ProjectTraffic(traffic, view);
              Assert.Equal(traffic.MachineLive, projectedTraffic.MachineLive);
              Assert.Same(traffic.MachineHistory, projectedTraffic.MachineHistory);
@@ -2109,7 +2109,3 @@ index 5286eee1..fa753050 100644
      [Fact]
      public void TheTaskbarBlockFollowsTheSetting()
      {
-
--- 
-2.41.0
-
