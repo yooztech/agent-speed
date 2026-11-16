@@ -409,6 +409,27 @@ AppKit/WPF desktop input, macOS raster orientation/clipping or actual animation;
 native visual acceptance remains unverified. No package, Actions or Release was
 created.
 
+Release run [43797161025](https://github.com/yooztech/agent-speed/actions/runs/43797161025)
+failed both native gates despite the earlier cross-build and portable checks.
+Windows compiled but failed all five dispatcher-lifecycle cases because their
+setup asserted that Subscription settings contained exactly one button; the Kimi
+key action legitimately adds another. The two unrelated whole-page button-count
+assertions are removed where this dispatcher/reader integration test is introduced,
+in 0022; owner-dispatcher delivery, result publication and all invalidation checks
+remain. macOS failed to compile ten assertions where
+Swift Testing rewrote a mutating `intent.update` call through an immutable
+receiver. Patch 0020 evaluates each mutation into a local Boolean before
+`#expect`, preserving the call order and assertions. Syntax parsing and extracted
+precondition harnesses did not exercise that macro expansion; they were not proof
+of native test compilation. Neither failure is treated as a runner flake, and no
+test is skipped or failure gate relaxed. Native reruns remain required; no new
+Actions or Release run is authorized by these corrections.
+The corrected Windows application and native test assembly cross-compile with
+zero warnings/errors. Two Swift 6.2.4 tests using the real Testing macros and the
+unchanged production intent type compile and pass with strict concurrency and
+warnings as errors. These checks cover the macro failure and assembly compilation,
+not execution of the five Windows WPF cases or the complete native macOS suite.
+
 The redesigned native surfaces and real-login behavior remain unverified on
 Windows and macOS. Portable geometry checks and SVG previews validate shared
 shape calculations, not native window placement, hit testing, font rasterization

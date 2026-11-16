@@ -1,6 +1,6 @@
-From d2292791a01fad31360262cbf5ad72ebff62c4f1 Mon Sep 17 00:00:00 2001
+From 672bae996312737c97cd02b438874dd9b1a0741d Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Mon, 16 Nov 2026 11:02:49 +0800
+Date: Mon, 16 Nov 2026 11:34:29 +0800
 Subject: [PATCH] Add local and remote Kimi Code quota
 
 Support read-only CLI OAuth and regional subscription API keys, native secure settings, client-managed SSH provisioning, private revision-safe storage and account-isolated quota lifecycle.

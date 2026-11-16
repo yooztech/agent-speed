@@ -1,6 +1,6 @@
-From 0825683750b695ba83490e5fadde0b4d26746754 Mon Sep 17 00:00:00 2001
+From 8f683f17eabaf99aa01f46e9ecb2132678ec0652 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Mon, 16 Nov 2026 11:02:46 +0800
+Date: Mon, 16 Nov 2026 11:34:27 +0800
 Subject: [PATCH] Read remote subscription quota over SSH
 
 ---

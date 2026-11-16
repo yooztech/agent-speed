@@ -1,6 +1,6 @@
-From dabc8ef6afc9a8cbae2cc219e0c32d8d153f8df8 Mon Sep 17 00:00:00 2001
+From c37e2782e09bfbb18926153468394d5cfa318aa8 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Mon, 16 Nov 2026 11:02:43 +0800
+Date: Mon, 16 Nov 2026 11:34:26 +0800
 Subject: [PATCH] Add multi-window quota and OpenCode Go provider
 
 ---
@@ -46,8 +46,8 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  .../QuotaSettingsPageTests.cs                 |  89 +++-
  .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
- .../QuotaSurfaceTests.cs                      | 131 ++++-
- 43 files changed, 2453 insertions(+), 238 deletions(-)
+ .../QuotaSurfaceTests.cs                      | 129 ++++-
+ 43 files changed, 2451 insertions(+), 238 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -855,7 +855,7 @@ index ead924c28ea2ac140b1ce2b78be43130e49a9347..b2a82557169798e8f8a2ce35fdc03b47
              #expect(restored.snapshots.isEmpty)
          }
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-index e5a66013c38e9e6c00888bda629d2ee8667a64f5..be9e7b1a532333b89615c43ce88b70858b26e20c 100644
+index 395c90b439f5a918735afbc5cd8cbcda9e5816f1..cef11d804cbbe0a62162133b2ca7c10eef592d88 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 @@ -15,7 +15,7 @@ struct QuotaNotchTests {
@@ -892,7 +892,7 @@ index e5a66013c38e9e6c00888bda629d2ee8667a64f5..be9e7b1a532333b89615c43ce88b7085
      @Test func allCellsAndUprightLabelsFitEveryEdge() {
          let monitor = CGRect(x: -1_920, y: -1_080, width: 1_920, height: 1_080)
          for edge in NotchEdge.allCases {
-@@ -409,12 +409,12 @@ struct QuotaNotchTests {
+@@ -421,12 +421,12 @@ struct QuotaNotchTests {
          hover.keepExpanded = true
          hover.move(to: .cell("codex")); hover.move(to: .outside)
          clock.advance(0.1)
@@ -908,7 +908,7 @@ index e5a66013c38e9e6c00888bda629d2ee8667a64f5..be9e7b1a532333b89615c43ce88b7085
          clock.advance(0.001)
          #expect(hover.expanded && hover.activeSource == nil && !hover.graceActive)
          hover.reset()
-@@ -432,9 +432,9 @@ struct QuotaNotchTests {
+@@ -444,9 +444,9 @@ struct QuotaNotchTests {
          #expect(!hover.expanded && hover.activeSource == nil && !hover.graceActive)
          hover.move(to: .bar)
          #expect(hover.expanded)
@@ -3683,7 +3683,7 @@ index be4d0544b2f6096ef10ea153d5f323495d03a0b0..f69e05f09d1e6aa5f415577985a091d1
          }
      }
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
-index 29890dea5f36470a519d50f3871a3d910b0fe9ad..f4a98e8c277b403130f77df07ebc09f49f169804 100644
+index 29890dea5f36470a519d50f3871a3d910b0fe9ad..463f237ddf2fe9b69a01ba58439ac726aff72d7d 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 @@ -36,7 +36,7 @@ public sealed class QuotaSurfaceTests
@@ -3768,7 +3768,7 @@ index 29890dea5f36470a519d50f3871a3d910b0fe9ad..f4a98e8c277b403130f77df07ebc09f4
                      now: () => now);
                  settings.Changed += (_, _) => surface.ApplySettings();
                  UIElement? summary = null;
-@@ -441,6 +442,110 @@ public sealed class QuotaSurfaceTests
+@@ -441,6 +442,108 @@ public sealed class QuotaSurfaceTests
          });
      }
  
@@ -3819,7 +3819,6 @@ index 29890dea5f36470a519d50f3871a3d910b0fe9ad..f4a98e8c277b403130f77df07ebc09f4
 +                };
 +                surface.SetFlyoutActive(true);
 +                Assert.Null(SynchronizationContext.Current);
-+                Assert.False(Assert.Single(Descendants(page).OfType<Button>()).IsEnabled);
 +
 +                // Hold the owner thread until the worker has queued its completion. This makes
 +                // invalidation-before-render deterministic, rather than relying on sleeps or HTTP timing.
@@ -3856,7 +3855,6 @@ index 29890dea5f36470a519d50f3871a3d910b0fe9ad..f4a98e8c277b403130f77df07ebc09f4
 +                if (transition == "active")
 +                {
 +                    Assert.Contains(Descendants(page).OfType<TextBlock>(), text => text.Text == handler.Plan);
-+                    Assert.True(Assert.Single(Descendants(page).OfType<Button>()).IsEnabled);
 +                    Assert.NotNull(summary);
 +                    Assert.Same(dispatcher, summary.Dispatcher);
 +                    Assert.Contains(Descendants(summary).OfType<TextBlock>(), text => text.Text == loc["win.quota.plan"] + ": " + handler.Plan);
@@ -3879,7 +3877,7 @@ index 29890dea5f36470a519d50f3871a3d910b0fe9ad..f4a98e8c277b403130f77df07ebc09f4
      private static void RunSta(Action action)
      {
          Exception? failure = null;
-@@ -484,12 +589,14 @@ public sealed class QuotaSurfaceTests
+@@ -484,12 +587,14 @@ public sealed class QuotaSurfaceTests
          public string Plan = "plus";
          public int UsedPercent = 13;
          public TaskCompletionSource? Block;

@@ -1,6 +1,6 @@
-From 91246268115167c110e43b521e52f5edf41df039 Mon Sep 17 00:00:00 2001
+From 5a1c66e6d7400762521b75a94bb7be7d92b555ef Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Mon, 16 Nov 2026 11:02:37 +0800
+Date: Mon, 16 Nov 2026 11:34:24 +0800
 Subject: [PATCH] Add macOS Codex quota monitoring
 
 ---
@@ -26,7 +26,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  macos/Sources/AgentSpeedCore/Quota.swift      | 138 ++++
  .../AgentSpeedCore/QuotaPersistence.swift     |  82 ++
  .../QuotaControllerTests.swift                | 585 +++++++++++++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 456 ++++++++++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 468 ++++++++++++
  .../QuotaPresentationTests.swift              | 172 +++++
  .../QuotaWarmStartupTests.swift               |  93 +++
  .../CodexQuotaProviderTests.swift             | 236 ++++++
@@ -37,7 +37,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  spec/QUOTA.md                                 | 131 ++++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 33 files changed, 5222 insertions(+), 2 deletions(-)
+ 33 files changed, 5234 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -3975,10 +3975,10 @@ index 0000000000000000000000000000000000000000..ead924c28ea2ac140b1ce2b78be43130
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..e5a66013c38e9e6c00888bda629d2ee8667a64f5
+index 0000000000000000000000000000000000000000..395c90b439f5a918735afbc5cd8cbcda9e5816f1
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,456 @@
+@@ -0,0 +1,468 @@
 +import AppKit
 +import SwiftUI
 +import Testing
@@ -4309,22 +4309,32 @@ index 0000000000000000000000000000000000000000..e5a66013c38e9e6c00888bda629d2ee8
 +            }
 +            let point = try #require(touched, "An emerging painted edge must leave its old footprint")
 +            let envelope = QuotaGripGeometry.activation(shape.orbCenter).applying(shape.transform).union(initial.hit)
-+            #expect(!intent.update(CGPoint(x: -100, y: -100), entry: false, envelope: false))
-+            #expect(intent.update(point, entry: initial.hit.contains(point), envelope: envelope.contains(point)))
++            let initiallyAcquired = intent.update(CGPoint(x: -100, y: -100), entry: false, envelope: false)
++            #expect(!initiallyAcquired)
++            let acquiredOnEntry = intent.update(point, entry: initial.hit.contains(point), envelope: envelope.contains(point))
++            #expect(acquiredOnEntry)
 +            motion.setTargets(expanded: true, reveal: true, hover: true, held: false, now: 0.815, reducedMotion: false)
 +            for tick in 1...80 {
 +                motion.sample(0.815 + Double(tick) / 50)
 +                let paint = QuotaGripPaint(geometry: shape, frame: motion.frame, filter: filter, scale: 1, acquired: envelope)
-+                #expect(intent.update(point, entry: paint.hit.contains(point), envelope: envelope.contains(point)))
++                let remainsAcquired = intent.update(point, entry: paint.hit.contains(point), envelope: envelope.contains(point))
++                #expect(remainsAcquired)
 +                #expect(paint.hit.contains(point))
 +            }
 +            let departure = CGPoint(x: -100, y: -100)
-+            #expect(!intent.update(departure, entry: false, envelope: envelope.contains(departure)))
++            let acquiredAfterDeparture = intent.update(departure, entry: false, envelope: envelope.contains(departure))
++            #expect(!acquiredAfterDeparture)
 +            // A paint-only classification change at the same screen position is not intent.
-+            for _ in 0..<20 { #expect(!intent.update(departure, entry: true, envelope: true)) }
-+            #expect(intent.update(point, entry: initial.hit.contains(point), envelope: envelope.contains(point)))
-+            #expect(intent.update(departure, entry: false, envelope: false, held: true))
-+            #expect(!intent.update(departure, entry: false, envelope: false))
++            for _ in 0..<20 {
++                let acquiredWithoutMovement = intent.update(departure, entry: true, envelope: true)
++                #expect(!acquiredWithoutMovement)
++            }
++            let reacquiredOnEntry = intent.update(point, entry: initial.hit.contains(point), envelope: envelope.contains(point))
++            #expect(reacquiredOnEntry)
++            let acquiredWhileHeld = intent.update(departure, entry: false, envelope: false, held: true)
++            #expect(acquiredWhileHeld)
++            let acquiredAfterRelease = intent.update(departure, entry: false, envelope: false)
++            #expect(!acquiredAfterRelease)
 +        }
 +    }
 +
@@ -4334,12 +4344,14 @@ index 0000000000000000000000000000000000000000..e5a66013c38e9e6c00888bda629d2ee8
 +            let center = shape.orbCenter
 +            let point = CGPoint(x: center.x - NotchLayout.arcRadius, y: center.y).applying(shape.transform)
 +            var intent = QuotaGripIntent(), motion = QuotaGripMotion()
-+            #expect(!intent.update(point, entry: false, envelope: false))
++            let initiallyAcquired = intent.update(point, entry: false, envelope: false)
++            #expect(!initiallyAcquired)
 +            motion.setTargets(expanded: true, reveal: false, hover: false, held: false, now: 0, reducedMotion: false)
 +            for tick in 1...100 {
 +                motion.sample(Double(tick) / 50)
 +                let paint = QuotaGripPaint(geometry: shape, frame: motion.frame, filter: filter, scale: 1)
-+                #expect(!intent.update(point, entry: paint.hit.contains(point), envelope: false))
++                let acquiredWithoutMovement = intent.update(point, entry: paint.hit.contains(point), envelope: false)
++                #expect(!acquiredWithoutMovement)
 +            }
 +        }
 +    }
