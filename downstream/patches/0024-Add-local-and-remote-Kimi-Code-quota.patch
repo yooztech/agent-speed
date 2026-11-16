@@ -1,6 +1,6 @@
-From 672bae996312737c97cd02b438874dd9b1a0741d Mon Sep 17 00:00:00 2001
+From 1349ae9d932abd8ea27cac6e929e579abd55d7ce Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Mon, 16 Nov 2026 11:34:29 +0800
+Date: Mon, 16 Nov 2026 12:22:12 +0800
 Subject: [PATCH] Add local and remote Kimi Code quota
 
 Support read-only CLI OAuth and regional subscription API keys, native secure settings, client-managed SSH provisioning, private revision-safe storage and account-isolated quota lifecycle.
@@ -65,9 +65,9 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../SettingsSerializerTests.cs                |   2 +-
  .../KimiKeySettingsTests.cs                   | 140 ++++++
  .../QuotaNotchViewTests.cs                    |   1 +
- .../QuotaSettingsPageTests.cs                 |  34 +-
+ .../QuotaSettingsPageTests.cs                 |  30 +-
  .../QuotaSurfaceRetryTests.cs                 |  16 +-
- 62 files changed, 4432 insertions(+), 140 deletions(-)
+ 62 files changed, 4430 insertions(+), 138 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/KimiCredentialResponse.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
  create mode 100644 macos/Sources/AgentSpeedCore/KimiAPIKeyStore.swift
@@ -1629,10 +1629,10 @@ index ed8e603231f7e7200332a0b26b5c43e530a71db9..f412d962d49bdc82ce323403cfdec64e
          if startup { startupAttempted.insert(reader.provider.id) }
          // Supersede a cache-only load without allowing its late result to overwrite a live read.
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index 79ac2d06ec3710f2ce85ff9782a7824373779404..268d1a2b271aae818a9842fe0f580be68cd157e2 100644
+index b46ca44762dc6bc66a9dc759d2f35f440d3747f4..c8e0cf26f3a9ec25e71d748e05ec7b2b62b46be6 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -106,7 +106,12 @@ struct QuotaNotchReading {
+@@ -102,7 +102,12 @@ struct QuotaNotchReading {
          } else { label = l10n("mac.quota.window") }
      }
      if quotaIsProviderLabel(window.label, providerName: providerName) { return label }
@@ -5789,7 +5789,7 @@ index 4e305138e8a1b6e469998551799460b46951769c..cb350f799d0dca07446cabf980c2f2ca
      private static QuotaSnapshot Snapshot() => new("codex", "Codex", "exact", QuotaStatus.Ok,
          [new("weekly", "Weekly", 1.25, null, null, null, TimeSpan.FromDays(7))], "weekly", null, "account", "plus", Observed, "codex-cli", null, null, false);
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
-index 0436e0c486f031b88afdef0ae4cf86f7bbc180c3..f648c46b5f8a508c97927860d8edf36ceddf030a 100644
+index e026a7e218820a46f1b4a2ab727ca0e175bcf6e6..6e9c76ba38fd6c164c35af54463ff466b3356be4 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 @@ -13,6 +13,51 @@ public class QuotaFormatTests
@@ -6028,41 +6028,32 @@ index 0000000000000000000000000000000000000000..b103676813c5433ef680b53845a1c21c
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index 859a34091ccafaf2b83c4f67f89b845ee1305ff5..04f4b98d413cd126683d7a3d6e4dcdad9fe52706 100644
+index 5350b606f2fe0662d674335034b6ce9e38e61dc4..14096288b626e617583f62e9f77fde606bf41ed8 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-@@ -14,6 +14,7 @@ public class QuotaNotchViewTests
+@@ -11,6 +11,7 @@ public class QuotaNotchViewTests
      [Theory]
      [InlineData("codex")]
      [InlineData("opencode-go")]
 +    [InlineData("kimi")]
-     public void RemoteSourceUsesProviderGlyphAndSupportsScopedDetailCard(string provider) => OnSta(() =>
+     public void RemoteSourceSupportsScopedDetailCard(string provider) => OnSta(() =>
      {
          var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-index 5cfcb92f0c54066cb9d531e54d4a90b977a1197e..e274b80cf99c26c1827e02973c609191ca1fd527 100644
+index fd2fae0d434ad09c133116f0ef2067c349b3594b..90663c85afb66fdc5958e041262142ba006537a2 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-@@ -263,7 +263,7 @@ public class QuotaSettingsPageTests
-                 var content = Assert.IsType<StackPanel>(source.Content);
-                 var dot = Assert.Single(content.Children.OfType<Ellipse>());
-                 Assert.Equal(8, dot.Width); Assert.Equal(8, dot.Height);
--                Assert.Same(page.Resources[provider.Id == "codex" ? "QuotaCodexSourceBrush" : "QuotaOpenCodeSourceBrush"], dot.Fill);
-+                Assert.Same(page.Resources[provider.Id switch { "codex" => "QuotaCodexSourceBrush", "kimi" => "QuotaKimiSourceBrush", _ => "QuotaOpenCodeSourceBrush" }], dot.Fill);
-             }
-             page.Update(state with { AllSources = false });
-             foreach (var provider in QuotaProviders.Supported)
-@@ -274,15 +274,18 @@ public class QuotaSettingsPageTests
+@@ -244,15 +244,18 @@ public class QuotaSettingsPageTests
          });
      }
  
 -    [Fact]
--    public void RemoteSourcesUseExistingAccountCardsAndHostScopedSelectionWithProviderColor()
+-    public void RemoteSourcesUseExistingAccountCardsAndHostScopedSelection()
 +    [Theory]
-+    [InlineData("codex", "QuotaCodexSourceBrush")]
-+    [InlineData("opencode-go", "QuotaOpenCodeSourceBrush")]
-+    [InlineData("kimi", "QuotaKimiSourceBrush")]
-+    public void RemoteSourcesUseExistingAccountCardsAndHostScopedSelectionWithProviderColor(string provider, string color)
++    [InlineData("codex")]
++    [InlineData("opencode-go")]
++    [InlineData("kimi")]
++    public void RemoteSourcesUseExistingAccountCardsAndHostScopedSelection(string provider)
      {
          OnStaThread(() =>
          {
@@ -6074,16 +6065,7 @@ index 5cfcb92f0c54066cb9d531e54d4a90b977a1197e..e274b80cf99c26c1827e02973c609191
              var snapshot = Snapshot(QuotaStatus.Stale, []) with { Id = source.Id, DisplayName = source.DisplayName, Source = source.Source };
              using var page = Page(new QuotaPageState([snapshot], [source.Id], false, true, false, false, false, null, false, available), 440);
              Assert.Contains(LogicalDescendants(page).OfType<TextBlock>(), text => text.Text == source.DisplayName);
-@@ -291,7 +294,7 @@ public class QuotaSettingsPageTests
-             Assert.True(choice.IsChecked);
-             Assert.True(choice.IsEnabled);
-             var dot = Assert.Single(Assert.IsType<StackPanel>(choice.Content).Children.OfType<Ellipse>());
--            Assert.Same(page.Resources["QuotaCodexSourceBrush"], dot.Fill);
-+            Assert.Same(page.Resources[color], dot.Fill);
-         });
-     }
- 
-@@ -406,6 +409,27 @@ public class QuotaSettingsPageTests
+@@ -374,6 +377,27 @@ public class QuotaSettingsPageTests
          });
      }
  

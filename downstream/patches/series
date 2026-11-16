@@ -22,3 +22,4 @@
 0022-Add-multi-window-quota-and-OpenCode-Go-provider.patch
 0023-Read-remote-subscription-quota-over-SSH.patch
 0024-Add-local-and-remote-Kimi-Code-quota.patch
+0025-Test-history-worker-lifecycle-without-wall-clock-gate.patch

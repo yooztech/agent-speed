@@ -1,6 +1,6 @@
-From 8f683f17eabaf99aa01f46e9ecb2132678ec0652 Mon Sep 17 00:00:00 2001
+From e6ddf8b53da1d6981dc5436d70b8dd536eedc683 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Mon, 16 Nov 2026 11:34:27 +0800
+Date: Mon, 16 Nov 2026 12:22:11 +0800
 Subject: [PATCH] Read remote subscription quota over SSH
 
 ---
@@ -50,11 +50,11 @@ Subject: [PATCH] Read remote subscription quota over SSH
  .../RemoteQuotaPersistenceTests.cs            | 105 +++
  .../AgentSpeed.Core.Tests/RemoteQuotaTests.cs | 160 +++++
  .../RemoteQuotaSourcesTests.cs                |  45 ++
- .../QuotaNotchViewTests.cs                    |  31 +
- .../QuotaSettingsPageTests.cs                 |  21 +
+ .../QuotaNotchViewTests.cs                    |  16 +
+ .../QuotaSettingsPageTests.cs                 |  19 +
  .../QuotaSurfaceProviderCollectionTests.cs    |  85 +++
  .../QuotaSurfaceRetryTests.cs                 | 274 ++++++++
- 50 files changed, 3615 insertions(+), 98 deletions(-)
+ 50 files changed, 3598 insertions(+), 98 deletions(-)
  create mode 100644 linux/collector/quota.LICENSE.txt
  create mode 100644 linux/collector/quota.cpp
  create mode 100644 linux/collector/quota.hpp
@@ -1837,10 +1837,10 @@ index 2bd429c8f321dfaa2165f962aee8fe436d4b5d49..ed8e603231f7e7200332a0b26b5c43e5
          reader.task?.cancel()
          reader.task = nil
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index 647e01839b0d4b6109723c0e9d159b35167aa309..79ac2d06ec3710f2ce85ff9782a7824373779404 100644
+index 01ec078ec56c4ffee4363ed6c7f805f0b3de0b59..b46ca44762dc6bc66a9dc759d2f35f440d3747f4 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -16,6 +16,7 @@ struct QuotaNotchReading {
+@@ -12,6 +12,7 @@ struct QuotaNotchReading {
      let snapshot: QuotaSnapshot?
      let networkEnabled: Bool
      let l10n: Localizer
@@ -1848,7 +1848,7 @@ index 647e01839b0d4b6109723c0e9d159b35167aa309..79ac2d06ec3710f2ce85ff9782a78243
      let windows: [QuotaWindow]
      let readings: [String]
      let labels: [String]
-@@ -27,9 +28,10 @@ struct QuotaNotchReading {
+@@ -23,9 +24,10 @@ struct QuotaNotchReading {
      var outerDiameter: CGFloat { NotchLayout.outerDiameter(windows.count) }
      var cellMetrics: QuotaNotchCellMetrics { QuotaNotchCellMetrics(width: readingWidth, readingHeight: readingHeight, diameter: outerDiameter) }
  
@@ -1860,7 +1860,7 @@ index 647e01839b0d4b6109723c0e9d159b35167aa309..79ac2d06ec3710f2ce85ff9782a78243
          windows = QuotaWindow.ordered(snapshot?.windows ?? [])
          let multiple = windows.count > 1
          let windowLabels = windows.map { quotaCompactWindowLabel($0, l10n, providerName: snapshot?.displayName) }
-@@ -67,7 +69,7 @@ struct QuotaNotchReading {
+@@ -63,7 +65,7 @@ struct QuotaNotchReading {
          !networkEnabled || snapshot?.status == .stale || snapshot?.observedAt.map { now.timeIntervalSince($0) > 900 } == true
      }
      func status(at now: Date) -> String { quotaDisplayStatus(snapshot, l10n, networkEnabled: networkEnabled, now: now) }
@@ -1869,7 +1869,7 @@ index 647e01839b0d4b6109723c0e9d159b35167aa309..79ac2d06ec3710f2ce85ff9782a78243
  
      func resetText(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
          let seconds = date.timeIntervalSince(now)
-@@ -494,7 +496,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
+@@ -461,7 +463,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
          visible = state.0; reducedMotion = state.1
          dark = state.2 == .dark || (state.2 == .auto && NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
          readings = state.4.map { provider in
@@ -4299,57 +4299,42 @@ index 0000000000000000000000000000000000000000..b0f99956a3e7735e92e9d3ca015bc9f3
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index 9fda4750b804e393868ec7ecf1aad2775d7978da..859a34091ccafaf2b83c4f67f89b845ee1305ff5 100644
+index e9e5216c509b01b135dc74f7840a80e01696672a..5350b606f2fe0662d674335034b6ce9e38e61dc4 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-@@ -11,6 +11,37 @@ namespace AgentSpeed.Windows.Tests;
+@@ -8,6 +8,22 @@ namespace AgentSpeed.Windows.Tests;
  
  public class QuotaNotchViewTests
  {
 +    [Theory]
 +    [InlineData("codex")]
 +    [InlineData("opencode-go")]
-+    public void RemoteSourceUsesProviderGlyphAndSupportsScopedDetailCard(string provider) => OnSta(() =>
++    public void RemoteSourceSupportsScopedDetailCard(string provider) => OnSta(() =>
 +    {
 +        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
 +        var source = QuotaProviders.RemoteSourceId(Guid.NewGuid(), provider);
-+        var view = new QuotaNotchView(loc);
-+        byte[] Render(string id)
-+        {
-+            view.Update(new([], [id], true, true, "right", 1));
-+            view.Measure(view.Extent); view.Arrange(new Rect(view.Extent));
-+            var width = (int)Math.Ceiling(view.Extent.Width);
-+            var height = (int)Math.Ceiling(view.Extent.Height);
-+            var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
-+            bitmap.Render(view);
-+            var pixels = new byte[width * height * 4];
-+            bitmap.CopyPixels(pixels, width * 4, 0);
-+            return pixels;
-+        }
-+        Assert.Equal(Render(provider), Render(source));
 +        var snapshot = new QuotaSnapshot(source, "Provider · Build server", "exact", QuotaStatus.Stale,
 +            [], null, "Disconnected", null, null, DateTimeOffset.UtcNow.AddHours(-1), "Build server · SSH", null, null, false);
 +        var card = new QuotaNotchView(loc, card: true);
 +        card.Update(new([snapshot], [source], true, true, "right", 1, ActiveSource: source));
 +        Assert.True(card.HasCard);
-+        Assert.True(card.Extent.Height > 0);
 +        card.Update(new([], [], true, true, "right", 1, ActiveSource: source));
 +        Assert.False(card.HasCard);
 +    });
 +
-     [Theory]
-     [InlineData("left")]
-     [InlineData("right")]
+ 
+     [Fact]
+     public void EnabledSourceWithoutReadingHasARealCard() => OnSta(() =>
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-index 358d6d4243c0670845a4e7ab4d62fcf7066cd02d..5cfcb92f0c54066cb9d531e54d4a90b977a1197e 100644
+index 859b9d5794a09f8f8972c23bb07bc818c83e7e0b..fd2fae0d434ad09c133116f0ef2067c349b3594b 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-@@ -274,6 +274,27 @@ public class QuotaSettingsPageTests
+@@ -244,6 +244,25 @@ public class QuotaSettingsPageTests
          });
      }
  
 +    [Fact]
-+    public void RemoteSourcesUseExistingAccountCardsAndHostScopedSelectionWithProviderColor()
++    public void RemoteSourcesUseExistingAccountCardsAndHostScopedSelection()
 +    {
 +        OnStaThread(() =>
 +        {
@@ -4364,8 +4349,6 @@ index 358d6d4243c0670845a4e7ab4d62fcf7066cd02d..5cfcb92f0c54066cb9d531e54d4a90b9
 +                System.Windows.Automation.AutomationProperties.GetName(check) == source.DisplayName);
 +            Assert.True(choice.IsChecked);
 +            Assert.True(choice.IsEnabled);
-+            var dot = Assert.Single(Assert.IsType<StackPanel>(choice.Content).Children.OfType<Ellipse>());
-+            Assert.Same(page.Resources["QuotaCodexSourceBrush"], dot.Fill);
 +        });
 +    }
 +

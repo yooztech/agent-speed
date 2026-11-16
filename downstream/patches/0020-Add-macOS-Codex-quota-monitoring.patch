@@ -1,6 +1,6 @@
-From 5a1c66e6d7400762521b75a94bb7be7d92b555ef Mon Sep 17 00:00:00 2001
+From f2a4f41adc236e49d00ea3f8beca4931c08dd256 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Mon, 16 Nov 2026 11:34:24 +0800
+Date: Mon, 16 Nov 2026 12:22:08 +0800
 Subject: [PATCH] Add macOS Codex quota monitoring
 
 ---
@@ -9,35 +9,35 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  .../Sources/AgentSpeed/App/AppDelegate.swift  |   7 +
  macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
  .../AgentSpeed/App/LaunchOptions.swift        |   6 +
- .../AgentSpeed/App/QuotaController.swift      | 253 +++++++
+ .../AgentSpeed/App/QuotaController.swift      | 253 ++++++
  .../AgentSpeed/App/QuotaGlyphOutline.swift    | 102 +++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 701 ++++++++++++++++++
- .../App/QuotaNotchContentLayout.swift         |  45 ++
- .../AgentSpeed/App/QuotaNotchShape.swift      | 573 ++++++++++++++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 670 ++++++++++++++
+ .../App/QuotaNotchContentLayout.swift         |  45 +
+ .../AgentSpeed/App/QuotaNotchShape.swift      | 832 ++++++++++++++++++
  .../App/QuotaNotchVisualHarness.swift         | 163 ++++
- .../App/QuotaRefreshScheduler.swift           |  94 +++
+ .../App/QuotaRefreshScheduler.swift           |  94 ++
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
  .../AgentSpeed/Dashboard/DashboardView.swift  |  72 ++
- .../AgentSpeed/Localization/StringTable.swift |  91 +++
- .../SettingsWindow/Panes/QuotaPane.swift      | 294 ++++++++
+ .../AgentSpeed/Localization/StringTable.swift |  91 ++
+ .../SettingsWindow/Panes/QuotaPane.swift      | 294 +++++++
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
  .../AgentSpeed/Support/MenuFactory.swift      |   1 +
- .../AgentSpeedCore/CodexQuotaProvider.swift   | 360 +++++++++
- macos/Sources/AgentSpeedCore/Quota.swift      | 138 ++++
+ .../AgentSpeedCore/CodexQuotaProvider.swift   | 360 ++++++++
+ macos/Sources/AgentSpeedCore/Quota.swift      | 138 +++
  .../AgentSpeedCore/QuotaPersistence.swift     |  82 ++
- .../QuotaControllerTests.swift                | 585 +++++++++++++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 468 ++++++++++++
- .../QuotaPresentationTests.swift              | 172 +++++
- .../QuotaWarmStartupTests.swift               |  93 +++
- .../CodexQuotaProviderTests.swift             | 236 ++++++
+ .../QuotaControllerTests.swift                | 585 ++++++++++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 259 ++++++
+ .../QuotaPresentationTests.swift              | 172 ++++
+ .../QuotaWarmStartupTests.swift               |  93 ++
+ .../CodexQuotaProviderTests.swift             | 236 +++++
  .../QuotaColdStartTests.swift                 | 202 +++++
- .../QuotaLifecycleTests.swift                 | 191 +++++
- .../AgentSpeedCoreTests/QuotaTests.swift      |  48 ++
+ .../QuotaLifecycleTests.swift                 | 191 ++++
+ .../AgentSpeedCoreTests/QuotaTests.swift      |  48 +
  macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 | 131 ++++
+ spec/QUOTA.md                                 | 131 +++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 33 files changed, 5234 insertions(+), 2 deletions(-)
+ 33 files changed, 5253 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -629,10 +629,10 @@ index 0000000000000000000000000000000000000000..b1a81438ef6eaf22f55adac0355ea9aa
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..13c0dd38cf38d331bf32fd7f3b905080d170d050
+index 0000000000000000000000000000000000000000..d2e1aaff963eb347aea7c7216d25d47e162982fd
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,701 @@
+@@ -0,0 +1,670 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -640,10 +640,6 @@ index 0000000000000000000000000000000000000000..13c0dd38cf38d331bf32fd7f3b905080
 +
 +// Port of the approved Windows quota notch, Codenotch 835550a (Vinz, MIT).
 +// See Resources/Codenotch-LICENSE.txt. Native input follows actual painted contours.
-+enum NotchEdge: String, CaseIterable, Sendable {
-+    case right, left, top, bottom
-+    var isVertical: Bool { self == .right || self == .left }
-+}
 +
 +@MainActor
 +struct QuotaNotchReading {
@@ -766,64 +762,28 @@ index 0000000000000000000000000000000000000000..13c0dd38cf38d331bf32fd7f3b905080
 +}
 +
 +
-+enum QuotaGripLayer {
-+    case vector(Path, clip: Path)
-+    case raster(QuotaGripRaster, clip: Path)
++
++/// Native body paths and portable grip components remain independent filled sets.
++/// Neither NSView hit testing nor panel interception asks SwiftUI to normalize CSG.
++struct QuotaNotchInput {
++    var paths: [Path] = []
++    var grip = QuotaGripFootprint()
++    func contains(_ point: CGPoint) -> Bool { grip.contains(point) || paths.contains { $0.contains(point) } }
 +}
 +
-+struct QuotaGripPaint {
-+    var layers: [QuotaGripLayer] = []
-+    var paint = Path()
-+    var hit = Path()
-+    var routes = Path()
-+
-+    init(geometry: QuotaNotchGeometry, frame: QuotaGripFrame, filter: QuotaGripFilter, scale: CGFloat, acquired: Path? = nil, dark: Bool = true) {
-+        guard geometry.expansion >= 1 else { return }
-+        let center = geometry.orbCenter
-+        let clip = Path(ellipseIn: CGRect(x: center.x - 39.2, y: center.y - 39.2, width: 78.4, height: 78.4)).applying(geometry.transform)
-+        if frame.entryArc > 0.001 {
-+            append(QuotaGripGeometry.goo(center, separation: frame.entryArc, returning: frame.entryReturning, quick: frame.entryQuick),
-+                   geometry: geometry, clip: clip, filter: filter, scale: scale, dark: dark)
-+        }
-+        if frame.disc > 0.001 || frame.reveal > 0.01 {
-+            append(QuotaGripGeometry.goo(center, separation: 1, returning: false, quick: false),
-+                   geometry: geometry, clip: clip, filter: filter, scale: scale, dark: dark)
-+        }
-+        append(QuotaGripGeometry.orb(center, frame: frame), geometry: geometry, clip: clip, filter: filter, scale: scale, dark: dark)
-+        if frame.reveal > 0.01 {
-+            let drops = QuotaGripGeometry.drops(center, frame: frame)
-+            let canvas = Path(CGRect(origin: .zero, size: geometry.size))
-+            if drops.shape.liquid {
-+                append(drops.shape, geometry: geometry, clip: canvas, filter: filter, scale: scale, dark: dark)
-+            } else {
-+                for index in 0..<6 {
-+                    let dot = QuotaGripGeometry.drop(center, frame: frame, index: index)
-+                    let path = Path(ellipseIn: CGRect(x: dot.center.x - dot.radius, y: dot.center.y - dot.radius, width: dot.radius * 2, height: dot.radius * 2))
-+                    append(QuotaOrbShape(source: path), geometry: geometry, clip: canvas, filter: filter, scale: scale, dark: dark)
-+                }
-+            }
-+            routes = drops.hit.applying(geometry.transform)
-+        }
-+        routes = routes.union(QuotaGripGeometry.routes(center, frame: frame).applying(geometry.transform))
-+        if let acquired { routes = routes.union(acquired) }
-+        hit = hit.union(routes)
-+    }
-+
-+    private mutating func append(_ shape: QuotaOrbShape, geometry: QuotaNotchGeometry, clip: Path,
-+                                 filter: QuotaGripFilter, scale: CGFloat, dark: Bool) {
-+        guard !shape.source.isEmpty else { return }
-+        let footprint: Path
-+        if shape.liquid {
-+            let raster = filter.render(shape, transform: geometry.transform, scale: scale, dark: dark)
-+            layers.append(.raster(raster, clip: clip))
-+            footprint = raster.input.intersection(clip)
++private struct QuotaGripVectorPart: View {
++    let part: QuotaGripFootprint.Part
++    let fill: Color
++    let edge: Color
++    var lineWidth: CGFloat = 1
++    var body: some View {
++        let path = part.contour.path.applying(part.transform.affine)
++        if let clip = part.clip {
++            path.fill(fill).overlay { if lineWidth > 0 { path.stroke(edge, lineWidth: lineWidth) } }
++                .clipShape(clip.contour.path.applying(clip.transform.affine))
 +        } else {
-+            let path = shape.source.applying(geometry.transform)
-+            layers.append(.vector(path, clip: clip))
-+            footprint = path.union(quotaStrokeOutline(path, width: 1)).intersection(clip)
++            path.fill(fill).overlay { if lineWidth > 0 { path.stroke(edge, lineWidth: lineWidth) } }
 +        }
-+        paint = paint.union(footprint)
-+        hit = hit.union(footprint)
 +    }
 +}
 +
@@ -849,18 +809,25 @@ index 0000000000000000000000000000000000000000..13c0dd38cf38d331bf32fd7f3b905080
 +            }
 +            ForEach(grip.layers.indices, id: \.self) { index in
 +                switch grip.layers[index] {
-+                case let .vector(path, clip):
-+                    path.fill(fill).overlay(path.stroke(edge, lineWidth: 1)).clipShape(clip)
++                case let .vector(footprint):
++                    ForEach(footprint.parts.indices, id: \.self) { part in
++                        QuotaGripVectorPart(part: footprint.parts[part], fill: fill, edge: edge)
++                    }
 +                case let .raster(raster, clip):
 +                    Image(decorative: raster.image, scale: 1)
 +                        .resizable().interpolation(.none)
 +                        .frame(width: raster.bounds.width, height: raster.bounds.height)
 +                        .position(x: raster.bounds.midX, y: raster.bounds.midY)
 +                        .frame(width: geometry.size.width, height: geometry.size.height)
-+                        .clipShape(clip)
++                        .clipShape(clip.parts[0].contour.path.applying(clip.parts[0].transform.affine))
 +                }
 +            }
-+            grip.routes.fill(Color.black.opacity(1 / 255))
++            ZStack(alignment: .topLeading) {
++                ForEach(grip.routes.parts.indices, id: \.self) { index in
++                    let part = grip.routes.parts[index]
++                    QuotaGripVectorPart(part: part, fill: .black, edge: .black, lineWidth: 0)
++                }
++            }.compositingGroup().opacity(1 / 255)
 +        }
 +        .frame(width: geometry.size.width, height: geometry.size.height)
 +        .foregroundStyle(dark ? Color(red: 232 / 255, green: 232 / 255, blue: 234 / 255) : Color(red: 29 / 255, green: 29 / 255, blue: 31 / 255))
@@ -992,7 +959,7 @@ index 0000000000000000000000000000000000000000..13c0dd38cf38d331bf32fd7f3b905080
 +}
 +
 +@MainActor final class QuotaNotchHostingView: NSHostingView<AnyView> {
-+    var input = Path()
++    var input = QuotaNotchInput()
 +    var press: ((NSEvent) -> Void)?
 +    var drag: ((NSEvent) -> Void)?
 +    var release: ((NSEvent) -> Void)?
@@ -1025,7 +992,7 @@ index 0000000000000000000000000000000000000000..13c0dd38cf38d331bf32fd7f3b905080
 +    private var gripPaint: QuotaGripPaint?
 +    private var motion = QuotaGripMotion(), expansion = QuotaMotionTrack()
 +    private var gripIntent = QuotaGripIntent()
-+    private var gripEnvelope: Path?
++    private var gripEnvelope: QuotaGripFootprint?
 +    private var animation: Task<Void, Never>?, clock: Task<Void, Never>?
 +    private var displayNow = Date()
 +    private var edge: NotchEdge
@@ -1148,7 +1115,7 @@ index 0000000000000000000000000000000000000000..13c0dd38cf38d331bf32fd7f3b905080
 +        let frame = geometry.panelFrame(on: screen.visibleFrame, along: along)
 +        if panel.frame != frame { panel.setFrame(frame, display: true) }
 +        hosting.frame = CGRect(origin: .zero, size: geometry.size)
-+        hosting.input = geometry.bodyPath.union(quotaStrokeOutline(geometry.bodyPath, width: expansion.value > 0 ? 1 : 0)).union(grip.hit)
++        hosting.input = QuotaNotchInput(paths: [geometry.bodyPath, quotaStrokeOutline(geometry.bodyPath, width: expansion.value > 0 ? 1 : 0)], grip: grip.hit)
 +        hosting.rootView = AnyView(QuotaNotchView(readings: readings, geometry: geometry, grip: grip, dark: dark))
 +        placeCard(on: screen)
 +        updateInterception(NSEvent.mouseLocation)
@@ -1206,8 +1173,10 @@ index 0000000000000000000000000000000000000000..13c0dd38cf38d331bf32fd7f3b905080
 +        case .top: tail = CGRect(x: tailAt - 16.36, y: 0, width: 32.72, height: 28.2)
 +        case .bottom: tail = CGRect(x: tailAt - 16.36, y: height, width: 32.72, height: 28.2)
 +        }
-+        let path = RoundedRectangle(cornerRadius: 16).path(in: body).union(QuotaTooltipTail(edge: edge).path(in: tail))
-+        cardHosting.input = path
++        let bodyPath = RoundedRectangle(cornerRadius: 16).path(in: body)
++        let tailPath = QuotaTooltipTail(edge: edge).path(in: tail)
++        let path = bodyPath.union(tailPath)
++        cardHosting.input = QuotaNotchInput(paths: [bodyPath, tailPath])
 +        cardHosting.frame = CGRect(origin: .zero, size: size)
 +        cardHosting.rootView = AnyView(ZStack(alignment: .topLeading) {
 +            path.fill(dark ? Color(white: 10 / 255) : .white)
@@ -1387,13 +1356,198 @@ index 0000000000000000000000000000000000000000..74fc14b07e9a09769bfcaea3b019b8cb
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08ce52b95b1
+index 0000000000000000000000000000000000000000..ed1c6a9c336f2ea6ee837d4cb28dea5d8a989d52
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
-@@ -0,0 +1,573 @@
+@@ -0,0 +1,832 @@
++import Foundation
++#if canImport(SwiftUI)
 +import AgentSpeedCore
 +import AppKit
 +import SwiftUI
++#endif
++
++enum NotchEdge: String, CaseIterable, Sendable {
++    case right, left, top, bottom
++    var isVertical: Bool { self == .right || self == .left }
++}
++
++/// An orthogonal edge transform, also used by the portable production mask.
++struct QuotaGripTransform {
++    var a: CGFloat = 1, b: CGFloat = 0, c: CGFloat = 0, d: CGFloat = 1, tx: CGFloat = 0, ty: CGFloat = 0
++    func point(_ p: CGPoint) -> CGPoint { CGPoint(x: a * p.x + c * p.y + tx, y: b * p.x + d * p.y + ty) }
++    func inverse(_ p: CGPoint) -> CGPoint {
++        let x = p.x - tx, y = p.y - ty
++        return CGPoint(x: a * x + b * y, y: c * x + d * y)
++    }
++    func followed(by t: Self) -> Self {
++        Self(a: t.a * a + t.c * b, b: t.b * a + t.d * b,
++             c: t.a * c + t.c * d, d: t.b * c + t.d * d,
++             tx: t.a * tx + t.c * ty + t.tx, ty: t.b * tx + t.d * ty + t.ty)
++    }
++}
++
++extension QuotaGripTransform {
++    init(edge: NotchEdge, depth: CGFloat, offset: CGFloat) {
++        switch edge {
++        case .left: self.init(ty: offset)
++        case .right: self.init(a: -1, tx: depth, ty: offset)
++        case .top: self.init(a: 0, b: 1, c: 1, d: 0, tx: offset)
++        case .bottom: self.init(a: 0, b: -1, c: 1, d: 0, tx: offset, ty: depth)
++        }
++    }
++}
++
++/// Keep filled components and clips separate. SwiftUI Path's CSG normalization
++/// can turn a stroked arc intersected with a circle into the whole clip circle.
++/// These are the actual primitives used for both drawing and source-mask coverage.
++enum QuotaGripContour {
++    case ellipse(CGRect)
++    case rect(CGRect)
++    case arc(center: CGPoint, radius: CGFloat, from: CGFloat, to: CGFloat, width: CGFloat)
++    case strand(CGPoint, CGPoint, basis: CGFloat, pinch: CGFloat, top: CGFloat)
++
++    var bounds: CGRect {
++        switch self {
++        case let .ellipse(rect), let .rect(rect): return rect
++        case let .arc(center, radius, from, to, width):
++            let start = -CGFloat.pi + from * .pi / 2, end = -CGFloat.pi + to * .pi / 2
++            let x0 = center.x + radius * cos(start), x1 = center.x + radius * cos(end)
++            let y0 = center.y + radius * sin(start), y1 = center.y + radius * sin(end)
++            return CGRect(x: min(x0, x1) - width / 2, y: min(y0, y1) - width / 2,
++                          width: abs(x1 - x0) + width, height: abs(y1 - y0) + width)
++        case let .strand(from, to, basis, pinch, top):
++            let half = max(basis, pinch, top)
++            return CGRect(x: min(from.x, to.x) - half, y: min(from.y, to.y) - half,
++                          width: abs(to.x - from.x) + 2 * half, height: abs(to.y - from.y) + 2 * half)
++        }
++    }
++    func contains(_ p: CGPoint) -> Bool {
++        switch self {
++        case let .ellipse(rect):
++            guard rect.width > 0 && rect.height > 0 else { return false }
++            let x = (p.x - rect.midX) / (rect.width / 2), y = (p.y - rect.midY) / (rect.height / 2)
++            return x * x + y * y <= 1
++        case let .rect(rect): return rect.contains(p)
++        case let .arc(center, radius, from, to, width):
++            let x = p.x - center.x, y = p.y - center.y
++            let start = -CGFloat.pi + from * .pi / 2, end = -CGFloat.pi + to * .pi / 2
++            let angle = atan2(y, x)
++            let inSector = (angle >= start && angle <= end) || (angle == .pi && start == -.pi)
++            if inSector && abs(hypot(x, y) - radius) <= width / 2 { return true }
++            let half = width / 2
++            return hypot(x - radius * cos(start), y - radius * sin(start)) <= half
++                || hypot(x - radius * cos(end), y - radius * sin(end)) <= half
++        case let .strand(from, to, basis, pinch, top):
++            // In the strand's basis the two quadratic sides share a linear
++            // longitudinal coordinate. Their exact half-width is quadratic.
++            let dx = to.x - from.x, dy = to.y - from.y, distance = hypot(dx, dy)
++            guard distance > 0 else { return false }
++            let x = p.x - from.x, y = p.y - from.y
++            let t = (x * dx + y * dy) / (distance * distance)
++            guard t >= 0 && t <= 1 else { return false }
++            let half = (1 - t) * (1 - t) * basis + 2 * (1 - t) * t * pinch + t * t * top
++            return abs((-dy * x + dx * y) / distance) <= half * distance / max(distance, 0.001)
++        }
++    }
++    func outlined(_ width: CGFloat) -> Self {
++        switch self {
++        case let .ellipse(rect): return .ellipse(rect.insetBy(dx: -width / 2, dy: -width / 2))
++        case let .arc(center, radius, from, to, thickness): return .arc(center: center, radius: radius, from: from, to: to, width: thickness + width)
++        // Strands and rectangles are input routes or liquid source only, never
++        // outlined vector paint. Keep their original contour.
++        case .strand, .rect: return self
++        }
++    }
++}
++
++struct QuotaGripFootprint {
++    struct Clip {
++        var contour: QuotaGripContour
++        var transform = QuotaGripTransform()
++        func contains(_ point: CGPoint) -> Bool { contour.contains(transform.inverse(point)) }
++    }
++    struct Part {
++        var contour: QuotaGripContour
++        var clip: Clip?
++        var transform = QuotaGripTransform()
++        func contains(_ point: CGPoint) -> Bool {
++            contour.contains(transform.inverse(point)) && (clip?.contains(point) ?? true)
++        }
++    }
++    var parts: [Part] = []
++    init() {}
++    init(_ contour: QuotaGripContour) { parts = [Part(contour: contour)] }
++    var isEmpty: Bool { parts.isEmpty }
++    var boundingRect: CGRect {
++        func mapped(_ box: CGRect, _ transform: QuotaGripTransform) -> CGRect {
++            let p = transform.point(CGPoint(x: box.minX, y: box.minY))
++            let q = transform.point(CGPoint(x: box.maxX, y: box.maxY))
++            return CGRect(x: min(p.x, q.x), y: min(p.y, q.y), width: abs(q.x - p.x), height: abs(q.y - p.y))
++        }
++        return parts.reduce(CGRect.null) { result, part in
++            var box = mapped(part.contour.bounds, part.transform)
++            if let clip = part.clip { box = box.intersection(mapped(clip.contour.bounds, clip.transform)) }
++            return result.union(box)
++        }
++    }
++    func contains(_ point: CGPoint) -> Bool { parts.contains { $0.contains(point) } }
++    func union(_ other: Self) -> Self { var result = self; result.parts.append(contentsOf: other.parts); return result }
++    func clipped(to clip: QuotaGripContour) -> Self {
++        var result = self
++        for index in result.parts.indices { result.parts[index].clip = Clip(contour: clip) }
++        return result
++    }
++    func outlined(_ width: CGFloat) -> Self {
++        var result = self
++        for index in result.parts.indices { result.parts[index].contour = result.parts[index].contour.outlined(width) }
++        return result
++    }
++    func applying(_ transform: QuotaGripTransform) -> Self {
++        var result = self
++        for index in result.parts.indices {
++            result.parts[index].transform = result.parts[index].transform.followed(by: transform)
++            if let clip = result.parts[index].clip {
++                result.parts[index].clip?.transform = clip.transform.followed(by: transform)
++            }
++        }
++        return result
++    }
++    mutating func addEllipse(in rect: CGRect) { parts.append(Part(contour: .ellipse(rect))) }
++    mutating func addRect(_ rect: CGRect) { parts.append(Part(contour: .rect(rect))) }
++}
++
++#if canImport(SwiftUI)
++extension QuotaGripTransform {
++    init(_ t: CGAffineTransform) { self.init(a: t.a, b: t.b, c: t.c, d: t.d, tx: t.tx, ty: t.ty) }
++    var affine: CGAffineTransform { CGAffineTransform(a: a, b: b, c: c, d: d, tx: tx, ty: ty) }
++}
++extension QuotaGripContour {
++    var path: Path {
++        switch self {
++        case let .ellipse(rect): return Path(ellipseIn: rect)
++        case let .rect(rect): return Path(rect)
++        case let .arc(center, radius, from, to, width):
++            var path = Path()
++            path.addArc(center: center, radius: radius, startAngle: .radians(-.pi + Double(from) * .pi / 2),
++                        endAngle: .radians(-.pi + Double(to) * .pi / 2), clockwise: false)
++            return quotaStrokeOutline(path, width: width, rounded: true)
++        case let .strand(from, to, basis, pinch, top):
++            let dx = to.x - from.x, dy = to.y - from.y, length = max(hypot(dx, dy), 0.001)
++            let px = -dy / length, py = dx / length
++            let middle = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)
++            func side(_ point: CGPoint, _ half: CGFloat, _ sign: CGFloat) -> CGPoint { CGPoint(x: point.x + px * half * sign, y: point.y + py * half * sign) }
++            var path = Path()
++            path.move(to: side(from, basis, 1)); path.addQuadCurve(to: side(to, top, 1), control: side(middle, pinch, 1))
++            path.addLine(to: side(to, top, -1)); path.addQuadCurve(to: side(from, basis, -1), control: side(middle, pinch, -1)); path.closeSubpath()
++            return path
++        }
++    }
++}
++extension QuotaGripFootprint {
++    func applying(_ transform: CGAffineTransform) -> Self { applying(QuotaGripTransform(transform)) }
++}
++#endif
 +
 +// Codenotch 835550a342871779135b6484d6899161c5222f7c, Vinz, MIT.
 +// Measurements and timelines mirror Windows QuotaNotchGeometry / GripMotion.
@@ -1407,6 +1561,7 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +    static let ringStroke: CGFloat = 4
 +
 +    static func outerDiameter(_ count: Int) -> CGFloat { 52 + CGFloat(max(0, count - 1)) * 16 }
++    #if canImport(SwiftUI)
 +    static func periodColor(_ window: QuotaWindow) -> Color {
 +        switch window.period {
 +        case .month: Color(red: 67 / 255, green: 143 / 255, blue: 229 / 255)
@@ -1416,6 +1571,7 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +            : Color(red: 109 / 255, green: 184 / 255, blue: 196 / 255)
 +        }
 +    }
++    #endif
 +}
 +
 +struct QuotaGripFrame: Equatable {
@@ -1436,14 +1592,16 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +    return t * t * (3 - 2 * t)
 +}
 +
-+// Boolean operations and native input need a filled outline, not SwiftUI's
-+// deferred strokedPath representation. Match Windows GetWidenedPathGeometry.
++#if canImport(SwiftUI)
++// Native drawing widens the same primitive arcs used by analytic membership.
++// No Path union/intersection normalization is used for paint or input.
 +func quotaStrokeOutline(_ path: Path, width: CGFloat, rounded: Bool = false) -> Path {
 +    guard width > 0 else { return Path() }
 +    return Path(path.cgPath.copy(strokingWithWidth: width,
 +                                 lineCap: rounded ? .round : .butt,
 +                                 lineJoin: rounded ? .round : .miter, miterLimit: 10))
 +}
++#endif
 +
 +struct QuotaMotionTrack {
 +    private(set) var value: CGFloat = 0
@@ -1574,6 +1732,7 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +    }
 +}
 +
++#if canImport(SwiftUI)
 +/// All shapes use X inward, Y along the display, then apply a single edge transform.
 +struct QuotaNotchGeometry {
 +    let edge: NotchEdge
@@ -1601,12 +1760,7 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +        let flare = NotchLayout.curlRadius * t
 +        let start = flare, end = start + bodyLength
 +        let offset = bodyCenterAlong - (start + end) / 2
-+        switch edge {
-+        case .left: transform = CGAffineTransform(translationX: 0, y: offset)
-+        case .right: transform = CGAffineTransform(a: -1, b: 0, c: 0, d: 1, tx: envelopeDepth, ty: offset)
-+        case .top: transform = CGAffineTransform(a: 0, b: 1, c: 1, d: 0, tx: offset, ty: 0)
-+        case .bottom: transform = CGAffineTransform(a: 0, b: -1, c: 1, d: 0, tx: offset, ty: envelopeDepth)
-+        }
++        transform = QuotaGripTransform(edge: edge, depth: envelopeDepth, offset: offset).affine
 +        var path = Path()
 +        if t == 0 {
 +            path.move(to: .zero); path.addLine(to: CGPoint(x: 4, y: 0))
@@ -1649,34 +1803,24 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +        }
 +    }
 +}
++#endif
 +
 +struct QuotaOrbShape {
-+    var source = Path()
++    var source = QuotaGripFootprint()
 +    var blur: CGFloat = 0
 +    var liquid = false
 +}
 +
 +enum QuotaGripGeometry {
 +    private static let s = sqrt(CGFloat(0.5))
-+    static func quarter(_ center: CGPoint, radius: CGFloat, from: CGFloat = 0, to: CGFloat = 1, shift: CGFloat = 0) -> Path {
-+        var path = Path()
-+        let center = CGPoint(x: center.x + shift, y: center.y + shift)
-+        path.addArc(center: center, radius: radius, startAngle: .radians(-.pi + Double(from) * .pi / 2),
-+                    endAngle: .radians(-.pi + Double(to) * .pi / 2), clockwise: false)
-+        return path
++    static func quarter(_ center: CGPoint, radius: CGFloat, from: CGFloat = 0, to: CGFloat = 1, shift: CGFloat = 0) -> QuotaGripFootprint {
++        QuotaGripFootprint(.arc(center: CGPoint(x: center.x + shift, y: center.y + shift), radius: radius, from: from, to: to, width: 0))
 +    }
-+    static func strand(_ from: CGPoint, _ to: CGPoint, basis: CGFloat, pinch: CGFloat, top: CGFloat) -> Path {
-+        let dx = to.x - from.x, dy = to.y - from.y, length = max(hypot(dx, dy), 0.001)
-+        let px = -dy / length, py = dx / length
-+        let middle = CGPoint(x: (from.x + to.x) / 2, y: (from.y + to.y) / 2)
-+        func side(_ point: CGPoint, _ half: CGFloat, _ sign: CGFloat) -> CGPoint { CGPoint(x: point.x + px * half * sign, y: point.y + py * half * sign) }
-+        var path = Path()
-+        path.move(to: side(from, basis, 1)); path.addQuadCurve(to: side(to, top, 1), control: side(middle, pinch, 1))
-+        path.addLine(to: side(to, top, -1)); path.addQuadCurve(to: side(from, basis, -1), control: side(middle, pinch, -1)); path.closeSubpath()
-+        return path
++    static func strand(_ from: CGPoint, _ to: CGPoint, basis: CGFloat, pinch: CGFloat, top: CGFloat) -> QuotaGripFootprint {
++        QuotaGripFootprint(.strand(from, to, basis: basis, pinch: pinch, top: top))
 +    }
 +    private static func into(_ center: CGPoint, _ distance: CGFloat) -> CGPoint { CGPoint(x: center.x - s * distance, y: center.y - s * distance) }
-+    private static func stroke(_ path: Path, _ width: CGFloat) -> Path { quotaStrokeOutline(path, width: width, rounded: true) }
++    private static func stroke(_ path: QuotaGripFootprint, _ width: CGFloat) -> QuotaGripFootprint { path.outlined(width) }
 +    static func goo(_ center: CGPoint, separation: CGFloat, returning: Bool, quick: Bool) -> QuotaOrbShape {
 +        guard separation > 0.001 else { return QuotaOrbShape() }
 +        let fill = NotchLayout.arcFill, fillet = NotchLayout.curlRadius, radius = NotchLayout.arcRadius
@@ -1718,7 +1862,7 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +            let blur = 4.5 * quotaSmooth(t / 0.2), inside = into(center, fillet + r * 0.75), k = quotaSmooth(t)
 +            let moved = CGPoint(x: center.x + (inside.x - center.x) * k, y: center.y + (inside.y - center.y) * k)
 +            let size = r * (1 - 0.72 * quotaSmooth((t - 0.2) / 0.8)), liquid = blur > 0.3
-+            var source = Path(ellipseIn: CGRect(x: moved.x - size, y: moved.y - size, width: size * 2, height: size * 2))
++            var source = QuotaGripFootprint(.ellipse(CGRect(x: moved.x - size, y: moved.y - size, width: size * 2, height: size * 2)))
 +            if liquid {
 +                let band = fill * 2.4, hold = quotaSmooth(t / 0.22)
 +                source = source.union(stroke(quarter(center, radius: fillet + 0.5 + band / 2), band))
@@ -1729,10 +1873,10 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +        if frame.disc > 0.001 {
 +            if frame.reveal > 0.01 {
 +                let blur = 2.7 * (1 - quotaSmooth((frame.reveal - 0.42) / 0.36)), r = max(0, radius * frame.disc - 0.5)
-+                return QuotaOrbShape(source: Path(ellipseIn: CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)), blur: blur, liquid: blur > 0.3)
++                return QuotaOrbShape(source: QuotaGripFootprint(.ellipse(CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2))), blur: blur, liquid: blur > 0.3)
 +            }
 +            let p = 1 - min(max(frame.disc, 0), 1)
-+            if p <= 0.001 { return QuotaOrbShape(source: Path(ellipseIn: CGRect(x: center.x - radius + 0.5, y: center.y - radius + 0.5, width: 2 * radius - 1, height: 2 * radius - 1))) }
++            if p <= 0.001 { return QuotaOrbShape(source: QuotaGripFootprint(.ellipse(CGRect(x: center.x - radius + 0.5, y: center.y - radius + 0.5, width: 2 * radius - 1, height: 2 * radius - 1)))) }
 +            let half = max(0.004, 0.5 * quotaSmooth((p - 0.08) / 0.82))
 +            let width = 2 * radius - 2 + (fill - 2 * radius + 2) * quotaSmooth(p / 0.8)
 +            return QuotaOrbShape(source: stroke(quarter(center, radius: NotchLayout.arcRadius, from: 0.5 - half, to: 0.5 + half,
@@ -1749,11 +1893,11 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +        return (CGPoint(x: moved.x + CGFloat(index % 3 - 1) * pitch, y: moved.y + CGFloat(index / 3 * 2 - 1) * pitch / 2), radius)
 +    }
 +
-+    static func drops(_ center: CGPoint, frame: QuotaGripFrame) -> (shape: QuotaOrbShape, hit: Path) {
++    static func drops(_ center: CGPoint, frame: QuotaGripFrame) -> (shape: QuotaOrbShape, hit: QuotaGripFootprint) {
 +        let t = min(max(frame.reveal, 0), 1), blur = 2.7 * (1 - quotaSmooth((t - 0.42) / 0.36))
 +        let liquid = t > 0.01 && blur > 0.27
 +        let moved = CGPoint(x: center.x, y: center.y + 8 * quotaSmooth(t / 0.6) + 1.44 * sin(.pi * min(t / 0.8, 1)))
-+        var source = Path(), box = CGRect.null
++        var source = QuotaGripFootprint(), box = CGRect.null
 +        let core = liquid ? NotchLayout.discRadius * 0.55 * quotaSmooth(t / 0.15) * (1 - quotaSmooth(t / 0.7)) : 0
 +        if core > 0 { source.addEllipse(in: CGRect(x: center.x - core, y: center.y - core, width: core * 2, height: core * 2)) }
 +        let neck = 20.5 * 0.55 * (1 - quotaSmooth((t - 0.25) / 0.35))
@@ -1761,17 +1905,17 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +        for index in 0..<6 {
 +            let dot = drop(center, frame: frame, index: index)
 +            let rect = CGRect(x: dot.center.x - dot.radius, y: dot.center.y - dot.radius, width: dot.radius * 2, height: dot.radius * 2)
-+            source = source.union(Path(ellipseIn: rect)); box = box.union(rect)
++            source = source.union(QuotaGripFootprint(.ellipse(rect))); box = box.union(rect)
 +        }
-+        var hit = Path()
++        var hit = QuotaGripFootprint()
 +        if t > 0.01 {
 +            hit.addRect(box.insetBy(dx: -2.5, dy: -2.5))
 +            hit.addRect(CGRect(x: center.x - 4, y: center.y - 0.5, width: 8, height: max(0, box.maxY + 3 - center.y)))
 +        }
 +        return (QuotaOrbShape(source: source, blur: blur, liquid: liquid), hit)
 +    }
-+    static func routes(_ center: CGPoint, frame: QuotaGripFrame) -> Path {
-+        guard frame.arc > 0.001 || frame.disc > 0.001 || frame.reveal > 0.01 else { return Path() }
++    static func routes(_ center: CGPoint, frame: QuotaGripFrame) -> QuotaGripFootprint {
++        guard frame.arc > 0.001 || frame.disc > 0.001 || frame.reveal > 0.01 else { return QuotaGripFootprint() }
 +        let from = into(center, NotchLayout.curlRadius + 1)
 +        let to = frame.disc > 0.001 || frame.reveal > 0.01 ? center : into(center, NotchLayout.arcRadius - (NotchLayout.arcFill + 2) / 2)
 +        var path = strand(from, to, basis: 4, pinch: 4, top: 4)
@@ -1794,10 +1938,10 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +
 +    /// Fixed acquired intent covers the original disc, final dots and narrow
 +    /// connecting routes. None of this envelope is input before real grip entry.
-+    static func activation(_ center: CGPoint) -> Path {
++    static func activation(_ center: CGPoint) -> QuotaGripFootprint {
 +        let frame = QuotaGripFrame(reveal: 1, hover: 1.3, arc: 1)
 +        let radius = NotchLayout.discRadius + 0.5
-+        let disc = Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2))
++        let disc = QuotaGripFootprint(.ellipse(CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)))
 +        return routes(center, frame: frame).union(drops(center, frame: frame).hit)
 +            .union(stroke(quarter(center, radius: NotchLayout.arcRadius), NotchLayout.arcFill + 2))
 +            .union(disc)
@@ -1898,9 +2042,20 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +}
 +
 +struct QuotaGripRaster {
-+    let image: CGImage
++    let pixels: Data
 +    let bounds: CGRect
-+    let input: Path
++    let input: QuotaGripFootprint
++    #if canImport(SwiftUI)
++    var image: CGImage {
++        let width = Int(bounds.width * scale), height = Int(bounds.height * scale)
++        let provider = CGDataProvider(data: pixels as CFData)!
++        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
++                       bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
++                       bitmapInfo: CGBitmapInfo.byteOrder32Little.union(CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)),
++                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
++    }
++    #endif
++    let scale: CGFloat
 +}
 +
 +/// Paint and native input share the outer alpha mask. Liquid paint is not stroked
@@ -1908,12 +2063,11 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +final class QuotaGripFilter {
 +    private let filter = QuotaGripAlphaFilter()
 +    private var source: [UInt8] = [], pixels: [UInt8] = []
-+    private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
 +
-+    func render(_ shape: QuotaOrbShape, transform: CGAffineTransform, scale: CGFloat, dark: Bool) -> QuotaGripRaster {
++    func render(_ shape: QuotaOrbShape, transform: QuotaGripTransform, scale: CGFloat, dark: Bool) -> QuotaGripRaster {
 +        let scale = max(scale, 1)
-+        let path = shape.source.applying(transform).cgPath
-+        let extent = path.boundingBoxOfPath
++        let path = shape.source.applying(transform)
++        let extent = path.boundingRect
 +        let padding = ceil(3 * shape.blur * scale + scale)
 +        let left = floor(extent.minX * scale) - padding, top = floor(extent.minY * scale) - padding
 +        let width = Int(ceil(extent.maxX * scale) - left + padding)
@@ -1942,12 +2096,7 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +        }
 +        // The immutable image must own its bytes; scratch remains reusable next frame.
 +        let data = pixels.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: count * 4) }
-+        let provider = CGDataProvider(data: data as CFData)!
-+        let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-+                            bytesPerRow: width * 4, space: colorSpace,
-+                            bitmapInfo: CGBitmapInfo.byteOrder32Little.union(CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue)),
-+                            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
-+        var input = Path()
++        var input = QuotaGripFootprint()
 +        for y in 0..<height {
 +            var x = 0
 +            while x < width {
@@ -1960,13 +2109,92 @@ index 0000000000000000000000000000000000000000..ab6c7d3e19085108edb2b0f5d582a08c
 +                }
 +            }
 +        }
-+        return QuotaGripRaster(image: image, bounds: CGRect(x: left / scale, y: top / scale,
-+                                                           width: CGFloat(width) / scale, height: CGFloat(height) / scale), input: input)
++        return QuotaGripRaster(pixels: data, bounds: CGRect(x: left / scale, y: top / scale,
++                                                           width: CGFloat(width) / scale, height: CGFloat(height) / scale), input: input, scale: scale)
 +    }
 +}
++
++#if canImport(SwiftUI)
++extension QuotaGripFilter {
++    func render(_ shape: QuotaOrbShape, transform: CGAffineTransform, scale: CGFloat, dark: Bool) -> QuotaGripRaster {
++        render(shape, transform: QuotaGripTransform(transform), scale: scale, dark: dark)
++    }
++}
++#endif
++
++enum QuotaGripLayer {
++    case vector(QuotaGripFootprint)
++    case raster(QuotaGripRaster, clip: QuotaGripFootprint)
++}
++
++/// Production construction shared by native rendering/input and the Linux proof.
++struct QuotaGripPaint {
++    var layers: [QuotaGripLayer] = []
++    var paint = QuotaGripFootprint()
++    var hit = QuotaGripFootprint()
++    var routes = QuotaGripFootprint()
++
++    init(center: CGPoint, transform: QuotaGripTransform, size: CGSize, expansion: CGFloat = 1,
++         frame: QuotaGripFrame, filter: QuotaGripFilter, scale: CGFloat,
++         acquired: QuotaGripFootprint? = nil, dark: Bool = true) {
++        guard expansion >= 1 else { return }
++        let clip = QuotaGripContour.ellipse(CGRect(x: center.x - 39.2, y: center.y - 39.2, width: 78.4, height: 78.4))
++        if frame.entryArc > 0.001 {
++            append(QuotaGripGeometry.goo(center, separation: frame.entryArc, returning: frame.entryReturning, quick: frame.entryQuick),
++                   transform: transform, clip: clip, filter: filter, scale: scale, dark: dark)
++        }
++        if frame.disc > 0.001 || frame.reveal > 0.01 {
++            append(QuotaGripGeometry.goo(center, separation: 1, returning: false, quick: false),
++                   transform: transform, clip: clip, filter: filter, scale: scale, dark: dark)
++        }
++        append(QuotaGripGeometry.orb(center, frame: frame), transform: transform, clip: clip, filter: filter, scale: scale, dark: dark)
++        if frame.reveal > 0.01 {
++            let drops = QuotaGripGeometry.drops(center, frame: frame)
++            // Canvas clips are in display coordinates, unlike the local orb clip.
++            let canvas = QuotaGripContour.rect(CGRect(origin: .zero, size: size))
++            append(drops.shape, transform: transform, clip: canvas, clipIsDisplay: true, filter: filter, scale: scale, dark: dark)
++            routes = drops.hit.applying(transform)
++        }
++        routes = routes.union(QuotaGripGeometry.routes(center, frame: frame).applying(transform))
++        if let acquired { routes = routes.union(acquired) }
++        hit = paint.union(routes)
++    }
++
++    private mutating func append(_ shape: QuotaOrbShape, transform: QuotaGripTransform, clip: QuotaGripContour,
++                                 clipIsDisplay: Bool = false, filter: QuotaGripFilter, scale: CGFloat, dark: Bool) {
++        guard !shape.source.isEmpty else { return }
++        let footprint: QuotaGripFootprint
++        if shape.liquid {
++            // Rasterize in local coordinates and carry the edge transform into
++            // coverage before filtering; pixels and input share the final mask.
++            let raster = filter.render(shape, transform: transform, scale: scale, dark: dark)
++            let displayClip = QuotaGripFootprint(clip).applying(clipIsDisplay ? QuotaGripTransform() : transform)
++            layers.append(.raster(raster, clip: displayClip))
++            var input = raster.input
++            let part = displayClip.parts[0]
++            for index in input.parts.indices { input.parts[index].clip = .init(contour: part.contour, transform: part.transform) }
++            footprint = input
++        } else {
++            let vector = clipIsDisplay ? shape.source.applying(transform).clipped(to: clip) : shape.source.clipped(to: clip).applying(transform)
++            layers.append(.vector(vector))
++            footprint = vector.outlined(1)
++        }
++        paint = paint.union(footprint)
++    }
++}
++
++#if canImport(SwiftUI)
++extension QuotaGripPaint {
++    init(geometry: QuotaNotchGeometry, frame: QuotaGripFrame, filter: QuotaGripFilter, scale: CGFloat,
++         acquired: QuotaGripFootprint? = nil, dark: Bool = true) {
++        self.init(center: geometry.orbCenter, transform: QuotaGripTransform(geometry.transform), size: geometry.size,
++                  expansion: geometry.expansion, frame: frame, filter: filter, scale: scale, acquired: acquired, dark: dark)
++    }
++}
++#endif
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..98ef66f4cb7bcdbb2687b1b18390abbbb88ffe2e
+index 0000000000000000000000000000000000000000..d239a9b3ce902df9a32e3708a41cce608be022ef
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 @@ -0,0 +1,163 @@
@@ -2072,7 +2300,7 @@ index 0000000000000000000000000000000000000000..98ef66f4cb7bcdbb2687b1b18390abbb
 +                        }
 +                        check(abs(CGFloat(bitmap.pixelsWide) / scale - geometry.size.width) < 1, "\(name): tight native width")
 +                        check(abs(CGFloat(bitmap.pixelsHigh) / scale - geometry.size.height) < 1, "\(name): tight native height")
-+                        let input = geometry.bodyPath.union(quotaStrokeOutline(geometry.bodyPath, width: state == "folded" ? 0 : 1)).union(grip.hit)
++                        let input = QuotaNotchInput(paths: [geometry.bodyPath, quotaStrokeOutline(geometry.bodyPath, width: state == "folded" ? 0 : 1)], grip: grip.hit)
 +                        for y in stride(from: 2, to: bitmap.pixelsHigh - 2, by: 4) {
 +                            for x in stride(from: 2, to: bitmap.pixelsWide - 2, by: 4) {
 +                                let color = try require(bitmap.colorAt(x: x, y: y), "\(name): missing native sample")
@@ -3975,12 +4203,12 @@ index 0000000000000000000000000000000000000000..ead924c28ea2ac140b1ce2b78be43130
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..395c90b439f5a918735afbc5cd8cbcda9e5816f1
+index 0000000000000000000000000000000000000000..005e82d65b1ce8422ea247d9e81b81b35fc9ec59
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,468 @@
-+import AppKit
-+import SwiftUI
+@@ -0,0 +1,259 @@
++import CoreGraphics
++import Foundation
 +import Testing
 +@testable import AgentSpeed
 +@testable import AgentSpeedCore
@@ -4002,9 +4230,6 @@ index 0000000000000000000000000000000000000000..395c90b439f5a918735afbc5cd8cbcda
 +    }
 +    private func reading(_ snapshot: QuotaSnapshot? = nil, enabled: Bool = true) -> QuotaNotchReading {
 +        QuotaNotchReading(snapshot: snapshot, networkEnabled: enabled, l10n: Localizer(preference: .en))
-+    }
-+    private func geometry(_ edge: NotchEdge, expanded: Bool = true, count: Int = 2) -> QuotaNotchGeometry {
-+        QuotaNotchGeometry(edge: edge, expansion: expanded ? 1 : 0, layout: QuotaNotchContentLayout(cells: Array(repeating: QuotaNotchCellMetrics(width: 300, readingHeight: 40, diameter: NotchLayout.outerDiameter(3)), count: count), horizontal: !edge.isVertical))
 +    }
 +
 +    private final class Clock: PerfCardScheduling {
@@ -4076,119 +4301,6 @@ index 0000000000000000000000000000000000000000..395c90b439f5a918735afbc5cd8cbcda
 +        #expect(value.resetText(start.addingTimeInterval(7 * 86_400), now: start, calendar: calendar) == "Resets Jan 22")
 +    }
 +
-+    @Test func mixedMeasuredCellsUseTheirOwnExtentOnEveryEdge() {
-+        let values = [reading(), reading(snapshot()), reading(snapshot("opencode-go"))]
-+        for edge in NotchEdge.allCases {
-+            let layout = QuotaNotchContentLayout(cells: values.map(\.cellMetrics), horizontal: !edge.isVertical)
-+            let shape = QuotaNotchGeometry(edge: edge, expansion: 1, layout: layout)
-+            for index in values.indices {
-+                let rect = shape.cellRects[index]
-+                #expect(rect.size == values[index].cellMetrics.size)
-+                #expect(CGRect(origin: .zero, size: shape.size).contains(rect))
-+                #expect(shape.bodyPath.contains(CGPoint(x: rect.midX, y: rect.midY)))
-+                if index == 0 { continue }
-+                let previous = shape.cellRects[index - 1]
-+                let gap = edge.isVertical ? rect.minY - previous.maxY : rect.minX - previous.maxX
-+                #expect(abs(gap - QuotaNotchContentLayout.cellGap) < 0.000_001)
-+            }
-+            let expected = layout.cells.reduce(2 * QuotaNotchContentLayout.padding) { $0 + (edge.isVertical ? $1.size.height : $1.size.width) }
-+                + CGFloat(max(0, layout.cells.count - 1)) * QuotaNotchContentLayout.cellGap
-+            #expect(abs(layout.length - max(80, expected)) < 0.000_001)
-+        }
-+    }
-+
-+
-+    @Test func allCellsAndUprightLabelsFitEveryEdge() {
-+        let monitor = CGRect(x: -1_920, y: -1_080, width: 1_920, height: 1_080)
-+        for edge in NotchEdge.allCases {
-+            let shape = geometry(edge)
-+            #expect(shape.centers.count == 2 && shape.cellRects.count == 2)
-+            #expect(monitor.contains(shape.panelFrame(on: monitor, along: 0.5)))
-+            for center in shape.centers { #expect(shape.bodyPath.contains(center)) }
-+            #expect(!shape.cellRects[0].intersects(shape.cellRects[1]))
-+            for along in [CGFloat(0), 0.5, 1] {
-+                let frame = shape.panelFrame(on: monitor, along: along)
-+                #expect(monitor.contains(frame))
-+                switch edge {
-+                case .left: #expect(frame.minX == monitor.minX)
-+                case .right: #expect(frame.maxX == monitor.maxX)
-+                case .top: #expect(frame.maxY == monitor.maxY)
-+                case .bottom: #expect(frame.minY == monitor.minY)
-+                }
-+            }
-+        }
-+    }
-+
-+    @Test func collapsedTabDoesNotClaimTheExpandedEnvelope() {
-+        for edge in NotchEdge.allCases {
-+            let closed = geometry(edge, expanded: false)
-+            let bounds = closed.bodyPath.boundingRect
-+            #expect(closed.bodyPath.contains(CGPoint(x: bounds.midX, y: bounds.midY)))
-+            #expect(!closed.bodyPath.contains(CGPoint(x: 1, y: 1)))
-+            let grip = QuotaGripPaint(geometry: closed, frame: QuotaGripFrame(arc: 1), filter: QuotaGripFilter(), scale: 2)
-+            #expect(grip.hit.isEmpty && grip.paint.isEmpty)
-+        }
-+    }
-+
-+    @Test func restingArcAcceptsPaintedPointsAndPassesThroughItsCenter() {
-+        _ = NSApplication.shared
-+        for edge in NotchEdge.allCases {
-+            let shape = geometry(edge)
-+            let grip = QuotaGripPaint(geometry: shape, frame: QuotaGripFrame(arc: 1), filter: QuotaGripFilter(), scale: 2)
-+            let host = QuotaNotchHostingView(rootView: AnyView(EmptyView()))
-+            let bounds = CGRect(origin: .zero, size: shape.size)
-+            let container = NSView(frame: bounds)
-+            host.frame = bounds
-+            host.input = shape.bodyPath.union(quotaStrokeOutline(shape.bodyPath, width: 1)).union(grip.hit)
-+            container.addSubview(host)
-+            let center = shape.orbCenter.applying(shape.transform)
-+            #expect(!grip.hit.contains(center))
-+            #expect(host.hitTest(host.convert(center, to: container)) == nil)
-+            for step in 0...8 {
-+                let angle = -.pi + CGFloat(step) * .pi / 16
-+                let point = CGPoint(x: shape.orbCenter.x + NotchLayout.arcRadius * cos(angle), y: shape.orbCenter.y + NotchLayout.arcRadius * sin(angle)).applying(shape.transform)
-+                #expect(grip.hit.contains(point))
-+                #expect(grip.paint.contains(point))
-+                #expect(!shape.bodyPath.contains(point))
-+                #expect(host.hitTest(host.convert(point, to: container)) != nil)
-+            }
-+        }
-+    }
-+
-+    @Test func revealedControlHasSixIndependentPaintedDrops() {
-+        for edge in NotchEdge.allCases {
-+            let shape = geometry(edge)
-+            let grip = QuotaGripPaint(geometry: shape, frame: QuotaGripFrame(reveal: 1, arc: 1), filter: QuotaGripFilter(), scale: 2)
-+            for index in 0..<6 {
-+                let point = CGPoint(x: shape.orbCenter.x + CGFloat(index % 3 - 1) * 12.5,
-+                                    y: shape.orbCenter.y + 8 + CGFloat(index / 3 * 2 - 1) * 6.25).applying(shape.transform)
-+                #expect(grip.hit.contains(point))
-+                #expect(grip.paint.contains(point))
-+                #expect(!shape.bodyPath.contains(point))
-+            }
-+            let gap = CGPoint(x: shape.orbCenter.x, y: shape.orbCenter.y + 8).applying(shape.transform)
-+            #expect(!grip.paint.contains(gap), "The completed burst must retain the visible gap between its two rows")
-+            #expect(grip.hit.contains(gap), "The intentional control route remains draggable through that gap")
-+        }
-+    }
-+
-+    @Test func acquiredDiscEnvelopeRemainsStableThroughBurstAndReturn() {
-+        let frames = [QuotaGripFrame(arc: 1, disc: 0.5), QuotaGripFrame(arc: 1, disc: 1),
-+                      QuotaGripFrame(reveal: 0.4, arc: 1, disc: 0.4), QuotaGripFrame(reveal: 1, arc: 1),
-+                      QuotaGripFrame(reveal: 1, squeeze: 1, arc: 1), QuotaGripFrame(arc: 1)]
-+        for edge in NotchEdge.allCases {
-+            let shape = geometry(edge), filter = QuotaGripFilter()
-+            let initial = QuotaGripPaint(geometry: shape, frame: QuotaGripFrame(arc: 1), filter: filter, scale: 1)
-+            let point = CGPoint(x: shape.orbCenter.x + NotchLayout.discRadius - 1, y: shape.orbCenter.y).applying(shape.transform)
-+            #expect(!initial.hit.contains(point), "A future disc must not acquire hover or intercept before real entry")
-+            let envelope = QuotaGripGeometry.activation(shape.orbCenter).applying(shape.transform).union(initial.hit)
-+            for frame in frames {
-+                let paint = QuotaGripPaint(geometry: shape, frame: frame, filter: filter, scale: 1, acquired: envelope)
-+                #expect(paint.hit.contains(point), "The acquired disc boundary must not withdraw as animation changes phase")
-+                #expect(!paint.hit.contains(CGPoint(x: -100, y: -100)))
-+            }
-+        }
-+    }
 +
 +    @Test func gripMotionUsesApprovedDiscAndDropDelaysThenBecomesIdle() {
 +        var motion = QuotaGripMotion()
@@ -4237,123 +4349,42 @@ index 0000000000000000000000000000000000000000..395c90b439f5a918735afbc5cd8cbcda
 +        #expect(motion.frame.reveal == 1 && motion.frame.disc == 0 && !motion.active)
 +    }
 +
-+    @Test func liquidThresholdRetainsFractionalAlphaAndErodedInnerAtBothScales() {
-+        #expect(QuotaGripAlphaFilter.threshold(120) == 0)
-+        #expect(QuotaGripAlphaFilter.threshold(127.5) == 128)
-+        #expect(QuotaGripAlphaFilter.threshold(128) == 136)
-+        #expect(QuotaGripAlphaFilter.threshold(140) == 255)
-+        let filter = QuotaGripAlphaFilter()
-+        let solid = [UInt8](repeating: 255, count: 81)
-+        for scale in [Double(1), 2] {
-+            filter.apply(width: 9, height: 9, sigma: 0, scale: scale, source: solid)
-+            let erosion = Int(scale)
-+            for y in 0..<9 {
-+                for x in 0..<9 {
-+                    #expect(filter.outer[y * 9 + x] == 255)
-+                    let inside = x >= erosion && x < 9 - erosion && y >= erosion && y < 9 - erosion
-+                    #expect(filter.inner[y * 9 + x] == (inside ? 255 : 0))
-+                }
-+            }
-+            filter.apply(width: 3, height: 3, sigma: 0.000_001, scale: scale, source: [UInt8](repeating: 0, count: 9))
-+            #expect(filter.outer.prefix(9).allSatisfy { $0 == 0 })
-+            #expect(filter.inner.prefix(9).allSatisfy { $0 == 0 })
-+        }
-+        let edge = QuotaGripAlphaFilter.composite(outer: 128, inner: 0, rim: SIMD3(255, 0, 0), fill: SIMD3(repeating: 0))
-+        #expect(edge == SIMD4(0, 0, 128, 128), "The fractional rim is premultiplied BGRA, not a new opaque vector stroke")
++
++    @Test func acquiredIntentSurvivesClassificationChangesUntilDeparture() {
++        let outside = CGPoint(x: 10, y: 10)
++        let inside = CGPoint(x: 20, y: 20)
++        var intent = QuotaGripIntent()
++        let initiallyAcquired = intent.update(outside, entry: false, envelope: false)
++        #expect(!initiallyAcquired)
++        let acquiredOnEntry = intent.update(inside, entry: true, envelope: true)
++        #expect(acquiredOnEntry)
++        let remainsAcquired = intent.update(inside, entry: false, envelope: true)
++        #expect(remainsAcquired)
++        let acquiredAfterDeparture = intent.update(outside, entry: false, envelope: false)
++        #expect(!acquiredAfterDeparture)
++        let acquiredWithoutMovement = intent.update(outside, entry: true, envelope: true)
++        #expect(!acquiredWithoutMovement)
++        let reacquiredOnEntry = intent.update(inside, entry: true, envelope: true)
++        #expect(reacquiredOnEntry)
++        let acquiredWhileHeld = intent.update(outside, entry: false, envelope: false, held: true)
++        #expect(acquiredWhileHeld)
++        let acquiredAfterRelease = intent.update(outside, entry: false, envelope: false)
++        #expect(!acquiredAfterRelease)
++        let acquiredAgain = intent.update(inside, entry: true, envelope: true)
++        #expect(acquiredAgain)
++        intent.reset()
++        #expect(!intent.acquired)
++        let acquiredAfterReset = intent.update(inside, entry: true, envelope: true)
++        #expect(!acquiredAfterReset)
 +    }
 +
-+    @Test func liquidBurstRasterAndNativeInputShareEveryNonzeroPixel() throws {
-+        let filter = QuotaGripFilter()
-+        for edge in NotchEdge.allCases {
-+            let shape = geometry(edge)
-+            let burst = QuotaGripGeometry.drops(shape.orbCenter, frame: QuotaGripFrame(reveal: 0.4, arc: 1, disc: 0.4)).shape
-+            for scale in [CGFloat(1), 2] {
-+                let raster = filter.render(burst, transform: shape.transform, scale: scale, dark: true)
-+                let bitmap = NSBitmapImageRep(cgImage: raster.image)
-+                var fractional = false, opaque = false, clear = false
-+                for y in 0..<bitmap.pixelsHigh {
-+                    for x in 0..<bitmap.pixelsWide {
-+                        let alpha = try #require(bitmap.colorAt(x: x, y: y)).alphaComponent
-+                        let point = CGPoint(x: raster.bounds.minX + (CGFloat(x) + 0.5) / scale,
-+                                            y: raster.bounds.minY + (CGFloat(y) + 0.5) / scale)
-+                        #expect(raster.input.contains(point) == (alpha > 0))
-+                        fractional = fractional || (alpha > 0 && alpha < 1)
-+                        opaque = opaque || alpha == 1
-+                        clear = clear || alpha == 0
-+                    }
-+                }
-+                #expect(fractional && opaque && clear)
-+            }
-+        }
-+    }
-+
-+    @Test func stationaryEmergingPaintEdgeKeepsAcquiredRoutesOnEveryEdge() throws {
-+        for edge in NotchEdge.allCases {
-+            let shape = geometry(edge)
-+            let filter = QuotaGripFilter()
-+            var motion = QuotaGripMotion(), intent = QuotaGripIntent()
-+            motion.setTargets(expanded: true, reveal: false, hover: false, held: false, now: 0, reducedMotion: false)
-+            motion.sample(0.815)
-+            let initial = QuotaGripPaint(geometry: shape, frame: motion.frame, filter: filter, scale: 1)
-+            let rest = QuotaGripPaint(geometry: shape, frame: QuotaGripFrame(arc: 1), filter: filter, scale: 1)
-+            let bounds = initial.hit.boundingRect
-+            var touched: CGPoint?
-+            for y in stride(from: bounds.minY, through: bounds.maxY, by: CGFloat(0.5)) {
-+                for x in stride(from: bounds.minX, through: bounds.maxX, by: CGFloat(0.5)) {
-+                    let point = CGPoint(x: x, y: y)
-+                    if initial.paint.contains(point) && !rest.hit.contains(point) && !shape.bodyPath.contains(point) {
-+                        touched = point; break
-+                    }
-+                }
-+                if touched != nil { break }
-+            }
-+            let point = try #require(touched, "An emerging painted edge must leave its old footprint")
-+            let envelope = QuotaGripGeometry.activation(shape.orbCenter).applying(shape.transform).union(initial.hit)
-+            let initiallyAcquired = intent.update(CGPoint(x: -100, y: -100), entry: false, envelope: false)
-+            #expect(!initiallyAcquired)
-+            let acquiredOnEntry = intent.update(point, entry: initial.hit.contains(point), envelope: envelope.contains(point))
-+            #expect(acquiredOnEntry)
-+            motion.setTargets(expanded: true, reveal: true, hover: true, held: false, now: 0.815, reducedMotion: false)
-+            for tick in 1...80 {
-+                motion.sample(0.815 + Double(tick) / 50)
-+                let paint = QuotaGripPaint(geometry: shape, frame: motion.frame, filter: filter, scale: 1, acquired: envelope)
-+                let remainsAcquired = intent.update(point, entry: paint.hit.contains(point), envelope: envelope.contains(point))
-+                #expect(remainsAcquired)
-+                #expect(paint.hit.contains(point))
-+            }
-+            let departure = CGPoint(x: -100, y: -100)
-+            let acquiredAfterDeparture = intent.update(departure, entry: false, envelope: envelope.contains(departure))
-+            #expect(!acquiredAfterDeparture)
-+            // A paint-only classification change at the same screen position is not intent.
-+            for _ in 0..<20 {
-+                let acquiredWithoutMovement = intent.update(departure, entry: true, envelope: true)
-+                #expect(!acquiredWithoutMovement)
-+            }
-+            let reacquiredOnEntry = intent.update(point, entry: initial.hit.contains(point), envelope: envelope.contains(point))
-+            #expect(reacquiredOnEntry)
-+            let acquiredWhileHeld = intent.update(departure, entry: false, envelope: false, held: true)
-+            #expect(acquiredWhileHeld)
-+            let acquiredAfterRelease = intent.update(departure, entry: false, envelope: false)
-+            #expect(!acquiredAfterRelease)
-+        }
-+    }
-+
-+    @Test func stationaryPointerCannotAcquireAsArcPaintArrives() {
-+        for edge in NotchEdge.allCases {
-+            let shape = geometry(edge), filter = QuotaGripFilter()
-+            let center = shape.orbCenter
-+            let point = CGPoint(x: center.x - NotchLayout.arcRadius, y: center.y).applying(shape.transform)
-+            var intent = QuotaGripIntent(), motion = QuotaGripMotion()
-+            let initiallyAcquired = intent.update(point, entry: false, envelope: false)
-+            #expect(!initiallyAcquired)
-+            motion.setTargets(expanded: true, reveal: false, hover: false, held: false, now: 0, reducedMotion: false)
-+            for tick in 1...100 {
-+                motion.sample(Double(tick) / 50)
-+                let paint = QuotaGripPaint(geometry: shape, frame: motion.frame, filter: filter, scale: 1)
-+                let acquiredWithoutMovement = intent.update(point, entry: paint.hit.contains(point), envelope: false)
-+                #expect(!acquiredWithoutMovement)
-+            }
-+        }
++    @Test func stationaryPointerCannotAcquireFromClassificationChange() {
++        let point = CGPoint(x: 10, y: 10)
++        var intent = QuotaGripIntent()
++        let initiallyAcquired = intent.update(point, entry: false, envelope: false)
++        #expect(!initiallyAcquired)
++        let acquiredWithoutMovement = intent.update(point, entry: true, envelope: true)
++        #expect(!acquiredWithoutMovement)
 +    }
 +
 +    @Test func pressRetainsPaintedPoseAndReducedMotionSettlesWithoutFrames() {
@@ -4434,18 +4465,6 @@ index 0000000000000000000000000000000000000000..395c90b439f5a918735afbc5cd8cbcda
 +        hover.reset()
 +    }
 +
-+    @Test func nativeHostingRejectsTransparentTailCorners() {
-+        _ = NSApplication.shared
-+        let rect = CGRect(x: 0, y: 0, width: 28.2, height: 32.72)
-+        let tail = QuotaTooltipTail(edge: .right).path(in: rect)
-+        let host = QuotaNotchHostingView(rootView: AnyView(EmptyView()))
-+        let container = NSView(frame: rect)
-+        host.frame = rect; host.input = tail; container.addSubview(host)
-+        let hole = CGPoint(x: 27, y: 1), ink = CGPoint(x: 8, y: 16)
-+        #expect(!tail.contains(hole) && tail.contains(ink))
-+        #expect(host.hitTest(host.convert(hole, to: container)) == nil)
-+        #expect(host.hitTest(host.convert(ink, to: container)) != nil)
-+    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 new file mode 100644

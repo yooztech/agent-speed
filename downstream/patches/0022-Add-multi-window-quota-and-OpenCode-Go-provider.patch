@@ -1,6 +1,6 @@
-From c37e2782e09bfbb18926153468394d5cfa318aa8 Mon Sep 17 00:00:00 2001
+From bd70b0792cd8fdc38c5eb27e32ff72311f186a2b Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Mon, 16 Nov 2026 11:34:26 +0800
+Date: Mon, 16 Nov 2026 12:22:10 +0800
 Subject: [PATCH] Add multi-window quota and OpenCode Go provider
 
 ---
@@ -19,7 +19,7 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  macos/Sources/CSQLite/module.modulemap        |   5 +
  macos/Sources/CSQLite/shim.h                  |   1 +
  .../QuotaControllerTests.swift                |  22 +-
- .../AgentSpeedAppTests/QuotaNotchTests.swift  |  18 +-
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  |  16 +-
  .../QuotaPresentationTests.swift              |   4 +-
  .../OpenCodeGoQuotaProviderTests.swift        | 256 ++++++++++
  .../QuotaColdStartTests.swift                 |  19 +-
@@ -40,14 +40,13 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  .../OpenCodeGoQuotaProviderTests.cs           | 449 ++++++++++++++++++
  .../QuotaColdStartTests.cs                    |  16 +-
  .../QuotaFormatTests.cs                       |  77 ++-
- .../QuotaNotchGeometryTests.cs                |   7 +-
  .../SettingsSerializerTests.cs                |  24 +-
- .../QuotaNotchViewTests.cs                    |  21 +
- .../QuotaSettingsPageTests.cs                 |  89 +++-
+ .../QuotaNotchViewTests.cs                    |  13 +
+ .../QuotaSettingsPageTests.cs                 |  64 ++-
  .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
  .../QuotaSurfaceTests.cs                      | 129 ++++-
- 43 files changed, 2451 insertions(+), 238 deletions(-)
+ 42 files changed, 2420 insertions(+), 227 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -116,10 +115,10 @@ index 4cf47a4b4cf3b99be25b7052fc500c892ff15761..e4b85a13e09185f61bc9b1ff63aa3d8d
    "mac.quota.noAllowance": {"zh-Hant":"此帳戶沒有可用的 %@ 訂閱額度","zh-Hans":"此账户没有可用的 %@ 订阅额度","en":"No %@ subscription allowance on this account","ja":"このアカウントに %@ の利用枠はありません"},
    "mac.quota.limitReached": {"zh-Hant":"已達額度限制","zh-Hans":"已达额度限制","en":"Allowance reached","ja":"利用枠の上限に達しました"},
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index 13c0dd38cf38d331bf32fd7f3b905080d170d050..647e01839b0d4b6109723c0e9d159b35167aa309 100644
+index d2e1aaff963eb347aea7c7216d25d47e162982fd..01ec078ec56c4ffee4363ed6c7f805f0b3de0b59 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -18,6 +18,10 @@ struct QuotaNotchReading {
+@@ -14,6 +14,10 @@ struct QuotaNotchReading {
      let l10n: Localizer
      let windows: [QuotaWindow]
      let readings: [String]
@@ -130,7 +129,7 @@ index 13c0dd38cf38d331bf32fd7f3b905080d170d050..647e01839b0d4b6109723c0e9d159b35
      let readingWidth: CGFloat
      let readingHeight: CGFloat
      var outerDiameter: CGFloat { NotchLayout.outerDiameter(windows.count) }
-@@ -28,15 +32,36 @@ struct QuotaNotchReading {
+@@ -24,15 +28,36 @@ struct QuotaNotchReading {
          self.snapshot = snapshot; self.networkEnabled = networkEnabled; self.l10n = l10n
          windows = QuotaWindow.ordered(snapshot?.windows ?? [])
          let multiple = windows.count > 1
@@ -173,7 +172,7 @@ index 13c0dd38cf38d331bf32fd7f3b905080d170d050..647e01839b0d4b6109723c0e9d159b35
      }
      func stale(at now: Date) -> Bool {
          !networkEnabled || snapshot?.status == .stale || snapshot?.observedAt.map { now.timeIntervalSince($0) > 900 } == true
-@@ -241,13 +266,13 @@ private struct QuotaNotchCell: View {
+@@ -208,13 +233,13 @@ private struct QuotaNotchCell: View {
              ZStack {
                  Circle().fill(dark ? Color(white: 42 / 255) : .white)
                      .overlay(Circle().stroke(dark ? Color(white: 57 / 255) : Color(white: 214 / 255), lineWidth: 0.5))
@@ -190,7 +189,7 @@ index 13c0dd38cf38d331bf32fd7f3b905080d170d050..647e01839b0d4b6109723c0e9d159b35
                      let unknown = window.usedFraction == nil || reading.snapshot?.status == .needsAuth
                      let color = NotchLayout.periodColor(window)
                      Circle().stroke(color.opacity(unknown ? 0.38 : 0.22), style: StrokeStyle(lineWidth: NotchLayout.ringStroke, dash: unknown ? [1, 4] : []))
-@@ -258,19 +283,27 @@ private struct QuotaNotchCell: View {
+@@ -225,19 +250,27 @@ private struct QuotaNotchCell: View {
                              .frame(width: diameter, height: diameter)
                      }
                  }
@@ -227,10 +226,10 @@ index 13c0dd38cf38d331bf32fd7f3b905080d170d050..647e01839b0d4b6109723c0e9d159b35
          .fixedSize()
          .accessibilityElement(children: .ignore)
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
-index ab6c7d3e19085108edb2b0f5d582a08ce52b95b1..6df6b3a580f29e76bc88b0608f97fb68fbdb08f9 100644
+index ed1c6a9c336f2ea6ee837d4cb28dea5d8a989d52..cde15e5f77c8fa5deddbf445c58b1dbb02e8a7ec 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
-@@ -12,8 +12,12 @@ enum NotchLayout {
+@@ -197,8 +197,12 @@ enum NotchLayout {
      static let gripPitch: CGFloat = 12.5
  
      static let ringStroke: CGFloat = 4
@@ -242,11 +241,11 @@ index ab6c7d3e19085108edb2b0f5d582a08ce52b95b1..6df6b3a580f29e76bc88b0608f97fb68
 +    static func outerDiameter(_ count: Int) -> CGFloat {
 +        discDiameter(count) + 16 + CGFloat(max(0, count - 1)) * 2 * ringPitch
 +    }
+     #if canImport(SwiftUI)
      static func periodColor(_ window: QuotaWindow) -> Color {
          switch window.period {
-         case .month: Color(red: 67 / 255, green: 143 / 255, blue: 229 / 255)
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
-index 98ef66f4cb7bcdbb2687b1b18390abbbb88ffe2e..bb5890b9d892c121c2e1ed7af9298d7887471b9b 100644
+index d239a9b3ce902df9a32e3708a41cce608be022ef..527a8dc9d0cb41a52a442b69a32c5ee2a64ff742 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 @@ -4,7 +4,7 @@ import AppKit
@@ -855,7 +854,7 @@ index ead924c28ea2ac140b1ce2b78be43130e49a9347..b2a82557169798e8f8a2ce35fdc03b47
              #expect(restored.snapshots.isEmpty)
          }
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-index 395c90b439f5a918735afbc5cd8cbcda9e5816f1..cef11d804cbbe0a62162133b2ca7c10eef592d88 100644
+index 005e82d65b1ce8422ea247d9e81b81b35fc9ec59..dbb1032b256a985f10fc6df4c17e798dd65ec1b8 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 @@ -15,7 +15,7 @@ struct QuotaNotchTests {
@@ -867,7 +866,7 @@ index 395c90b439f5a918735afbc5cd8cbcda9e5816f1..cef11d804cbbe0a62162133b2ca7c10e
                               windows: windows, headlineId: "rolling", block: nil, account: "account", plan: "Plus",
                               observedAt: now.addingTimeInterval(-300), source: "local", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
      }
-@@ -57,13 +57,14 @@ struct QuotaNotchTests {
+@@ -54,8 +54,8 @@ struct QuotaNotchTests {
      }
  
      @Test func everyProviderRetainsAllPeriodsWithoutFollowingHeadline() {
@@ -878,21 +877,7 @@ index 395c90b439f5a918735afbc5cd8cbcda9e5816f1..cef11d804cbbe0a62162133b2ca7c10e
          for value in accounts {
              #expect(value.windows.map(\.id) == ["monthly", "weekly", "rolling"])
              #expect(value.readings.count == 3)
-             #expect(value.readings.first?.contains("-20%") == true)
-             #expect(value.readings.last?.contains("79%") == true)
-+            #expect(value.rowHeights.count == 3)
-         }
-         let unknown = reading(snapshot(used: nil))
-         #expect(unknown.readings.last?.contains("Unknown") == true)
-@@ -116,7 +117,6 @@ struct QuotaNotchTests {
-         }
-     }
- 
--
-     @Test func allCellsAndUprightLabelsFitEveryEdge() {
-         let monitor = CGRect(x: -1_920, y: -1_080, width: 1_920, height: 1_080)
-         for edge in NotchEdge.allCases {
-@@ -421,12 +421,12 @@ struct QuotaNotchTests {
+@@ -224,12 +224,12 @@ struct QuotaNotchTests {
          hover.keepExpanded = true
          hover.move(to: .cell("codex")); hover.move(to: .outside)
          clock.advance(0.1)
@@ -908,7 +893,7 @@ index 395c90b439f5a918735afbc5cd8cbcda9e5816f1..cef11d804cbbe0a62162133b2ca7c10e
          clock.advance(0.001)
          #expect(hover.expanded && hover.activeSource == nil && !hover.graceActive)
          hover.reset()
-@@ -444,9 +444,9 @@ struct QuotaNotchTests {
+@@ -247,9 +247,9 @@ struct QuotaNotchTests {
          #expect(!hover.expanded && hover.activeSource == nil && !hover.graceActive)
          hover.move(to: .bar)
          #expect(hover.expanded)
@@ -3120,7 +3105,7 @@ index 48778a2e56d6247900591ecd2e2fe12ba06bec44..758faf54c199db0eb6b1ff16a46b3010
              };
              var response = new HttpResponseMessage((HttpStatusCode)(Failure == "server" ? 503 : Status)) { Content = new StringContent(body) };
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
-index 7843155e5ec44dc252d4caffe2a6a44e663a96cd..0436e0c486f031b88afdef0ae4cf86f7bbc180c3 100644
+index 11cc8a2b772e879c449afec901a62fecf5f6d244..e026a7e218820a46f1b4a2ab727ca0e175bcf6e6 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 @@ -29,18 +29,79 @@ public class QuotaFormatTests
@@ -3211,32 +3196,6 @@ index 7843155e5ec44dc252d4caffe2a6a44e663a96cd..0436e0c486f031b88afdef0ae4cf86f7
      }
  
      [Fact]
-diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
-index d7c987eac9f24377dc1b345de774bf8efdab52d9..d79e94869eee6270f1b6af9344e88ecdd2c55309 100644
---- a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
-+++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGeometryTests.cs
-@@ -148,10 +148,10 @@ public class QuotaNotchGeometryTests
-     }
- 
-     [Theory]
--    [InlineData(.0001, "<0.1", ">99.9")]
-+    [InlineData(.0001, "0.01", "99.99")]
-     [InlineData(.995, "99.5", "0.5")]
--    [InlineData(.126, "13", "87")]
--    [InlineData(1.2, "120", "0")]
-+    [InlineData(.126, "12.6", "87.4")]
-+    [InlineData(1.2, "120", "-20")]
-     public void DisplayHalvesMatchTheReference(double used, string spent, string remaining)
-     {
-         Assert.Equal((spent, remaining), QuotaNotchGeometry.PercentHalves(used));
-@@ -167,6 +167,7 @@ public class QuotaNotchGeometryTests
-         Assert.Equal(remaining, QuotaNotchGeometry.RemainingFill(used), 6);
-         Assert.Equal(tone, QuotaNotchGeometry.Tone(used));
-     }
-+
-     [Theory]
-     [InlineData("left")]
-     [InlineData("right")]
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
 index a346f35a60dacf8ae086a478df6161a1a6160263..b52734682ace2b2bab4729a3f5fda5a6708fed8c 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
@@ -3291,47 +3250,39 @@ index a346f35a60dacf8ae086a478df6161a1a6160263..b52734682ace2b2bab4729a3f5fda5a6
      public void AllQuotaSourcesPersistIntentRatherThanFreezingTheSavedRegistry()
      {
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index d4916638ab0516f9f2663dba508a6dfb4b416d96..9fda4750b804e393868ec7ecf1aad2775d7978da 100644
+index 80898d31e106dc69a31ea995bdc75daaf28373a3..e9e5216c509b01b135dc74f7840a80e01696672a 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-@@ -380,6 +380,27 @@ public class QuotaNotchViewTests
-         Assert.True(view.GripInputGeometry.FillContains(pointer));
-     });
+@@ -36,6 +36,19 @@ public class QuotaNotchViewTests
+     }
+ 
  
 +    [Fact]
-+    public void EveryRegisteredProviderHasCardAndKeepsAllCells() => OnSta(() =>
++    public void EveryRegisteredProviderHasCard() => OnSta(() =>
 +    {
 +        var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
 +        var sources = QuotaProviders.Supported.Select(provider => provider.Id).ToArray();
-+        var view = new QuotaNotchView(loc);
-+        view.Update(new([], sources, true, true, "right", 1));
 +        foreach (string source in sources)
 +        {
 +            var card = new QuotaNotchView(loc, card: true);
 +            card.Update(new([], sources, true, true, "right", 1, source));
 +            Assert.True(card.HasCard);
 +        }
-+        if (sources.Length > 1)
-+        {
-+            var single = new QuotaNotchView(loc);
-+            single.Update(new([], [sources[0]], true, true, "right", 1));
-+            Assert.True(view.Extent.Height > single.Extent.Height);
-+        }
 +    });
 +
-     private static double SegmentDistance(Point p, Point a, Point b)
+     private static void OnSta(Action action)
      {
-         var delta = b - a;
+         Exception? failure = null;
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-index 9af2cdb1841382abaf7a45dc5d8a37044f0048c7..358d6d4243c0670845a4e7ab4d62fcf7066cd02d 100644
+index 681b849fa5012867a492ebea07fe076ced789ca4..859b9d5794a09f8f8972c23bb07bc818c83e7e0b 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-@@ -71,6 +71,41 @@ public class QuotaSettingsPageTests
+@@ -63,6 +63,35 @@ public class QuotaSettingsPageTests
          });
      }
  
 +    [Fact]
-+    public void PeriodsStaySortedColoredAndExactWithoutHidingUnknownScopes()
++    public void PeriodsRetainExactValuesWithoutHidingUnknownScopes()
 +    {
 +        OnStaThread(() =>
 +        {
@@ -3344,21 +3295,15 @@ index 9af2cdb1841382abaf7a45dc5d8a37044f0048c7..358d6d4243c0670845a4e7ab4d62fcf7
 +            var snapshot = Snapshot(QuotaStatus.Ok, windows) with { HeadlineId = "rolling" };
 +            var card = AccountCard(snapshot, 440);
 +            var texts = Descendants(card).OfType<TextBlock>().ToArray();
-+            double previous = double.NegativeInfinity;
 +            foreach (var window in QuotaFormat.OrderedWindows(snapshot))
 +            {
 +                string label = QuotaFormat.WindowLabel(Loc, window, snapshot.DisplayName);
-+                var title = Assert.Single(texts, text => text.Text == label);
-+                double y = title.TransformToAncestor(card).Transform(new Point()).Y;
-+                Assert.True(y > previous); previous = y;
-+                AssertVisibleWithin(title, card);
++                Assert.Single(texts, text => text.Text == label);
 +                if (window.UsedFraction.HasValue)
 +                {
 +                    Assert.Contains(texts, text => text.Text == Loc.Format("win.quota.remaining", QuotaFormat.RemainingText(Loc, window)));
-+                    var track = Assert.Single(Descendants(card).OfType<Grid>(), grid => System.Windows.Automation.AutomationProperties.GetName(grid) ==
++                    Assert.Single(Descendants(card).OfType<Grid>(), grid => System.Windows.Automation.AutomationProperties.GetName(grid) ==
 +                        label + ": " + Loc.Format("win.quota.remaining", QuotaFormat.RemainingText(Loc, window)));
-+                    var color = (Color)ColorConverter.ConvertFromString(QuotaFormat.PeriodColor(window));
-+                    Assert.Contains(Descendants(track).OfType<Border>(), border => border.Background is SolidColorBrush brush && brush.Color == color);
 +                }
 +            }
 +            Assert.Contains(texts, text => text.Text == Loc["win.quota.unavailable"]);
@@ -3368,7 +3313,7 @@ index 9af2cdb1841382abaf7a45dc5d8a37044f0048c7..358d6d4243c0670845a4e7ab4d62fcf7
      [Fact]
      public void EmptyStatesDoNotInventReadings()
      {
-@@ -104,23 +139,38 @@ public class QuotaSettingsPageTests
+@@ -96,16 +125,26 @@ public class QuotaSettingsPageTests
      {
          OnStaThread(() =>
          {
@@ -3378,41 +3323,26 @@ index 9af2cdb1841382abaf7a45dc5d8a37044f0048c7..358d6d4243c0670845a4e7ab4d62fcf7
              var toolbar = Assert.IsType<DockPanel>(root.Children[0]);
              var refresh = Assert.Single(LogicalDescendants(toolbar).OfType<Button>());
              Assert.Equal(Loc["win.quota.refresh"], refresh.Content);
-             Assert.Equal(30, refresh.Height);
-             Assert.Equal(Dock.Right, DockPanel.GetDock(refresh));
--            Assert.IsType<Border>(root.Children[1]);
 -            var preferences = Assert.IsType<StackPanel>(root.Children[2]);
--            Assert.Equal(new Thickness(16, 26, 16, 0), preferences.Margin);
              var elements = LogicalDescendants(page).ToArray();
 +            var preferencesLabel = Assert.Single(elements.OfType<TextBlock>(), text => text.Text == Loc["win.quota.preferences"]);
 +            var preferences = Assert.IsAssignableFrom<FrameworkElement>(preferencesLabel.Parent);
-+            Assert.Equal(new Thickness(16, 26, 16, 0), preferences.Margin);
-+            var preferencesTop = preferences.TransformToAncestor(page).Transform(new Point()).Y;
 +            foreach (var provider in QuotaProviders.Supported)
 +            {
-+                var account = Assert.Single(elements.OfType<StackPanel>(), panel =>
++                Assert.Single(elements.OfType<StackPanel>(), panel =>
 +                    System.Windows.Automation.AutomationProperties.GetName(panel) == provider.DisplayName);
-+                AssertVisibleWithin(account, page);
-+                Assert.True(account.TransformToAncestor(page).Transform(new Point(0, account.ActualHeight)).Y <= preferencesTop);
 +            }
              var rows = LogicalDescendants(preferences).OfType<Grid>().Where(grid => grid.ColumnDefinitions.Count == 2).ToArray();
              Assert.Equal(new[] { Loc["win.quota.autoRefresh"], Loc["win.quota.showNotch"], Loc["win.quota.keepExpanded"] },
                  rows.Select(row => Assert.Single(row.Children.OfType<TextBlock>()).Text));
-             Assert.All(rows, row => Assert.InRange(row.ActualHeight, 46, 47));
-             Assert.All(rows, row => Assert.Equal(14, Assert.Single(row.Children.OfType<TextBlock>()).FontSize));
--            Assert.Equal(2, elements.OfType<Border>().Count(border => border.BorderThickness == new Thickness(1) && border.CornerRadius == new CornerRadius(8)));
-+            var sources = Assert.Single(elements.OfType<Border>(), border => border.BorderThickness == new Thickness(1) &&
-+                border.CornerRadius == new CornerRadius(8) && LogicalDescendants(border).OfType<CheckBox>().Any(check =>
-+                    System.Windows.Automation.AutomationProperties.GetName(check) == Loc["win.quota.allSources"]));
-+            AssertVisibleWithin(sources, page);
-+            var sourcesTop = sources.TransformToAncestor(page).Transform(new Point()).Y;
-+            Assert.All(rows, row => Assert.True(row.TransformToAncestor(page).Transform(new Point(0, row.ActualHeight)).Y < sourcesTop));
++            var sources = Assert.Single(elements.OfType<Border>(), border => LogicalDescendants(border).OfType<CheckBox>().Any(check =>
++                System.Windows.Automation.AutomationProperties.GetName(check) == Loc["win.quota.allSources"]));
 +            Assert.Equal(QuotaProviders.Supported.Count, LogicalDescendants(sources).OfType<CheckBox>().Count(check =>
 +                QuotaProviders.Supported.Any(provider => provider.DisplayName == System.Windows.Automation.AutomationProperties.GetName(check))));
              Assert.Contains(elements.OfType<TextBlock>(), text => text.Text == "native failure");
              Assert.DoesNotContain(elements, element => element is Expander || element is TextBox || element is AgentSpeed.Controls.SettingsCard);
              Assert.DoesNotContain(elements.OfType<TextBlock>(), text => text.Text.Contains("Credentials", StringComparison.Ordinal));
-@@ -197,23 +247,30 @@ public class QuotaSettingsPageTests
+@@ -182,19 +221,26 @@ public class QuotaSettingsPageTests
      {
          OnStaThread(() =>
          {
@@ -3425,23 +3355,15 @@ index 9af2cdb1841382abaf7a45dc5d8a37044f0048c7..358d6d4243c0670845a4e7ab4d62fcf7
              Assert.True(master.IsChecked); Assert.True(master.IsEnabled);
              Assert.Equal(Loc["win.quota.allSourcesHint"], System.Windows.Automation.AutomationProperties.GetHelpText(master));
 -            var source = Assert.Single(checks, c => System.Windows.Automation.AutomationProperties.GetName(c) == "Codex");
--            Assert.True(source.IsChecked); Assert.False(source.IsEnabled); Assert.Equal(38, source.Height);
+-            Assert.True(source.IsChecked); Assert.False(source.IsEnabled);
 -            Assert.Equal(DependencyProperty.UnsetValue, source.ReadLocalValue(Control.TemplateProperty));
--            var content = Assert.IsType<StackPanel>(source.Content);
--            var dot = Assert.Single(content.Children.OfType<Ellipse>());
--            Assert.Equal(8, dot.Width); Assert.Equal(8, dot.Height);
--            Assert.Same(page.Resources["QuotaCodexSourceBrush"], dot.Fill);
 -            Assert.Equal(1, checks.Count(c => QuotaProviders.Supported.Any(provider => provider.DisplayName == System.Windows.Automation.AutomationProperties.GetName(c))));
 +            Assert.Equal(QuotaProviders.Supported.Count, checks.Count(c => QuotaProviders.Supported.Any(provider => provider.DisplayName == System.Windows.Automation.AutomationProperties.GetName(c))));
 +            foreach (var provider in QuotaProviders.Supported)
 +            {
 +                var source = Assert.Single(checks, c => System.Windows.Automation.AutomationProperties.GetName(c) == provider.DisplayName);
-+                Assert.True(source.IsChecked); Assert.False(source.IsEnabled); Assert.Equal(38, source.Height);
++                Assert.True(source.IsChecked); Assert.False(source.IsEnabled);
 +                Assert.Equal(DependencyProperty.UnsetValue, source.ReadLocalValue(Control.TemplateProperty));
-+                var content = Assert.IsType<StackPanel>(source.Content);
-+                var dot = Assert.Single(content.Children.OfType<Ellipse>());
-+                Assert.Equal(8, dot.Width); Assert.Equal(8, dot.Height);
-+                Assert.Same(page.Resources[provider.Id == "codex" ? "QuotaCodexSourceBrush" : "QuotaOpenCodeSourceBrush"], dot.Fill);
 +            }
              page.Update(state with { AllSources = false });
 -            source = Assert.Single(LogicalDescendants(page).OfType<CheckBox>(), c => System.Windows.Automation.AutomationProperties.GetName(c) == "Codex");

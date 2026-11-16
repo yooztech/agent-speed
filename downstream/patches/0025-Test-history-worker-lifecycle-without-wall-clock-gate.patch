@@ -1,0 +1,92 @@
+From 830164983a71cbcc6798575272185d6601a48a1d Mon Sep 17 00:00:00 2001
+From: yooztech <service@yooztech.com>
+Date: Mon, 16 Nov 2026 12:11:00 +0800
+Subject: [PATCH] Test history worker lifecycle without wall clock gate
+
+---
+ .../HistoryServiceTests.cs                    | 53 ++++++++++++++++---
+ 1 file changed, 47 insertions(+), 6 deletions(-)
+
+diff --git a/windows/tests/AgentSpeed.Core.Tests/HistoryServiceTests.cs b/windows/tests/AgentSpeed.Core.Tests/HistoryServiceTests.cs
+index 1223ce0591091f8ced83933aff5f8c2bbf4ee572..21c753668d9c82fffedf0a9c95544752d45d1dc5 100644
+--- a/windows/tests/AgentSpeed.Core.Tests/HistoryServiceTests.cs
++++ b/windows/tests/AgentSpeed.Core.Tests/HistoryServiceTests.cs
+@@ -106,24 +106,56 @@ public sealed class HistoryServiceTests : IDisposable
+     }
+ 
+     [Fact]
+-    public void StopAndDisposeAreIdempotent()
++    public async Task StopAndDisposeAreIdempotent()
+     {
+-        var service = new HistoryService(new HistoryHub(), Configuration(), StorePath);
++        var hub = await Task.Run(() => new HistoryHub());
++        // Lifecycle needs a real completed run, not transcript discovery in the host's home folders.
++        var configuration = Configuration() with { EnabledSources = new HashSet<SourceKind>() };
++        using var service = new HistoryService(hub, configuration, StorePath);
++        var workers = new ConcurrentQueue<Thread>();
++        var ready = new TaskCompletionSource<Thread>(TaskCreationOptions.RunContinuationsAsynchronously);
++        service.PerfRecordsUpdated = _ =>
++        {
++            workers.Enqueue(Thread.CurrentThread);
++            if (hub.State.Kind == HistoryStateKind.Ready)
++            {
++                ready.TrySetResult(Thread.CurrentThread);
++            }
++        };
++
++        service.Stop();
++        service.Stop();
++        service.Start();
++        service.Start();
++
++        // Observe the real worker, then assert shutdown itself, not elapsed time on a loaded host.
++        var firstWorker = await ready.Task.WaitAsync(TimeSpan.FromSeconds(20));
++        Assert.Empty(hub.Days);
+         service.Stop();
++        service.Stop();
++        Assert.False(firstWorker.IsAlive);
++        Assert.All(workers, worker => Assert.Same(firstWorker, worker));
++
++        // Stop permits a fresh worker; Dispose is terminal and releases that worker too.
++        workers.Clear();
++        ready = new TaskCompletionSource<Thread>(TaskCreationOptions.RunContinuationsAsynchronously);
+         service.Start();
+         service.Start();
+-        var watch = Stopwatch.StartNew();
++        var secondWorker = await ready.Task.WaitAsync(TimeSpan.FromSeconds(20));
++        Assert.NotSame(firstWorker, secondWorker);
++        Assert.Empty(hub.Days);
+         service.Dispose();
+         service.Dispose();
+-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5));
++        service.Stop();
++        Assert.False(secondWorker.IsAlive);
++        Assert.All(workers, worker => Assert.Same(secondWorker, worker));
+         Assert.Throws<ObjectDisposedException>(service.Start);
+-        Assert.Equal(Path.Combine("AgentSpeed", "history.sqlite"),
+-            Path.GetRelativePath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), HistoryService.DefaultStorePath));
+     }
+ 
+     private HistoryService Service(HistoryHub hub) =>
+         new(hub, Configuration(), StorePath, TimeZoneInfo.Utc, new HistoryOptions { Workers = 2 });
+ 
++    // Set every root: null enables automatic discovery and can scan the test host's real transcripts.
+     private MonitorConfiguration Configuration(params SourceKind[] enabled) => new(
+         new HashSet<SourceKind>(enabled.Length == 0 ? Enum.GetValues<SourceKind>() : enabled),
+         _temp.Combine("codex", "sessions"),
+@@ -131,6 +163,15 @@ public sealed class HistoryServiceTests : IDisposable
+         _temp.Combine("dsh", "sessions"),
+         _temp.Combine("opencode"),
+         _temp.Combine("gemini", "tmp"),
++        OmpRoot: _temp.Combine("omp", "sessions"),
++        AntigravityRoot: _temp.Combine("antigravity"),
++        WorkBuddyRoot: _temp.Combine("workbuddy", "projects"),
++        WorkBuddyAiRoot: _temp.Combine("workbuddy-ai", "projects"),
++        ZCodeRoot: _temp.Combine("zcode", "cli", "db"),
++        KimiRoot: _temp.Combine("kimi", "sessions"),
++        GrokBuildRoot: _temp.Combine("grok", "sessions"),
++        PiRoot: _temp.Combine("pi", "sessions"),
++        OpenClawRoot: _temp.Combine("openclaw"),
+         HermesRoot: _temp.Combine("hermes"),
+         DroidRoot: _temp.Combine(".factory"));
+ 

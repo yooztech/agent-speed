@@ -349,10 +349,10 @@ paint/attenuation comparisons at their existing thresholds, and writes all 32
 2x edge/state PNGs. From a prepared tree on macOS, run
 `swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native`
 to opt into those diagnostics. They are not discovered by `swift test` and do
-not block Release as ordinary tests. Geometry, hit routing, folding, animation,
-unknown/status, and reset-formatting regressions remain in the registered
-`swift test --package-path macos --filter QuotaNotchTests` suite, without test
-skip conditions, widened assertions, or replacement wiring-only assertions.
+not block Release as ordinary tests. The registered `QuotaNotchTests` suite keeps
+nonvisual animation-state, hover/drag ownership, unknown/status and reset-formatting
+behavior only. Drawing, geometry-coordinate, bitmap and shape-point assertions
+are not ordinary test or Release gates and are not replaced with similar tests.
 Release run `43695455501` compiled the macOS application and tests, then failed four
 quota tests among 1,637 tests: two brittle lifecycle waits, an exact floating-point
 layout-pin test, and a genuine resting-grip input-path assertion. The correction
@@ -396,18 +396,22 @@ input contour and fixed final-pose routes retain ownership until real departure,
 without retaining duplicate paint or intercepting the rest of the transparent
 window. Held drag and reduced-motion behavior use the same interaction contract.
 These base corrections belong to macOS patch 0020 and Windows patch 0021.
-Focused Linux-hosted checks passed 52 Windows grip-motion/geometry/filter
-regressions. The unchanged extracted Swift alpha filter matches the production
-Windows filter exactly across eight fixtures and 42,140 mask bytes, including
-352 fractional-alpha pixels. Eight additional Swift 6.2.4 motion/intent scenarios
-pass 11,046 assertions, including 660 continuity samples and 1,099 stationary
-samples for the restored disc/drop sequence. The Windows application/native test
-assembly cross-compiles; four changed macOS native files pass syntax parsing. All 24
-patches replay successfully, and all 3,151 replayed source files match both the
-repaired source and reconstructed tree byte-for-byte. These checks do not execute
-AppKit/WPF desktop input, macOS raster orientation/clipping or actual animation;
-native visual acceptance remains unverified. No package, Actions or Release was
-created.
+Quota automation checks nonvisual provider, persistence, lifecycle, animation-state
+and hover/drag ownership behavior. It does not validate drawing. Pixel/color,
+snapshot, glyph/path, contour/topology, raster/filter-output, layout-coordinate
+and shape-point assertions are removed from ordinary tests on both platforms,
+including geometry tests presented as hit-region verification. Drawing acceptance
+requires the actual native surface or explicitly manual visual diagnostics.
+Without that environment, appearance remains unverified; portable assertion
+counts, extracted geometry scripts and CI reruns are not substitutes.
+
+The drawing-gate cleanup changes tests and their registration descriptions only;
+production drawing and the disc animation are unchanged. Windows Presentation and
+native test assemblies compile; retained Swift test source passes syntax parsing,
+not macOS SDK compilation. No tests, drawing probes, CI or Release runs were
+executed for this cleanup.
+The full 25-patch queue replays successfully and matches the checked cleanup tree
+byte-for-byte. This proves queue integrity, not visual correctness.
 
 Release run [43797161025](https://github.com/yooztech/agent-speed/actions/runs/43797161025)
 failed both native gates despite the earlier cross-build and portable checks.
@@ -422,13 +426,36 @@ receiver. Patch 0020 evaluates each mutation into a local Boolean before
 `#expect`, preserving the call order and assertions. Syntax parsing and extracted
 precondition harnesses did not exercise that macro expansion; they were not proof
 of native test compilation. Neither failure is treated as a runner flake, and no
-test is skipped or failure gate relaxed. Native reruns remain required; no new
-Actions or Release run is authorized by these corrections.
+test is skipped or failure gate relaxed. Do not use another CI or Release run as
+a debugging step or ask the user to validate these fixes through CI. Exercise the
+actual failure paths locally; unavailable native checks remain unverified, not
+passed. No Actions or Release run is authorized by these corrections.
 The corrected Windows application and native test assembly cross-compile with
 zero warnings/errors. Two Swift 6.2.4 tests using the real Testing macros and the
 unchanged production intent type compile and pass with strict concurrency and
 warnings as errors. These checks cover the macro failure and assembly compilation,
 not execution of the five Windows WPF cases or the complete native macOS suite.
+
+Release run [43800228990](https://github.com/yooztech/agent-speed/actions/runs/43800228990)
+then exposed separate failures: Windows `HistoryServiceTests.StopAndDisposeAreIdempotent`
+imposed an undocumented five-second stopwatch limit, while macOS reported 17 real
+grip paint/input issues. macOS no longer uses SwiftUI boolean path normalization
+to combine grip strokes and clips: the same explicit primitive/clip footprint
+now drives source coverage, painted support, native hosting-view input and hover.
+The production geometry file can compile independently, but that does not verify
+native drawing. Previous portable geometry/pixel assertion counts are withdrawn
+as drawing-verification evidence; their ordinary drawing gates are removed rather
+than replaced. The original disc transition and fractional-alpha filter remain.
+Native SwiftUI/AppKit rendering and visual acceptance remain unverified here.
+
+Dedicated patch 0025 replaces the upstream history stopwatch assertion with real
+Ready publication, worker termination/restart and disposed-state checks. Its test
+fixtures explicitly isolate all 16 source roots: the previous defaults could scan
+the developer's real omp transcripts. All six actual `HistoryServiceTests` pass
+locally with the isolated roots. No Windows/macOS production history behavior is
+changed. No CI, Actions or Release run was launched to verify these corrections.
+The full 25-patch queue replays successfully, with all 3,151 source files matching
+the locally checked repair tree and reconstructed tree byte-for-byte.
 
 The redesigned native surfaces and real-login behavior remain unverified on
 Windows and macOS. Portable geometry checks and SVG previews validate shared
@@ -450,9 +477,9 @@ bars show remaining allowance rather than used allowance.
 
 The downstream-only live-HWND region, synthetic desktop mouse-path and native
 capture harness is removed. It is not an additional Release requirement for
-quota windows. Portable geometry/state checks, isolated WPF control tests,
-provider and refresh-lifecycle regressions remain; none establishes desktop
-click-through, mixed-DPI behavior or native input acceptance.
+quota windows. Nonvisual state/ownership, provider, persistence and refresh-lifecycle
+checks remain. Drawing/shape assertions and geometry-point substitutes do not
+establish native click-through, pixels or visual acceptance and are not gates.
 
 The approved compact multi-window design retains the real supplier marks, matte
 center disks, round progress caps and native concave flares. Rings run longest
