@@ -32,7 +32,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../Settings/QuotaNotch.LICENSE.txt           |  49 ++
  .../src/AgentSpeed/Settings/QuotaNotchGoo.cs  |  95 +++
  .../AgentSpeed/Settings/QuotaNotchRegion.cs   | 118 +++
- .../src/AgentSpeed/Settings/QuotaNotchView.cs | 422 ++++++++++
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs | 418 ++++++++++
  .../AgentSpeed/Settings/QuotaNotchWindow.cs   | 759 ++++++++++++++++++
  .../Settings/QuotaRetryScheduler.cs           |  35 +
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  | 315 ++++++++
@@ -60,7 +60,8 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../QuotaSettingsPageTests.cs                 | 386 +++++++++
  .../QuotaSurfaceRetryTests.cs                 | 151 ++++
  .../QuotaSurfaceTests.cs                      | 501 ++++++++++++
- 56 files changed, 7766 insertions(+), 53 deletions(-)
+ windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs | 101 ++++++++++++++++++++
+ 57 files changed, 7863 insertions(+), 53 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
@@ -97,9 +98,10 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 2b79580f3a618736361db21277bf179f6febe1b9..7618afd4ef0927fbe613e591a289c1dc065eaede 100644
+index dc709600aaf8baaa625e5d9d1466243d512cd782..ab297787e3dd335b42ee6e4b7b5e2fd23b132855 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,8 @@
@@ -113,7 +115,7 @@ index 2b79580f3a618736361db21277bf179f6febe1b9..7618afd4ef0927fbe613e591a289c1dc
  
  ## Snapshot
  
-@@ -23,7 +23,7 @@ A snapshot has the following logical fields. Optional values are nullable; a mis
+@@ -23,7 +23,7 @@
  | `nextAllowedAt` | Nullable earliest next permitted refresh time, if the provider is backing off. |
  | `waitingForRefresh` | True only when a persisted successful polling interval prevents a refresh and no observation is available in this process. Status remains `error` for compatibility; display this condition as waiting, not a failed request. |
  | `credits` | Nullable credit information: `hasCredits` and `unlimited` are nullable booleans, `balance` is a nullable decimal string. `limit` and `used` are nullable numeric absolute amounts in provider-reported spend units, with no inferred currency; `usedFraction` and `resetAt` describe the individual spend-control allowance. A balance of `"0"` is known zero, not unknown. The allowance's `usedFraction` is not clamped and may exceed 1. |
@@ -122,7 +124,7 @@ index 2b79580f3a618736361db21277bf179f6febe1b9..7618afd4ef0927fbe613e591a289c1dc
  
  A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`, and `duration`. `id` is stable and unique within a snapshot; `label` is display text. For Codex windows, `usedFraction` and `used` are the reported percentage divided by 100, and `remaining` is 1 minus that fraction. These nullable fractions are not absolute counts and are not clamped: usage may exceed 1 and remaining may be negative. Zero is known zero, not unknown. `resetAt` is a nullable absolute instant and `duration` is a nullable window length in seconds. Unknown fields remain null, including an unknown fraction on an otherwise valid window.
  
-@@ -39,7 +39,7 @@ A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`,
+@@ -39,7 +39,7 @@
  * `error`: a network, decoding, service, or other failure that does not establish a more specific state.
  
  An authentication failure must not be represented as zero usage. If old data is retained, it must be visibly stale; a previous timestamp must never be advanced on an unsuccessful refresh. Rate limiting is a transient failure, not an empty successful observation. Respect server retry guidance and avoid repeatedly querying the endpoint while it is rate-limited.
@@ -131,7 +133,7 @@ index 2b79580f3a618736361db21277bf179f6febe1b9..7618afd4ef0927fbe613e591a289c1dc
  
  ## Desktop presentation
  
-@@ -47,15 +47,15 @@ Quota is presented in the existing Settings window as source-neutral account car
+@@ -47,15 +47,15 @@
  
  Subscription is a source-neutral account list and settings group, with the real Codex adapter; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
  
@@ -150,9 +152,9 @@ index 2b79580f3a618736361db21277bf179f6febe1b9..7618afd4ef0927fbe613e591a289c1dc
  
  Automatic polling schedules per-source retries when a refresh returns a transiently unavailable observation (`error` or `stale`), rather than waiting for the next ordinary five-minute tick. Cold start means the current account/source has no validated successful observation; an available account-bound cached observation is displayed stale immediately and is not cold. Before the first successful observation, genuine transport, service and decoding failures retry after 5, 10, 20 and then at most 30 seconds per attempt. Both the native scheduler and the credential-owning provider enforce this short cadence: a five-second UI wake blocked by a hidden sixty-second provider floor does not satisfy the contract. Remote connection readiness triggers the existing immediate selected-source startup read. The first successful observation clears cold-start pacing and restores normal polling; failures with an already available observation retain the ordinary backoff policy.
  
-@@ -64,11 +64,15 @@ A provider's future `nextAllowedAt` is authoritative. HTTP 429 retains its conse
- Retries wake only the affected source and coalesce with in-flight work; no synthetic zero reading is created. Turning automatic refresh off, revoking network access, removing a source or disposing the application cancels its pending retry work, and stale callbacks/results cannot re-arm it. Existing manual/startup preference semantics remain unchanged. These rules apply to Codex, OpenCode Go and Kimi on both native clients and the shared remote collector; no extra SSH process or autonomous collector quota polling is introduced.
- For migration, a legacy schedule without a validated version-1 account snapshot cannot distinguish a normal successful floor from an optional reset-credit 429 extension. Preserve its future `nextAllowedAt` rather than granting the startup bypass. After that deadline, a successful request upgrades the structured snapshot and independent retry deadline; subsequent application starts may bypass only the ordinary successful floor.
+@@ -66,11 +66,15 @@
+ 
+ Both floating panels retain full-strength provider logos, allowance rings and numerical readings when showing an old observation, including after a refresh failure, with network access disabled or when the observation is more than fifteen minutes old. Stale status, the original observation time and details remain visible; full brightness never marks old data as fresh. Ring background tracks, unknown-reading styling and the normal expansion/collapse fade are independent and unchanged.
  
 -By default, without pointer attention, the macOS panel start and rest as a collapsed strip: 10 by 79 logical pixels on vertical edges or 79 by 10 on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
 +Dashboard floating windows and the quota floating panel have independent context-menu controls. On Windows, the quota panel uses direct WPF drawing in tightly bounded native windows for the main shape and its details card. The host owns physical monitor/work-area placement, closest-edge dragging, persisted monitor/edge/along position, and DPI correction. Drawing, hit classification, and the operating-system window region use the same geometry, leaving unpainted corners and holes available to other desktop windows. Successful region handles are owned by Windows; intermediate handles and handles from failed region updates are released by the application. A region setup failure hides the panel rather than leaving a transparent rectangular input blocker. The panel follows the existing ThemeService's resolved light/dark appearance, including live System changes.
@@ -169,27 +171,27 @@ index 2b79580f3a618736361db21277bf179f6febe1b9..7618afd4ef0927fbe613e591a289c1dc
  
  The outlined resting arc has 8.49 DIP of true radial clearance from the outlined circular body flare; the temporary full disc has 17.23 DIP. Neutral outlined dot paint spans X 21.7–55.7 and Y `BodyEnd + 35.95`–`BodyEnd + 57.45`, a 34-by-21.5-DIP envelope; settled hover paint is 36.4 by 23.9 DIP. Hit padding, radial bridge, activation fan and liquid core/neck consumers use the actual production dot/grid geometry, not independently enlarged SVGs or a blanket input rectangle. `GripPaintClearance` measures the actual quarter curve including its endpoints, not the full circle or a bounding rectangle; `ArcGripPaintClearance` measures the retained outlined arc against all six outlined dots, including hover. These production methods drive regressions and the frame probe. The animation canvas still conservatively reserves 32.97 DIP beyond the flare for transient disc/filter bounds, without making that envelope interactive or moving the screen anchor.
  
-@@ -84,6 +88,10 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
+@@ -85,6 +89,10 @@
+ Subscription Settings no longer exposes runtime diagnostics or a credential-storage footnote. Safe initialization/placement stage and exception type/HResult state may remain internal to the native host for tests; no page callback or hidden replacement diagnostic UI is retained. Pointer events and finite transitions drive the panel lifecycle; it has no continuous cursor, browser bridge, or bitmap polling loop. Provider refresh and backoff remain independent of this rendering lifecycle.
  
  The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
- 
++
 +The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
 +
 +Windows startup regressions use the real `QuotaSurface` → `Window.Show` → `SourceInitialized` path with ephemeral settings, networking and automatic polling disabled, and no credentials. They require a visible HWND, nonzero placement, an opaque black collapsed bar in both themes, transparent unused canvas, and a nonempty installed native region that includes only the painted bar on all four edges. Deterministic pointer/card/grace and menu/drag-state regressions exercise real paint and installed input regions with reduced motion, while finite animation runs are advanced to their terminal samples without sleeps. The body-to-grip route is sampled through the production pointer handlers, visible pixels and installed native region, with grace expiration driven between samples to represent arbitrarily slow movement. Both grip and Alt-body presses must acquire real mouse capture, remain pending below threshold, move the anchor above threshold, resample a different edge on release, persist the result and release capture; another physical monitor is used when available. An explicitly expanded injected first-render failure must be hidden and retain a safe stage/type/HResult/inner-exception diagnostic in the native runtime state. These are Windows-only regressions, not claims based on a portable geometry check.
-+
+ 
  The existing transient menu-bar popover or tray flyout may show a compact quota summary when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers, but include every available quota window within each displayed provider; open the existing Settings quota page for details.
  
- Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
-@@ -99,7 +107,7 @@ swift test --package-path macos --filter QuotaNotchTests
+@@ -101,7 +109,7 @@
  swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native
  ```
  
--The first command runs the ordinary geometry, state, motion, hit-routing, folding, unknown/status, and reset-formatting regressions; it does not render offscreen images or compare pixels/PNG encodings. The second explicitly opts into `QuotaNotchVisualHarness` via the existing debug launch-option mechanism. It renders the actual Codex `QuotaNotchView` and painted control-family input mask on four edges, in both themes at 1x and 2x, for eleven body/control/status states (176 notch PNGs), plus four localized details PNGs. It exits nonzero on diagnostic failure, including missing native images or PNG encoding/write failures. This opt-in native route is not part of ordinary test discovery or the Release gate. It runs before application activation without real credentials and requires the native macOS SDK and a GUI login session.
-+The first command runs the ordinary geometry, state, motion, hit-routing, folding, unknown/status, and reset-formatting regressions; it does not render offscreen images or compare pixels/PNG encodings. The second explicitly opts into `QuotaNotchVisualHarness` via the existing debug launch-option mechanism. It renders the actual multi-source `QuotaNotchView` and painted control-family input mask on four edges, in both themes at 1x and 2x, for eleven body/control/status states (176 notch PNGs), plus four localized details PNGs. It exits nonzero on diagnostic failure, including missing native images or PNG encoding/write failures. This opt-in native route is not part of ordinary test discovery or the Release gate. It runs before application activation without real credentials and requires the native macOS SDK and a GUI login session.
+-The first command runs the ordinary geometry, state, motion, hit-routing, folding, unknown/status, and reset-formatting regressions; it does not render offscreen images or compare pixels/PNG encodings. The second explicitly opts into `QuotaNotchVisualHarness` via the existing debug launch-option mechanism. It renders the actual Codex `QuotaNotchView` and painted control-family input mask on four edges, in both themes at 1x and 2x, for twelve body/control/status states (192 notch PNGs), plus four localized details PNGs. It exits nonzero on diagnostic failure, including missing native images or PNG encoding/write failures. This opt-in native route is not part of ordinary test discovery or the Release gate. It runs before application activation without real credentials and requires the native macOS SDK and a GUI login session.
++The first command runs the ordinary geometry, state, motion, hit-routing, folding, unknown/status, and reset-formatting regressions; it does not render offscreen images or compare pixels/PNG encodings. The second explicitly opts into `QuotaNotchVisualHarness` via the existing debug launch-option mechanism. It renders the actual multi-source `QuotaNotchView` and painted control-family input mask on four edges, in both themes at 1x and 2x, for twelve body/control/status states (192 notch PNGs), plus four localized details PNGs. It exits nonzero on diagnostic failure, including missing native images or PNG encoding/write failures. This opt-in native route is not part of ordinary test discovery or the Release gate. It runs before application activation without real credentials and requires the native macOS SDK and a GUI login session.
  
- The optional captures use fixed synthetic frames and credential-free observations, not live requests or substitute browser graphics. They exercise folded, resting arc, emerging arc, temporary disc, dividing drops, six drops, held, stale, offline, unknown and authentication states. The harness checks tight native bounds, opaque paint against the shared input mask, the resting arc's transparent hole and every revealed drop's draggable target. Its four localized details captures cover English, Simplified Chinese, Traditional Chinese and Japanese.
+ The optional captures use fixed synthetic frames and credential-free observations, not live requests or substitute browser graphics. They exercise folded, resting arc, emerging arc, temporary disc, dividing drops, six drops, held, stale, offline, aged, unknown and authentication states. Stale, offline and aged renders are compared with matching fresh native controls so the logo, rings and readings retain full brightness without pinning layout coordinates. The harness also checks tight native bounds, opaque paint against the shared input mask, the resting arc's transparent hole and every revealed drop's draggable target. Its four localized details captures cover English, Simplified Chinese, Traditional Chinese and Japanese.
  
-@@ -117,7 +125,7 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
+@@ -119,7 +127,7 @@
  `GET https://chatgpt.com/backend-api/wham/usage` uses the local Codex session's bearer access token and `ChatGPT-Account-Id`; `Accept: application/json` requests JSON. Never place either credential in fixtures or logs. `plan_type` is the plan when supplied. The main `rate_limit.primary_window` and `rate_limit.secondary_window` are independent; parse each without discarding a valid sibling because another is null or malformed. A window's numeric `used_percent` converts to `usedFraction` by dividing by 100 without clamping. `limit_window_seconds` gives duration. `reset_at` is Unix epoch seconds; when absent, `reset_after_seconds` is relative to the observation time. Null or omitted data stays unknown. A non-null 0 percentage is a valid measurement.
  `additional_rate_limits` is an array of feature-scoped rate-limit objects (`limit_name`, `metered_feature`, `rate_limit`), not a replacement for the main account windows. `code_review_rate_limit` may contain another pair. Preserve source scope when representing these windows. A malformed extra must not destroy usable main data. `spend_control.individual_limit` is a separate credit-backed allowance: its `limit` and `used` can be decimal strings, `used_percent` is a percentage, and `reset_at` is epoch seconds. The response's `credits` balance is distinct from that allowance and from unused reset credits at the separate `/wham/rate-limit-reset-credits` endpoint; none is interchangeable with another.
  
@@ -2532,10 +2534,10 @@ index 0000000000000000000000000000000000000000..13d3dadf6b30b0731d7aae6421ff4417
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..77f95d0637727b2101d55b808dbfe464885b548f
+index 0000000000000000000000000000000000000000..d9cdcfc07fa9aa03bcb6c88050e11990d1d15ab3
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,418 @@
 +using System.Globalization;
 +using System.Reflection;
 +using System.Text.RegularExpressions;
@@ -2657,9 +2659,6 @@ index 0000000000000000000000000000000000000000..77f95d0637727b2101d55b808dbfe464
 +            var cell = new CombinedGeometry(GeometryCombineMode.Intersect, new EllipseGeometry(center, 22, 22), body); Add(cell, new(QuotaNotchTarget.Cell, ids[i]));
 +            var snap = _state.Snapshots.FirstOrDefault(s => s.Id == ids[i]);
 +            var headline = QuotaFormat.Headline(snap);
-+            bool stale = !_state.Network || snap?.Status == QuotaStatus.Stale ||
-+                (snap?.ObservedAt is { } observed && DateTimeOffset.UtcNow - observed > TimeSpan.FromMinutes(15));
-+            dc.PushOpacity(stale ? .55 : 1);
 +            dc.DrawEllipse(Brush(_state.Dark ? "#2a2a2a" : "#ffffff"), null, center,
 +                QuotaNotchGeometry.CenterDiameter / 2, QuotaNotchGeometry.CenterDiameter / 2);
 +            double radius = (QuotaNotchGeometry.RingDiameter - QuotaNotchGeometry.RingWidth) / 2;
@@ -2669,7 +2668,6 @@ index 0000000000000000000000000000000000000000..77f95d0637727b2101d55b808dbfe464
 +            if (headline?.UsedFraction >= 1) dc.PushOpacity(.55);
 +            DrawGlyph(dc, Codex, center, QuotaNotchGeometry.GlyphDiameter, ink);
 +            if (headline?.UsedFraction >= 1) dc.Pop();
-+            dc.Pop();
 +            string text = headline?.UsedFraction is { } value && snap?.Status != QuotaStatus.NeedsAuth
 +                ? QuotaNotchGeometry.PercentHalves(value).Remaining + "%" : "—";
 +            var label = Text(text, 15, Semibold, ink);
@@ -8621,5 +8619,112 @@ index 0000000000000000000000000000000000000000..29890dea5f36470a519d50f3871a3d91
 +                    : """{"available_count":2}""")
 +            };
 +        }
++    }
++}
+diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
+new file mode 100644
+index 0000000000000000000000000000000000000000..f16807ff676a25127face0139891b7290613266c
+--- /dev/null
++++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
+@@ -0,0 +1,101 @@
++using System.IO;
++using System.Net;
++using System.Net.Http;
++using System.Runtime.ExceptionServices;
++using System.Windows.Threading;
++using AgentSpeed.Core;
++using AgentSpeed.Presentation.Localization;
++using AgentSpeed.Presentation.Settings;
++using AgentSpeed.Services;
++using AgentSpeed.Settings;
++
++namespace AgentSpeed.Windows.Tests;
++
++public sealed class QuotaWarmStartupTests
++{
++    [Fact]
++    public void CachedStartupFailureKeepsReadingAndRetriesActualHttpAtSixtySeconds()
++    {
++        Exception? failure = null;
++        var thread = new Thread(() =>
++        {
++            var directory = Path.Combine(Path.GetTempPath(), "quota-warm-startup-" + Guid.NewGuid().ToString("N"));
++            Directory.CreateDirectory(directory);
++            try
++            {
++                var auth = Path.Combine(directory, "auth.json");
++                File.WriteAllText(auth, """{"tokens":{"access_token":"fixture","account_id":"fixture-account"}}""");
++                var now = new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero);
++                using var handler = new WarmStartupHandler();
++                CodexQuotaProvider Provider() => new(auth, Path.Combine(directory, "schedule"), new HttpClient(handler, false), () => now);
++                using var seed = Provider();
++                var successful = seed.RefreshAsync().GetAwaiter().GetResult();
++                Assert.Equal(QuotaStatus.Ok, successful.Status);
++                Assert.Equal(1, handler.UsageCalls);
++                using var restored = Provider();
++                Assert.Equal(successful.ObservedAt, restored.ReadCachedSnapshot().ObservedAt);
++                using var settings = new SettingsService(Dispatcher.CurrentDispatcher);
++                settings.MakeEphemeral();
++                settings.Update(s => s with { ShowQuotaNotch = false, NetworkEnabled = true, AutoRefreshQuota = true,
++                    QuotaAllSources = false, QuotaSources = ["codex"] });
++                var scheduler = new WarmStartupScheduler();
++                var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
++                using var surface = new QuotaSurface(settings, loc, false, _ => restored,
++                    refreshInterval: TimeSpan.FromHours(1), now: () => now, retryScheduler: scheduler);
++                Drain();
++                Assert.Equal(2, handler.UsageCalls); // Startup bypasses only the cached success floor.
++                var stale = restored.ReadCachedSnapshot();
++                Assert.Equal(QuotaStatus.Stale, stale.Status);
++                Assert.Equal(successful.ObservedAt, stale.ObservedAt);
++                Assert.Equal(successful.Windows, stale.Windows);
++                Assert.Equal(TimeSpan.FromSeconds(60), scheduler.Delay); // Not the ordinary five-minute tick.
++                now = now.AddSeconds(59);
++                scheduler.Fire();
++                Assert.Equal(2, handler.UsageCalls);
++                Assert.Equal(TimeSpan.FromSeconds(1), scheduler.Delay);
++                now = now.AddSeconds(1);
++                scheduler.Fire();
++                Drain();
++                Assert.Equal(3, handler.UsageCalls);
++                Assert.Equal(now, restored.ReadCachedSnapshot().ObservedAt);
++                Assert.Null(scheduler.Delay);
++            }
++            catch (Exception error) { failure = error; }
++            finally { Directory.Delete(directory, recursive: true); }
++        });
++        thread.SetApartmentState(ApartmentState.STA);
++        thread.Start(); thread.Join();
++        if (failure is not null) ExceptionDispatchInfo.Capture(failure).Throw();
++    }
++
++    private sealed class WarmStartupHandler : HttpMessageHandler
++    {
++        public int UsageCalls;
++        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
++        {
++            var usage = request.RequestUri!.AbsolutePath.EndsWith("/usage", StringComparison.Ordinal);
++            if (usage && ++UsageCalls == 2) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
++            var body = usage
++                ? """{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}}}"""
++                : """{"available_count":2}""";
++            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
++        }
++    }
++
++    private sealed class WarmStartupScheduler : IQuotaRetryScheduler
++    {
++        public TimeSpan? Delay { get; private set; }
++        private Action? retry;
++        public void Schedule(string sourceId, TimeSpan delay, Action retry) { Delay = delay; this.retry = retry; }
++        public void Cancel(string sourceId) { Delay = null; retry = null; }
++        public void Clear() { Delay = null; retry = null; }
++        public void Fire() { var tick = retry; Clear(); tick?.Invoke(); }
++    }
++
++    private static void Drain()
++    {
++        var frame = new DispatcherFrame();
++        Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => frame.Continue = false));
++        Dispatcher.PushFrame(frame);
 +    }
 +}

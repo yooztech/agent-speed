@@ -699,10 +699,10 @@ index e4b85a13e09185f61bc9b1ff63aa3d8d8c10884e..dd50f5178b7c6cbbf5cfe7194e7349aa
    "mac.quota.empty": {"zh-Hant":"尚無額度資料。","zh-Hans":"尚无额度数据。","en":"No quota data yet.","ja":"使用枠データはまだありません。"},
    "mac.quota.diagnostics": {"zh-Hant":"詳細資料","zh-Hans":"详细信息","en":"Details","ja":"詳細"},
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index b6e06bcc52df44096b2b25618472381d17f2f4e0..713e7680ac2ef93edca3b699e427f654375db6ae 100644
+index 5e30d58465ffcbad4d04f82a86425aa50f97b5c1..d2e73b801d9c6fd330e73aac77e9b35807f28a25 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -105,7 +105,12 @@ struct QuotaNotchReading {
+@@ -105,7 +105,12 @@
          } else { label = l10n("mac.quota.window") }
      }
      if quotaIsProviderLabel(window.label, providerName: providerName) { return label }
@@ -1799,10 +1799,10 @@ index 717b1b6d86a32596231f58b87309c8d73c1db588..510f61a89d1f5d23ac06f472904043bd
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index aebc73715782cefe1761b9d3dec67538b2b269ae..e7342fc2a996feb66063bf6e100a45bec0196a5c 100644
+index 86f5715114496b29ea89ef5ca6a0b6eb28883a09..4806f21e7ab41c1001e16c76a8e132ed94159665 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
-@@ -6,15 +6,15 @@ On macOS and Windows, the local Codex provider reads `auth.json` from a non-empt
+@@ -6,15 +6,15 @@
  
  ## Remote subscription sources
  
@@ -1821,7 +1821,7 @@ index aebc73715782cefe1761b9d3dec67538b2b269ae..e7342fc2a996feb66063bf6e100a45be
  
  ## Snapshot
  
-@@ -57,7 +57,7 @@ Both platforms persist the last successfully parsed, structured account snapshot
+@@ -57,7 +57,7 @@
  
  Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any qualifying tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
  
@@ -1830,7 +1830,7 @@ index aebc73715782cefe1761b9d3dec67538b2b269ae..e7342fc2a996feb66063bf6e100a45be
  
  Windows and macOS Subscription follow the approved account-card layout using their native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
  
-@@ -156,6 +156,14 @@ Follow the reference's distinction between missing Go entitlement and sign-out:
+@@ -158,6 +158,14 @@
  
  Go follows the pinned provider's polling semantics: successful requests do not create a hard minimum request interval, so a manual refresh may request again after the previous request completes. Automatic application polling remains five minutes; concurrent refreshes are coalesced, and persisted rate-limit/failure retry deadlines remain binding. This does not change Codex's existing successful-request floor or startup rules.
  
@@ -2321,10 +2321,10 @@ index 03cb5d84f864bbdbb53020349431c3b2381b0037..49533722dc0593bbf1b889a1c57e6d60
  revision 835550a342871779135b6484d6899161c5222f7c:
  
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index bc2afce624a54a54efc3a1b22e75e096dc011e54..db144299138b88c9bb75897954a6a0a00ede6fb5 100644
+index 35ffaa773911e7891c89ecf996327026893fa28c..863b4f31189064f459ba9ecebf0a91e4aa2b71b8 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-@@ -27,6 +27,8 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -27,6 +27,8 @@
      // Official Mark paths: anomalyco/opencode packages/ui/src/components/logo.tsx (16 × 20).
      private static readonly Geometry OpenCode = Geometry.Parse("F0 M12 4H4V16H12V4ZM16 20H0V0H16V20Z");
      private static readonly Geometry OpenCodeShadow = Geometry.Parse("M12 16H4V8H12V16Z");
@@ -2333,7 +2333,7 @@ index bc2afce624a54a54efc3a1b22e75e096dc011e54..db144299138b88c9bb75897954a6a0a0
      private readonly Localizer _loc;
      private readonly bool _card;
      private readonly List<(Geometry Shape, QuotaNotchHit Hit)> _targets = [];
-@@ -470,6 +472,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -466,6 +468,7 @@
      {
          source = QuotaProviders.ProviderId(source);
          if (source == "codex") { DrawGlyph(dc, Codex, center, size, color); return; }

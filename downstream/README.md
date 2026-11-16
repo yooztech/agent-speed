@@ -396,6 +396,29 @@ legacy future deadlines of unknown cause are not blindly shortened. Auth/access
 and unsupported states do not enter rapid retry. Remote readiness triggers the
 existing immediate startup read. Source/network/automatic-off/disposal cancellation
 and manual-mode semantics remain intact; unknown is never filled with zero.
+Cached or stale quota observations retain normal floating-cell brightness on both
+platforms: provider marks, rings and readings do not dim because of observation
+age, refresh failure or disabled network access. Existing status and original
+observation timestamps still distinguish retained data from a successful refresh;
+normal expansion animation and ring-track contrast remain unchanged.
+Startup retry policy distinguishes a genuinely cold account from a valid cached
+observation. With automatic refresh enabled, the former uses the 5/10/20/30-second
+transient-failure cadence above; a cached account uses normal backoff, starting at
+60 seconds, then 120 and 240 seconds. Automatic refresh disabled means the startup
+read does not enable background retries. Authentication/access rejection needs
+user action, and persisted rate-limit or explicit Retry-After deadlines still bind.
+Focused follow-up verification passes 127 Windows Core Codex/cold-start/remote
+cases and 30 real-source Swift cold/warm-start/controller/lifecycle tests. The new
+warm-start scenario restores a valid cached observation, fails startup HTTP with
+503, keeps the stale reading, prevents an early request at 59 seconds and recovers
+through an actual HTTP request at 60 seconds. The corresponding Windows native
+regression compiles with the application and native test assembly (zero warnings
+or errors), but cannot execute on this Linux host. Three changed Swift files pass
+syntax parsing; native WPF/AppKit brightness and live-account startup failures
+remain unverified. This follow-up does not change production retry policy or run
+packaging, Actions or Release.
+All 24 updated patches replay from the pinned baseline, and all 3,139 replayed
+source files match the verified prepared tree byte-for-byte.
 Base platform fixes remain in 0020/0021, Go in 0022, collector/remote integration
 in 0023 and Kimi in 0024; no unrelated visual changes accompany this correction.
 Cold-start verification passes 186 Windows Core provider/transport cases, ten

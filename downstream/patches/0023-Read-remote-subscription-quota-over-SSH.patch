@@ -1526,10 +1526,10 @@ index 2bd429c8f321dfaa2165f962aee8fe436d4b5d49..ed8e603231f7e7200332a0b26b5c43e5
          reader.task?.cancel()
          reader.task = nil
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index 10d49e4e053566ad95eb8d6e3c8c87b799d652bb..b6e06bcc52df44096b2b25618472381d17f2f4e0 100644
+index 761b5dda5f8330cad497d9d4316887a963c44beb..5e30d58465ffcbad4d04f82a86425aa50f97b5c1 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -16,6 +16,7 @@ struct QuotaNotchReading {
+@@ -16,6 +16,7 @@
      let snapshot: QuotaSnapshot?
      let networkEnabled: Bool
      let l10n: Localizer
@@ -1537,7 +1537,7 @@ index 10d49e4e053566ad95eb8d6e3c8c87b799d652bb..b6e06bcc52df44096b2b25618472381d
      let windows: [QuotaWindow]
      let readings: [String]
      let labels: [String]
-@@ -26,9 +27,10 @@ struct QuotaNotchReading {
+@@ -26,9 +27,10 @@
      let readingHeight: CGFloat
      var outerDiameter: CGFloat { NotchLayout.outerDiameter(windows.count) }
  
@@ -1549,7 +1549,7 @@ index 10d49e4e053566ad95eb8d6e3c8c87b799d652bb..b6e06bcc52df44096b2b25618472381d
          windows = QuotaWindow.ordered(snapshot?.windows ?? [])
          let multiple = windows.count > 1
          let windowLabels = windows.map { quotaCompactWindowLabel($0, l10n, providerName: snapshot?.displayName) }
-@@ -66,7 +68,7 @@ struct QuotaNotchReading {
+@@ -66,7 +68,7 @@
          !networkEnabled || snapshot?.status == .stale || snapshot?.observedAt.map { now.timeIntervalSince($0) > 900 } == true
      }
      func status(at now: Date) -> String { quotaDisplayStatus(snapshot, l10n, networkEnabled: networkEnabled, now: now) }
@@ -1558,7 +1558,7 @@ index 10d49e4e053566ad95eb8d6e3c8c87b799d652bb..b6e06bcc52df44096b2b25618472381d
  
      func resetText(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
          let seconds = date.timeIntervalSince(now)
-@@ -453,7 +455,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
+@@ -450,7 +452,7 @@
          visible = state.0; reducedMotion = state.1
          dark = state.2 == .dark || (state.2 == .auto && NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
          readings = state.4.map { provider in
@@ -2596,7 +2596,7 @@ index b7ceeb7c51764959dd8d4a4960353ad3b95144a2..e5c11991c6a7212f6889f0096f571018
 +See [`QUOTA.md`](QUOTA.md) for provider parsing, cache isolation and wire details.
 +
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index ca6a82be7c8de29d6218c731240dc4be93dd2c64..aebc73715782cefe1761b9d3dec67538b2b269ae 100644
+index 395deaf23d0342116527fe64ede922d7969a2715..86f5715114496b29ea89ef5ca6a0b6eb28883a09 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,20 @@
@@ -3239,10 +3239,10 @@ index a2585fcd0d93fbf00c09d4bb4fee6df5fca16188..5b468fd9686566fd9740fff69d0ad8f2
      }
  
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index bd5cd7648c2d890742b73c1019ce462d3ff50465..bc2afce624a54a54efc3a1b22e75e096dc011e54 100644
+index e38b40a58d2995ca796838aacedc07a3511e0686..35ffaa773911e7891c89ecf996327026893fa28c 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-@@ -108,7 +108,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -108,7 +108,7 @@
          _cellSnapshots = _state.Snapshots; _cellSources = _state.EnabledSources;
          _cellLanguage = _loc.LanguageCode; _cellDpi = _lastDpi; _cellDark = _state.Dark;
          var ink = Brush(_state.Dark ? "#e8e8ea" : "#1d1d1f");
@@ -3251,7 +3251,7 @@ index bd5cd7648c2d890742b73c1019ce462d3ff50465..bc2afce624a54a54efc3a1b22e75e096
          {
              var snapshot = _state.Snapshots.FirstOrDefault(item => item.Id == id);
              var windows = QuotaFormat.OrderedWindows(snapshot);
-@@ -323,10 +323,10 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -319,10 +319,10 @@
      private void BuildCard(DrawingContext dc)
      {
          _source = _state.ActiveSource;
@@ -3264,7 +3264,7 @@ index bd5cd7648c2d890742b73c1019ce462d3ff50465..bc2afce624a54a54efc3a1b22e75e096
          var ink = Brush(_state.Dark ? "#e8e8ea" : "#1d1d1f");
          var muted = Brush(_state.Dark ? "#808080" : "#6b6b6b");
          var fill = Brush(_state.Dark ? "#0a0a0a" : "#ffffff");
-@@ -336,7 +336,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -332,7 +332,7 @@
          using (var c = content.Open())
          {
              DrawSourceGlyph(c, provider.Id, new Point(24, y + 8), 16, _state.Dark ? Brushes.White : ink);
@@ -3273,7 +3273,7 @@ index bd5cd7648c2d890742b73c1019ce462d3ff50465..bc2afce624a54a54efc3a1b22e75e096
              c.DrawText(title, new Point(40, y)); y += Math.Max(18, title.Height) + 4;
              if (!string.IsNullOrWhiteSpace(snapshot?.Account)) { var t = Text(snapshot.Account, 11, Regular, muted, inner); c.DrawText(t, new Point(16, y)); y += t.Height + 4; }
              if (snapshot?.ObservedAt is { } at && (!_state.Network || snapshot.Status == QuotaStatus.Stale || (_state.DisplayNow ?? DateTimeOffset.UtcNow) - at > TimeSpan.FromMinutes(15)))
-@@ -468,6 +468,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -464,6 +464,7 @@
  
      private static void DrawSourceGlyph(DrawingContext dc, string source, Point center, double size, Brush color)
      {

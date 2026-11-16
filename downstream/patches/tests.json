@@ -337,14 +337,14 @@
     "related": [
       {
         "platform": "macos",
-        "run": "cd macos && swift test --filter 'QuotaPresentationTests|QuotaControllerTests'"
+        "run": "cd macos && swift test --filter 'QuotaPresentationTests|QuotaControllerTests|QuotaWarmStartupTests'"
       },
       {
         "platform": "macos",
         "run": "cd macos && swift test --filter QuotaNotchTests"
       }
     ],
-    "reason": "macOS base Codex quota: account-isolated structured snapshot restoration, startup-floor exception and backoff, reset credits, automatic/manual app-lifetime polling, source controls, account-card formatting, update clocks and native floating-surface interactions. Provider/lifecycle and controller tests cover account, cancellation and startup edges. Native rendering/input and SDK verification require macOS."
+    "reason": "macOS base Codex quota: account-isolated structured snapshot restoration, startup-floor exception and backoff, reset credits, automatic/manual app-lifetime polling, source controls, account-card formatting, update clocks and native floating-surface interactions. Provider/lifecycle and controller tests cover account, cancellation and startup edges, including genuine HTTP recovery at the warm cached account's 60-second deadline. Old observations keep full-strength floating logos, rings and values; matched-native brightness diagnostics remain opt-in, never ordinary visual assertions. Native rendering/input and SDK verification require macOS."
   },
   "0021-Add-Windows-Codex-quota-monitoring.patch": {
     "regression": [
@@ -358,7 +358,7 @@
       },
       {
         "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --filter 'FullyQualifiedName~QuotaSurfaceTests|FullyQualifiedName~QuotaSurfaceRetryTests|FullyQualifiedName~QuotaSettingsPageTests|FullyQualifiedName~QuotaNotchViewTests|FullyQualifiedName~QuotaDisplayClockTests'"
+        "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --filter 'FullyQualifiedName~QuotaSurfaceTests|FullyQualifiedName~QuotaSurfaceRetryTests|FullyQualifiedName~QuotaWarmStartupTests|FullyQualifiedName~QuotaSettingsPageTests|FullyQualifiedName~QuotaNotchViewTests|FullyQualifiedName~QuotaDisplayClockTests'"
       },
       {
         "platform": "linux",

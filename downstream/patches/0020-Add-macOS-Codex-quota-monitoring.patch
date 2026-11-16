@@ -11,9 +11,9 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  .../AgentSpeed/App/LaunchOptions.swift        |   6 +
  .../AgentSpeed/App/QuotaController.swift      | 253 +++++++
  .../AgentSpeed/App/QuotaGlyphOutline.swift    | 102 +++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 647 ++++++++++++++++++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 644 ++++++++++++++++++
  .../AgentSpeed/App/QuotaNotchShape.swift      | 451 ++++++++++++
- .../App/QuotaNotchVisualHarness.swift         | 150 ++++
+ .../App/QuotaNotchVisualHarness.swift         | 164 ++++
  .../App/QuotaRefreshScheduler.swift           |  94 +++
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
  .../AgentSpeed/Dashboard/DashboardView.swift  |  72 ++
@@ -27,15 +27,16 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  .../QuotaControllerTests.swift                | 585 ++++++++++++++++
  .../AgentSpeedAppTests/QuotaNotchTests.swift  | 280 ++++++++
  .../QuotaPresentationTests.swift              | 172 +++++
+ macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift | 93 ++++++++++++++++++++
  .../CodexQuotaProviderTests.swift             | 236 +++++++
  .../QuotaColdStartTests.swift                 | 202 ++++++
  .../QuotaLifecycleTests.swift                 | 191 ++++++
  .../AgentSpeedCoreTests/QuotaTests.swift      |  48 ++
  macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 | 127 ++++
+ spec/QUOTA.md                                 | 129 ++++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 31 files changed, 4715 insertions(+), 2 deletions(-)
+ 32 files changed, 4821 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -58,6 +59,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  create mode 100644 spec/QUOTA.md
  create mode 100644 spec/fixtures/codex-credit-quota.json
  create mode 100644 spec/fixtures/codex-quota.json
+ create mode 100644 macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift
 
 diff --git a/macos/Resources/Codenotch-LICENSE.txt b/macos/Resources/Codenotch-LICENSE.txt
 new file mode 100644
@@ -625,10 +627,10 @@ index 0000000000000000000000000000000000000000..b1a81438ef6eaf22f55adac0355ea9aa
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..a7de64fc6ee898aa6f77d3dc00550f768b46978c
+index 0000000000000000000000000000000000000000..08c15af0dd376be9fd9e886ab9bc130f14b1d7ed
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,647 @@
+@@ -0,0 +1,644 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -795,7 +797,6 @@ index 0000000000000000000000000000000000000000..a7de64fc6ee898aa6f77d3dc00550f76
 +    let readings: [QuotaNotchReading]
 +    let geometry: QuotaNotchGeometry
 +    let grip: QuotaGripPaint
-+    let now: Date
 +    let dark: Bool
 +
 +    var body: some View {
@@ -806,7 +807,7 @@ index 0000000000000000000000000000000000000000..a7de64fc6ee898aa6f77d3dc00550f76
 +            if geometry.expansion > 0 {
 +                geometry.bodyPath.stroke(edge, lineWidth: 1)
 +                ForEach(Array(readings.enumerated()), id: \.element.providerID) { index, reading in
-+                    QuotaNotchCell(reading: reading, now: now, dark: dark)
++                    QuotaNotchCell(reading: reading, dark: dark)
 +                        .position(x: geometry.centers[index].x, y: geometry.centers[index].y + reading.readingHeight / 2 + 2)
 +                        .opacity(Double(geometry.expansion))
 +                }
@@ -825,7 +826,6 @@ index 0000000000000000000000000000000000000000..a7de64fc6ee898aa6f77d3dc00550f76
 +
 +private struct QuotaNotchCell: View {
 +    let reading: QuotaNotchReading
-+    let now: Date
 +    let dark: Bool
 +    var body: some View {
 +        VStack(spacing: 4) {
@@ -864,7 +864,6 @@ index 0000000000000000000000000000000000000000..a7de64fc6ee898aa6f77d3dc00550f76
 +            }.font(.system(size: reading.windows.count > 1 ? 11 : 15, weight: .semibold))
 +        }
 +        .fixedSize()
-+        .opacity(reading.stale(at: now) ? 0.55 : 1)
 +        .accessibilityElement(children: .ignore)
 +        .accessibilityLabel(reading.displayName + ", " + reading.readings.joined(separator: ", "))
 +    }
@@ -1103,7 +1102,7 @@ index 0000000000000000000000000000000000000000..a7de64fc6ee898aa6f77d3dc00550f76
 +        if panel.frame != frame { panel.setFrame(frame, display: true) }
 +        hosting.frame = CGRect(origin: .zero, size: geometry.size)
 +        hosting.input = geometry.bodyPath.union(quotaStrokeOutline(geometry.bodyPath, width: expansion.value > 0 ? 1 : 0)).union(grip.hit)
-+        hosting.rootView = AnyView(QuotaNotchView(readings: readings, geometry: geometry, grip: grip, now: displayNow, dark: dark))
++        hosting.rootView = AnyView(QuotaNotchView(readings: readings, geometry: geometry, grip: grip, dark: dark))
 +        placeCard(on: screen)
 +        updateInterception(NSEvent.mouseLocation)
 +    }
@@ -1735,10 +1734,10 @@ index 0000000000000000000000000000000000000000..c2349f7790fb6c929b7ea21cdb0a7188
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..e4ae63214ed2e45d6e80065436e21e1bab6702dc
+index 0000000000000000000000000000000000000000..475fc7862d1f90eb776c6cfe7c94cbbe64a3f4ce
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,164 @@
 +#if DEBUG
 +import AgentSpeedCore
 +import AppKit
@@ -1788,7 +1787,7 @@ index 0000000000000000000000000000000000000000..e4ae63214ed2e45d6e80065436e21e1b
 +        let snapshot = QuotaSnapshot(id: id, displayName: "Codex", fidelity: "official",
 +                                     status: state == "stale" ? .stale : state == "auth" ? .needsAuth : .ok, windows: windows,
 +                                     headlineId: "rolling", block: nil, account: "local account", plan: "Plus",
-+                                     observedAt: now.addingTimeInterval(-300), source: "local", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
++                                     observedAt: now.addingTimeInterval(state == "aged" ? -3_600 : -300), source: "local", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
 +        return QuotaNotchReading(snapshot: snapshot, networkEnabled: state != "offline", l10n: Localizer(preference: .en))
 +    }
 +
@@ -1811,6 +1810,7 @@ index 0000000000000000000000000000000000000000..e4ae63214ed2e45d6e80065436e21e1b
 +            ("six-drops", QuotaGripFrame(reveal: 1, hover: 1, arc: 1)),
 +            ("held", QuotaGripFrame(reveal: 1, hover: 1, squeeze: 1, arc: 1)),
 +            ("stale", QuotaGripFrame(arc: 1)), ("offline", QuotaGripFrame(arc: 1)),
++            ("aged", QuotaGripFrame(arc: 1)),
 +            ("unknown", QuotaGripFrame(arc: 1)), ("auth", QuotaGripFrame(arc: 1)),
 +        ]
 +        for edge in NotchEdge.allCases {
@@ -1822,10 +1822,23 @@ index 0000000000000000000000000000000000000000..e4ae63214ed2e45d6e80065436e21e1b
 +                        let cell = CGSize(width: max(ring, readings.map(\.readingWidth).max() ?? 56), height: max(80, ring + 4 + (readings.map(\.readingHeight).max() ?? 20)))
 +                        let geometry = QuotaNotchGeometry(edge: edge, expansion: state == "folded" ? 0 : 1, count: readings.count, cellSize: cell, ringSize: ring)
 +                        let grip = QuotaGripPaint(geometry: geometry, frame: frame, filter: filter, scale: scale)
-+                        let view = QuotaNotchView(readings: readings, geometry: geometry, grip: grip, now: now, dark: dark)
++                        let view = QuotaNotchView(readings: readings, geometry: geometry, grip: grip, dark: dark)
 +                        let bitmap = try render(view, scale: scale)
 +                        let name = "native-notch-\(edge.rawValue)-\(dark ? "dark" : "light")-\(state)@\(Int(scale))x.png"
 +                        try save(bitmap, to: directory.appendingPathComponent(name))
++                        if ["stale", "offline", "aged"].contains(state) {
++                            let fresh = readings.map { reading($0.providerID, state: "arc") }
++                            let control = try render(QuotaNotchView(readings: fresh, geometry: geometry, grip: grip, dark: dark), scale: scale)
++                            let actualPixels = try require(bitmap.bitmapData, "Missing native pixels")
++                            let controlPixels = try require(control.bitmapData, "Missing control pixels")
++                            check(bitmap.bytesPerRow == control.bytesPerRow && bitmap.pixelsHigh == control.pixelsHigh,
++                                  "\(name): matching native bitmap dimensions")
++                            let count = bitmap.bytesPerRow * bitmap.pixelsHigh
++                            if count == control.bytesPerRow * control.pixelsHigh {
++                                check(Data(bytes: actualPixels, count: count) == Data(bytes: controlPixels, count: count),
++                                      "\(name): old data retains the fresh logo, rings and readings")
++                            }
++                        }
 +                        check(abs(CGFloat(bitmap.pixelsWide) / scale - geometry.size.width) < 1, "\(name): tight native width")
 +                        check(abs(CGFloat(bitmap.pixelsHigh) / scale - geometry.size.height) < 1, "\(name): tight native height")
 +                        let input = geometry.bodyPath.union(quotaStrokeOutline(geometry.bodyPath, width: state == "folded" ? 0 : 1)).union(grip.hit)
@@ -4193,6 +4206,105 @@ index 0000000000000000000000000000000000000000..665ae9ee61b6ce976e42dc4afcbe30f0
 +        }
 +    }
 +}
+diff --git a/macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift
+new file mode 100644
+index 0000000000000000000000000000000000000000..3138f7ec07de6025982a0d82a24f4dd6b04f5050
+--- /dev/null
++++ b/macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift
+@@ -0,0 +1,93 @@
++import Foundation
++#if canImport(FoundationNetworking)
++import FoundationNetworking
++#endif
++import Testing
++@testable import AgentSpeed
++@testable import AgentSpeedCore
++
++private final class WarmStartupTransport: @unchecked Sendable {
++    private let lock = NSLock()
++    private var time = Date(timeIntervalSince1970: 1_800_000_000)
++    private var calls = 0
++    func now() -> Date { lock.lock(); defer { lock.unlock() }; return time }
++    func advance(_ seconds: TimeInterval) { lock.lock(); defer { lock.unlock() }; time.addTimeInterval(seconds) }
++    func count() -> Int { lock.lock(); defer { lock.unlock() }; return calls }
++    func fetch(_ request: URLRequest) -> (Data, HTTPURLResponse) {
++        lock.lock(); defer { lock.unlock() }
++        let usage = request.url!.path.hasSuffix("/usage")
++        if usage { calls += 1 }
++        let status = usage && calls == 2 ? 503 : 200
++        let body = usage
++            ? #"{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":25,"limit_window_seconds":18000}}}"#
++            : #"{"available_count":2}"#
++        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
++    }
++}
++
++@MainActor
++private final class WarmStartupScheduler: QuotaRefreshScheduling {
++    private(set) var delay: TimeInterval?
++    private var retry: (@MainActor () -> Void)?
++    func start(every interval: TimeInterval, tick: @escaping @MainActor () -> Void) { }
++    func stop() { }
++    func scheduleRetry(for sourceID: String, after delay: TimeInterval, tick: @escaping @MainActor () -> Void) {
++        self.delay = delay; retry = tick
++    }
++    func cancelRetry(for sourceID: String) { delay = nil; retry = nil }
++    func stopRetries() { delay = nil; retry = nil }
++    func fire() {
++        let tick = retry
++        delay = nil; retry = nil
++        tick?()
++    }
++}
++
++@Suite("Warm Codex startup recovery", .timeLimit(.minutes(1)))
++@MainActor
++struct QuotaWarmStartupTests {
++    @Test func cachedStartupFailureKeepsReadingAndRetriesActualHttpAtSixtySeconds() async throws {
++        let suite = UUID().uuidString
++        let defaults = UserDefaults(suiteName: suite)!
++        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
++        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
++        defer {
++            defaults.removePersistentDomain(forName: suite)
++            try? FileManager.default.removeItem(at: directory)
++        }
++        let auth = directory.appendingPathComponent("auth.json")
++        try Data(#"{"tokens":{"access_token":"fixture","account_id":"fixture-account"}}"#.utf8).write(to: auth)
++        let transport = WarmStartupTransport()
++        func provider() -> CodexQuotaProvider {
++            CodexQuotaProvider(credentialURL: auth, defaults: UserDefaults(suiteName: suite)!, now: { transport.now() },
++                cacheDirectory: directory.appendingPathComponent("schedule"), transport: { transport.fetch($0) })
++        }
++        let seed = provider()
++        let successful = await seed.refresh()
++        #expect(successful.status == .ok)
++        #expect(transport.count() == 1)
++        let restored = provider()
++        #expect(await restored.readCachedSnapshot().observedAt == successful.observedAt)
++        let scheduler = WarmStartupScheduler()
++        let controller = QuotaController(defaults: defaults, providers: [restored], scheduler: scheduler, now: { transport.now() })
++        defer { controller.dispose() }
++        controller.setNetworkEnabled(true)
++        await controller.operationBarrier().value
++        #expect(transport.count() == 2, "Startup must bypass only the cached successful polling floor")
++        #expect(controller.snapshots.first?.status == .stale)
++        #expect(controller.snapshots.first?.observedAt == successful.observedAt)
++        #expect(controller.snapshots.first?.windows == successful.windows)
++        #expect(scheduler.delay == 60, "A validated cached account uses warm backoff, not the five-minute tick")
++        transport.advance(59)
++        scheduler.fire()
++        #expect(transport.count() == 2)
++        #expect(scheduler.delay == 1)
++        transport.advance(1)
++        scheduler.fire()
++        await controller.operationBarrier().value
++        #expect(transport.count() == 3)
++        #expect(controller.snapshots.first?.status == .ok)
++        #expect(controller.snapshots.first?.observedAt == transport.now())
++        #expect(scheduler.delay == nil)
++    }
++}
 diff --git a/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
 new file mode 100644
 index 0000000000000000000000000000000000000000..2ed5f6c6971c71d96c137f87b9a17968dcc441b6
@@ -4908,10 +5020,10 @@ index 300ed6d282427f140ca0021e3bcebb8221ec7efb..5ee4c0474e1c1884e3fe8e371dc6edcc
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b79580f3a618736361db21277bf179f6febe1b9
+index 0000000000000000000000000000000000000000..dc709600aaf8baaa625e5d9d1466243d512cd782
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,129 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -4978,6 +5090,8 @@ index 0000000000000000000000000000000000000000..2b79580f3a618736361db21277bf179f
 +Retries wake only the affected source and coalesce with in-flight work; no synthetic zero reading is created. Turning automatic refresh off, revoking network access, removing a source or disposing the application cancels its pending retry work, and stale callbacks/results cannot re-arm it. Existing manual/startup preference semantics remain unchanged. These rules apply to Codex, OpenCode Go and Kimi on both native clients and the shared remote collector; no extra SSH process or autonomous collector quota polling is introduced.
 +For migration, a legacy schedule without a validated version-1 account snapshot cannot distinguish a normal successful floor from an optional reset-credit 429 extension. Preserve its future `nextAllowedAt` rather than granting the startup bypass. After that deadline, a successful request upgrades the structured snapshot and independent retry deadline; subsequent application starts may bypass only the ordinary successful floor.
 +
++Both floating panels retain full-strength provider logos, allowance rings and numerical readings when showing an old observation, including after a refresh failure, with network access disabled or when the observation is more than fifteen minutes old. Stale status, the original observation time and details remain visible; full brightness never marks old data as fresh. Ring background tracks, unknown-reading styling and the normal expansion/collapse fade are independent and unchanged.
++
 +By default, without pointer attention, the macOS panel start and rest as a collapsed strip: 10 by 79 logical pixels on vertical edges or 79 by 10 on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
 +
 +On macOS the Subscription preference “Keep expanded” (Simplified Chinese: “保持展开”) sits immediately after the floating-panel visibility switch. It defaults off and persists independently of visibility and monitor/edge/along placement; missing or nonboolean values retain the off default without a settings-version migration. When enabled, the first visible body is already expanded at startup or re-show, even if Settings has never been opened. Leaving the panel does not collapse its body. This preference changes only the body target: it does not synthesize pointer attention, reveal the six-dot grip, open an account card, refresh quota or rebuild a provider. The resting arc still follows body expansion and the arc/disc/dots retain their independent real hover/held interaction. Disabling the preference applies immediately but preserves any real body/card/menu/grace/pending-drag/active-drag attention until that interaction ends. Hide/close clear interaction and stop finite motion; re-show reads the preference again, and settled pinned rest has no continuous rendering subscription.
@@ -5013,9 +5127,9 @@ index 0000000000000000000000000000000000000000..2b79580f3a618736361db21277bf179f
 +swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native
 +```
 +
-+The first command runs the ordinary geometry, state, motion, hit-routing, folding, unknown/status, and reset-formatting regressions; it does not render offscreen images or compare pixels/PNG encodings. The second explicitly opts into `QuotaNotchVisualHarness` via the existing debug launch-option mechanism. It renders the actual Codex `QuotaNotchView` and painted control-family input mask on four edges, in both themes at 1x and 2x, for eleven body/control/status states (176 notch PNGs), plus four localized details PNGs. It exits nonzero on diagnostic failure, including missing native images or PNG encoding/write failures. This opt-in native route is not part of ordinary test discovery or the Release gate. It runs before application activation without real credentials and requires the native macOS SDK and a GUI login session.
++The first command runs the ordinary geometry, state, motion, hit-routing, folding, unknown/status, and reset-formatting regressions; it does not render offscreen images or compare pixels/PNG encodings. The second explicitly opts into `QuotaNotchVisualHarness` via the existing debug launch-option mechanism. It renders the actual Codex `QuotaNotchView` and painted control-family input mask on four edges, in both themes at 1x and 2x, for twelve body/control/status states (192 notch PNGs), plus four localized details PNGs. It exits nonzero on diagnostic failure, including missing native images or PNG encoding/write failures. This opt-in native route is not part of ordinary test discovery or the Release gate. It runs before application activation without real credentials and requires the native macOS SDK and a GUI login session.
 +
-+The optional captures use fixed synthetic frames and credential-free observations, not live requests or substitute browser graphics. They exercise folded, resting arc, emerging arc, temporary disc, dividing drops, six drops, held, stale, offline, unknown and authentication states. The harness checks tight native bounds, opaque paint against the shared input mask, the resting arc's transparent hole and every revealed drop's draggable target. Its four localized details captures cover English, Simplified Chinese, Traditional Chinese and Japanese.
++The optional captures use fixed synthetic frames and credential-free observations, not live requests or substitute browser graphics. They exercise folded, resting arc, emerging arc, temporary disc, dividing drops, six drops, held, stale, offline, aged, unknown and authentication states. Stale, offline and aged renders are compared with matching fresh native controls so the logo, rings and readings retain full brightness without pinning layout coordinates. The harness also checks tight native bounds, opaque paint against the shared input mask, the resting arc's transparent hole and every revealed drop's draggable target. Its four localized details captures cover English, Simplified Chinese, Traditional Chinese and Japanese.
 +
 +On macOS the AppKit interception gate and SwiftUI control must share the actual painted control-family target: resting arc, temporary disc, revealed drops and their narrow connecting routes. The resting arc's center hole remains transparent. A settings button or stale circular wake region is not a substitute for the grip, and hovering a visible moving arc must not make its last-painted target disappear. Tucked controls are not clickable. Native tests cover all edges, control-family transitions, hosting-view hit routing, and transparent unused canvas; Linux syntax checks do not establish these native input properties.
 +
