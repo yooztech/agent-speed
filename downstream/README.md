@@ -309,8 +309,11 @@ cached summaries without hiding them, and every displayed window has a known
 or indeterminate usage bar on both platforms. The Windows summary now follows
 the macOS hierarchy: one section title and plain click target, compact
 logo/name/plan account headers, window label/value rows and secondary status
-captions, without per-account cards. The failed run has not been retried
-automatically. On the final replayed tree, the Windows native test assembly
+captions, without per-account cards. A second candidate run then stopped only
+on one stale test expectation that still looked for `Codex · Updated …`; the
+compact layout now exposes the status as a standalone caption, and that test
+was corrected. Neither failed run was retried automatically. On the final
+replayed tree, the Windows native test assembly
 cross-compiles in Release, 78 focused Presentation tests pass, and all changed
 Swift files pass Swift 6.2.4 syntax parsing. All 25 patches replay and all 3,147
 non-build files match the checked source tree byte-for-byte. Native WPF test

@@ -1,4 +1,4 @@
-From 9973bdcc0f125f8d833d9a200ff02522286d8e0f Mon Sep 17 00:00:00 2001
+From 5bcf5b35d20bc86b16891fde4372e68219e4b588 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:10 +0800
 Subject: [PATCH 22/25] Add multi-window quota and OpenCode Go provider
@@ -46,8 +46,8 @@ Subject: [PATCH 22/25] Add multi-window quota and OpenCode Go provider
  .../QuotaSettingsPageTests.cs                 |  64 ++-
  .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
- .../QuotaSurfaceTests.cs                      | 129 ++++-
- 43 files changed, 2564 insertions(+), 251 deletions(-)
+ .../QuotaSurfaceTests.cs                      | 139 +++++-
+ 43 files changed, 2569 insertions(+), 256 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -3782,7 +3782,7 @@ index be4d0544..f69e05f0 100644
          }
      }
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
-index a67942a2..ace1dc11 100644
+index a67942a2..8b9e878d 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 @@ -36,7 +36,7 @@ public sealed class QuotaSurfaceTests
@@ -3867,6 +3867,40 @@ index a67942a2..ace1dc11 100644
                      now: () => now);
                  settings.Changed += (_, _) => surface.ApplySettings();
                  UIElement? summary = null;
+@@ -404,20 +405,20 @@ public sealed class QuotaSurfaceTests
+                 now = observed.AddSeconds(59);
+                 surface.SetFlyoutActive(true);
+                 Assert.Equal(TimeSpan.FromSeconds(1), surface.FlyoutTimeRefreshDelay);
+-                Assert.Contains("Codex · Updated just now", Texts());
++                Assert.Contains("Updated just now", Texts());
+                 now = observed.AddMinutes(1);
+                 surface.RefreshFlyoutTimes();
+-                Assert.Contains("Codex · Updated 1m ago", Texts());
++                Assert.Contains("Updated 1m ago", Texts());
+                 Assert.Equal(TimeSpan.FromMinutes(1), surface.FlyoutTimeRefreshDelay);
+                 now = observed.AddSeconds(119);
+                 surface.RefreshFlyoutTimes();
+                 Assert.Equal(TimeSpan.FromSeconds(1), surface.FlyoutTimeRefreshDelay);
+                 now = observed.AddMinutes(2);
+                 surface.RefreshFlyoutTimes();
+-                Assert.Contains("Codex · Updated 2m ago", Texts());
++                Assert.Contains("Updated 2m ago", Texts());
+                 now = observed.AddHours(1);
+                 surface.RefreshFlyoutTimes();
+-                Assert.Contains("Codex · Updated 1h ago", Texts());
++                Assert.Contains("Updated 1h ago", Texts());
+                 Assert.Equal(1, handler.UsageCalls);
+                 Assert.Equal(1, handler.ResetCalls);
+ 
+@@ -428,7 +429,7 @@ public sealed class QuotaSurfaceTests
+                 surface.RefreshFlyoutTimes();
+                 Assert.Equal(closedUpdates, updates);
+                 surface.SetFlyoutActive(true);
+-                Assert.Contains("Codex · Updated 1d ago", Texts());
++                Assert.Contains("Updated 1d ago", Texts());
+                 Assert.True(surface.IsFlyoutTimeRefreshActive);
+                 Assert.Equal(1, handler.UsageCalls);
+                 settings.Update(s => s with { NetworkEnabled = false });
 @@ -444,6 +445,108 @@ public sealed class QuotaSurfaceTests
          });
      }
