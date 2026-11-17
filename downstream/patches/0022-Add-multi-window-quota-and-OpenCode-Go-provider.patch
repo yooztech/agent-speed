@@ -1,4 +1,4 @@
-From 0a17dd2fc98f372373e2f76c78cbeb67a3d43620 Mon Sep 17 00:00:00 2001
+From 938d237f6421dd59c7d688b0dd9e78b7ebca8908 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:10 +0800
 Subject: [PATCH] Add multi-window quota and OpenCode Go provider
@@ -34,7 +34,7 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  .../Settings/QuotaFormat.cs                   |  64 ++-
  .../Settings/QuotaNotchGeometry.cs            |   5 +-
  .../Settings/QuotaNotch.LICENSE.txt           |   3 +-
- .../src/AgentSpeed/Settings/QuotaNotchView.cs |  90 +++-
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs |  88 +++-
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  12 +-
  .../src/AgentSpeed/Settings/QuotaSurface.cs   | 190 ++++----
  .../OpenCodeGoQuotaProviderTests.cs           | 449 ++++++++++++++++++
@@ -46,7 +46,7 @@ Subject: [PATCH] Add multi-window quota and OpenCode Go provider
  .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
  .../QuotaSurfaceTests.cs                      | 129 ++++-
- 42 files changed, 2426 insertions(+), 228 deletions(-)
+ 42 files changed, 2424 insertions(+), 228 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -115,7 +115,7 @@ index 4cf47a4b4cf3b99be25b7052fc500c892ff15761..e4b85a13e09185f61bc9b1ff63aa3d8d
    "mac.quota.noAllowance": {"zh-Hant":"此帳戶沒有可用的 %@ 訂閱額度","zh-Hans":"此账户没有可用的 %@ 订阅额度","en":"No %@ subscription allowance on this account","ja":"このアカウントに %@ の利用枠はありません"},
    "mac.quota.limitReached": {"zh-Hant":"已達額度限制","zh-Hans":"已达额度限制","en":"Allowance reached","ja":"利用枠の上限に達しました"},
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index d2e1aaff963eb347aea7c7216d25d47e162982fd..b5f90b7317153eee6e3a39934ed568fa089365b9 100644
+index 075e00a389e66a91b10d2e77da319be05498d78e..767b2bbd86a9c98a079614e896adce010756e677 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 @@ -14,6 +14,12 @@ struct QuotaNotchReading {
@@ -195,16 +195,13 @@ index d2e1aaff963eb347aea7c7216d25d47e162982fd..b5f90b7317153eee6e3a39934ed568fa
                      let unknown = window.usedFraction == nil || reading.snapshot?.status == .needsAuth
                      let color = NotchLayout.periodColor(window)
                      Circle().stroke(color.opacity(unknown ? 0.38 : 0.22), style: StrokeStyle(lineWidth: NotchLayout.ringStroke, dash: unknown ? [1, 4] : []))
-@@ -225,19 +255,27 @@ private struct QuotaNotchCell: View {
+@@ -225,16 +255,24 @@ private struct QuotaNotchCell: View {
                              .frame(width: diameter, height: diameter)
                      }
                  }
 -                QuotaSourceLogo(providerID: reading.providerID, ink: dark ? .white : Color(white: 0.12)).frame(width: 22, height: 22)
 +                QuotaSourceLogo(providerID: reading.providerID, ink: dark ? .white : Color(white: 0.12))
 +                    .frame(width: NotchLayout.logoExtent(reading.windows.count), height: NotchLayout.logoExtent(reading.windows.count))
-                 if reading.windows.contains(where: { ($0.usedFraction ?? 0) >= 0.9 }) {
-                     Circle().fill(Color(red: 229 / 255, green: 104 / 255, blue: 104 / 255)).frame(width: 5, height: 5).offset(x: 15, y: 15)
-                 }
              }.frame(width: reading.outerDiameter, height: reading.outerDiameter)
 -            HStack(spacing: 9) {
 -                ForEach(reading.readings.indices, id: \.self) { index in
@@ -327,7 +324,7 @@ index c120006303960a7b4e117772dd8484e2b183ddfc..621a9b30254dba40ed5a8591577c5b7e
                  EmptyView()
              }
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index dcdc61d492bbde604cd9338a67ca1c29163745c8..5772750f3ff0496f72bd14aeea6e6f33d14c9b52 100644
+index 0b9e132da22134e4b4f0a32f2a91f8206aa11cb1..31dcf469bd58488978349caf198b475bdee8f714 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
 @@ -392,6 +392,7 @@ enum StringTable {
@@ -2025,7 +2022,7 @@ index 90f5dd481e9b9b721a9bc2c155b4cd306be15a94..03cb5d84f864bbdbb53020349431c3b2
  
  MIT License
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..8029f9186f40ae7d013b0a439cbdfc776b0f927e 100644
+index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..756e1ebe06ca321e449f3fccafa05ccf9e224ef2 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -24,6 +24,9 @@ internal sealed class QuotaNotchView : FrameworkElement
@@ -2079,7 +2076,7 @@ index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..8029f9186f40ae7d013b0a439cbdfc77
          _verticalLayout = new(false, sizes);
          _horizontalLayout = new(true, sizes);
      }
-@@ -158,22 +171,39 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -158,22 +171,37 @@ internal sealed class QuotaNotchView : FrameworkElement
              var cell = _cells[i];
              var localCenter = ContentLayout.Center(_main, i, _state.Edge == "bottom");
              var center = _matrix.Transform(new Point(localCenter.X, localCenter.Y));
@@ -2117,8 +2114,6 @@ index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..8029f9186f40ae7d013b0a439cbdfc77
 +                if (!unknown) DrawArc(dc, center, r, QuotaNotchGeometry.RemainingFill(window!.UsedFraction!.Value), color, QuotaNotchGeometry.RingWidth);
 +            }
 +            DrawSourceGlyph(dc, cell.Id, center, QuotaNotchGeometry.GlyphDiameter(cell.Windows.Count), _state.Dark ? Brushes.White : ink);
-+            if (cell.Windows.Any(window => window.UsedFraction >= .9))
-+                dc.DrawEllipse(Brush("#e56868"), null, new Point(center.X + disc * .34, center.Y + disc * .34), 2.5, 2.5);
 +            double x = center.X - cell.ReadingWidth / 2;
 +            for (int reading = 0; reading < cell.Readings.Length; reading++)
 +            {
@@ -2134,7 +2129,7 @@ index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..8029f9186f40ae7d013b0a439cbdfc77
          }
          dc.Pop(); // Internal content stays clipped; the original grip lives outside the body.
          dc.Pop();
-@@ -336,7 +366,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -336,7 +364,7 @@ internal sealed class QuotaNotchView : FrameworkElement
          var content = new DrawingGroup(); double y = 16;
          using (var c = content.Open())
          {
@@ -2143,7 +2138,7 @@ index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..8029f9186f40ae7d013b0a439cbdfc77
              var title = Text(_loc.Format("win.quota.notchUsageTitle", provider.DisplayName), 14, Bold, ink, inner - 24);
              c.DrawText(title, new Point(40, y)); y += Math.Max(18, title.Height) + 4;
              if (!string.IsNullOrWhiteSpace(snapshot?.Account)) { var t = Text(snapshot.Account, 11, Regular, muted, inner); c.DrawText(t, new Point(16, y)); y += t.Height + 4; }
-@@ -344,7 +374,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -344,7 +372,7 @@ internal sealed class QuotaNotchView : FrameworkElement
              { var t = Text(_loc.Format("win.quota.updatedAt", at.ToLocalTime().ToString("g", _loc.Culture)), 11, Regular, muted, inner); c.DrawText(t, new Point(16, y)); y += t.Height + 4; }
              if (snapshot is not null && snapshot.Windows.Count > 0 && snapshot.Status != QuotaStatus.NeedsAuth)
              {
@@ -2152,7 +2147,7 @@ index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..8029f9186f40ae7d013b0a439cbdfc77
                  {
                      y += 10;
                      var label = Text(QuotaFormat.WindowLabel(_loc, w, snapshot.DisplayName), 12, Semibold, ink, inner);
-@@ -365,7 +395,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -365,7 +393,7 @@ internal sealed class QuotaNotchView : FrameworkElement
                      {
                          y += 6; c.DrawRoundedRectangle(track, null, new Rect(16, y, inner, 4), 2, 2);
                          double fraction = QuotaNotchGeometry.RemainingFill(used);
@@ -2161,7 +2156,7 @@ index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..8029f9186f40ae7d013b0a439cbdfc77
                          y += 8;
                      }
                      string usage;
-@@ -427,7 +457,6 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -427,7 +455,6 @@ internal sealed class QuotaNotchView : FrameworkElement
      private static Geometry Painted(Geometry geometry, Pen pen) => new CombinedGeometry(GeometryCombineMode.Union, geometry, geometry.GetWidenedPathGeometry(pen));
      private static Brush Brush(string hex) { var b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex)); b.Freeze(); return b; }
      private static Pen Pen(Brush brush, double width, bool round = false) { var p = new Pen(brush, width); if (round) p.StartLineCap = p.EndLineCap = PenLineCap.Round; p.Freeze(); return p; }
@@ -2169,7 +2164,7 @@ index 54e1c9da9b69940d03201912c3e9f1e29dc053d6..8029f9186f40ae7d013b0a439cbdfc77
      internal string ResetText(DateTimeOffset reset, DateTimeOffset now)
      {
          double milliseconds = (reset - now).TotalMilliseconds;
-@@ -467,6 +496,15 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -467,6 +494,15 @@ internal sealed class QuotaNotchView : FrameworkElement
      }
      private static void DrawGlyph(DrawingContext dc, Geometry glyph, Point center, double size, Brush color)
      { dc.PushTransform(new MatrixTransform(size/24, 0, 0, size/24, center.X-size/2, center.Y-size/2)); dc.DrawGeometry(color, null, glyph); dc.Pop(); }

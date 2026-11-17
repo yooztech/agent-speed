@@ -485,8 +485,10 @@ screenshots. Claude quota and Linux quota interfaces are future phases.
 The Windows native replacement retains the source-neutral Subscription page and
 Light, Dark or System appearance. The multi-window feature adds a real OpenCode Go
 adapter beside Codex. Quota bars, rings and flyout summaries show remaining allowance;
-period colors are stable and warnings are separate. Dashboard and quota-window
-visibility controls remain independent.
+period colors are stable and warnings are separate. All providers on macOS and
+Windows omit the low-remaining-quota red dot on floating rings, without a
+replacement; rings, percentages and other status indicators are unchanged.
+Dashboard and quota-window visibility controls remain independent.
 
 The Windows quota fixes preserve Nonzero winding in transformed grip geometry
 and return asynchronous quota completion to the surface's owning Dispatcher.

@@ -1,4 +1,4 @@
-From 9365c855dad718bbcaab52be964dd86c792bc257 Mon Sep 17 00:00:00 2001
+From 491fa44dd0b42b1b36b68489ff3b0e9b7eee685b Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:08 +0800
 Subject: [PATCH] Add macOS Codex quota monitoring
@@ -11,7 +11,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  .../AgentSpeed/App/LaunchOptions.swift        |   6 +
  .../AgentSpeed/App/QuotaController.swift      | 253 ++++++
  .../AgentSpeed/App/QuotaGlyphOutline.swift    | 102 +++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 670 ++++++++++++++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 667 ++++++++++++++
  .../App/QuotaNotchContentLayout.swift         |  45 +
  .../AgentSpeed/App/QuotaNotchShape.swift      | 832 ++++++++++++++++++
  .../App/QuotaNotchVisualHarness.swift         | 163 ++++
@@ -37,7 +37,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  spec/QUOTA.md                                 | 133 +++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 33 files changed, 5255 insertions(+), 2 deletions(-)
+ 33 files changed, 5252 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -184,10 +184,10 @@ index b6b512f880795edaf2976613edd4075e85a89e0a..80e441620089cbe27b18fbae2be91b4d
          orbs?.shutdown()
          model?.shutdown()
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index c7e59b49d8c469e60120899958a83fbe47d34c83..a5af5ca5c75f21af502db2abc13d11ee15332ff9 100644
+index 0df8e8ba24afd186d68f7eb39ce41a8e229d5559..d0d676b810b33275ac40bf742e23609e0c8b3d86 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
-@@ -63,6 +63,7 @@ final class AppModel {
+@@ -65,6 +65,7 @@ final class AppModel {
      let traffic: TrafficStore
      /// Live reporting (DESIGN 11): off until the user confirms a service.
      let report: ReportController
@@ -195,7 +195,7 @@ index c7e59b49d8c469e60120899958a83fbe47d34c83..a5af5ca5c75f21af502db2abc13d11ee
      let remoteHosts: RemoteHosts
      /// The menu bar intelligence block's thinking line, hidden after its rate has read 0 for 3 s (DESIGN 10).
      let barThinking = StatusItemThinkingHold()
-@@ -104,6 +105,7 @@ final class AppModel {
+@@ -106,6 +107,7 @@ final class AppModel {
          mainFeed = OrbFeed(gauge: gauge)
          orbs = OrbsController(defaults: settings.storage)
          boards = BoardsController(defaults: settings.storage)
@@ -203,7 +203,7 @@ index c7e59b49d8c469e60120899958a83fbe47d34c83..a5af5ca5c75f21af502db2abc13d11ee
          titles = TitleThemesController(defaults: settings.storage)
          accessibility = AccessibilityState()
          launchAtLogin = LaunchAtLogin()
-@@ -281,6 +283,7 @@ final class AppModel {
+@@ -325,6 +327,7 @@ final class AppModel {
              let network = self.settings.networkEnabled
              self.prices.update(networkEnabled: network, autoSync: self.settings.syncPrices)
              self.rates.update(networkEnabled: network, currency: self.settings.currency)
@@ -211,7 +211,7 @@ index c7e59b49d8c469e60120899958a83fbe47d34c83..a5af5ca5c75f21af502db2abc13d11ee
              self.updates.networkEnabled = network
          })
          prices.start()
-@@ -390,7 +393,7 @@ enum DemoDriverRatio {
+@@ -434,7 +437,7 @@ enum DemoDriverRatio {
  
  /// Settings window panes (DESIGN section 5).
  enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
@@ -220,7 +220,7 @@ index c7e59b49d8c469e60120899958a83fbe47d34c83..a5af5ca5c75f21af502db2abc13d11ee
  
      var id: String { rawValue }
  
-@@ -402,6 +405,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
+@@ -446,6 +449,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
          case .effects: "settings.effects"
          case .cost: "settings.cost"
          case .traffic: "settings.traffic"
@@ -228,7 +228,7 @@ index c7e59b49d8c469e60120899958a83fbe47d34c83..a5af5ca5c75f21af502db2abc13d11ee
          case .report: "settings.report"
          case .sources: "settings.sources"
          case .about: "settings.about"
-@@ -426,6 +430,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
+@@ -470,6 +474,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
          case .effects: "sparkles"
          case .cost: "banknote"
          case .traffic: "arrow.up.arrow.down"
@@ -629,10 +629,10 @@ index 0000000000000000000000000000000000000000..b1a81438ef6eaf22f55adac0355ea9aa
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..d2e1aaff963eb347aea7c7216d25d47e162982fd
+index 0000000000000000000000000000000000000000..075e00a389e66a91b10d2e77da319be05498d78e
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,670 @@
+@@ -0,0 +1,667 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -861,9 +861,6 @@ index 0000000000000000000000000000000000000000..d2e1aaff963eb347aea7c7216d25d47e
 +                    }
 +                }
 +                QuotaSourceLogo(providerID: reading.providerID, ink: dark ? .white : Color(white: 0.12)).frame(width: 22, height: 22)
-+                if reading.windows.contains(where: { ($0.usedFraction ?? 0) >= 0.9 }) {
-+                    Circle().fill(Color(red: 229 / 255, green: 104 / 255, blue: 104 / 255)).frame(width: 5, height: 5).offset(x: 15, y: 15)
-+                }
 +            }.frame(width: reading.outerDiameter, height: reading.outerDiameter)
 +            HStack(spacing: 9) {
 +                ForEach(reading.readings.indices, id: \.self) { index in
@@ -2572,7 +2569,7 @@ index dacd9698981e9ff4f2ef4e88c6b00e9eb3d655ec..2ac92d9d1d33ef1903b2b2784cdc841a
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index f9eb994dce0c386468a227a3727804ff1caeed0c..dcdc61d492bbde604cd9338a67ca1c29163745c8 100644
+index e98b726698365541f605118f52b1433063ed297a..0b9e132da22134e4b4f0a32f2a91f8206aa11cb1 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
 @@ -17,6 +17,7 @@ enum StringTable {
