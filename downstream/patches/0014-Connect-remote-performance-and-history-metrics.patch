@@ -1,7 +1,7 @@
-From 7148d640f15c3370f631d6bcf0b439100a557e4e Mon Sep 17 00:00:00 2001
+From bcb0a41acc655ebd2dd39692fbc5c43aec1fcc54 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
-Subject: [PATCH 14/19] Connect remote performance and history metrics
+Subject: [PATCH 14/25] Connect remote performance and history metrics
 
 ---
  README.md                                     |  40 +-
@@ -87,7 +87,7 @@ Subject: [PATCH 14/19] Connect remote performance and history metrics
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemotePerformanceTests.cs
 
 diff --git a/README.md b/README.md
-index 35193b81..9f9eee7e 100644
+index a635c73a..44ba489c 100644
 --- a/README.md
 +++ b/README.md
 @@ -61,7 +61,7 @@ Add `--purge` / `-Purge` to remove settings as well. On Windows you can also uni
@@ -99,7 +99,7 @@ index 35193b81..9f9eee7e 100644
  - **Live reporting (opt-in)** — off by default; if you like, share your live numbers with an API you pick, such as the [Codex Radar](https://codexradar.com/) speed ladder, under a username you choose. Never conversation content, files or project names — see [Privacy](#privacy).
  - **Execution modes** — show confirmed Standard / Fast / Ultrafast modes and native accelerator, model-variant or routing choices across supported agents, with defaults and unknown values kept distinct. History has a separate mode CSV; measurement formulas stay the same.
  - **Profile and devices (optional API extension)** — preview, change or remove an avatar, and link devices through an approved one-time code. Your receiver must support the [new API schema](spec/report-schema.json); each device keeps its own key and unlinking preserves accounted history.
-@@ -121,9 +121,18 @@ Settings → Sources shows each host's online, offline or disabled status and it
+@@ -129,9 +129,18 @@ Settings → Sources shows each host's online, offline or disabled status and it
  snapshot arrives.
  Duplicate SSH destinations are rejected when saving; an existing host can keep its own destination while editing.
  Remote effort and speed retain their configured or selected status when provided by the collector.
@@ -121,7 +121,7 @@ index 35193b81..9f9eee7e 100644
  
  The Linux collector reuses the native measurement core, including omp parsing and parent/child deduplication. The
  remote host has its own identity and history, separate from local usage. A disconnected host is shown offline with
-@@ -132,6 +141,9 @@ On macOS and Windows, cached history remains stale after reconnecting until a ne
+@@ -140,6 +149,9 @@ On macOS and Windows, cached history remains stale after reconnecting until a ne
  Disabling a host stops its connection and excludes it from displayed totals while retaining its in-memory history.
  Re-enabling can show that retained history as stale until refreshed; deleting the host or changing its destination clears it.
  When multiple connections report the same machine, history is selected per source; stale or partial status reflects every connection whose history contributes.
@@ -131,7 +131,7 @@ index 35193b81..9f9eee7e 100644
  Fields absent from logs are unknown. Live rates inferred from recent completed responses are estimates; completed
  response rates use the logged duration. On macOS and Windows, the chart's “Estimating” legend remains visible
  whenever the selected range includes a dashed estimated segment, even after that response has completed. In particular omp commonly writes a response when it completes, so remote
-@@ -139,10 +151,16 @@ monitoring cannot measure per-token streaming speed or infer an unrecorded time
+@@ -147,10 +159,16 @@ monitoring cannot measure per-token streaming speed or infer an unrecorded time
  the first-token wait. It cannot reveal router retries or account cooldowns absent from the logs.
  
  Remote sources and agents appear alongside local sources in the native dashboard and history when available. Remote
@@ -152,7 +152,7 @@ index 35193b81..9f9eee7e 100644
  After the client requests its time zone, snapshot today totals also use that zone. Untagged or null-zone snapshots
  retain collector-local compatibility behavior. History from older collectors without a matching time-zone tag is
  unavailable rather than being mislabeled as viewer-local.
-@@ -157,6 +175,12 @@ The flag covers known discovered-file and database errors: inaccessible director
+@@ -165,6 +183,12 @@ The flag covers known discovered-file and database errors: inaccessible director
  skipped during discovery, and unchanged cached files are not reopened. Thus `partial: false` does not guarantee
  exhaustive discovery or filesystem readability.
  
@@ -166,18 +166,18 @@ index 35193b81..9f9eee7e 100644
  8.546 seconds, but no history frame arrived within 90 seconds. During a subsequent 10-second sample, the collector used
  12.63 seconds of CPU time and about 106,988 KiB RSS. The history scan was still running, so these figures describe an ongoing
 diff --git a/docs/shared-collector.md b/docs/shared-collector.md
-index bb3ab486..2d78d6e0 100644
+index 879dc0c8..667945ef 100644
 --- a/docs/shared-collector.md
 +++ b/docs/shared-collector.md
-@@ -13,6 +13,8 @@
- Each subscription has its own input buffer, named timezone, history generation and bounded nonblocking output. A subscriber compares the view's projection generation, not its text, so an unchanged projection is never re-sent and a changed one is always delivered whole; the worker advances that generation only when the newly serialized projection differs from the cached one. Unsent snapshots may coalesce. History and completion frames do not silently coalesce or disappear: a subscriber exceeding the output bound is disconnected and receives a nonzero interrupted-stream failure. Consumers must treat interruption as an incomplete stream and reconnect. A destructive completion drain occurs once per sampler tick and is fanned out to connected subscribers.
+@@ -14,6 +14,8 @@ Each subscription has its own input buffer, named timezone, history generation a
  
  The live monitor retains a rolling 48-hour input window so changing a viewer's day boundary does not rebuild discovery, parsing, performance or traffic state. Calendar totals use each view's day start, including offset transitions. History projections are per view; live performance baselines retain the existing host-local-calendar meaning and do not change with an SSH viewer's timezone. Physical traffic sampling and its baseline remain shared; viewing it does not resample the machine. Unknown rates, partial histories and offline gaps retain the existing v1 semantics.
-+
-+Daily history peaks are observed live, not derived from log aggregates. For each view, the sampler raises that view time zone's `peakToday` maximum per calendar day and the history worker persists it in the private cache's `peak_days(zone, day, peak)` table. A projection merges only the peaks stored for its own time zone; the unnamed local view uses the empty zone key. Days the daemon did not observe while running stay unknown (`null`); the collector does not fabricate or backfill them from logs. A local time-zone identity change clears the unnamed view's stored peaks with its other cached projections.
  
++Daily history peaks are observed live, not derived from log aggregates. For each view, the sampler raises that view time zone's `peakToday` maximum per calendar day and the history worker persists it in the private cache's `peak_days(zone, day, peak)` table. A projection merges only the peaks stored for its own time zone; the unnamed local view uses the empty zone key. Days the daemon did not observe while running stay unknown (`null`); the collector does not fabricate or backfill them from logs. A local time-zone identity change clears the unnamed view's stored peaks with its other cached projections.
++
  Any connected subscriber or live/pending authorized lease keeps the daemon active. Closing one bridge's stdin removes only that subscriber. A confirmed lease survives the last SSH exit until expiry, explicit unsubscribe, replacement, terminal relay rejection or bounded invalid-snapshot failure. With no subscribers or leases the daemon exits after 30 seconds. Candidate leases awaiting their first successful publish expire after 75 seconds even when the SSH channel remains open; disconnecting the last waiter cancels an unconfirmed candidate.
  
+ Detachment closes inherited SSH descriptors, redirects stdio to `/dev/null`, uses a readiness pipe, and ignores SIGHUP. This is not a guarantee against systemd `KillUserProcesses`, session cgroup destruction, container termination, host shutdown or account policy. Supported background operation requires that policy to allow detached same-user processes to survive the SSH session. No root service or linger setting is installed. A host policy that kills those processes requires operator action outside this feature; re-open SSH and inspect relay freshness rather than reporting continued collection.
 diff --git a/linux/collector/CMakeLists.txt b/linux/collector/CMakeLists.txt
 index b64cb4d1..1eb5023e 100644
 --- a/linux/collector/CMakeLists.txt
@@ -905,10 +905,10 @@ index c67262c7..9f9a3c06 100644
      std::map<int, std::string> priceTables() const;
      void savePriceBindings(const std::map<std::string, int>& bindings, const std::function<std::string(int)>& tableData);
 diff --git a/linux/core/include/agentspeed/snapshot.hpp b/linux/core/include/agentspeed/snapshot.hpp
-index b7b8d676..6719df1b 100644
+index eefc887a..a7a5c4dd 100644
 --- a/linux/core/include/agentspeed/snapshot.hpp
 +++ b/linux/core/include/agentspeed/snapshot.hpp
-@@ -43,6 +43,7 @@
+@@ -43,6 +43,7 @@ struct AgentRow {
      // METRICS 6.9 Live thinking: this agent's reasoning tokens per second and share.
      double liveThinking = 0;
      double thinkingShare = 0;
@@ -916,7 +916,7 @@ index b7b8d676..6719df1b 100644
  };
  
  // 性能 and 思考 of one set of sources (METRICS 6.9 Sets and groups, Live thinking): an orb, the tray, a board.
-@@ -78,6 +79,8 @@
+@@ -78,6 +79,8 @@ struct SourceRow {
      double liveOutput = 0;
      double liveTotal = 0;
      bool liveRateComplete = true;
@@ -1560,7 +1560,7 @@ diff --git a/linux/core/src/monitor_snapshot.cpp b/linux/core/src/monitor_snapsh
 index 90417d3f..d8a967ee 100644
 --- a/linux/core/src/monitor_snapshot.cpp
 +++ b/linux/core/src/monitor_snapshot.cpp
-@@ -50,6 +50,8 @@
+@@ -50,6 +50,8 @@ void Monitor::scoreAgents(Snapshot& snap, const std::vector<engine::Response>& r
          if (const auto it = thinking.perAgent.find(row.id); it != thinking.perAgent.end()) {
              row.liveThinking = it->second.liveThinking();
              row.thinkingShare = it->second.thinkingShare();
@@ -1569,7 +1569,7 @@ index 90417d3f..d8a967ee 100644
          }
          const auto& info = agents_.at(row.id);
          const auto* reader = actionsOf(row.id);
-@@ -193,6 +195,8 @@
+@@ -193,6 +195,8 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
      const auto today = engine::todayStats(responses, todayStartMs, nowMs);
      snap.todayOutput = today.output;
      snap.todayInput = today.input;
@@ -1578,7 +1578,7 @@ index 90417d3f..d8a967ee 100644
      snap.todayCachedInput = today.cachedInput;
      snap.todayCacheWriteInput = today.cacheWriteInput;
      snap.todayReasoning = today.reasoning;
-@@ -268,6 +272,11 @@
+@@ -268,6 +272,11 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
          row.available = available;
          row.sessions = sessionCount(kind, todayStartMs);
          if (row.enabled) {
@@ -1590,7 +1590,7 @@ index 90417d3f..d8a967ee 100644
              std::vector<engine::Response> own, ownToday;
              for (const auto& r : responses) {
                  if (r.source != kind) continue;
-@@ -281,6 +290,8 @@
+@@ -281,6 +290,8 @@ Snapshot Monitor::snapshot(std::int64_t nowMs, std::int64_t todayStartMs) {
              row.todayCacheWriteInput = stats.cacheWriteInput;
              row.todayReasoning = stats.reasoning;
              row.todayRequests = stats.requests;
@@ -3769,10 +3769,10 @@ index 00000000..f7b7ad43
 +
 +}  // namespace
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index a7502800..a397855e 100644
+index 679ab899..000a5b08 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-@@ -16,6 +16,20 @@ struct RemoteHost: Codable, Identifiable, Equatable {
+@@ -27,6 +27,20 @@ extension RemoteHost {
      }
  }
  
@@ -3793,7 +3793,7 @@ index a7502800..a397855e 100644
  struct RemoteAgent: Decodable, Identifiable, Sendable {
      let id: String
      let source: String
-@@ -31,6 +45,58 @@ struct RemoteAgent: Decodable, Identifiable, Sendable {
+@@ -42,6 +56,58 @@ struct RemoteAgent: Decodable, Identifiable, Sendable {
      let speed: String?
      let effortConfigured: Bool?
      let speedConfigured: Bool?
@@ -3852,7 +3852,7 @@ index a7502800..a397855e 100644
  }
  
  struct RemoteDay: Decodable, Identifiable, Sendable {
-@@ -97,6 +163,9 @@ struct RemoteSource: Decodable, Sendable {
+@@ -108,6 +174,9 @@ struct RemoteSource: Decodable, Sendable {
      let todayInput: Int
      let todayOutput: Int
      let todayRequests: Int
@@ -3862,7 +3862,7 @@ index a7502800..a397855e 100644
      let todayCachedInput: Int?
      let todayCacheWriteInput: Int?
      let todayReasoning: Int?
-@@ -130,6 +199,7 @@ struct RemoteMessage: Decodable, Sendable {
+@@ -141,6 +210,7 @@ struct RemoteMessage: Decodable, Sendable {
      let tools: Int?
      let agents: [RemoteAgent]?
      let days: [RemoteDay]?
@@ -3870,7 +3870,7 @@ index a7502800..a397855e 100644
      let timezone: String?
      let responseId: String?
      let partial: Bool?
-@@ -157,6 +227,7 @@ struct RemoteHostState {
+@@ -168,6 +238,7 @@ struct RemoteHostState {
      var snapshot: RemoteMessage?
      var connectionID = UUID()
      var days: [RemoteDay] = []
@@ -3878,7 +3878,7 @@ index a7502800..a397855e 100644
      var historyPartial: Bool?
      var historyReceivedAt: Date?
      /// True only after this connection has supplied a history frame.
-@@ -172,6 +243,7 @@ struct RemoteHostState {
+@@ -183,6 +254,7 @@ struct RemoteHostState {
              error = nil
          } else if message.type == "history", message.timezone == TimeZone.current.identifier, let replacement = message.days {
              days = replacement
@@ -3887,10 +3887,10 @@ index a7502800..a397855e 100644
              historyReceivedAt = Date()
              historyReceivedOnConnection = true
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-index 5396abe7..8ea864af 100644
+index 9a14a664..29426e0c 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-@@ -65,6 +65,7 @@ extension RemoteHosts {
+@@ -105,6 +105,7 @@ extension RemoteHosts {
                          source.liveRateAvailable = false
                          source.liveCostRateAvailable = false
                          source.todayAvailable = false
@@ -3898,7 +3898,7 @@ index 5396abe7..8ea864af 100644
                          result.sourceInstances.append(SourceInstance(hostID: host.id, status: source))
                          if case .noSources = result.state { result.state = .running }
                          if let index = result.sources.firstIndex(where: { $0.kind == source.kind }) {
-@@ -98,7 +99,6 @@ extension RemoteHosts {
+@@ -138,7 +139,6 @@ extension RemoteHosts {
              result.timestamp = max(result.timestamp, remote.timestamp)
              result.peakTodayAvailable = false
              result.liveCostRateAvailable = false
@@ -3906,7 +3906,7 @@ index 5396abe7..8ea864af 100644
              result.sourceInstances += sources.map { SourceInstance(hostID: host.id, status: $0) }
              if case .noSources = result.state { result.state = .running }
              let agents = remote.agents.filter { kinds.contains($0.source) }.map { agent in
-@@ -106,6 +106,7 @@ extension RemoteHosts {
+@@ -146,6 +146,7 @@ extension RemoteHosts {
                  agent.hostID = host.id
                  let prefix = "remote:\(host.id.uuidString):\(state.connectionID.uuidString):"
                  agent.id = prefix + agent.id
@@ -3914,7 +3914,7 @@ index 5396abe7..8ea864af 100644
                  if let parent = agent.parentId { agent.parentId = prefix + parent }
                  return agent
              }
-@@ -113,6 +114,7 @@ extension RemoteHosts {
+@@ -153,6 +154,7 @@ extension RemoteHosts {
              result.generatingCount += agents.filter { $0.phase == .generating }.count
              result.toolsCount += agents.filter { $0.phase == .tools }.count
              for source in sources {
@@ -3922,7 +3922,7 @@ index 5396abe7..8ea864af 100644
                  result.liveRateAvailable = result.liveRateAvailable && source.liveRateAvailable
                  if source.available {
                      result.todayAvailable = result.todayAvailable && source.todayAvailable
-@@ -135,6 +137,7 @@ extension RemoteHosts {
+@@ -175,6 +177,7 @@ extension RemoteHosts {
                      let existingAvailable = result.sources[index].available
                      result.sources[index].enabled = result.sources[index].enabled || source.enabled
                      result.sources[index].available = result.sources[index].available || source.available
@@ -3930,7 +3930,7 @@ index 5396abe7..8ea864af 100644
                      result.sources[index].sessionCount += source.sessionCount
                      result.sources[index].activeAgents += source.activeAgents
                      if source.available {
-@@ -163,10 +166,37 @@ extension RemoteHosts {
+@@ -203,10 +206,37 @@ extension RemoteHosts {
                      result.sources.append(source)
                  }
              }
@@ -3968,7 +3968,7 @@ index 5396abe7..8ea864af 100644
          result.liveEstimatedShare = result.live.output > 0 ? estimated / result.live.output : 0
          return result
      }
-@@ -199,8 +229,11 @@ extension RemoteHostState {
+@@ -239,8 +269,11 @@ extension RemoteHostState {
                  activeAgents: source.activeAgents,
                  liveEstimated: Rate(output: live.output * share, total: live.total * share),
                  todayCost: CostTally(costMicroUsd: source.todayCostMicroUsd ?? 0, unpricedRequests: source.unpricedRequests ?? source.todayRequests))
@@ -3980,7 +3980,7 @@ index 5396abe7..8ea864af 100644
              status.liveCostRateAvailable = false
              return status
          }
-@@ -221,7 +254,27 @@ extension RemoteHostState {
+@@ -261,7 +294,27 @@ extension RemoteHostState {
                  recentSpeed: nil, lastActivity: agent.lastLineMs.map { Date(timeIntervalSince1970: $0 / 1000) } ?? timestamp,
                  parentId: agent.parentId, modes: modes(configured: false))
              status.liveRateAvailable = agent.liveOutput != nil && agent.liveTotal != nil
@@ -4008,7 +4008,7 @@ index 5396abe7..8ea864af 100644
              return status
          }
          return SpeedSnapshot(timestamp: timestamp, state: .running,
-@@ -269,6 +322,28 @@ extension RemoteHostState {
+@@ -309,6 +362,28 @@ extension RemoteHostState {
          }
          return result
      }
@@ -4076,7 +4076,7 @@ index 0049d5b5..420de6a8 100644
      }
  
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index 51c968dd..f9eb994d 100644
+index 926d83c0..e98b7266 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
 @@ -212,6 +212,7 @@ enum StringTable {
@@ -4288,10 +4288,10 @@ index b2f7391d..a0e37ad6 100644
      /// Today's responses whose final usage was never written.
      var unfinalizedToday: Int
 diff --git a/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift b/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
-index b1b6b035..185634a4 100644
+index f8258043..d2e1c294 100644
 --- a/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
 +++ b/macos/Sources/AgentSpeedCore/Engine/OrbSubset.swift
-@@ -224,10 +224,19 @@ public enum OrbSubset {
+@@ -244,10 +244,19 @@ public enum OrbSubset {
          result.subsetPeaks = [:]
          result.lastResponse = nil
          result.liveCost = .zero
@@ -4325,7 +4325,7 @@ index 8da17299..4149880b 100644
              unfinalizedToday: ledger?.unfinalized ?? 0,
              todayCost: ledger?.cost ?? .zero,
 diff --git a/macos/Sources/AgentSpeedCore/Models.swift b/macos/Sources/AgentSpeedCore/Models.swift
-index 2bbb390c..56282624 100644
+index cb57e150..86a54cbc 100644
 --- a/macos/Sources/AgentSpeedCore/Models.swift
 +++ b/macos/Sources/AgentSpeedCore/Models.swift
 @@ -194,6 +194,9 @@ public struct SourceStatus: Identifiable, Equatable, Sendable {
@@ -4617,7 +4617,7 @@ index a87c8283..2274432d 100644
  A response whose `endMs` is before `0001-01-03T00:00:00Z` or after `9999-12-29T23:59:59.999Z` (only broken timestamps
  get there, 3.1, 3.6) has no date, since in some time zone it would fall outside the years 0001–9999: it is left out of
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index c49834db..cd0bd5d7 100644
+index c49834db..3c9ad5ae 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -2,9 +2,11 @@
@@ -4634,7 +4634,7 @@ index c49834db..cd0bd5d7 100644
  
  ## 1. Common rules
  
-@@ -243,9 +245,27 @@
+@@ -243,9 +245,27 @@ reconnection must not join disconnected curve segments into a continuous measure
  After the client requests its time zone, `today_day`, `today_start_ms` and snapshot today totals use that zone;
  `today_day` is in `YYYY-MM-DD` form or null if conversion fails. Untagged or null-zone snapshots retain collector-local
  compatibility behavior. Snapshot and history frames identify their aggregation time zone; history from an older
@@ -4665,7 +4665,7 @@ index c49834db..cd0bd5d7 100644
  
  Each configured host has a stable identity; remote sources are identified by host and source kind. Local sources and
  all enabled remote sources appear together in the native macOS dashboard. Local diagnostic reports and live reporting
-@@ -263,3 +283,48 @@
+@@ -263,3 +283,48 @@ If the flag is absent, completeness is unknown, including when history is empty.
  stale/offline, not evidence of an idle agent or zero usage. Unavailable measurements remain unknown and in-progress
  rates derived from prior completions are estimates; see `spec/METRICS.md`.
  
@@ -4715,10 +4715,10 @@ index c49834db..cd0bd5d7 100644
 +Only one pending request and the most recently successful receipt ID are retained for bounded deduplication.
 +The full schema, generation fencing and valid response bounds are in `docs/shared-collector.md`.
 diff --git a/spec/strings.json b/spec/strings.json
-index f3b0992c..771f6c56 100644
+index b6c4e719..a6efa4e4 100644
 --- a/spec/strings.json
 +++ b/spec/strings.json
-@@ -5640,6 +5640,12 @@
+@@ -5652,6 +5652,12 @@
      "en": "Performance",
      "ja": "性能"
    },
@@ -4810,13 +4810,13 @@ index 4c1b0630..9d722236 100644
          _total.AddInterval(interval.StartMs, interval.EndMs, sign * (double)entry.Tokens.Total, StartMs);
          _sourceOutput.AddInterval(entry.Source, interval.StartMs, interval.EndMs, sign * (double)entry.Tokens.Output, StartMs);
 diff --git a/windows/src/AgentSpeed.Core/Models.cs b/windows/src/AgentSpeed.Core/Models.cs
-index fe75c61d..3d28f2c2 100644
+index 46edfce5..f4277a44 100644
 --- a/windows/src/AgentSpeed.Core/Models.cs
 +++ b/windows/src/AgentSpeed.Core/Models.cs
-@@ -143,6 +143,8 @@ public sealed record SourceStatus(
-     public bool NotDetected { get; init; }
-     public bool LiveAvailable { get; init; } = true;
-     public bool TodayAvailable { get; init; } = true;
+@@ -149,6 +149,8 @@ public sealed record SourceStatus(
+     /// <summary>Detection or recorded activity, independent of connection and measurement availability.</summary>
+     public bool HasObservations => Available || Detected || SessionCount > 0 || Today.Requests > 0
+         || Today.Output > 0 || Live != Rate.Zero || ActiveAgents > 0;
 +    /// <summary>Measured response output and duration today; null means the collector did not provide them.</summary>
 +    public (double Output, double Ms)? TodayMeasured { get; init; }
  
@@ -4835,10 +4835,10 @@ index a455f2a4..a61ae188 100644
              UnpricedFacts = frame.SourceUnpricedFacts[index],
              Intelligence = frame.SourceIntelligence[index],
 diff --git a/windows/src/AgentSpeed.Core/OrbSubset.cs b/windows/src/AgentSpeed.Core/OrbSubset.cs
-index 315883dc..6d9ac1fa 100644
+index a625867a..6eab1f6f 100644
 --- a/windows/src/AgentSpeed.Core/OrbSubset.cs
 +++ b/windows/src/AgentSpeed.Core/OrbSubset.cs
-@@ -209,7 +209,7 @@ public static class OrbSubset
+@@ -241,7 +241,7 @@ public static class OrbSubset
              PeakTodayOutputAvailable = hasPeak,
              PeakTodayTotalAvailable = false,
              PeakTodayAt = null,
@@ -4847,7 +4847,7 @@ index 315883dc..6d9ac1fa 100644
              LastResponse = last,
              History = history,
              RemoteLiveComplete = reading.LiveComplete,
-@@ -376,3 +376,20 @@ public static class OrbSubset
+@@ -409,3 +409,20 @@ public static class OrbSubset
          a.Output + b.Output,
          a.Reasoning + b.Reasoning);
  }
@@ -5074,7 +5074,7 @@ index 00000000..cb8c4e13
 +    }
 +}
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 13f57214..09b805ce 100644
+index b845d3fa..9a7d36d9 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
 @@ -205,7 +205,8 @@ public sealed class SpeedHub
@@ -5107,8 +5107,8 @@ index 13f57214..09b805ce 100644
                  var sourceCost = todayAvailable ? new CostTally(source.Integer("today_cost_micro_usd"), source.Integer("unpriced_requests")) : CostTally.Zero;
                  var sourceStatus = new SourceStatus(kind.Value, true, "", available, (int)source.Integer("sessions"), rate,
                      sourceToday, available ? (int)source.Integer("active_agents") : 0, new Rate(rate.Output * share, rate.Total * share))
--                    { HostId = host.Id, NotDetected = source.Boolean("available") == false, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost };
-+                    { HostId = host.Id, NotDetected = source.Boolean("available") == false, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost, TodayMeasured = measured,
+-                    { HostId = host.Id, NotDetected = source.Boolean("available") == false, Detected = source.Boolean("available") == true, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost };
++                    { HostId = host.Id, NotDetected = source.Boolean("available") == false, Detected = source.Boolean("available") == true, LiveAvailable = liveAvailable, TodayAvailable = todayAvailable, TodayCost = sourceCost, TodayMeasured = measured,
 +                      Intelligence = available ? RemoteHostData.Intelligence(source) : AgentSpeed.Core.Intelligence.IntelligenceSums.Zero };
                  if (!isOwner) { alternateSources.Add(sourceStatus); continue; }
                  sources.Add(sourceStatus);
@@ -5300,7 +5300,7 @@ index 975b1d7b..4e14fccb 100644
  
          return new PerfHistorySection(PerfHistoryState.Rows, sorted, chosen, PerfHistoryChart.Of(chosen, days, highlighted, loc), sort);
 diff --git a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
-index b2d709b7..d41a3e9f 100644
+index d63ba01b..c6bd097a 100644
 --- a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
 +++ b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
 @@ -450,7 +450,7 @@ internal sealed partial class DashboardViewModel : ObservableObject
@@ -5781,7 +5781,3 @@ index d2b5b774..122f20e3 100644
      [Fact]
      public void TheWidthPicksTheLayout()
      {
-
--- 
-2.41.0
-

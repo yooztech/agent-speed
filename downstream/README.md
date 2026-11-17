@@ -60,7 +60,11 @@ reports exclude remote data. See the [fork release notes](../docs/releases/v1.6.
 for setup, collector requirements and verification limitations.
 Floating orb source settings on macOS and Windows also allow selection by host
 and source, including enabled remote hosts.
-On Windows, source switches for local monitoring do not filter remote sources.
+On macOS and Windows, source switches for local monitoring do not filter remote sources;
+provider-wide orb source availability combines the local and remote instances rather than copying local state.
+Both global and orb popups list actual output or unknown measurements backed by detection/activity,
+not every enabled-but-undetected reader. Previously detected offline sources remain present with unknown
+measurements, and unobserved readers do not make selected measurements or history incomplete.
 Remote data remains associated with its host. An orb's host/source exclusions
 are separate: excluding a source on one host affects that orb and its associated
 views without excluding the same source on another host.
@@ -77,6 +81,28 @@ configurable. Hiding or deleting the associated orb closes its dashboard rather
 than silently displaying all sources. These changes belong to feature patch 0011;
 its remote traffic row integration belongs to 0015. Native desktop behavior
 requires Windows/macOS acceptance, not a Linux-only test or syntax check.
+Global and per-orb source controls identify each row by the complete host UUID
+(or the local-host sentinel) and source kind, never by source kind or displayed
+host name alone. macOS uses those composite identities in its flattened SwiftUI
+rows; Windows retains its existing distinct host/source choices. Local Codex and
+remote Codex therefore remain independent, as do alternate SSH connections;
+repeated observations for the same host/source do not create extra choices.
+The duplicate-Codex correction in 0011 passes the focused Windows Presentation
+host/source identity regression on Linux (.NET 10, one test). macOS adds the
+matching nonvisual choice regression, but this host has no Swift toolchain or
+native desktop: Swift compilation/tests and the reported macOS settings display
+remain unverified. No package, Actions or Release was created.
+All 25 patches replay successfully from the pin; all 3,147 non-build files match
+the checked prepared tree byte-for-byte after folding the correction into 0011.
+
+The observed-source and provider-wide availability corrections belong to 0011;
+0014 is regenerated only to retain the new detection metadata in its existing model integration.
+Focused Linux-hosted checks pass 32 Core and 120 Presentation tests; the Windows application
+cross-compiles with zero warnings/errors, and all seven changed Swift source/test files parse.
+All 25 patches replay from the pin, with all 3,147 non-build files byte-identical to the checked tree.
+macOS SDK type checking/tests and both native Settings/popup interactions remain unverified;
+the reported host-row appearance is not established by these nonvisual checks. No package or Release was made.
+
 For the independent global selection, focused Linux-hosted checks passed 135
 Presentation tests and 10 OrbSubset Core tests. The Windows application
 cross-compiles with zero warnings/errors, and the changed Swift files pass

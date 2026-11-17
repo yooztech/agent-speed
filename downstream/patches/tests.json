@@ -172,7 +172,7 @@
       },
       {
         "platform": "macos",
-        "run": "cd macos && swift test --filter 'LiveChartAvailabilityTests|OrbInstanceProjectionTests|OrbDashboardContextTests|OrbHostRuntimeTests|RemoteTrafficTests'"
+        "run": "cd macos && swift test --filter 'LiveChartAvailabilityTests|OrbInstanceProjectionTests|OrbDashboardContextTests|OrbHostRuntimeTests|RemoteTrafficTests|SourceListingTests|OrbHostSelectionTests'"
       },
       {
         "platform": "windows",
@@ -180,7 +180,7 @@
       },
       {
         "platform": "windows",
-        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter 'FullyQualifiedName~OrbFeedTests|FullyQualifiedName~BoardLiveFeedTests|FullyQualifiedName~OrbSettingsTests|FullyQualifiedName~OrbDashboardContextTests'"
+        "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests --filter 'FullyQualifiedName~OrbFeedTests|FullyQualifiedName~BoardLiveFeedTests|FullyQualifiedName~OrbSettingsTests|FullyQualifiedName~OrbDashboardContextTests|FullyQualifiedName~SourceDetectionTests'"
       }
     ],
     "related": [],
