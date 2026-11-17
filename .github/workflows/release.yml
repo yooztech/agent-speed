@@ -113,8 +113,12 @@ jobs:
       - name: Select newest Xcode
         run: |
           xcode="$(ls -d /Applications/Xcode*.app | grep -viE 'beta|_rc|release_candidate' | sort -V | tail -1)"
-          sudo xcode-select -s "$xcode"
-          echo "::notice::$(xcodebuild -version | tr '\n' ' ')"
+          test -n "$xcode"
+          developer="$xcode/Contents/Developer"
+          test -x "$developer/usr/bin/xcodebuild"
+          echo "DEVELOPER_DIR=$developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$developer" xcodebuild -version | tr '\n' ' '
+          echo
       - name: Test core
         working-directory: ${{ runner.temp }}/agent-speed-prepared/macos
         run: |

@@ -1287,7 +1287,9 @@ the x86_64 collector in macOS and Windows packages. Windows offers both a
 portable ZIP and a per-user installer. The macOS job uses the repository's
 self-hosted Apple Silicon runner selected by
 `[self-hosted, macOS, ARM64]`; that host must keep a current Xcode 26/macOS 26
-SDK, Python 3 and a logged-in GUI session for the AppKit update test. This
+SDK, Python 3 and a logged-in GUI session for the AppKit update test. Xcode is
+selected for the job through `DEVELOPER_DIR`; the Release does not run
+`xcode-select`, require sudo or mutate the shared runner's system default. This
 runner executes only trusted tagged Release code, and an unavailable runner
 queues the job rather than falling back to another host.
 The Windows installer smoke test exercises legacy startup migration, upgrades
