@@ -312,7 +312,11 @@ logo/name/plan account headers, window label/value rows and secondary status
 captions, without per-account cards. A second candidate run then stopped only
 on one stale test expectation that still looked for `Codex · Updated …`; the
 compact layout now exposes the status as a standalone caption, and that test
-was corrected. Neither failed run was retried automatically. On the final
+was corrected. A later candidate reached the macOS suite and found one
+test-only ordering mistake: the offline projection already sorts quota windows,
+but its assertion compared them with the raw snapshot array. The assertion now
+uses the ordered projection; product behavior was unchanged. No failed run
+was retried automatically. On the final
 replayed tree, the Windows native test assembly
 cross-compiles in Release, 78 focused Presentation tests pass, and all changed
 Swift files pass Swift 6.2.4 syntax parsing. All 25 patches replay and all 3,147

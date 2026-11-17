@@ -1,4 +1,4 @@
-From cc148e6d3e87bbb965199a23c07b32d44c0a5644 Mon Sep 17 00:00:00 2001
+From c8acad09bd9a41d6bbcb965c1cece5f191db9b4d Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:08 +0800
 Subject: [PATCH 20/25] Add macOS Codex quota monitoring
@@ -4243,7 +4243,7 @@ index 00000000..ce6e754c
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 00000000..9f3dd42e
+index 00000000..44215e8d
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 @@ -0,0 +1,262 @@
@@ -4324,7 +4324,7 @@ index 00000000..9f3dd42e
 +            #expect(reading(snapshot(status: status), enabled: false).status(at: now) == value.l10n("mac.quota.offline"))
 +        }
 +        let offline = reading(snapshot(), enabled: false)
-+        #expect(offline.windows == snapshot().windows)
++        #expect(offline.windows == QuotaWindow.ordered(snapshot().windows))
 +        #expect(offline.readings.count == 3)
 +        #expect(reading(snapshot()).status(at: now) == "Updated 5m ago")
 +        #expect(!reading(snapshot()).stale(at: now))
