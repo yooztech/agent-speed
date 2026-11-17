@@ -87,13 +87,25 @@ host name alone. macOS uses those composite identities in its flattened SwiftUI
 rows; Windows retains its existing distinct host/source choices. Local Codex and
 remote Codex therefore remain independent, as do alternate SSH connections;
 repeated observations for the same host/source do not create extra choices.
-The duplicate-Codex correction in 0011 passes the focused Windows Presentation
-host/source identity regression on Linux (.NET 10, one test). macOS adds the
-matching nonvisual choice regression, but this host has no Swift toolchain or
-native desktop: Swift compilation/tests and the reported macOS settings display
-remain unverified. No package, Actions or Release was created.
-All 25 patches replay successfully from the pin; all 3,147 non-build files match
-the checked prepared tree byte-for-byte after folding the correction into 0011.
+The orb editor keeps the upstream All Sources and provider-wide source list
+(`orbs.sources.allHosts`) as its primary control. Aggregate status there spans
+every monitored host, so a source detected only on an SSH host is not a local
+detection. A collapsed `orbs.sources.byHost` disclosure adds the downstream
+per-connection refinement under This Mac / SSH host headings; each row carries
+that exact host/source's status. Host rows include current enabled or
+activity-backed connections and saved exclusions, never historical session
+counts alone. Excluding a host row affects only that instance, not monitoring,
+the upstream provider selection, or the independent global dashboard selection.
+No persisted-selection migration or replacement provider-policy model is
+introduced; board and global-dashboard settings are unchanged.
+
+The upstream-compatible selector correction stays in 0011. Focused Windows
+Presentation tests pass 94 on Linux (.NET 10), and the Windows application
+cross-builds with zero warnings/errors. The three changed Swift files pass
+syntax parsing with Swift 6.2.4; macOS AppKit/SwiftUI tests and native
+appearance remain unverified. No package, Actions or Release was created.
+All 25 patches replay from the pin; all 3,147 non-build files match the
+checked prepared tree byte-for-byte after folding the correction into 0011.
 
 The observed-source and provider-wide availability corrections belong to 0011;
 0014 is regenerated only to retain the new detection metadata in its existing model integration.
