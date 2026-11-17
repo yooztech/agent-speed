@@ -1,10 +1,10 @@
-From 98d7b67ec726929d44dc0f4b6a8ea18d22a6d31b Mon Sep 17 00:00:00 2001
+From 40e1ed5ba0d05d1650e89fb38883386ed7f93eec Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:09 +0800
 Subject: [PATCH 21/25] Add Windows Codex quota monitoring
 
 ---
- spec/QUOTA.md                                 |  32 +-
+ spec/QUOTA.md                                 |  34 +-
  .../AgentSpeed.Core/AgentSpeed.Core.csproj    |   1 +
  .../src/AgentSpeed.Core/CodexQuotaProvider.cs | 425 ++++++++++
  windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |  20 +
@@ -54,9 +54,9 @@ Subject: [PATCH 21/25] Add Windows Codex quota monitoring
  .../QuotaNotchViewTests.cs                    |  47 ++
  .../QuotaSettingsPageTests.cs                 | 359 ++++++++
  .../QuotaSurfaceRetryTests.cs                 | 151 ++++
- .../QuotaSurfaceTests.cs                      | 501 +++++++++++
+ .../QuotaSurfaceTests.cs                      | 504 ++++++++++++
  .../QuotaWarmStartupTests.cs                  | 101 +++
- 52 files changed, 7063 insertions(+), 53 deletions(-)
+ 52 files changed, 7067 insertions(+), 54 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
@@ -91,7 +91,7 @@ Subject: [PATCH 21/25] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 8e57de14..73b8bc9e 100644
+index 8e57de14..ea8bdc1a 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,8 @@
@@ -161,17 +161,19 @@ index 8e57de14..73b8bc9e 100644
  
  The outlined resting arc has 8.49 DIP of true radial clearance from the outlined circular body flare; the temporary full disc has 17.23 DIP. Neutral outlined dot paint spans X 21.7–55.7 and Y `BodyEnd + 35.95`–`BodyEnd + 57.45`, a 34-by-21.5-DIP envelope; settled hover paint is 36.4 by 23.9 DIP. Hit padding, radial bridge, activation fan and liquid core/neck consumers use the actual production dot/grid geometry, not independently enlarged SVGs or a blanket input rectangle. `GripPaintClearance` measures the actual quarter curve including its endpoints, not the full circle or a bounding rectangle; `ArcGripPaintClearance` measures the retained outlined arc against all six outlined dots, including hover. These production methods drive regressions and the frame probe. The animation canvas still conservatively reserves 32.97 DIP beyond the flare for transient disc/filter bounds, without making that envelope interactive or moving the screen anchor.
  
-@@ -90,6 +94,10 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
+@@ -90,7 +94,11 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
  
  The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
  
+-The existing transient menu-bar popover or tray flyout shows a compact summary of every selected account, including healthy ones, and every available quota window within each account. Authentication, block, low-allowance, unknown and offline states stay explicit; there is no account-count cap. With networking disabled, previously hydrated snapshots remain visible with the offline status instead of disappearing. Open the existing Settings quota page for details.
 +The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
 +
 +Windows startup regressions use the real `QuotaSurface` → `Window.Show` → `SourceInitialized` path with ephemeral settings, networking and automatic polling disabled, and no credentials. They require a visible HWND, nonzero placement, an opaque black collapsed bar in both themes, transparent unused canvas, and a nonempty installed native region that includes only the painted bar on all four edges. Deterministic pointer/card/grace and menu/drag-state regressions exercise real paint and installed input regions with reduced motion, while finite animation runs are advanced to their terminal samples without sleeps. The body-to-grip route is sampled through the production pointer handlers, visible pixels and installed native region, with grace expiration driven between samples to represent arbitrarily slow movement. Both grip and Alt-body presses must acquire real mouse capture, remain pending below threshold, move the anchor above threshold, resample a different edge on release, persist the result and release capture; another physical monitor is used when available. An explicitly expanded injected first-render failure must be hidden and retain a safe stage/type/HResult/inner-exception diagnostic in the native runtime state. These are Windows-only regressions, not claims based on a portable geometry check.
 +
- The existing transient menu-bar popover or tray flyout shows a compact summary of every selected account, including healthy ones, and every available quota window within each account. Authentication, block, low-allowance, unknown and offline states stay explicit; there is no account-count cap. With networking disabled, previously hydrated snapshots remain visible with the offline status instead of disappearing. Open the existing Settings quota page for details.
++The existing transient menu-bar popover or tray flyout shows a compact summary of every selected account, including healthy ones, and every available quota window within each account. A single section title and one plain whole-section click target introduce the summary; each account has a compact logo/name row with its optional plan at the trailing edge, followed by window label/value rows and a secondary status caption. There are no per-account cards or repeated section titles. Authentication, block, low-allowance, unknown and offline states stay explicit; there is no account-count cap. Every displayed window has one graphical usage indicator: known usage drains its remaining-allowance bar, while unknown usage uses the platform's indeterminate/unknown presentation rather than omitting the indicator or inventing zero. With networking disabled, previously hydrated snapshots remain visible with the offline status instead of disappearing, and the observation-age clock stops until networking is restored. Open the existing Settings quota page for details.
  
  Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
+ 
 @@ -105,7 +113,7 @@ swift test --package-path macos --filter QuotaNotchTests
  swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native
  ```
@@ -940,7 +942,7 @@ index 00000000..323817ba
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 new file mode 100644
-index 00000000..6b78e51a
+index 00000000..5fa36d41
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 @@ -0,0 +1,117 @@
@@ -1029,7 +1031,7 @@ index 00000000..6b78e51a
 +    /// <summary>Unknown usage stays unknown; text can retain negative remaining for an over-limit reading.</summary>
 +    public static double? RemainingFraction(double? usedFraction) => 1 - usedFraction;
 +
-+    /// <summary>The bar is full when untouched and drains with use; callers must not draw a bar for unknown usage.</summary>
++    /// <summary>Known usage drains the bar from full; callers show unknown usage as indeterminate, without a fabricated value.</summary>
 +    public static double BarFill(double usedFraction) => Math.Clamp(1 - usedFraction, 0, 1);
 +
 +    /// <summary>The Settings account card switches from blue to amber near exhaustion.</summary>
@@ -4195,7 +4197,7 @@ index 00000000..99a3917a
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 new file mode 100644
-index 00000000..fe181a28
+index 00000000..87b3d2a7
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 @@ -0,0 +1,393 @@
@@ -4507,7 +4509,7 @@ index 00000000..fe181a28
 +    private void UpdateFlyoutClock()
 +    {
 +        _flyoutClock.Stop();
-+        if (_disposed || !_flyoutOpen) return;
++        if (_disposed || !_flyoutOpen || !_settings.Current.NetworkEnabled) return;
 +        TimeSpan? nextTick = null;
 +        var now = _now();
 +        foreach (var snapshot in _snapshots)
@@ -4593,7 +4595,7 @@ index 00000000..fe181a28
 +    }
 +}
 diff --git a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
-index 390d1df1..561aeacd 100644
+index 78c8c331..12b53821 100644
 --- a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
 +++ b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
 @@ -159,6 +159,7 @@ internal sealed class SettingsViewModel : ObservableObject
@@ -7276,10 +7278,10 @@ index 00000000..be4d0544
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 new file mode 100644
-index 00000000..29890dea
+index 00000000..a67942a2
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
-@@ -0,0 +1,501 @@
+@@ -0,0 +1,504 @@
 +using System.IO;
 +using System.Net;
 +using System.Net.Http;
@@ -7680,7 +7682,7 @@ index 00000000..29890dea
 +                string[] Texts() => summary is null ? [] : Descendants(summary).OfType<TextBlock>().Select(text => text.Text).ToArray();
 +                Assert.False(surface.IsFlyoutTimeRefreshActive);
 +                surface.SetFlyoutActive(true);
-+                PumpUntil(() => Texts().Contains("Codex · Updated just now"));
++                PumpUntil(() => Texts().Contains("Updated just now"));
 +                Assert.True(surface.IsFlyoutTimeRefreshActive);
 +                surface.SetFlyoutActive(false);
 +                now = observed.AddSeconds(59);
@@ -7715,7 +7717,10 @@ index 00000000..29890dea
 +                Assert.Equal(1, handler.UsageCalls);
 +                settings.Update(s => s with { NetworkEnabled = false });
 +                Assert.False(surface.IsFlyoutTimeRefreshActive);
-+                Assert.Null(summary);
++                Assert.NotNull(summary);
++                Assert.Contains(Texts(), text => text.EndsWith(loc["win.quota.offline"], StringComparison.Ordinal));
++                surface.RefreshFlyoutTimes();
++                Assert.False(surface.IsFlyoutTimeRefreshActive);
 +                surface.Dispose();
 +                Assert.False(surface.IsFlyoutTimeRefreshActive);
 +            }

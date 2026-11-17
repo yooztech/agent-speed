@@ -1,4 +1,4 @@
-From e28c99585b67ba00069e5c7012c1c4ce5df550bc Mon Sep 17 00:00:00 2001
+From 502f853b753e4aad521fe3f6b14c711ff9cd013a Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:11 +0800
 Subject: [PATCH 23/25] Read remote subscription quota over SSH
@@ -1728,7 +1728,7 @@ index 00000000..b0190871
 +
 +} // namespace
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index d0d676b8..2367951c 100644
+index 15cd2937..71c5f57b 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -120,6 +120,12 @@ final class AppModel {
@@ -1837,7 +1837,7 @@ index 2bd429c8..ed8e6032 100644
          reader.task?.cancel()
          reader.task = nil
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index 767b2bbd..e88bfd46 100644
+index 0f88628e..2edf493b 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 @@ -12,6 +12,7 @@ struct QuotaNotchReading {
@@ -1869,15 +1869,15 @@ index 767b2bbd..e88bfd46 100644
  
      func resetText(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
          let seconds = date.timeIntervalSince(now)
-@@ -463,7 +465,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
+@@ -466,7 +468,7 @@ final class QuotaNotchController: NSObject, NSMenuDelegate {
          visible = state.0; reducedMotion = state.1
          dark = state.2 == .dark || (state.2 == .auto && NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua)
          readings = state.4.map { provider in
 -            QuotaNotchReading(providerID: provider.id, snapshot: state.3.first { $0.id == provider.id }, networkEnabled: state.6, l10n: model.l10n)
 +            QuotaNotchReading(providerID: provider.id, snapshot: state.3.first { $0.id == provider.id }, networkEnabled: state.6, l10n: model.l10n, sourceName: provider.name)
          }
+         if !state.6 { clock?.cancel(); clock = nil }
          let cells = readings.map(\.cellMetrics)
-         verticalLayout = QuotaNotchContentLayout(cells: cells, horizontal: false)
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 index 621a9b30..1e07a20b 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
@@ -2302,7 +2302,7 @@ index 00000000..84f0010a
 +    func cancel() async { transport.cancel(hostID: hostID, providerID: providerID) }
 +}
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-index f35df7a4..0398cf27 100644
+index 26efb2b5..767b5cd4 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 @@ -46,13 +46,13 @@ struct QuotaPane: View {
@@ -2321,7 +2321,7 @@ index f35df7a4..0398cf27 100644
                                  .frame(width: 8, height: 8)
                              Text(provider.name)
                          }
-@@ -75,16 +75,6 @@ struct QuotaPane: View {
+@@ -76,16 +76,6 @@ struct QuotaPane: View {
      }
  }
  
@@ -2338,7 +2338,7 @@ index f35df7a4..0398cf27 100644
  
  struct QuotaAccountCard: View {
      let account: QuotaSnapshot
-@@ -230,7 +220,7 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
+@@ -244,7 +234,7 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
      case .stale: l10n("mac.quota.status.stale")
      case .needsAuth: l10n("mac.quota.status.needsAuth")
      case .accessDenied: l10n("mac.quota.status.accessDenied")
@@ -2540,7 +2540,7 @@ index 3e03d356..f8aab1fe 100644
      func cancellingPendingRetryRemovesWakeupAndRejectsQueuedCallback(_ transition: String) async throws {
          let id = "remote:11111111-1111-1111-1111-111111111111:codex"
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-index d47e8d8a..c39bac33 100644
+index a210b7f4..6957af31 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 @@ -69,6 +69,21 @@ struct QuotaPresentationTests {
@@ -2990,7 +2990,7 @@ index b7ceeb7c..e5c11991 100644
 +See [`QUOTA.md`](QUOTA.md) for provider parsing, cache isolation and wire details.
 +
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index b5b544ec..ec6bee6c 100644
+index 385bacea..ecd62b7f 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,31 @@
@@ -3460,7 +3460,7 @@ index 4645c0e6..775c0c82 100644
          return selected.SequenceEqual(sources, StringComparer.Ordinal) ? sources : selected;
      }
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
-index 2408e8f6..49c3bd81 100644
+index 31e77e02..e60fcd33 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 @@ -64,7 +64,7 @@ public static class QuotaFormat
@@ -3662,7 +3662,7 @@ index a2585fcd..5b468fd9 100644
      }
  
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index 756e1ebe..729d61fc 100644
+index 7efab836..2540a6ff 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -120,7 +120,7 @@ internal sealed class QuotaNotchView : FrameworkElement
@@ -3782,10 +3782,10 @@ index e5d2a673..5dc74db3 100644
              if (!string.IsNullOrWhiteSpace(snapshot?.Block) && !string.Equals(snapshot.Block, message, StringComparison.Ordinal))
                  message += " · " + snapshot.Block;
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-index 9fffbb78..48a3c028 100644
+index 839420bb..f422442f 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-@@ -9,7 +9,7 @@ using AgentSpeed.Services;
+@@ -10,7 +10,7 @@ using AgentSpeed.Services;
  
  namespace AgentSpeed.Settings;
  
@@ -3794,7 +3794,7 @@ index 9fffbb78..48a3c028 100644
  internal sealed class QuotaSurface : IDisposable
  {
  
-@@ -21,6 +21,10 @@ internal sealed class QuotaSurface : IDisposable
+@@ -22,6 +22,10 @@ internal sealed class QuotaSurface : IDisposable
      private readonly DispatcherTimer _flyoutClock;
      private readonly Func<DateTimeOffset> _now;
      private readonly Func<string, IQuotaProvider> _providerFactory;
@@ -3805,7 +3805,7 @@ index 9fffbb78..48a3c028 100644
      private readonly Dictionary<string, Reader> _readers = new(StringComparer.Ordinal);
      private readonly HashSet<string> _startupAttempted = new(StringComparer.Ordinal);
      private IReadOnlyList<QuotaSnapshot> _snapshots = [];
-@@ -48,14 +52,18 @@ internal sealed class QuotaSurface : IDisposable
+@@ -49,14 +53,18 @@ internal sealed class QuotaSurface : IDisposable
  
      public QuotaSurface(SettingsService settings, Localizer loc, bool dark,
          Func<string, IQuotaProvider>? providerFactory = null, TimeSpan? refreshInterval = null,
@@ -3826,7 +3826,7 @@ index 9fffbb78..48a3c028 100644
          _now = now ?? (() => DateTimeOffset.UtcNow);
          _flyoutClock = new DispatcherTimer(DispatcherPriority.Background, _dispatcher)
          {
-@@ -70,6 +78,36 @@ internal sealed class QuotaSurface : IDisposable
+@@ -71,6 +79,36 @@ internal sealed class QuotaSurface : IDisposable
          ApplySettings();
      }
  
@@ -3863,7 +3863,7 @@ index 9fffbb78..48a3c028 100644
      public UIElement CreatePage()
      {
          _page?.Dispose();
-@@ -87,12 +125,12 @@ internal sealed class QuotaSurface : IDisposable
+@@ -88,12 +126,12 @@ internal sealed class QuotaSurface : IDisposable
  
      private void SetSource(string id, bool enabled)
      {
@@ -3879,7 +3879,7 @@ index 9fffbb78..48a3c028 100644
          });
      }
  
-@@ -101,7 +139,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -102,7 +140,7 @@ internal sealed class QuotaSurface : IDisposable
          QuotaAllSources = enabled,
          // Turning off “all” keeps today's supported readers explicitly selected, like OrbPage.
          QuotaSources = enabled || s.QuotaAllSources
@@ -3888,7 +3888,7 @@ index 9fffbb78..48a3c028 100644
      });
  
      public void SetPageActive(bool active)
-@@ -128,11 +166,18 @@ internal sealed class QuotaSurface : IDisposable
+@@ -129,11 +167,18 @@ internal sealed class QuotaSurface : IDisposable
      public void ApplySettings()
      {
          if (_disposed) return;
@@ -3909,7 +3909,7 @@ index 9fffbb78..48a3c028 100644
          {
              var reader = _readers[id];
              reader.Generation++;
-@@ -142,19 +187,28 @@ internal sealed class QuotaSurface : IDisposable
+@@ -143,19 +188,28 @@ internal sealed class QuotaSurface : IDisposable
              reader.Provider.Dispose();
              _readers.Remove(id);
          }
@@ -3940,7 +3940,7 @@ index 9fffbb78..48a3c028 100644
                  reader.Busy = false;
              }
              // Hydrate every enabled account before the first render, even without network consent.
-@@ -300,7 +354,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -301,7 +355,7 @@ internal sealed class QuotaSurface : IDisposable
          });
      }
  
@@ -3949,7 +3949,7 @@ index 9fffbb78..48a3c028 100644
          .Where(definition => _readers.ContainsKey(definition.Id)).Select(definition => _readers[definition.Id].Snapshot).ToArray();
  
      private string Text(string key) => _loc["win.quota." + key];
-@@ -350,10 +404,10 @@ internal sealed class QuotaSurface : IDisposable
+@@ -359,10 +413,10 @@ internal sealed class QuotaSurface : IDisposable
          _notch?.Update(snapshots, _settings.Current.NetworkEnabled);
          if (_flyoutOpen) FlyoutChanged?.Invoke(CreateFlyoutSummary(snapshots));
          UpdateFlyoutClock();
@@ -3962,7 +3962,7 @@ index 9fffbb78..48a3c028 100644
      }
  
      private UIElement? CreateFlyoutSummary(IReadOnlyList<QuotaSnapshot> snapshots)
-@@ -397,6 +451,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -450,6 +504,7 @@ internal sealed class QuotaSurface : IDisposable
      {
          if (_disposed) return;
          _disposed = true;

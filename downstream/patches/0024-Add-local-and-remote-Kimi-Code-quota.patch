@@ -1,4 +1,4 @@
-From 3cc335e64a053371e5cece9ee92bf5822b7a36a0 Mon Sep 17 00:00:00 2001
+From 6b1897573ae134e297d7818abf86c9672dd3e5b5 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:12 +0800
 Subject: [PATCH 24/25] Add local and remote Kimi Code quota
@@ -54,7 +54,7 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../Settings/QuotaNotch.LICENSE.txt           |   2 +-
  .../src/AgentSpeed/Settings/QuotaNotchView.cs |   3 +
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  37 +-
- .../src/AgentSpeed/Settings/QuotaSurface.cs   | 128 +++++-
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   | 126 +++++-
  .../AgentSpeed.Core.Tests/KimiApiKeyTests.cs  | 158 +++++++
  .../KimiQuotaProviderTests.cs                 | 279 ++++++++++++
  .../QuotaColdStartTests.cs                    |  18 +-
@@ -66,9 +66,9 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../KimiKeySettingsTests.cs                   | 193 +++++++++
  .../QuotaNotchViewTests.cs                    |   1 +
  .../QuotaSettingsPageTests.cs                 |  30 +-
- .../QuotaSurfaceProviderCollectionTests.cs    |  12 +-
+ .../QuotaSurfaceProviderCollectionTests.cs    |  29 +-
  .../QuotaSurfaceRetryTests.cs                 |  16 +-
- 63 files changed, 4517 insertions(+), 142 deletions(-)
+ 63 files changed, 4528 insertions(+), 146 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/KimiCredentialResponse.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
  create mode 100644 macos/Sources/AgentSpeedCore/KimiAPIKeyStore.swift
@@ -1445,7 +1445,7 @@ index e4b85a13..9931851d 100644
    "mac.quota.empty": {"zh-Hant":"尚無額度資料。","zh-Hans":"尚无额度数据。","en":"No quota data yet.","ja":"使用枠データはまだありません。"},
    "mac.quota.diagnostics": {"zh-Hant":"詳細資料","zh-Hans":"详细信息","en":"Details","ja":"詳細"},
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index 2367951c..97c77169 100644
+index 71c5f57b..8d8f32e7 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -107,7 +107,9 @@ final class AppModel {
@@ -1630,7 +1630,7 @@ index ed8e6032..f412d962 100644
          if startup { startupAttempted.insert(reader.provider.id) }
          // Supersede a cache-only load without allowing its late result to overwrite a live read.
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index e88bfd46..c1a74ff9 100644
+index 2edf493b..39b21eb8 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 @@ -107,7 +107,12 @@ struct QuotaNotchReading {
@@ -1882,7 +1882,7 @@ index 84f0010a..39b469be 100644
              cache[id] = value.withRemoteStatus(.stale)
          }
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index 31dcf469..9bb63166 100644
+index 0886ffc5..e61996d8 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
 @@ -18,6 +18,31 @@ enum StringTable {
@@ -2065,7 +2065,7 @@ index 00000000..1cbacbd3
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-index 0398cf27..62961ef1 100644
+index 767b5cd4..ef7c1111 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 @@ -6,6 +6,7 @@ struct QuotaPane: View {
@@ -2094,7 +2094,7 @@ index 0398cf27..62961ef1 100644
          .background(OrbPaneActivityReader(activity: $activity))
          .onAppear { updateClock() }
          .onChange(of: quota.snapshots) { updateClock() }
-@@ -98,7 +103,7 @@ struct QuotaAccountCard: View {
+@@ -99,7 +104,7 @@ struct QuotaAccountCard: View {
                  if !networkEnabled || account.status != .ok || account.waitingForRefresh {
                      Text(quotaDisplayStatus(account, l10n, networkEnabled: networkEnabled, now: now)).font(.caption).foregroundStyle(.secondary)
                  }
@@ -2103,7 +2103,7 @@ index 0398cf27..62961ef1 100644
                  ForEach(QuotaWindow.ordered(account.windows), id: \.id) { window in
                      VStack(alignment: .leading, spacing: 8) {
                          HStack {
-@@ -175,7 +180,15 @@ func quotaHasData(_ account: QuotaSnapshot) -> Bool {
+@@ -189,7 +194,15 @@ func quotaUsageIndicatorState(_ window: QuotaWindow) -> QuotaUsageIndicatorState
      else if account.status == .ok { message = l10n("mac.quota.initial") }
      else if account.status == .needsAuth && account.id == "codex" { message = l10n("mac.quota.codexSignIn") }
      else { message = quotaStatus(account, l10n) }
@@ -2120,7 +2120,7 @@ index 0398cf27..62961ef1 100644
  }
  
  
-@@ -191,6 +204,13 @@ func quotaIsProviderLabel(_ label: String, providerName: String?) -> Bool {
+@@ -205,6 +218,13 @@ func quotaIsProviderLabel(_ label: String, providerName: String?) -> Bool {
  }
  
  @MainActor func quotaWindowLabel(_ window: QuotaWindow, _ l10n: Localizer, providerName: String? = nil) -> String {
@@ -2134,7 +2134,7 @@ index 0398cf27..62961ef1 100644
      let period: String
      switch window.period {
      case .month: period = l10n("mac.quota.monthly")
-@@ -215,6 +235,12 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
+@@ -229,6 +249,12 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
  
  @MainActor func quotaStatus(_ account: QuotaSnapshot, _ l10n: Localizer) -> String {
      if account.waitingForRefresh { return l10n("mac.quota.status.waiting") }
@@ -2942,7 +2942,7 @@ index 00000000..96cca8ea
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-index c39bac33..b00de233 100644
+index 6957af31..5d30dbbc 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 @@ -84,6 +84,22 @@ struct QuotaPresentationTests {
@@ -3638,7 +3638,7 @@ index 53b36147..2eec8f80 100644
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index ec6bee6c..254c6755 100644
+index ecd62b7f..1c688fed 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,20 +1,20 @@
@@ -4531,7 +4531,7 @@ index 5bc85a6c..44df2ad4 100644
    "win.quota.details": {"zh-Hant":"來源與詳細資料","zh-Hans":"来源与详细资料","en":"Source and details","ja":"ソースと詳細"},
    "win.quota.age": {"zh-Hant":"%@ 分鐘前取得","zh-Hans":"%@ 分钟前获取","en":"Observed %@ min ago","ja":"%@ 分前に取得"},
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
-index 49c3bd81..decfe2c6 100644
+index e60fcd33..1442c266 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 @@ -41,6 +41,10 @@ public static class QuotaFormat
@@ -4792,7 +4792,7 @@ index 03cb5d84..49533722 100644
  revision 835550a342871779135b6484d6899161c5222f7c:
  
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index 729d61fc..1db3f30a 100644
+index 2540a6ff..e3277d3b 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -27,6 +27,8 @@ internal sealed class QuotaNotchView : FrameworkElement
@@ -4919,10 +4919,10 @@ index 5dc74db3..ea3fdbac 100644
          _clockTimer.Tick -= OnClockTick;
          _resetLabels.Clear();
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-index 48a3c028..53f04c14 100644
+index f422442f..754d55eb 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-@@ -23,9 +23,11 @@ internal sealed class QuotaSurface : IDisposable
+@@ -24,9 +24,11 @@ internal sealed class QuotaSurface : IDisposable
      private readonly Func<string, IQuotaProvider> _providerFactory;
      private readonly RemoteConnectionManager? _remote;
      private readonly RemoteQuotaStore? _remoteStore;
@@ -4934,7 +4934,7 @@ index 48a3c028..53f04c14 100644
      private readonly HashSet<string> _startupAttempted = new(StringComparer.Ordinal);
      private IReadOnlyList<QuotaSnapshot> _snapshots = [];
      private bool IsBusy => _readers.Values.Any(reader => reader.Busy);
-@@ -53,7 +55,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -54,7 +56,7 @@ internal sealed class QuotaSurface : IDisposable
      public QuotaSurface(SettingsService settings, Localizer loc, bool dark,
          Func<string, IQuotaProvider>? providerFactory = null, TimeSpan? refreshInterval = null,
          Func<DateTimeOffset>? now = null, RemoteConnectionManager? remote = null, RemoteQuotaStore? remoteStore = null,
@@ -4943,7 +4943,7 @@ index 48a3c028..53f04c14 100644
      {
          _settings = settings;
          _loc = loc;
-@@ -62,6 +64,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -63,6 +65,7 @@ internal sealed class QuotaSurface : IDisposable
          _retryScheduler = retryScheduler ?? new QuotaRetryScheduler(_dispatcher);
          _remote = remote;
          _remoteStore = remoteStore ?? (providerFactory is null ? new RemoteQuotaStore() : null);
@@ -4951,7 +4951,7 @@ index 48a3c028..53f04c14 100644
          _providerFactory = providerFactory ?? CreateProvider;
          if (_remote is not null) _remote.QuotaConnectionChanged += OnRemoteConnectionChanged;
          _now = now ?? (() => DateTimeOffset.UtcNow);
-@@ -80,7 +83,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -81,7 +84,7 @@ internal sealed class QuotaSurface : IDisposable
  
      private IQuotaProvider CreateProvider(string id)
      {
@@ -4960,7 +4960,7 @@ index 48a3c028..53f04c14 100644
          var definition = _available.First(source => source.Id == id);
          return new RemoteQuotaProvider(definition, (refresh, cancellationToken) => _remote is null
              ? Task.FromException<QuotaSnapshot>(new IOException("Remote collector is unavailable"))
-@@ -117,12 +120,125 @@ internal sealed class QuotaSurface : IDisposable
+@@ -118,12 +121,125 @@ internal sealed class QuotaSurface : IDisposable
              {
                  _notchFailure = null;
                  _settings.Update(s => s with { ShowQuotaNotch = enabled });
@@ -5087,7 +5087,7 @@ index 48a3c028..53f04c14 100644
      private void SetSource(string id, bool enabled)
      {
          if (!_available.Any(p => p.Id == id)) return;
-@@ -291,7 +407,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -292,7 +408,7 @@ internal sealed class QuotaSurface : IDisposable
          if (_disposed || !_settings.Current.NetworkEnabled) return;
          foreach (var (id, reader) in _readers.ToArray())
          {
@@ -5096,7 +5096,7 @@ index 48a3c028..53f04c14 100644
              if (automatic && reader.Retry.DueAt is not null) continue;
              if (startup) _startupAttempted.Add(id);
              RefreshReader(id, reader, startup);
-@@ -347,7 +463,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -348,7 +464,7 @@ internal sealed class QuotaSurface : IDisposable
          var delay = due - _now();
          _retryScheduler.Schedule(id, delay >= TimeSpan.FromSeconds(1) ? delay : TimeSpan.FromSeconds(1), () =>
          {
@@ -5105,15 +5105,6 @@ index 48a3c028..53f04c14 100644
                  !_readers.TryGetValue(id, out var current) || !ReferenceEquals(current, reader) || reader.Busy) return;
              if (reader.Retry.DueAt is { } deadline && deadline > _now()) { ScheduleRetry(id, reader); return; }
              RefreshReader(id, reader, startup: false);
-@@ -422,7 +538,7 @@ internal sealed class QuotaSurface : IDisposable
-             content.Children.Add(Line(snapshot.DisplayName + " · " + QuotaFormat.Status(_loc, _settings.Current.NetworkEnabled, snapshot, now), 12));
-             if (snapshot is { Status: QuotaStatus.Stale, ObservedAt: { } observedAt })
-                 content.Children.Add(Line(_loc.Format("win.quota.age", Math.Max(0, (int)(now - observedAt).TotalMinutes)), 12));
--            if (snapshot.Block is not null) content.Children.Add(Line(Text("block") + ": " + snapshot.Block, 12));
-+            if (snapshot.Block is not null) content.Children.Add(Line(Text("block") + ": " + QuotaFormat.Block(_loc, snapshot.Block), 12));
-             foreach (var headline in QuotaFormat.OrderedWindows(snapshot))
-             {
-                 var reading = new StackPanel { Opacity = snapshot.Status == QuotaStatus.Stale ? .65 : 1 };
 diff --git a/windows/tests/AgentSpeed.Core.Tests/KimiApiKeyTests.cs b/windows/tests/AgentSpeed.Core.Tests/KimiApiKeyTests.cs
 new file mode 100644
 index 00000000..a3b4035a
@@ -6174,7 +6165,7 @@ index fd2fae0d..90663c85 100644
          new("codex", "Codex", "official", status, windows, "a", null, "person@example.com", "Plus", Observed, "local", null, null, false);
  
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
-index 44fcfa71..f0f972cf 100644
+index 44fcfa71..9e8d27aa 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
 @@ -126,11 +126,14 @@ public sealed class QuotaSurfaceProviderCollectionTests
@@ -6194,18 +6185,37 @@ index 44fcfa71..f0f972cf 100644
                  using var settings = new SettingsService(Dispatcher.CurrentDispatcher);
                  settings.MakeEphemeral();
                  settings.Update(value => value with { ShowQuotaNotch = false, AutoRefreshQuota = false, NetworkEnabled = false,
-@@ -149,8 +152,9 @@ public sealed class QuotaSurfaceProviderCollectionTests
-                 Assert.Contains(texts, text => text.StartsWith("OpenCode Go · Build · ", StringComparison.Ordinal));
-                 Assert.Contains(texts, text => text.StartsWith("Codex · Second · ", StringComparison.Ordinal));
-                 Assert.Contains(texts, text => text.StartsWith("OpenCode Go · Second · ", StringComparison.Ordinal));
+@@ -145,15 +148,23 @@ public sealed class QuotaSurfaceProviderCollectionTests
+                 surface.SetFlyoutActive(true);
+                 Assert.NotNull(summary);
+                 var texts = Descendants(summary!).OfType<TextBlock>().Select(text => text.Text).ToArray();
+-                Assert.Contains(texts, text => text.StartsWith("Codex · Build · ", StringComparison.Ordinal));
+-                Assert.Contains(texts, text => text.StartsWith("OpenCode Go · Build · ", StringComparison.Ordinal));
+-                Assert.Contains(texts, text => text.StartsWith("Codex · Second · ", StringComparison.Ordinal));
+-                Assert.Contains(texts, text => text.StartsWith("OpenCode Go · Second · ", StringComparison.Ordinal));
 -                Assert.Equal(4, texts.Count(text => text.EndsWith(loc["win.quota.offline"], StringComparison.Ordinal)));
 -                Assert.Equal(7, Descendants(summary!).OfType<ProgressBar>().Count());
-+                Assert.Contains(texts, text => text.StartsWith("Kimi Code · Second · ", StringComparison.Ordinal));
-+                Assert.Equal(5, texts.Count(text => text.EndsWith(loc["win.quota.offline"], StringComparison.Ordinal)));
-+                Assert.Equal(9, Descendants(summary!).OfType<ProgressBar>().Count());
++                Assert.Equal(1, texts.Count(text => text == loc["win.quota.title"]));
++                Assert.Contains("Codex · Build", texts);
++                Assert.Contains("OpenCode Go · Build", texts);
++                Assert.Contains("Codex · Second", texts);
++                Assert.Contains("OpenCode Go · Second", texts);
++                Assert.Contains("Kimi Code · Second", texts);
++                Assert.Equal(5, texts.Count(text => text == loc["win.quota.offline"]));
++                var bars = Descendants(summary!).OfType<ProgressBar>().ToArray();
++                Assert.Equal(9, bars.Length);
++                Assert.Single(bars, bar => bar.IsIndeterminate);
++                Assert.Equal(8, bars.Count(bar => !bar.IsIndeterminate));
                  Assert.Contains(texts, text => text.Contains(QuotaFormat.Percent(loc, .9), StringComparison.Ordinal));
                  Assert.Contains(texts, text => text.Contains(loc["win.quota.unknown"], StringComparison.Ordinal));
-                 var button = Descendants(summary!).OfType<Button>().First();
+-                var button = Descendants(summary!).OfType<Button>().First();
++                var button = Assert.IsType<Button>(summary);
++                Assert.True(button.Focusable);
++                Assert.Equal(loc["win.quota.open"], System.Windows.Automation.AutomationProperties.GetName(button));
++                Assert.Empty(Descendants(button).OfType<Button>());
+                 button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                 Assert.True(opened);
+             }
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
 index 9912817f..30ce1fb5 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs

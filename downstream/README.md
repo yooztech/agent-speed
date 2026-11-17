@@ -283,8 +283,10 @@ tree byte-for-byte. Real supplier accounts, native macOS SDK/desktop and Windows
 desktop interactions remain unverified. No package, Actions or Release was made.
 
 The complete-subscription-summary correction belongs to 0020 (macOS dashboard)
-and 0021 (Windows flyout); 0022 keeps only its multi-window/OpenCode Go
-increment, and its former Windows `Take(2)` hunk is removed. The dashboard and
+and 0021 (Windows flyout); 0022 keeps its multi-window/OpenCode Go increment
+and the matching per-window indeterminate-bar correction, while the mixed
+remote/Kimi regression remains in 0024. The former Windows `Take(2)` hunk is
+removed. The dashboard and
 tray summaries now show every selected account, including healthy ones, with
 all returned windows and their original reset times; low-allowance,
 authentication, block, unknown and offline states stay explicit, and cached
@@ -298,7 +300,21 @@ The Windows application and native test assembly cross-compile with zero
 warnings/errors; native WPF execution and macOS Swift/SDK tests remain
 unverified. No package, Actions or Release was made.
 
-#### Provider implementation reference: Codenotch first
+The unpublished fork.27 Release run `44076237084` failed only in the native
+Windows quota surface: two observation-clock assertions remained active after
+network consent was revoked, and the all-windows fixture produced eight bars
+for nine displayed windows. Core, Presentation, Linux and the release-contract
+gates passed; no GitHub release was published. The clock now stops for offline
+cached summaries without hiding them, and every displayed window has a known
+or indeterminate usage bar on both platforms. The Windows summary now follows
+the macOS hierarchy: one section title and plain click target, compact
+logo/name/plan account headers, window label/value rows and secondary status
+captions, without per-account cards. The failed run has not been retried
+automatically. On the final replayed tree, the Windows native test assembly
+cross-compiles in Release, 78 focused Presentation tests pass, and all changed
+Swift files pass Swift 6.2.4 syntax parsing. All 25 patches replay and all 3,147
+non-build files match the checked source tree byte-for-byte. Native WPF test
+execution and actual macOS/Windows popup appearance remain unverified locally.
 
 Codenotch is the quota implementation reference as well as the visual reference.
 Before adding a supplier, inspect its existing adapter at the pinned commit

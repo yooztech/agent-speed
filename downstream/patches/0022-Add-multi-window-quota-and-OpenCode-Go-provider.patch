@@ -1,4 +1,4 @@
-From 77138ced9b2040df69f5c738914504178a3c4c6d Mon Sep 17 00:00:00 2001
+From 9973bdcc0f125f8d833d9a200ff02522286d8e0f Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:10 +0800
 Subject: [PATCH 22/25] Add multi-window quota and OpenCode Go provider
@@ -34,9 +34,10 @@ Subject: [PATCH 22/25] Add multi-window quota and OpenCode Go provider
  .../Settings/QuotaFormat.cs                   |  63 ++-
  .../Settings/QuotaNotchGeometry.cs            |   5 +-
  .../Settings/QuotaNotch.LICENSE.txt           |   3 +-
- .../src/AgentSpeed/Settings/QuotaNotchView.cs |  88 +++-
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs |  98 +++-
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  12 +-
- .../src/AgentSpeed/Settings/QuotaSurface.cs   | 188 ++++----
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   | 289 ++++++-----
+ windows/src/AgentSpeed/Theme/Styles.xaml      |  37 ++
  .../OpenCodeGoQuotaProviderTests.cs           | 449 ++++++++++++++++++
  .../QuotaColdStartTests.cs                    |  16 +-
  .../QuotaFormatTests.cs                       |  95 +++-
@@ -46,7 +47,7 @@ Subject: [PATCH 22/25] Add multi-window quota and OpenCode Go provider
  .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
  .../QuotaSurfaceTests.cs                      | 129 ++++-
- 42 files changed, 2440 insertions(+), 227 deletions(-)
+ 43 files changed, 2564 insertions(+), 251 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -115,7 +116,7 @@ index 4cf47a4b..e4b85a13 100644
    "mac.quota.noAllowance": {"zh-Hant":"此帳戶沒有可用的 %@ 訂閱額度","zh-Hans":"此账户没有可用的 %@ 订阅额度","en":"No %@ subscription allowance on this account","ja":"このアカウントに %@ の利用枠はありません"},
    "mac.quota.limitReached": {"zh-Hant":"已達額度限制","zh-Hans":"已达额度限制","en":"Allowance reached","ja":"利用枠の上限に達しました"},
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index 075e00a3..767b2bbd 100644
+index a514fba9..0f88628e 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 @@ -14,6 +14,12 @@ struct QuotaNotchReading {
@@ -324,7 +325,7 @@ index c1200063..621a9b30 100644
                  EmptyView()
              }
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index 0b9e132d..31dcf469 100644
+index 670a6d70..0886ffc5 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
 @@ -392,6 +392,7 @@ enum StringTable {
@@ -336,10 +337,10 @@ index 0b9e132d..31dcf469 100644
          "mac.quota.keepExpanded": Entry("保持展開", "保持展开", "Keep expanded", "展開したままにする"),
          "mac.quota.allSources": Entry("全部來源", "全部来源", "All sources", "すべてのソース"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-index 36ca0e78..f35df7a4 100644
+index ee2722a4..26efb2b5 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-@@ -80,7 +80,7 @@ struct QuotaSourceDefinition: Identifiable, Sendable {
+@@ -81,7 +81,7 @@ struct QuotaSourceDefinition: Identifiable, Sendable {
      let name: String
  }
  
@@ -348,7 +349,7 @@ index 36ca0e78..f35df7a4 100644
  
  @MainActor func quotaEnabledSources(_ quota: QuotaController) -> [QuotaSourceDefinition] {
      quotaSources.filter { quota.allSourcesEnabled || quota.enabledProviderIDs.contains($0.id) }
-@@ -230,7 +230,7 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
+@@ -244,7 +244,7 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
      case .stale: l10n("mac.quota.status.stale")
      case .needsAuth: l10n("mac.quota.status.needsAuth")
      case .accessDenied: l10n("mac.quota.status.accessDenied")
@@ -857,7 +858,7 @@ index ce6e754c..3e03d356 100644
              #expect(restored.snapshots.isEmpty)
          }
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-index 005e82d6..dbb1032b 100644
+index 9f3dd42e..01fdaac7 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 @@ -15,7 +15,7 @@ struct QuotaNotchTests {
@@ -880,7 +881,7 @@ index 005e82d6..dbb1032b 100644
          for value in accounts {
              #expect(value.windows.map(\.id) == ["monthly", "weekly", "rolling"])
              #expect(value.readings.count == 3)
-@@ -224,12 +224,12 @@ struct QuotaNotchTests {
+@@ -227,12 +227,12 @@ struct QuotaNotchTests {
          hover.keepExpanded = true
          hover.move(to: .cell("codex")); hover.move(to: .outside)
          clock.advance(0.1)
@@ -896,7 +897,7 @@ index 005e82d6..dbb1032b 100644
          clock.advance(0.001)
          #expect(hover.expanded && hover.activeSource == nil && !hover.graceActive)
          hover.reset()
-@@ -247,9 +247,9 @@ struct QuotaNotchTests {
+@@ -250,9 +250,9 @@ struct QuotaNotchTests {
          #expect(!hover.expanded && hover.activeSource == nil && !hover.graceActive)
          hover.move(to: .bar)
          #expect(hover.expanded)
@@ -909,10 +910,10 @@ index 005e82d6..dbb1032b 100644
          clock.advance(0.1)
          #expect(hover.activeSource == nil && !hover.expanded && !hover.graceActive)
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-index 53f7bafc..d47e8d8a 100644
+index 502f7b32..a210b7f4 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-@@ -139,8 +139,8 @@ struct QuotaPresentationTests {
+@@ -149,8 +149,8 @@ struct QuotaPresentationTests {
          let l10n = Localizer(preference: .en)
          let expiry = Date(timeIntervalSince1970: 1_800_000_000)
          func snapshot(_ count: Int?) -> QuotaSnapshot {
@@ -1340,7 +1341,7 @@ index 2182d481..460bec0d 100644
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 73b8bc9e..b5b544ec 100644
+index ea8bdc1a..385bacea 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,4 +1,4 @@
@@ -1876,7 +1877,7 @@ index 49a7f87a..5bc85a6c 100644
    "win.quota.days": {"zh-Hant":"%@ 天","zh-Hans":"%@ 天","en":"%@ days","ja":"%@ 日"},
    "win.quota.details": {"zh-Hant":"來源與詳細資料","zh-Hans":"来源与详细资料","en":"Source and details","ja":"ソースと詳細"},
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
-index 6b78e51a..2408e8f6 100644
+index 5fa36d41..31e77e02 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 @@ -6,18 +6,65 @@ namespace AgentSpeed.Presentation.Settings;
@@ -2017,7 +2018,7 @@ index 90f5dd48..03cb5d84 100644
  
  MIT License
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index 54e1c9da..756e1ebe 100644
+index 54e1c9da..7efab836 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -24,6 +24,9 @@ internal sealed class QuotaNotchView : FrameworkElement
@@ -2159,7 +2160,7 @@ index 54e1c9da..756e1ebe 100644
      internal string ResetText(DateTimeOffset reset, DateTimeOffset now)
      {
          double milliseconds = (reset - now).TotalMilliseconds;
-@@ -467,6 +494,15 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -467,6 +494,25 @@ internal sealed class QuotaNotchView : FrameworkElement
      }
      private static void DrawGlyph(DrawingContext dc, Geometry glyph, Point center, double size, Brush color)
      { dc.PushTransform(new MatrixTransform(size/24, 0, 0, size/24, center.X-size/2, center.Y-size/2)); dc.DrawGeometry(color, null, glyph); dc.Pop(); }
@@ -2171,6 +2172,16 @@ index 54e1c9da..756e1ebe 100644
 +        dc.PushTransform(new MatrixTransform(size / 20, 0, 0, size / 20, center.X - size * .4, center.Y - size / 2));
 +        dc.PushOpacity(.35); dc.DrawGeometry(color, null, OpenCodeShadow); dc.Pop();
 +        dc.DrawGeometry(color, null, OpenCode); dc.Pop();
++    }
++
++    internal static DrawingImage SourceLogo(string source, double size, Brush color)
++    {
++        var drawing = new DrawingGroup();
++        using (var dc = drawing.Open()) DrawSourceGlyph(dc, source, new Point(size / 2, size / 2), size, color);
++        drawing.Freeze();
++        var image = new DrawingImage(drawing);
++        image.Freeze();
++        return image;
 +    }
      private static Geometry LoadCodex()
      {
@@ -2235,17 +2246,18 @@ index 99a3917a..e5d2a673 100644
              System.Windows.Automation.AutomationProperties.SetName(track, label + ": " + remainingText);
              reading.Children.Add(track);
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-index fe181a28..9fffbb78 100644
+index 87b3d2a7..839420bb 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-@@ -1,5 +1,6 @@
+@@ -1,5 +1,7 @@
  using System.Windows;
  using System.Windows.Controls;
 +using System.Windows.Media;
++using System.Windows.Shapes;
  using System.Windows.Threading;
  using AgentSpeed.Core;
  using AgentSpeed.Presentation.Localization;
-@@ -14,16 +15,16 @@ internal sealed class QuotaSurface : IDisposable
+@@ -14,16 +16,16 @@ internal sealed class QuotaSurface : IDisposable
  
      private readonly SettingsService _settings;
      private readonly Localizer _loc;
@@ -2267,7 +2279,7 @@ index fe181a28..9fffbb78 100644
      private QuotaNotchWindow? _notch;
      private QuotaNotchFailure? _notchFailure;
      private QuotaSettingsPage? _page;
-@@ -31,8 +32,14 @@ internal sealed class QuotaSurface : IDisposable
+@@ -31,8 +33,14 @@ internal sealed class QuotaSurface : IDisposable
      private bool _flyoutOpen;
      private bool _disposed;
      private bool _autoRefresh;
@@ -2284,7 +2296,7 @@ index fe181a28..9fffbb78 100644
      private bool _networkEnabled;
      private bool _dark;
      private bool _reduceMotion;
-@@ -40,21 +47,25 @@ internal sealed class QuotaSurface : IDisposable
+@@ -40,21 +48,25 @@ internal sealed class QuotaSurface : IDisposable
      public event Action? OpenSettingsRequested;
  
      public QuotaSurface(SettingsService settings, Localizer loc, bool dark,
@@ -2315,7 +2327,7 @@ index fe181a28..9fffbb78 100644
          _timer.Tick += (_, _) => RefreshAutomatically();
          ApplySettings();
      }
-@@ -121,36 +132,35 @@ internal sealed class QuotaSurface : IDisposable
+@@ -121,36 +133,35 @@ internal sealed class QuotaSurface : IDisposable
          var added = false;
          var networkChanged = _networkEnabled != _settings.Current.NetworkEnabled;
          _networkEnabled = _settings.Current.NetworkEnabled;
@@ -2371,7 +2383,7 @@ index fe181a28..9fffbb78 100644
          if (_settings.Current.ShowQuotaNotch && _notchFailure is null)
          {
              if (_notch is null)
-@@ -178,7 +188,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -178,7 +189,7 @@ internal sealed class QuotaSurface : IDisposable
          _autoRefresh = _settings.Current.AutoRefreshQuota;
          Render();
          UpdateTimer();
@@ -2380,7 +2392,7 @@ index fe181a28..9fffbb78 100644
          else if (added || startAutomatic || networkChanged && _networkEnabled) RefreshAutomatically();
      }
  
-@@ -204,83 +214,95 @@ internal sealed class QuotaSurface : IDisposable
+@@ -204,83 +215,95 @@ internal sealed class QuotaSurface : IDisposable
      private void UpdateTimer()
      {
          if (!_disposed && _settings.Current.NetworkEnabled && _settings.Current.AutoRefreshQuota &&
@@ -2517,7 +2529,22 @@ index fe181a28..9fffbb78 100644
      private string Text(string key) => _loc["win.quota." + key];
      private string Percent(double? value) => QuotaFormat.Percent(_loc, value);
      private string Date(DateTimeOffset value) => value.ToLocalTime().ToString("g", _loc.Culture);
-@@ -330,7 +352,7 @@ internal sealed class QuotaSurface : IDisposable
+@@ -289,6 +312,14 @@ internal sealed class QuotaSurface : IDisposable
+         Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 3)
+     };
+ 
++    private static TextBlock SecondaryLine(string text, double size = 12, Thickness margin = default)
++    {
++        var line = Line(text, size);
++        line.Margin = margin;
++        line.SetResourceReference(TextBlock.ForegroundProperty, "TextFillColorSecondaryBrush");
++        return line;
++    }
++
+     internal bool IsFlyoutTimeRefreshActive => _flyoutClock.IsEnabled;
+     internal TimeSpan FlyoutTimeRefreshDelay => _flyoutClock.Interval;
+ 
+@@ -330,46 +361,89 @@ internal sealed class QuotaSurface : IDisposable
          UpdateFlyoutClock();
          _page?.Update(new QuotaPageState(snapshots, _settings.Current.QuotaSources,
              _settings.Current.AutoRefreshQuota, _settings.Current.NetworkEnabled,
@@ -2526,31 +2553,116 @@ index fe181a28..9fffbb78 100644
              _notchFailure is null ? null : Text("notchInitializationFailed"), _settings.Current.QuotaAllSources));
      }
  
-@@ -341,21 +363,20 @@ internal sealed class QuotaSurface : IDisposable
+     private UIElement? CreateFlyoutSummary(IReadOnlyList<QuotaSnapshot> snapshots)
+     {
+-        StackPanel? summaries = null;
++        if (snapshots.Count == 0) return null;
+         var now = _now();
++        var content = new StackPanel();
++        var divider = new Rectangle { Margin = new Thickness(0, 16, 0, 12) };
++        divider.SetResourceReference(FrameworkElement.StyleProperty, "Hairline");
++        content.Children.Add(divider);
++        content.Children.Add(new TextBlock
++        {
++            Text = Text("title"), FontSize = 14, FontWeight = FontWeights.SemiBold,
++            Margin = new Thickness(0, 0, 0, 10)
++        });
          foreach (var snapshot in snapshots)
          {
-             summaries ??= new StackPanel();
+-            summaries ??= new StackPanel();
 -            var headline = QuotaFormat.Headline(snapshot);
-             var content = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
-             content.Children.Add(Line(Text("title"), 14));
-             content.Children.Add(Line(snapshot.DisplayName + " · " + QuotaFormat.Status(_loc, _settings.Current.NetworkEnabled, snapshot, now), 12));
-             if (snapshot is { Status: QuotaStatus.Stale, ObservedAt: { } observedAt })
-                 content.Children.Add(Line(_loc.Format("win.quota.age", Math.Max(0, (int)(now - observedAt).TotalMinutes)), 12));
-             if (snapshot.Block is not null) content.Children.Add(Line(Text("block") + ": " + snapshot.Block, 12));
+-            var content = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+-            content.Children.Add(Line(Text("title"), 14));
+-            content.Children.Add(Line(snapshot.DisplayName + " · " + QuotaFormat.Status(_loc, _settings.Current.NetworkEnabled, snapshot, now), 12));
+-            if (snapshot is { Status: QuotaStatus.Stale, ObservedAt: { } observedAt })
+-                content.Children.Add(Line(_loc.Format("win.quota.age", Math.Max(0, (int)(now - observedAt).TotalMinutes)), 12));
+-            if (snapshot.Block is not null) content.Children.Add(Line(Text("block") + ": " + snapshot.Block, 12));
 -            if (headline is not null)
++            var account = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
++            var header = new Grid { Margin = new Thickness(0, 0, 0, 4) };
++            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
++            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
++            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
++            var logo = new Image
++            {
++                Source = QuotaNotchView.SourceLogo(snapshot.Id, 14, SystemColors.ControlTextBrush),
++                Width = 14, Height = 14, Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center
++            };
++            header.Children.Add(logo);
++            var name = Line(snapshot.DisplayName, 12);
++            name.Margin = new Thickness(0);
++            name.VerticalAlignment = VerticalAlignment.Center;
++            Grid.SetColumn(name, 1);
++            header.Children.Add(name);
++            if (snapshot.Plan is not null)
++            {
++                var plan = SecondaryLine(snapshot.Plan, 12, new Thickness(8, 0, 0, 0));
++                plan.VerticalAlignment = VerticalAlignment.Center;
++                Grid.SetColumn(plan, 2);
++                header.Children.Add(plan);
++            }
++            account.Children.Add(header);
 +            foreach (var headline in QuotaFormat.OrderedWindows(snapshot))
              {
                  var reading = new StackPanel { Opacity = snapshot.Status == QuotaStatus.Stale ? .65 : 1 };
-                 reading.Children.Add(Line(QuotaFormat.WindowLabel(_loc, headline, snapshot.DisplayName), 12));
-                 if (headline.UsedFraction is { } value)
-                 {
-                     var bar = new ProgressBar { Minimum = 0, Maximum = 1, Value = QuotaFormat.BarFill(value), Height = 5, Margin = new Thickness(0, 4, 0, 4) };
+-                reading.Children.Add(Line(QuotaFormat.WindowLabel(_loc, headline, snapshot.DisplayName), 12));
+-                if (headline.UsedFraction is { } value)
+-                {
+-                    var bar = new ProgressBar { Minimum = 0, Maximum = 1, Value = QuotaFormat.BarFill(value), Height = 5, Margin = new Thickness(0, 4, 0, 4) };
 -                    bar.SetResourceReference(Control.ForegroundProperty, value >= .9 ? "SystemFillColorCautionBrush" : "AccentFillColorDefaultBrush");
-+                    bar.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(QuotaFormat.PeriodColor(headline)));
-                     reading.Children.Add(bar);
-                 }
-                 reading.Children.Add(Line(_loc.Format("win.quota.remaining", Percent(QuotaFormat.RemainingFraction(headline.UsedFraction))) + " · " + _loc.Format("win.quota.used", Percent(headline.UsedFraction)), 12));
-@@ -380,10 +401,13 @@ internal sealed class QuotaSurface : IDisposable
+-                    reading.Children.Add(bar);
+-                }
+-                reading.Children.Add(Line(_loc.Format("win.quota.remaining", Percent(QuotaFormat.RemainingFraction(headline.UsedFraction))) + " · " + _loc.Format("win.quota.used", Percent(headline.UsedFraction)), 12));
+-                if (headline.ResetAt is { } reset) reading.Children.Add(Line(_loc.Format("win.quota.reset", Date(reset)), 12));
+-                content.Children.Add(reading);
++                var row = new Grid();
++                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
++                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
++                var label = Line(QuotaFormat.WindowLabel(_loc, headline, snapshot.DisplayName), 12);
++                label.Margin = new Thickness(0, 2, 8, 0);
++                row.Children.Add(label);
++                var remaining = Line(headline.UsedFraction is null ? Text("unknown") :
++                    _loc.Format("win.quota.remaining", Percent(QuotaFormat.RemainingFraction(headline.UsedFraction))), 12);
++                remaining.Margin = new Thickness(0, 2, 0, 0);
++                remaining.TextAlignment = TextAlignment.Right;
++                Grid.SetColumn(remaining, 1);
++                row.Children.Add(remaining);
++                reading.Children.Add(row);
++                var bar = new ProgressBar { Minimum = 0, Maximum = 1, Height = 3, Margin = new Thickness(0, 2, 0, 2) };
++                if (headline.UsedFraction is { } value) bar.Value = QuotaFormat.BarFill(value);
++                else bar.IsIndeterminate = true;
++                bar.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(QuotaFormat.PeriodColor(headline)));
++                reading.Children.Add(bar);
++                if (headline.ResetAt is { } reset)
++                    reading.Children.Add(SecondaryLine(_loc.Format("win.quota.reset", Date(reset)), 11));
++                account.Children.Add(reading);
+             }
+-            if (snapshot.Plan is not null) content.Children.Add(Line(Text("plan") + ": " + snapshot.Plan, 12));
+-            var button = new Button { Content = content, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+-                HorizontalAlignment = HorizontalAlignment.Stretch, ToolTip = Text("open") };
+-            System.Windows.Automation.AutomationProperties.SetName(button, Text("open"));
+-            button.Click += (_, _) => OpenSettingsRequested?.Invoke();
+-            summaries.Children.Add(button);
++            account.Children.Add(SecondaryLine(QuotaFormat.Status(_loc, _settings.Current.NetworkEnabled, snapshot, now),
++                12, new Thickness(0, 2, 0, 0)));
++            if (snapshot.Block is not null)
++                account.Children.Add(SecondaryLine(Text("block") + ": " + QuotaFormat.Block(_loc, snapshot.Block), 12));
++            content.Children.Add(account);
+         }
+-        return summaries;
++        var button = new Button
++        {
++            Content = content, HorizontalContentAlignment = HorizontalAlignment.Stretch,
++            HorizontalAlignment = HorizontalAlignment.Stretch, ToolTip = Text("open"), Focusable = true
++        };
++        button.SetResourceReference(FrameworkElement.StyleProperty, "PlainSummaryButton");
++        System.Windows.Automation.AutomationProperties.SetName(button, Text("open"));
++        button.Click += (_, _) => OpenSettingsRequested?.Invoke();
++        return button;
+     }
+ 
+     public void Dispose()
+@@ -380,10 +454,13 @@ internal sealed class QuotaSurface : IDisposable
          _retryScheduler.Clear();
          _flyoutClock.Stop();
          _flyoutClock.Tick -= OnFlyoutClockTick;
@@ -2568,6 +2680,54 @@ index fe181a28..9fffbb78 100644
          _snapshots = [];
          _notch?.Close();
          _notch = null;
+diff --git a/windows/src/AgentSpeed/Theme/Styles.xaml b/windows/src/AgentSpeed/Theme/Styles.xaml
+index 74b7b7f3..1d3b1aac 100644
+--- a/windows/src/AgentSpeed/Theme/Styles.xaml
++++ b/windows/src/AgentSpeed/Theme/Styles.xaml
+@@ -362,6 +362,43 @@
+         </Setter>
+     </Style>
+ 
++    <!-- Plain, whole-section dashboard summary; content remains one keyboard/click target. -->
++    <Style x:Key="PlainSummaryButton" TargetType="Button">
++        <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
++        <Setter Property="Background" Value="Transparent" />
++        <Setter Property="Padding" Value="0" />
++        <Setter Property="Cursor" Value="Hand" />
++        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
++        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
++        <Setter Property="VerticalContentAlignment" Value="Stretch" />
++        <Setter Property="Template">
++            <Setter.Value>
++                <ControlTemplate TargetType="Button">
++                    <Grid>
++                        <Border CornerRadius="4" Background="{TemplateBinding Background}" />
++                        <Border x:Name="Focus" CornerRadius="4" BorderThickness="2" Visibility="Collapsed"
++                                BorderBrush="{DynamicResource KeyboardFocusBorderColorBrush}" IsHitTestVisible="False" />
++                        <ContentPresenter Margin="{TemplateBinding Padding}"
++                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
++                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
++                                          TextElement.Foreground="{TemplateBinding Foreground}" RecognizesAccessKey="True" />
++                    </Grid>
++                    <ControlTemplate.Triggers>
++                        <Trigger Property="IsPressed" Value="True">
++                            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
++                        </Trigger>
++                        <Trigger Property="IsKeyboardFocused" Value="True">
++                            <Setter TargetName="Focus" Property="Visibility" Value="Visible" />
++                        </Trigger>
++                        <Trigger Property="IsEnabled" Value="False">
++                            <Setter Property="Opacity" Value="0.55" />
++                        </Trigger>
++                    </ControlTemplate.Triggers>
++                </ControlTemplate>
++            </Setter.Value>
++        </Setter>
++    </Style>
++
+     <!-- Text link button -->
+     <Style x:Key="LinkButton" TargetType="Button" BasedOn="{StaticResource SubtleButton}">
+         <Setter Property="Foreground" Value="{DynamicResource AccentTextFillColorPrimaryBrush}" />
 diff --git a/windows/tests/AgentSpeed.Core.Tests/OpenCodeGoQuotaProviderTests.cs b/windows/tests/AgentSpeed.Core.Tests/OpenCodeGoQuotaProviderTests.cs
 new file mode 100644
 index 00000000..8d4c6f97
@@ -3622,7 +3782,7 @@ index be4d0544..f69e05f0 100644
          }
      }
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
-index 29890dea..463f237d 100644
+index a67942a2..ace1dc11 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 @@ -36,7 +36,7 @@ public sealed class QuotaSurfaceTests
@@ -3707,7 +3867,7 @@ index 29890dea..463f237d 100644
                      now: () => now);
                  settings.Changed += (_, _) => surface.ApplySettings();
                  UIElement? summary = null;
-@@ -441,6 +442,108 @@ public sealed class QuotaSurfaceTests
+@@ -444,6 +445,108 @@ public sealed class QuotaSurfaceTests
          });
      }
  
@@ -3796,7 +3956,7 @@ index 29890dea..463f237d 100644
 +                    Assert.Contains(Descendants(page).OfType<TextBlock>(), text => text.Text == handler.Plan);
 +                    Assert.NotNull(summary);
 +                    Assert.Same(dispatcher, summary.Dispatcher);
-+                    Assert.Contains(Descendants(summary).OfType<TextBlock>(), text => text.Text == loc["win.quota.plan"] + ": " + handler.Plan);
++                    Assert.Contains(Descendants(summary).OfType<TextBlock>(), text => text.Text == handler.Plan);
 +                    // The flyout displays remaining allowance: 95% used leaves 5%.
 +                    Assert.Equal(.05, Assert.Single(Descendants(summary).OfType<ProgressBar>()).Value, 12);
 +                    Assert.True(updates > previousUpdates);
@@ -3816,7 +3976,7 @@ index 29890dea..463f237d 100644
      private static void RunSta(Action action)
      {
          Exception? failure = null;
-@@ -484,12 +587,14 @@ public sealed class QuotaSurfaceTests
+@@ -487,12 +590,14 @@ public sealed class QuotaSurfaceTests
          public string Plan = "plus";
          public int UsedPercent = 13;
          public TaskCompletionSource? Block;

@@ -1,4 +1,4 @@
-From d1072d8e8cf5d8dca82ced1d2458ad46e0ac8d86 Mon Sep 17 00:00:00 2001
+From cc148e6d3e87bbb965199a23c07b32d44c0a5644 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:08 +0800
 Subject: [PATCH 20/25] Add macOS Codex quota monitoring
@@ -11,23 +11,23 @@ Subject: [PATCH 20/25] Add macOS Codex quota monitoring
  .../AgentSpeed/App/LaunchOptions.swift        |   6 +
  .../AgentSpeed/App/QuotaController.swift      | 253 ++++++
  .../AgentSpeed/App/QuotaGlyphOutline.swift    | 102 +++
- macos/Sources/AgentSpeed/App/QuotaNotch.swift | 667 ++++++++++++++
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift | 676 ++++++++++++++
  .../App/QuotaNotchContentLayout.swift         |  45 +
  .../AgentSpeed/App/QuotaNotchShape.swift      | 832 ++++++++++++++++++
  .../App/QuotaNotchVisualHarness.swift         | 163 ++++
  .../App/QuotaRefreshScheduler.swift           |  94 ++
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
- .../AgentSpeed/Dashboard/DashboardView.swift  |  65 ++
+ .../AgentSpeed/Dashboard/DashboardView.swift  |  69 ++
  .../AgentSpeed/Localization/StringTable.swift |  91 ++
- .../SettingsWindow/Panes/QuotaPane.swift      | 294 +++++++
+ .../SettingsWindow/Panes/QuotaPane.swift      | 308 +++++++
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
  .../AgentSpeed/Support/MenuFactory.swift      |   1 +
  .../AgentSpeedCore/CodexQuotaProvider.swift   | 360 ++++++++
  macos/Sources/AgentSpeedCore/Quota.swift      | 138 +++
  .../AgentSpeedCore/QuotaPersistence.swift     |  82 ++
  .../QuotaControllerTests.swift                | 608 +++++++++++++
- .../AgentSpeedAppTests/QuotaNotchTests.swift  | 259 ++++++
- .../QuotaPresentationTests.swift              | 160 ++++
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  | 262 ++++++
+ .../QuotaPresentationTests.swift              | 170 ++++
  .../QuotaWarmStartupTests.swift               |  93 ++
  .../CodexQuotaProviderTests.swift             | 236 +++++
  .../QuotaColdStartTests.swift                 | 202 +++++
@@ -37,7 +37,7 @@ Subject: [PATCH 20/25] Add macOS Codex quota monitoring
  spec/QUOTA.md                                 | 133 +++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 33 files changed, 5256 insertions(+), 2 deletions(-)
+ 33 files changed, 5296 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -184,7 +184,7 @@ index b6b512f8..80e44162 100644
          orbs?.shutdown()
          model?.shutdown()
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index 0df8e8ba..d0d676b8 100644
+index 81d54fbd..15cd2937 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -65,6 +65,7 @@ final class AppModel {
@@ -203,7 +203,7 @@ index 0df8e8ba..d0d676b8 100644
          titles = TitleThemesController(defaults: settings.storage)
          accessibility = AccessibilityState()
          launchAtLogin = LaunchAtLogin()
-@@ -325,6 +327,7 @@ final class AppModel {
+@@ -332,6 +334,7 @@ final class AppModel {
              let network = self.settings.networkEnabled
              self.prices.update(networkEnabled: network, autoSync: self.settings.syncPrices)
              self.rates.update(networkEnabled: network, currency: self.settings.currency)
@@ -211,7 +211,7 @@ index 0df8e8ba..d0d676b8 100644
              self.updates.networkEnabled = network
          })
          prices.start()
-@@ -434,7 +437,7 @@ enum DemoDriverRatio {
+@@ -441,7 +444,7 @@ enum DemoDriverRatio {
  
  /// Settings window panes (DESIGN section 5).
  enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
@@ -220,7 +220,7 @@ index 0df8e8ba..d0d676b8 100644
  
      var id: String { rawValue }
  
-@@ -446,6 +449,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
+@@ -453,6 +456,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
          case .effects: "settings.effects"
          case .cost: "settings.cost"
          case .traffic: "settings.traffic"
@@ -228,7 +228,7 @@ index 0df8e8ba..d0d676b8 100644
          case .report: "settings.report"
          case .sources: "settings.sources"
          case .about: "settings.about"
-@@ -470,6 +474,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
+@@ -477,6 +481,7 @@ enum SettingsPane: String, CaseIterable, Identifiable, Sendable {
          case .effects: "sparkles"
          case .cost: "banknote"
          case .traffic: "arrow.up.arrow.down"
@@ -629,10 +629,10 @@ index 00000000..b1a81438
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 00000000..075e00a3
+index 00000000..a514fba9
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,667 @@
+@@ -0,0 +1,676 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -905,13 +905,16 @@ index 00000000..075e00a3
 +                                if let reset = window.resetAt { Text(reading.resetText(reset, now: now)).font(.system(size: 11)).foregroundStyle(.secondary) }
 +                            }
 +                        }.font(.system(size: 12))
-+                        if let remaining = window.remainingFraction {
++                        switch quotaUsageIndicatorState(window) {
++                        case .known(let remaining):
 +                            GeometryReader { proxy in
 +                                ZStack(alignment: .leading) {
 +                                    Capsule().fill(Color.secondary.opacity(0.25))
-+                                    Capsule().fill(NotchLayout.periodColor(window)).frame(width: proxy.size.width * min(max(remaining, 0), 1))
++                                    Capsule().fill(NotchLayout.periodColor(window)).frame(width: proxy.size.width * remaining)
 +                                }
 +                            }.frame(height: 4)
++                        case .indeterminate:
++                            ProgressView().progressViewStyle(.linear).tint(NotchLayout.periodColor(window))
 +                        }
 +                        Text(window.usedFraction.map { used in
 +                            reading.l10n("mac.quota.notchLeftUsed", quotaNumber((1 - used) * 100, reading.l10n), quotaNumber(used * 100, reading.l10n))
@@ -1062,6 +1065,7 @@ index 00000000..075e00a3
 +        readings = state.4.map { provider in
 +            QuotaNotchReading(providerID: provider.id, snapshot: state.3.first { $0.id == provider.id }, networkEnabled: state.6, l10n: model.l10n)
 +        }
++        if !state.6 { clock?.cancel(); clock = nil }
 +        let cells = readings.map(\.cellMetrics)
 +        verticalLayout = QuotaNotchContentLayout(cells: cells, horizontal: false)
 +        horizontalLayout = QuotaNotchContentLayout(cells: cells, horizontal: true)
@@ -1125,7 +1129,7 @@ index 00000000..075e00a3
 +        let reading = readings[index]
 +        let content = QuotaNotchTooltipContent(reading: reading, now: displayNow)
 +            .environment(\.colorScheme, dark ? .dark : .light)
-+        if cardSource != source || cardObserved != reading.snapshot?.observedAt {
++        if cardSource != source || cardObserved != reading.snapshot?.observedAt || clock == nil {
 +            cardSource = source; cardObserved = reading.snapshot?.observedAt
 +            cardMeasureDirty = true; scheduleClock(observedAt: cardObserved)
 +        }
@@ -1179,15 +1183,20 @@ index 00000000..075e00a3
 +            path.fill(dark ? Color(white: 10 / 255) : .white)
 +            content.position(x: body.midX, y: body.midY)
 +        }.frame(width: size.width, height: size.height).allowsHitTesting(false))
-+        if !card.isVisible { card.orderFrontRegardless(); scheduleClock(observedAt: reading.snapshot?.observedAt) }
++        if !card.isVisible { card.orderFrontRegardless() }
 +    }
 +
 +    private func scheduleClock(observedAt: Date?) {
-+        clock?.cancel()
++        clock?.cancel(); clock = nil
++        guard !stopped, visible, model.quota.networkEnabled else { return }
 +        clock = Task { @MainActor [weak self] in
 +            while !Task.isCancelled {
 +                try? await Task.sleep(for: .seconds(QuotaDisplayClock.delay(observedAt: observedAt, now: Date())))
-+                guard !Task.isCancelled, let self, self.card.isVisible, self.visible else { return }
++                guard !Task.isCancelled, let self else { return }
++                guard self.card.isVisible, self.visible, self.model.quota.networkEnabled else {
++                    self.clock = nil
++                    return
++                }
 +                self.displayNow = Date(); self.cardMeasureDirty = true; self.render()
 +            }
 +        }
@@ -2484,10 +2493,10 @@ index 00000000..c1200063
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-index dacd9698..56217ade 100644
+index dacd9698..41d38d53 100644
 --- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
 +++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-@@ -145,8 +145,73 @@ private struct DashboardDetails: View {
+@@ -145,8 +145,77 @@ private struct DashboardDetails: View {
                      .padding(.top, DashboardLayout.sectionSpacing)
                      .transition(.opacity)
              }
@@ -2528,8 +2537,11 @@ index dacd9698..56217ade 100644
 +                                    Text(window.remainingFraction.map { model.l10n("mac.quota.remaining", quotaPercent($0, locale: model.l10n.locale)) }
 +                                         ?? model.l10n("mac.quota.unknown")).monospacedDigit()
 +                                }
-+                                if let remaining = window.remainingFraction {
-+                                    ProgressView(value: max(0, min(1, remaining))).tint(NotchLayout.periodColor(window))
++                                switch quotaUsageIndicatorState(window) {
++                                case .known(let remaining):
++                                    ProgressView(value: remaining).tint(NotchLayout.periodColor(window))
++                                case .indeterminate:
++                                    ProgressView().progressViewStyle(.linear).tint(NotchLayout.periodColor(window))
 +                                }
 +                                if let reset = window.resetAt {
 +                                    Text(quotaResetTime(reset, model.l10n, now: clock.now))
@@ -2552,17 +2564,18 @@ index dacd9698..56217ade 100644
 +            .buttonStyle(.plain)
 +            .onAppear { updateClock() }
 +            .onChange(of: accounts) { updateClock() }
++            .onChange(of: model.quota.networkEnabled) { updateClock() }
 +            .onChange(of: model.isDashboardShown) { updateClock() }
 +            .onDisappear { clock.stop() }
 +        }
 +    }
 +
 +    private func updateClock() {
-+        clock.start(observationDates: accounts.compactMap(\.observedAt), enabled: model.isDashboardShown && !accounts.isEmpty)
++        clock.start(observationDates: accounts.compactMap(\.observedAt), enabled: model.isDashboardShown && model.quota.networkEnabled && !accounts.isEmpty)
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index e98b7266..0b9e132d 100644
+index 1e8dea26..670a6d70 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
 @@ -17,6 +17,7 @@ enum StringTable {
@@ -2672,10 +2685,10 @@ index e98b7266..0b9e132d 100644
          "mac.settings.about.license": Entry("以 MIT 授權開放原始碼", "以 MIT 许可证开源", "Open source under the MIT License", "MIT ライセンスのオープンソース"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 new file mode 100644
-index 00000000..36ca0e78
+index 00000000..ee2722a4
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,308 @@
 +import Observation
 +import AgentSpeedCore
 +import SwiftUI
@@ -2742,12 +2755,13 @@ index 00000000..36ca0e78
 +        .background(OrbPaneActivityReader(activity: $activity))
 +        .onAppear { updateClock() }
 +        .onChange(of: quota.snapshots) { updateClock() }
++        .onChange(of: quota.networkEnabled) { updateClock() }
 +        .onChange(of: activity) { updateClock() }
 +        .onDisappear { clock.stop() }
 +    }
 +
 +    private func updateClock() {
-+        clock.start(observedAt: nil, enabled: activity.visible && model.quota.snapshots.contains {
++        clock.start(observedAt: nil, enabled: activity.visible && model.quota.networkEnabled && model.quota.snapshots.contains {
 +            $0.windows.contains { $0.resetAt != nil } || $0.credits?.resetAt != nil
 +        })
 +    }
@@ -2796,8 +2810,11 @@ index 00000000..36ca0e78
 +                                .fontWeight(.semibold).monospacedDigit()
 +                                .foregroundStyle((window.usedFraction ?? 0) >= 0.9 ? Color.orange : Color.primary)
 +                        }
-+                        if let remaining = window.remainingFraction {
-+                            ProgressView(value: min(max(remaining, 0), 1)).tint(NotchLayout.periodColor(window))
++                        switch quotaUsageIndicatorState(window) {
++                        case .known(let remaining):
++                            ProgressView(value: remaining).tint(NotchLayout.periodColor(window))
++                        case .indeterminate:
++                            ProgressView().progressViewStyle(.linear).tint(NotchLayout.periodColor(window))
 +                        }
 +                        if let reset = window.resetAt { Text(quotaResetTime(reset, l10n, now: now)).font(.caption).foregroundStyle(.secondary) }
 +                    }.padding(.top, 6)
@@ -2838,6 +2855,16 @@ index 00000000..36ca0e78
 +func quotaHasData(_ account: QuotaSnapshot) -> Bool {
 +    account.observedAt != nil || !account.windows.isEmpty || account.resetCreditsAvailable != nil || account.resetCreditsNextExpiry != nil ||
 +        account.credits.map { $0.unlimited != nil || $0.hasCredits != nil || $0.balance != nil || $0.limit != nil || $0.used != nil || $0.usedFraction != nil || $0.resetAt != nil } == true
++}
++
++enum QuotaUsageIndicatorState: Equatable {
++    case known(Double)
++    case indeterminate
++}
++
++func quotaUsageIndicatorState(_ window: QuotaWindow) -> QuotaUsageIndicatorState {
++    guard let remaining = window.remainingFraction else { return .indeterminate }
++    return .known(min(max(remaining, 0), 1))
 +}
 +
 +@MainActor func quotaNumber(_ number: Double, _ l10n: Localizer) -> String { number.formatted(.number.locale(l10n.locale)) }
@@ -4216,10 +4243,10 @@ index 00000000..ce6e754c
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 00000000..005e82d6
+index 00000000..9f3dd42e
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,262 @@
 +import CoreGraphics
 +import Foundation
 +import Testing
@@ -4290,12 +4317,15 @@ index 00000000..005e82d6
 +        #expect(reading(snapshot(status: .needsAuth)).readings.allSatisfy { $0.contains("Unknown") })
 +    }
 +
-+    @Test func failedOrOfflineReadingsDoNotBecomeUpdatedAges() {
++    @Test func failedOrOfflineReadingsRetainCachedWindowsWithoutUpdatedAges() {
 +        for status in [QuotaStatus.stale, .error, .needsAuth, .accessDenied, .unsupported] {
 +            let value = reading(snapshot(status: status))
 +            #expect(value.status(at: now) == quotaStatus(value.snapshot!, value.l10n))
 +            #expect(reading(snapshot(status: status), enabled: false).status(at: now) == value.l10n("mac.quota.offline"))
 +        }
++        let offline = reading(snapshot(), enabled: false)
++        #expect(offline.windows == snapshot().windows)
++        #expect(offline.readings.count == 3)
 +        #expect(reading(snapshot()).status(at: now) == "Updated 5m ago")
 +        #expect(!reading(snapshot()).stale(at: now))
 +        #expect(reading(snapshot()).stale(at: now.addingTimeInterval(601)))
@@ -4481,10 +4511,10 @@ index 00000000..005e82d6
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 new file mode 100644
-index 00000000..53f7bafc
+index 00000000..502f7b32
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,170 @@
 +import Foundation
 +import Testing
 +@testable import AgentSpeed
@@ -4566,6 +4596,13 @@ index 00000000..53f7bafc
 +        #expect(quotaPercent(0.6267, locale: english.locale) == "62.67%")
 +    }
 +
++    @Test func usageIndicatorKeepsKnownFractionsAndMarksUnknownIndeterminate() {
++        #expect(quotaUsageIndicatorState(window(0.25)) == .known(0.75))
++        #expect(quotaUsageIndicatorState(window(1.25)) == .known(0))
++        #expect(quotaUsageIndicatorState(window(nil)) == .indeterminate)
++        #expect(quotaUsageIndicatorState(window(.nan)) == .indeterminate)
++    }
++
 +    @Test func floatingVisibilitySurvivesControllerRecreation() throws {
 +        let suite = "QuotaPresentationTests.visibility.\(UUID().uuidString)"
 +        let defaults = try #require(UserDefaults(suiteName: suite))
@@ -4590,7 +4627,7 @@ index 00000000..53f7bafc
 +        #expect(quotaResetTime(at, l10n, now: now.addingTimeInterval(60)).contains(quotaDate(at, locale: l10n.locale)))
 +    }
 +
-+    @Test func displayClockUsesObservationBoundariesAndStopsWhenHidden() {
++    @Test func displayClockUsesObservationBoundariesAndStopsWhenHiddenOrOffline() {
 +        let observed = Date(timeIntervalSince1970: 1_800_000_000)
 +        let now = observed.addingTimeInterval(58.75)
 +        #expect(abs(QuotaDisplayClock.delay(observedAt: observed, now: now) - 1.25) < 0.0001)
@@ -4598,6 +4635,9 @@ index 00000000..53f7bafc
 +        #expect(QuotaDisplayClock.delay(observedAt: observed.addingTimeInterval(100), now: observed) == 60)
 +        #expect(quotaObservationDelay([observed, observed.addingTimeInterval(-1)], now: now) == 0.25)
 +        let clock = QuotaDisplayClock()
++        clock.start(observedAt: observed)
++        #expect(clock.isActive)
++        // Settings and dashboard pass enabled: false synchronously when consent is revoked.
 +        clock.start(observedAt: observed, enabled: false)
 +        #expect(!clock.isActive)
 +        clock.start(observedAt: observed)
