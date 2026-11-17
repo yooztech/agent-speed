@@ -87,25 +87,33 @@ host name alone. macOS uses those composite identities in its flattened SwiftUI
 rows; Windows retains its existing distinct host/source choices. Local Codex and
 remote Codex therefore remain independent, as do alternate SSH connections;
 repeated observations for the same host/source do not create extra choices.
-The orb editor keeps the upstream All Sources and provider-wide source list
-(`orbs.sources.allHosts`) as its primary control. Aggregate status there spans
-every monitored host, so a source detected only on an SSH host is not a local
-detection. A collapsed `orbs.sources.byHost` disclosure adds the downstream
-per-connection refinement under This Mac / SSH host headings; each row carries
-that exact host/source's status. Host rows include current enabled or
-activity-backed connections and saved exclusions, never historical session
-counts alone. Excluding a host row affects only that instance, not monitoring,
-the upstream provider selection, or the independent global dashboard selection.
+The orb editor keeps the upstream All Sources and provider-wide source list as
+the local computer's selection; its status is local detection/disabled state.
+Remote hosts are additional flat rows labelled `orbs.sources.hostedSource`
+(`Host: code · Codex`) with that connection's own status. There is no repeated
+local-host group and no second local list. Remote rows include current
+enabled/activity-backed connections and saved exclusions, never historical
+session counts alone or invented provider rows for an unknown host. Unknown
+remote runtime measurements remain incomplete until the host reports or every
+possible provider is excluded. Toggling one affects only that host/source
+instance, not monitoring, the local provider selection, or the independent
+global dashboard selection. General's global source list retains local and
+remote composite rows inside the native grouped settings card on both platforms.
 No persisted-selection migration or replacement provider-policy model is
-introduced; board and global-dashboard settings are unchanged.
+introduced; board and global settings remain provider-wide.
 
-The upstream-compatible selector correction stays in 0011. Focused Windows
-Presentation tests pass 94 on Linux (.NET 10), and the Windows application
-cross-builds with zero warnings/errors. The three changed Swift files pass
-syntax parsing with Swift 6.2.4; macOS AppKit/SwiftUI tests and native
-appearance remain unverified. No package, Actions or Release was created.
-All 25 patches replay from the pin; all 3,147 non-build files match the
-checked prepared tree byte-for-byte after folding the correction into 0011.
+The upstream-compatible selector correction stays in 0011; the matching
+source-traffic scope correction stays in 0015. On the final replayed tree,
+focused Linux-hosted checks pass 35 Core and 133 Presentation tests (.NET 10),
+and the Windows application cross-builds with zero warnings/errors. All Swift
+files changed from the upstream pin pass Swift 6.2.4 syntax parsing. Linux
+cannot execute the macOS Core test closure because production files import
+Darwin/CryptoKit; macOS SDK tests, AppKit/SwiftUI behavior and native Settings
+appearance on both platforms remain unverified. No package, Actions or Release
+was created. All 25 patches replay from the pin. Of 3,147 shared non-build
+files, only eight pre-existing quota/subscription files differ from the earlier
+checked tree because the maintenance branch advanced separately; every file
+changed by this source-selection task matches the replay byte-for-byte.
 
 The observed-source and provider-wide availability corrections belong to 0011;
 0014 is regenerated only to retain the new detection metadata in its existing model integration.

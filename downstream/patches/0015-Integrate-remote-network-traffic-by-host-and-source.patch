@@ -1,4 +1,4 @@
-From 0fc255dcaa013e12d20d760255100638e5079de0 Mon Sep 17 00:00:00 2001
+From 2ae3aa7240d4940300e8519cc1f95b3e8e6a9fbe Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 15/25] Integrate remote network traffic by host and source
@@ -38,7 +38,7 @@ Subject: [PATCH 15/25] Integrate remote network traffic by host and source
  .../History/HistoryCsv.cs                     |  22 +++
  .../History/HistoryTraffic.cs                 |  27 ++-
  .../Orb/OrbDashboardContext.cs                |   5 +-
- .../Settings/Orbs/OrbTraffic.cs               |  28 ++++
+ .../Settings/Orbs/OrbTraffic.cs               |  33 ++++
  windows/src/AgentSpeed/App/AppController.cs   |  11 +-
  .../Dashboard/DashboardViewModel.Traffic.cs   |  11 +-
  .../Dashboard/DashboardWindow.xaml.cs         |   4 +-
@@ -51,18 +51,18 @@ Subject: [PATCH 15/25] Integrate remote network traffic by host and source
  .../HistoryTrafficTests.cs                    |  33 ++++
  .../OrbDashboardContextTests.cs               |   4 +
  .../RemoteHistoryCsvTests.cs                  |  37 +++++
- .../TrafficSurfaceTests.cs                    |  54 ++++++
- 48 files changed, 1067 insertions(+), 98 deletions(-)
+ .../TrafficSurfaceTests.cs                    |  82 ++++++++++
+ 48 files changed, 1100 insertions(+), 98 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/Orbs/OrbSourceTraffic.swift
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteTraffic.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
  create mode 100644 windows/src/AgentSpeed.Core/RemoteTraffic.cs
 
 diff --git a/README.md b/README.md
-index c16c9bbf..8e4f0063 100644
+index 44ba489c..ac47c2c3 100644
 --- a/README.md
 +++ b/README.md
-@@ -159,6 +159,8 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
+@@ -161,6 +161,8 @@ the first-token wait. It cannot reveal router retries or account cooldowns absen
  Remote sources and agents appear alongside local sources in the native dashboard and history when available. Remote
  data does not include categorized today's token totals, project paths or a continuous live chart; unavailable
  values, including missing price data, remain unknown. Network traffic is reported when the collector can observe it.
@@ -348,7 +348,7 @@ index 739be582..b6b512f8 100644
          model?.orbs.masterVisible = visible
      }
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index 871c2c9d..0df8e8ba 100644
+index 3ea19c82..81d54fbd 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -13,6 +13,7 @@ protocol AppCommands: AnyObject {
@@ -361,7 +361,7 @@ index 871c2c9d..0df8e8ba 100644
      func resetOrbPosition(_ id: String)
 diff --git a/macos/Sources/AgentSpeed/App/Orbs/OrbSourceTraffic.swift b/macos/Sources/AgentSpeed/App/Orbs/OrbSourceTraffic.swift
 new file mode 100644
-index 00000000..c35c2168
+index 00000000..41b5aea2
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/Orbs/OrbSourceTraffic.swift
 @@ -0,0 +1,31 @@
@@ -379,7 +379,7 @@ index 00000000..c35c2168
 +        let selected = OrbSubset.instances(orbSnapshot, sources: sources, excluded: excluded)
 +        let includeTools = settings.trafficIncludeTools
 +        var total = TrafficRate.zero
-+        for instance in selected where instance.status.enabled {
++        for instance in selected where !OrbSubset.isUnavailable(instance.status) {
 +            let rate: TrafficRate?
 +            if let hostID = instance.hostID {
 +                guard let state = remoteHosts.states[hostID], state.online,
@@ -397,7 +397,7 @@ index 00000000..c35c2168
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift b/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
-index 314d935e..a7bd9238 100644
+index a9d1d135..2466eb8e 100644
 --- a/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
 +++ b/macos/Sources/AgentSpeed/App/Orbs/OrbsController.swift
 @@ -113,7 +113,11 @@ final class OrbsController {
@@ -445,7 +445,7 @@ index 000a5b08..1484778c 100644
              online = true
              error = nil
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
-index 29426e0c..ff6c41b0 100644
+index bc199511..7ef4353c 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 @@ -9,7 +9,7 @@ struct RemoteCapabilities {
@@ -457,7 +457,7 @@ index 29426e0c..ff6c41b0 100644
      let todayBreakdown = false
      let chart = false
      let agentProject = false
-@@ -251,6 +251,7 @@ extension RemoteHostState {
+@@ -253,6 +253,7 @@ extension RemoteHostState {
              result.peak = snapshot.peakToday != nil
              result.cost = snapshot.todayCostMicroUsd != nil && snapshot.todayUnpricedRequests != nil
              result.todayStart = snapshot.todayStartMs != nil
@@ -856,10 +856,10 @@ index f2ee5a2c..2011ca72 100644
                  HStack(spacing: Spacing.s) {
                      if model.remoteHistoryStale { Text(model.l10n("history.remoteStale")) }
 diff --git a/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
-index 33ba70e1..b5c96f87 100644
+index 4833e1bb..4f90d75b 100644
 --- a/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/OrbDashboardContextTests.swift
-@@ -80,6 +80,10 @@ struct OrbDashboardContextTests {
+@@ -81,6 +81,10 @@ struct OrbDashboardContextTests {
          #expect(TodayCostSummary(model: model, snapshot: changed).total.costMicroUsd == 27)
          #expect(changed.history.first?.measured.output == 27)
          #expect(!changed.peakTodayAvailable && changed.averageToday == nil)
@@ -867,7 +867,7 @@ index 33ba70e1..b5c96f87 100644
 +            hosts: hosts.hosts, states: hosts.states, enabled: SourceSet(rawValue: 0), includeTools: true)
 +        #expect(Set(rows.compactMap(\.hostID)) == Set([b.id, other.id]))
 +        #expect(model.orbSourceTraffic(try #require(model.orbs.orb("first")))?.rx == 27)
-         #expect(second.snapshot.live.output == 5)
+         #expect(second.snapshot.live.output == 12)
          #expect(global.snapshot == globalSnapshot)
          #expect(model.snapshot == globalSnapshot)
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
@@ -1239,10 +1239,10 @@ index 00000000..1d92d44b
 +    }
 +}
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
-index 09b805ce..ff3b346f 100644
+index 06f565f1..d06cedf2 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
 +++ b/windows/src/AgentSpeed.Core/SpeedHub.cs
-@@ -74,6 +74,7 @@ public sealed class SpeedHub
+@@ -80,6 +80,7 @@ public sealed class SpeedHub
              {
                  if (!online)
                  {
@@ -1250,7 +1250,7 @@ index 09b805ce..ff3b346f 100644
                      host.Online = false;
                      host.HistoryCurrent = false;
                  }
-@@ -205,8 +206,12 @@ public sealed class SpeedHub
+@@ -211,8 +212,12 @@ public sealed class SpeedHub
          foreach (var host in _remote.Values.Where(h => h.Enabled).OrderByDescending(h => h.Online))
          {
              var status = host.Status();
@@ -1465,7 +1465,7 @@ index 15a252be..3828d018 100644
      }
  }
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs
-index 5f811c2d..f3cb7d1a 100644
+index 5f811c2d..caa7340a 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/Orbs/OrbTraffic.cs
 @@ -1,3 +1,6 @@
@@ -1475,28 +1475,33 @@ index 5f811c2d..f3cb7d1a 100644
  namespace AgentSpeed.Presentation.Settings.Orbs;
  
  /// <summary>
-@@ -25,6 +28,31 @@ public static class OrbTraffics
+@@ -25,6 +28,36 @@ public static class OrbTraffics
      /// <summary>Network traffic, which needs measuring (and, for sources, per-process data); intelligence needs neither.</summary>
      public static bool IsNetwork(OrbTraffic traffic) => traffic is OrbTraffic.Sources or OrbTraffic.Machine;
  
-+    /// <summary>Rates from the host/source instances selected for an orb.</summary>
++    /// <summary>Rates from the host/source instances selected for an orb: its provider list selects this computer
++    /// only, so a remote connection counts unless excluded by host and source.</summary>
 +    public static TrafficRate? SourceRate(TrafficSnapshot snapshot, OrbDefinition definition, bool includeTools)
 +    {
++        var selected = definition.TrackedSources;
++        var excluded = definition.ExcludedSources;
++        bool Tracks(Guid? hostId, SourceKind kind) =>
++            (hostId is not null || selected is not { } kinds || kinds.Contains(kind))
++            && (excluded.IsDefaultOrEmpty || !excluded.Contains(new OrbSourceInstance(hostId, kind)));
 +        if (snapshot.Hosts.Count <= 1)
 +        {
-+            if (definition.ExcludedSources.IsDefaultOrEmpty) return snapshot.Live(definition.TrackedSources, includeTools);
 +            var local = snapshot.Hosts.Count == 0 ? snapshot : snapshot.Hosts[0].Snapshot;
-+            var sources = local.Sources.Where(pair => !definition.ExcludedSources.Contains(new OrbSourceInstance(null, pair.Key)))
++            var hostId = snapshot.Hosts.Count == 0 ? (Guid?)null : snapshot.Hosts[0].HostId;
++            var sources = local.Sources.Where(pair => Tracks(hostId, pair.Key))
 +                .ToDictionary(pair => pair.Key, pair => pair.Value);
-+            return (local with { Sources = sources }).Live(definition.TrackedSources, includeTools);
++            return (local with { Sources = sources }).Live(null, includeTools);
 +        }
 +        TrafficRate? total = null;
-+        var seen = new HashSet<(string, AgentSpeed.Core.SourceKind)>();
++        var seen = new HashSet<(string, SourceKind)>();
 +        foreach (var host in snapshot.Hosts)
 +        foreach (var (kind, source) in host.Snapshot.Sources)
 +        {
-+            if (definition.TrackedSources is { } selected && !selected.Contains(kind)) continue;
-+            if (definition.ExcludedSources.Contains(new OrbSourceInstance(host.HostId, kind))) continue;
++            if (!Tracks(host.HostId, kind)) continue;
 +            if (host.HostId is not null && !seen.Add((host.MachineId, kind))) continue;
 +            if (!host.Snapshot.ProcessState.IsAvailable || source.Live(includeTools) is not { } rate) return null;
 +            total = (total ?? TrafficRate.Zero) + rate;
@@ -1968,7 +1973,7 @@ index d5135123..57447251 100644
 +    }
  }
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
-index d9adf923..5cae8b32 100644
+index a64fec2e..c4447988 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbDashboardContextTests.cs
 @@ -75,6 +75,7 @@ public sealed class OrbDashboardContextTests
@@ -2045,10 +2050,10 @@ index 6eeba75e..c98a9085 100644
      public void ModeCsvAddsHostIdentityWithoutChangingModeColumns()
      {
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs
-index 5286eee1..fa753050 100644
+index 5286eee1..f72051fc 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/TrafficSurfaceTests.cs
-@@ -30,6 +30,60 @@ public class TrafficSurfaceTests
+@@ -30,6 +30,88 @@ public class TrafficSurfaceTests
          },
      };
  
@@ -2090,6 +2095,34 @@ index 5286eee1..fa753050 100644
 +        Assert.Equal(TrafficRate.Zero, OrbTraffics.SourceRate(combined, definition, true) ?? TrafficRate.Zero);
 +        definition = definition with { ExcludedSources = [] };
 +        Assert.Equal(local.Live(null, true), OrbTraffics.SourceRate(combined, definition, true));
++    }
++
++    [Fact]
++    public void OrbTrafficFollowsRemoteConnectionsInsteadOfTheLocalProviderList()
++    {
++        var id = Guid.NewGuid();
++        var codex = Snapshot();
++        var local = codex with
++        {
++            Sources = new Dictionary<SourceKind, SourceTraffic>(codex.Sources)
++            {
++                [SourceKind.OpenCode] = new(SourceKind.OpenCode, TrafficSplit.Zero, TrafficBytes.Zero,
++                    new TrafficRate(500, 20), new TrafficRate(500, 20)),
++            },
++        };
++        var remote = Snapshot() with
++        {
++            Sources = new Dictionary<SourceKind, SourceTraffic>
++            {
++                [SourceKind.OpenCode] = new(SourceKind.OpenCode, TrafficSplit.Zero, TrafficBytes.Zero,
++                    new TrafficRate(650, 30), new TrafficRate(650, 30)),
++            },
++        };
++        var combined = RemoteTraffic.Combine(local, [new RemoteHostStatus(id, "server", true, null) { MachineId = "server", Traffic = new(remote, []) }]);
++        var definition = new OrbDefinition("orb") { Sources = OrbSources.Of(SourceKind.Codex) };
++        Assert.Equal(new TrafficRate(24_650, 1_230), OrbTraffics.SourceRate(combined, definition, true));
++        definition = definition with { ExcludedSources = [new(id, SourceKind.OpenCode)] };
++        Assert.Equal(new TrafficRate(24_000, 1_200), OrbTraffics.SourceRate(combined, definition, true));
 +    }
 +
 +    [Fact]
