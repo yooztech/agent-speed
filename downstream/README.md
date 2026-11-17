@@ -1284,7 +1284,12 @@ tagged commit must be an ancestor of `downstream/patch-build`. Fork tags use
 prepared release tree and used by all platform builds and packages.
 The workflow publishes Linux, macOS and Windows artifacts together, including
 the x86_64 collector in macOS and Windows packages. Windows offers both a
-portable ZIP and a per-user installer.
+portable ZIP and a per-user installer. The macOS job uses the repository's
+self-hosted Apple Silicon runner selected by
+`[self-hosted, macOS, ARM64]`; that host must keep a current Xcode 26/macOS 26
+SDK, Python 3 and a logged-in GUI session for the AppKit update test. This
+runner executes only trusted tagged Release code, and an unavailable runner
+queues the job rather than falling back to another host.
 The Windows installer smoke test exercises legacy startup migration, upgrades
 with startup enabled and disabled, and explicit installer task overrides.
 Drafts can be retried and published; published releases are left unchanged.
