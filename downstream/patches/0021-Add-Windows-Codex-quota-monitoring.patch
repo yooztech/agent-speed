@@ -1,7 +1,7 @@
-From c75efcf0161a7f1c36cfcaeaccf80dbfa08a2fac Mon Sep 17 00:00:00 2001
+From 98d7b67ec726929d44dc0f4b6a8ea18d22a6d31b Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:09 +0800
-Subject: [PATCH] Add Windows Codex quota monitoring
+Subject: [PATCH 21/25] Add Windows Codex quota monitoring
 
 ---
  spec/QUOTA.md                                 |  32 +-
@@ -14,7 +14,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../Menus/QuickMenuModel.cs                   |  15 +-
  .../Settings/AppSettings.cs                   |  30 +
  .../Settings/QuotaFailureRetry.cs             |  42 +
- .../Settings/QuotaFormat.cs                   | 121 +++
+ .../Settings/QuotaFormat.cs                   | 117 +++
  .../Settings/QuotaNotchGeometry.cs            | 306 +++++++
  .../Settings/QuotaNotchGeometryFilter.cs      | 190 +++++
  .../Settings/QuotaNotchGeometryOrb.cs         | 100 +++
@@ -36,7 +36,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../AgentSpeed/Settings/QuotaNotchWindow.cs   | 776 ++++++++++++++++++
  .../Settings/QuotaRetryScheduler.cs           |  35 +
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  | 315 +++++++
- .../src/AgentSpeed/Settings/QuotaSurface.cs   | 394 +++++++++
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   | 393 +++++++++
  .../AgentSpeed/Settings/SettingsViewModel.cs  |   1 +
  .../AgentSpeed/Settings/SettingsWindow.xaml   |  12 +-
  .../Settings/SettingsWindow.xaml.cs           |  27 +-
@@ -45,7 +45,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../QuotaColdStartTests.cs                    | 211 +++++
  .../OrbMenuModelTests.cs                      |  43 +-
  .../QuotaFailureRetryTests.cs                 | 112 +++
- .../QuotaFormatTests.cs                       | 272 ++++++
+ .../QuotaFormatTests.cs                       | 260 ++++++
  .../QuotaNotchGripMotionTests.cs              | 179 ++++
  .../QuotaNotchLayoutTests.cs                  | 109 +++
  .../Reporting/ReportMenuTests.cs              |  11 +-
@@ -56,7 +56,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  .../QuotaSurfaceRetryTests.cs                 | 151 ++++
  .../QuotaSurfaceTests.cs                      | 501 +++++++++++
  .../QuotaWarmStartupTests.cs                  | 101 +++
- 52 files changed, 7080 insertions(+), 53 deletions(-)
+ 52 files changed, 7063 insertions(+), 53 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
@@ -91,7 +91,7 @@ Subject: [PATCH] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 754485eeeaf5a5d9fc5ff84f5406b5086a18478e..0f68a1ce413fb1e9cd3569800fde384d96271243 100644
+index 8e57de14..73b8bc9e 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,8 @@
@@ -169,7 +169,7 @@ index 754485eeeaf5a5d9fc5ff84f5406b5086a18478e..0f68a1ce413fb1e9cd3569800fde384d
 +
 +Windows startup regressions use the real `QuotaSurface` → `Window.Show` → `SourceInitialized` path with ephemeral settings, networking and automatic polling disabled, and no credentials. They require a visible HWND, nonzero placement, an opaque black collapsed bar in both themes, transparent unused canvas, and a nonempty installed native region that includes only the painted bar on all four edges. Deterministic pointer/card/grace and menu/drag-state regressions exercise real paint and installed input regions with reduced motion, while finite animation runs are advanced to their terminal samples without sleeps. The body-to-grip route is sampled through the production pointer handlers, visible pixels and installed native region, with grace expiration driven between samples to represent arbitrarily slow movement. Both grip and Alt-body presses must acquire real mouse capture, remain pending below threshold, move the anchor above threshold, resample a different edge on release, persist the result and release capture; another physical monitor is used when available. An explicitly expanded injected first-render failure must be hidden and retain a safe stage/type/HResult/inner-exception diagnostic in the native runtime state. These are Windows-only regressions, not claims based on a portable geometry check.
 +
- The existing transient menu-bar popover or tray flyout may show a compact quota summary when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers, but include every available quota window within each displayed provider; open the existing Settings quota page for details.
+ The existing transient menu-bar popover or tray flyout shows a compact summary of every selected account, including healthy ones, and every available quota window within each account. Authentication, block, low-allowance, unknown and offline states stay explicit; there is no account-count cap. With networking disabled, previously hydrated snapshots remain visible with the offline status instead of disappearing. Open the existing Settings quota page for details.
  
  Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
 @@ -105,7 +113,7 @@ swift test --package-path macos --filter QuotaNotchTests
@@ -191,7 +191,7 @@ index 754485eeeaf5a5d9fc5ff84f5406b5086a18478e..0f68a1ce413fb1e9cd3569800fde384d
  Synthetic, credential-free examples: [`fixtures/codex-quota.json`](fixtures/codex-quota.json) shows main windows, an extra, a code-review window with unknown usage, and spend control; [`fixtures/codex-credit-quota.json`](fixtures/codex-credit-quota.json) shows missing rolling windows and a known zero balance. Their timestamps are examples, not current reset predictions. These are illustrative endpoint payloads, not captures of a real account.
  Both endpoint fixtures are raw provider responses, not snapshots; parsing either produces snapshot fidelity `official`.
 diff --git a/windows/src/AgentSpeed.Core/AgentSpeed.Core.csproj b/windows/src/AgentSpeed.Core/AgentSpeed.Core.csproj
-index fe867767b5041c5d8895692c482e70dffbf24db2..7e567f9b3820458d2ba38a6b716a2f3e4fc82da7 100644
+index fe867767..7e567f9b 100644
 --- a/windows/src/AgentSpeed.Core/AgentSpeed.Core.csproj
 +++ b/windows/src/AgentSpeed.Core/AgentSpeed.Core.csproj
 @@ -18,5 +18,6 @@
@@ -203,7 +203,7 @@ index fe867767b5041c5d8895692c482e70dffbf24db2..7e567f9b3820458d2ba38a6b716a2f3e
  </Project>
 diff --git a/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ae4bb284357643c2ed60b8dba0257a65f16c405c
+index 00000000..ae4bb284
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
 @@ -0,0 +1,425 @@
@@ -634,7 +634,7 @@ index 0000000000000000000000000000000000000000..ae4bb284357643c2ed60b8dba0257a65
 +internal partial class QuotaSnapshotJsonContext : JsonSerializerContext;
 diff --git a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..91e5af4c2e2d3d5c82f132e002659f830e3700e9
+index 00000000..91e5af4c
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 @@ -0,0 +1,20 @@
@@ -659,7 +659,7 @@ index 0000000000000000000000000000000000000000..91e5af4c2e2d3d5c82f132e002659f83
 +    ]);
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
-index 9e3d20caa65866926cacb6a648d8a6048d4c87c5..49a7f87a5a8fa6589bacb3aa28b2af8540f8a166 100644
+index 9e3d20ca..49a7f87a 100644
 --- a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
 +++ b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
 @@ -1,5 +1,91 @@
@@ -755,7 +755,7 @@ index 9e3d20caa65866926cacb6a648d8a6048d4c87c5..49a7f87a5a8fa6589bacb3aa28b2af85
      "zh-Hant": "所有主機",
      "zh-Hans": "所有主机",
 diff --git a/windows/src/AgentSpeed.Presentation/Menus/MenuAction.cs b/windows/src/AgentSpeed.Presentation/Menus/MenuAction.cs
-index 02be6e1a5eff19d74dfdd9fa49b5f83cbc8ac2ca..8b0320bf6e4b54e68a678d986c5ca9733665aa0b 100644
+index 02be6e1a..8b0320bf 100644
 --- a/windows/src/AgentSpeed.Presentation/Menus/MenuAction.cs
 +++ b/windows/src/AgentSpeed.Presentation/Menus/MenuAction.cs
 @@ -34,6 +34,9 @@ public abstract record MenuAction
@@ -769,7 +769,7 @@ index 02be6e1a5eff19d74dfdd9fa49b5f83cbc8ac2ca..8b0320bf6e4b54e68a678d986c5ca973
  
      /// <summary>tok/s or the money unit of one orb (DESIGN 9 Orb, Switching 2).</summary>
 diff --git a/windows/src/AgentSpeed.Presentation/Menus/OrbMenuModel.cs b/windows/src/AgentSpeed.Presentation/Menus/OrbMenuModel.cs
-index 2fa9d1006889cf9d9308d0704a43871a583176c5..c09399d8ebfacf867f16c9e5a827094711029d2b 100644
+index 2fa9d100..c09399d8 100644
 --- a/windows/src/AgentSpeed.Presentation/Menus/OrbMenuModel.cs
 +++ b/windows/src/AgentSpeed.Presentation/Menus/OrbMenuModel.cs
 @@ -35,7 +35,7 @@ public static class OrbMenuModel
@@ -782,7 +782,7 @@ index 2fa9d1006889cf9d9308d0704a43871a583176c5..c09399d8ebfacf867f16c9e5a8270947
  
          return new MenuLevel(
 diff --git a/windows/src/AgentSpeed.Presentation/Menus/QuickMenuModel.cs b/windows/src/AgentSpeed.Presentation/Menus/QuickMenuModel.cs
-index a7ad8b4ddc72e4ab33e9485a3470e03b8d9c13d3..9a7e3fde455161500add5b88a6be545a9d78104d 100644
+index a7ad8b4d..9a7e3fde 100644
 --- a/windows/src/AgentSpeed.Presentation/Menus/QuickMenuModel.cs
 +++ b/windows/src/AgentSpeed.Presentation/Menus/QuickMenuModel.cs
 @@ -34,6 +34,7 @@ public static class QuickMenuModel
@@ -822,7 +822,7 @@ index a7ad8b4ddc72e4ab33e9485a3470e03b8d9c13d3..9a7e3fde455161500add5b88a6be545a
      private static MenuRow OrbsMenu(AppSettings settings, IEnumerable<OrbDefinition> orbs, SourceAvailability sources, Localizer localizer,
          bool sourceTraffic) =>
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
-index 491527f379fca71e3ba8a068182ee410dccf5abc..704ba04ac9d99ae54e7d241b8c6377bc120a84d7 100644
+index da22ccfb..4645c0e6 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/AppSettings.cs
 @@ -70,6 +70,7 @@ public sealed record AppSettings
@@ -860,7 +860,7 @@ index 491527f379fca71e3ba8a068182ee410dccf5abc..704ba04ac9d99ae54e7d241b8c6377bc
      /// <summary>Every floating orb and its positions per display arrangement (settings value <c>orbs</c>).</summary>
      public OrbsDocument Orbs { get; init; } = OrbsDocument.ProcessDefault;
  
-@@ -388,6 +402,10 @@ public sealed record AppSettings
+@@ -391,6 +405,10 @@ public sealed record AppSettings
          RedlineTotal = HeatMath.ClampRedlineTotal(RedlineTotal),
          BarMode = Enum.IsDefined(BarMode) ? BarMode : BarDisplayMode.GlyphAndValue,
          TaskbarOffset = TaskbarPosition.Normalize(TaskbarOffset),
@@ -871,7 +871,7 @@ index 491527f379fca71e3ba8a068182ee410dccf5abc..704ba04ac9d99ae54e7d241b8c6377bc
          OrbSize = double.IsFinite(OrbSize) ? Math.Clamp(Math.Round(OrbSize), MinOrbSize, MaxOrbSize) : DefaultOrbSize,
          OrbOpacity = double.IsFinite(OrbOpacity) ? Math.Clamp(OrbOpacity, MinOrbOpacity, MaxOrbOpacity) : MaxOrbOpacity,
          Effects = Enum.IsDefined(Effects) ? Effects : EffectsIntensity.Standard,
-@@ -455,6 +473,18 @@ public sealed record AppSettings
+@@ -459,6 +477,18 @@ public sealed record AppSettings
              : builder.ToImmutable();
      }
  
@@ -892,7 +892,7 @@ index 491527f379fca71e3ba8a068182ee410dccf5abc..704ba04ac9d99ae54e7d241b8c6377bc
          if (string.IsNullOrWhiteSpace(path))
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..323817ba3a9fffbd57452c84881ac36273f92f7b
+index 00000000..323817ba
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
 @@ -0,0 +1,42 @@
@@ -940,10 +940,10 @@ index 0000000000000000000000000000000000000000..323817ba3a9fffbd57452c84881ac362
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b38e173683618666a2b50aaddd78c3cbaab2df2d
+index 00000000..6b78e51a
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,117 @@
 +using AgentSpeed.Core;
 +using AgentSpeed.Presentation.Localization;
 +
@@ -955,10 +955,6 @@ index 0000000000000000000000000000000000000000..b38e173683618666a2b50aaddd78c3cb
 +/// <summary>Consumer-visible subscription quota labels and percentages.</summary>
 +public static class QuotaFormat
 +{
-+    public static bool ShowFlyoutSummary(QuotaSnapshot? snapshot) => snapshot is not null &&
-+        (snapshot.Status == QuotaStatus.NeedsAuth || snapshot.Block is not null ||
-+         snapshot.Windows.Any(window => window.UsedFraction >= .9));
-+
 +    /// <summary>A provider's declared headline, never a different window promoted in its place.</summary>
 +    public static QuotaWindow? Headline(QuotaSnapshot? snapshot) => snapshot?.HeadlineId is { } id
 +        ? snapshot.Windows.FirstOrDefault(window => window.Id == id) : null;
@@ -1067,7 +1063,7 @@ index 0000000000000000000000000000000000000000..b38e173683618666a2b50aaddd78c3cb
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..badc78513fdd64bc8fb83025b9956d0bdf40be83
+index 00000000..badc7851
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometry.cs
 @@ -0,0 +1,306 @@
@@ -1379,7 +1375,7 @@ index 0000000000000000000000000000000000000000..badc78513fdd64bc8fb83025b9956d0b
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryFilter.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryFilter.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3079346a9580f842724f5c924c8b3a2bc3a7aa5f
+index 00000000..3079346a
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryFilter.cs
 @@ -0,0 +1,190 @@
@@ -1575,7 +1571,7 @@ index 0000000000000000000000000000000000000000..3079346a9580f842724f5c924c8b3a2b
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryOrb.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryOrb.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..8525bdb058ee5e3e204ecb432a821959edfb827c
+index 00000000..8525bdb0
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryOrb.cs
 @@ -0,0 +1,100 @@
@@ -1681,7 +1677,7 @@ index 0000000000000000000000000000000000000000..8525bdb058ee5e3e204ecb432a821959
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryRaster.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryRaster.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e23cdd1423d41b0628a62177db44357f03e966cb
+index 00000000..e23cdd14
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGeometryRaster.cs
 @@ -0,0 +1,69 @@
@@ -1756,7 +1752,7 @@ index 0000000000000000000000000000000000000000..e23cdd1423d41b0628a62177db44357f
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGripMotion.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGripMotion.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a96c768aeadc97ae6e1859fa25aaef43ae5b701b
+index 00000000..a96c768a
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchGripMotion.cs
 @@ -0,0 +1,158 @@
@@ -1920,7 +1916,7 @@ index 0000000000000000000000000000000000000000..a96c768aeadc97ae6e1859fa25aaef43
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchLayout.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchLayout.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..2c476469e4d17838f7248baef9585d9c22592978
+index 00000000..2c476469
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaNotchLayout.cs
 @@ -0,0 +1,79 @@
@@ -2004,7 +2000,7 @@ index 0000000000000000000000000000000000000000..2c476469e4d17838f7248baef9585d9c
 +
 +}
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs b/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
-index 760f586092e85f4e5a44928daee8cae701492362..3df5031965837c1d12f83b3ee73fc359f8964e34 100644
+index dd9cc9e2..78574298 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/SettingsSerializer.cs
 @@ -58,6 +58,22 @@ public static class SettingsSerializer
@@ -2030,7 +2026,7 @@ index 760f586092e85f4e5a44928daee8cae701492362..3df5031965837c1d12f83b3ee73fc359
              w.WriteStartObject("orb");
              w.WriteBoolean("show", s.ShowOrb);
              w.WriteNumber("size", s.OrbSize);
-@@ -231,6 +247,8 @@ public static class SettingsSerializer
+@@ -232,6 +248,8 @@ public static class SettingsSerializer
  
          var d = AppSettings.Default;
          var taskbar = Child(root, "taskbar");
@@ -2039,7 +2035,7 @@ index 760f586092e85f4e5a44928daee8cae701492362..3df5031965837c1d12f83b3ee73fc359
          var orb = Child(root, "orb");
          var effects = Child(root, "effects");
          var sources = Child(root, "sources");
-@@ -261,6 +279,14 @@ public static class SettingsSerializer
+@@ -262,6 +280,14 @@ public static class SettingsSerializer
              BarSecondary = ReadBool(taskbar, "secondary", d.BarSecondary),
              BarIntelligence = legacyIntelligence || ReadBool(taskbar, "intelligence", d.BarIntelligence),
              TaskbarOffset = ReadDouble(taskbar, "offset", d.TaskbarOffset),
@@ -2054,7 +2050,7 @@ index 760f586092e85f4e5a44928daee8cae701492362..3df5031965837c1d12f83b3ee73fc359
              ShowOrb = ReadBool(orb, "show", d.ShowOrb),
              ShowOrbs = ReadBool(root, "showOrbs", ReadBool(orb, "show", d.ShowOrb)),
              OrbNames = OrbNamesModes.Parse(ReadString(root, "orbNames")),
-@@ -346,6 +372,18 @@ public static class SettingsSerializer
+@@ -348,6 +374,18 @@ public static class SettingsSerializer
          };
      }
  
@@ -2074,7 +2070,7 @@ index 760f586092e85f4e5a44928daee8cae701492362..3df5031965837c1d12f83b3ee73fc359
      {
          if (!root.TryGetProperty("remoteHosts", out var value) || value.ValueKind != JsonValueKind.Array)
 diff --git a/windows/src/AgentSpeed/AgentSpeed.csproj b/windows/src/AgentSpeed/AgentSpeed.csproj
-index dd4c0c0a62f09f9c60db0388595db3a9aa539670..42ab0768509ec1f8db961a6f2d3f164c2e48f2a5 100644
+index dd4c0c0a..42ab0768 100644
 --- a/windows/src/AgentSpeed/AgentSpeed.csproj
 +++ b/windows/src/AgentSpeed/AgentSpeed.csproj
 @@ -53,6 +53,12 @@
@@ -2091,7 +2087,7 @@ index dd4c0c0a62f09f9c60db0388595db3a9aa539670..42ab0768509ec1f8db961a6f2d3f164c
         with its SHA-256. TrafficHelperDir holds win-x64/ and/or win-arm64/AgentSpeedTrafficHelper.exe; a RID-specific
         build embeds only its own architecture. Without the property or the files the app builds without a helper. -->
 diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
-index e3ad71c4d5e113a9b26c3363a75a808c145cc3d2..a6495cf0f76736417741b7c78eec1ad83e204fe5 100644
+index e7636162..07ca89dc 100644
 --- a/windows/src/AgentSpeed/App/AppController.cs
 +++ b/windows/src/AgentSpeed/App/AppController.cs
 @@ -79,6 +79,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
@@ -2134,7 +2130,7 @@ index e3ad71c4d5e113a9b26c3363a75a808c145cc3d2..a6495cf0f76736417741b7c78eec1ad8
          Try(() => _historyStartFallback?.Stop());
          Try(() => _remoteConnections?.Dispose());
          Try(() => _history?.Dispose());
-@@ -968,6 +977,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -973,6 +982,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
              {
                  if (_dashboard?.IsVisible != true)
                  {
@@ -2142,7 +2138,7 @@ index e3ad71c4d5e113a9b26c3363a75a808c145cc3d2..a6495cf0f76736417741b7c78eec1ad8
                      _dashboardTimer?.Stop();
                      if (_updateDoneShown)
                      {
-@@ -989,6 +999,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -994,6 +1004,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          RefreshReportSurfaces();
          _dashboard.ApplyBackground();
          RefreshDashboard();
@@ -2150,7 +2146,7 @@ index e3ad71c4d5e113a9b26c3363a75a808c145cc3d2..a6495cf0f76736417741b7c78eec1ad8
          _dashboard.ShowNear(anchor, _theme.ReduceMotion);
          OnSpeedChanged();
          RefreshDashboardTraffic();
-@@ -1113,6 +1124,8 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -1118,6 +1129,8 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
  
          _updates.OnSettingsChanged(previous, current);
          _cost.OnSettingsChanged(previous, current);
@@ -2159,7 +2155,7 @@ index e3ad71c4d5e113a9b26c3363a75a808c145cc3d2..a6495cf0f76736417741b7c78eec1ad8
          _traffic.OnSettingsChanged(previous, current);
          if (previous.Traffic.IncludeTools != current.Traffic.IncludeTools || previous.EnabledSourceSet() != current.EnabledSourceSet())
          {
-@@ -1307,6 +1320,8 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -1312,6 +1325,8 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          _dashboard?.ApplyBackground();
          _dashboard?.ReportInvitation.SetAppearance(_theme.IsDark, _theme.HighContrast, _theme.ReduceMotion);
          _history?.OnThemeChanged();
@@ -2168,7 +2164,7 @@ index e3ad71c4d5e113a9b26c3363a75a808c145cc3d2..a6495cf0f76736417741b7c78eec1ad8
          if (_settingsModel is not null)
          {
              _settingsModel.ReduceMotion = _theme.ReduceMotion;
-@@ -1327,6 +1342,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+@@ -1332,6 +1347,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
          }
  
          _settingsModel?.Relocalize(_loc);
@@ -2177,7 +2173,7 @@ index e3ad71c4d5e113a9b26c3363a75a808c145cc3d2..a6495cf0f76736417741b7c78eec1ad8
          RefreshReportSurfaces();
          _orbs?.Relocalize(_loc);
 diff --git a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml
-index 3490bf9d7f6c7bab6136ea67ecbc45b61da13855..eff5c36d6919abe3e2c6f970bce16b1fcf18843b 100644
+index 3490bf9d..eff5c36d 100644
 --- a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml
 +++ b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml
 @@ -617,6 +617,8 @@
@@ -2190,7 +2186,7 @@ index 3490bf9d7f6c7bab6136ea67ecbc45b61da13855..eff5c36d6919abe3e2c6f970bce16b1f
                  <Rectangle Style="{StaticResource Hairline}" Margin="0,14,0,8" />
                  <Button x:Name="UpdatePill" Style="{StaticResource PillButton}" HorizontalAlignment="Left" Margin="0,2,0,8"
 diff --git a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
-index 04dc9ae763c7c85e007929e9b0a73479688ccb6d..66b54f2950c2d0818bf66e4708d62ad5a0cd2300 100644
+index 04dc9ae7..66b54f29 100644
 --- a/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
 +++ b/windows/src/AgentSpeed/Dashboard/DashboardWindow.xaml.cs
 @@ -136,6 +136,8 @@ internal sealed partial class DashboardWindow : Window
@@ -2203,7 +2199,7 @@ index 04dc9ae763c7c85e007929e9b0a73479688ccb6d..66b54f2950c2d0818bf66e4708d62ad5
      public void SetRange(int seconds)
      {
 diff --git a/windows/src/AgentSpeed/Menus/MenuBuilder.cs b/windows/src/AgentSpeed/Menus/MenuBuilder.cs
-index ded598b603cb3915916bf8b332e48f9df1077668..5eb658540b1b5e87eed29c07fffe7c6c3a26357d 100644
+index ded598b6..5eb65854 100644
 --- a/windows/src/AgentSpeed/Menus/MenuBuilder.cs
 +++ b/windows/src/AgentSpeed/Menus/MenuBuilder.cs
 @@ -60,6 +60,9 @@ internal static class MenuBuilder
@@ -2218,7 +2214,7 @@ index ded598b603cb3915916bf8b332e48f9df1077668..5eb658540b1b5e87eed29c07fffe7c6c
                  break;
 diff --git a/windows/src/AgentSpeed/Settings/QuotaCodex.svg b/windows/src/AgentSpeed/Settings/QuotaCodex.svg
 new file mode 100644
-index 0000000000000000000000000000000000000000..3a283b982d4fe50a31d1ac7b9704289e42a08553
+index 00000000..3a283b98
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaCodex.svg
 @@ -0,0 +1 @@
@@ -2226,7 +2222,7 @@ index 0000000000000000000000000000000000000000..3a283b982d4fe50a31d1ac7b9704289e
 \ No newline at end of file
 diff --git a/windows/src/AgentSpeed/Settings/QuotaDisplayClock.cs b/windows/src/AgentSpeed/Settings/QuotaDisplayClock.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..42893372ae1b45794553ed35cd8f9ecd257609ac
+index 00000000..42893372
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaDisplayClock.cs
 @@ -0,0 +1,60 @@
@@ -2292,7 +2288,7 @@ index 0000000000000000000000000000000000000000..42893372ae1b45794553ed35cd8f9ecd
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt b/windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt
 new file mode 100644
-index 0000000000000000000000000000000000000000..90f5dd481e9b9b721a9bc2c155b4cd306be15a94
+index 00000000..90f5dd48
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt
 @@ -0,0 +1,49 @@
@@ -2347,7 +2343,7 @@ index 0000000000000000000000000000000000000000..90f5dd481e9b9b721a9bc2c155b4cd30
 +SOFTWARE.
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchGoo.cs b/windows/src/AgentSpeed/Settings/QuotaNotchGoo.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b1545ba91f8d8cd5f7bec2754a98272e089b6355
+index 00000000..b1545ba9
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchGoo.cs
 @@ -0,0 +1,95 @@
@@ -2448,7 +2444,7 @@ index 0000000000000000000000000000000000000000..b1545ba91f8d8cd5f7bec2754a98272e
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchRegion.cs b/windows/src/AgentSpeed/Settings/QuotaNotchRegion.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..13d3dadf6b30b0731d7aae6421ff44175ec068a7
+index 00000000..13d3dadf
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchRegion.cs
 @@ -0,0 +1,118 @@
@@ -2572,7 +2568,7 @@ index 0000000000000000000000000000000000000000..13d3dadf6b30b0731d7aae6421ff4417
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..54e1c9da9b69940d03201912c3e9f1e29dc053d6
+index 00000000..54e1c9da
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -0,0 +1,477 @@
@@ -3055,7 +3051,7 @@ index 0000000000000000000000000000000000000000..54e1c9da9b69940d03201912c3e9f1e2
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f018456abac56b12a132b917eca29e711250503b
+index 00000000..f018456a
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
 @@ -0,0 +1,776 @@
@@ -3837,7 +3833,7 @@ index 0000000000000000000000000000000000000000..f018456abac56b12a132b917eca29e71
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaRetryScheduler.cs b/windows/src/AgentSpeed/Settings/QuotaRetryScheduler.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..0862c294dafd46c5b1830ab3d23c9b81f1b4cb33
+index 00000000..0862c294
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaRetryScheduler.cs
 @@ -0,0 +1,35 @@
@@ -3878,7 +3874,7 @@ index 0000000000000000000000000000000000000000..0862c294dafd46c5b1830ab3d23c9b81
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..99a3917a3a9f44d91d19c27f5631a03dc588592f
+index 00000000..99a3917a
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 @@ -0,0 +1,315 @@
@@ -4199,10 +4195,10 @@ index 0000000000000000000000000000000000000000..99a3917a3a9f44d91d19c27f5631a03d
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..218f309c23845a452375db316b6b3bab666e2cd0
+index 00000000..fe181a28
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,393 @@
 +using System.Windows;
 +using System.Windows.Controls;
 +using System.Windows.Threading;
@@ -4503,7 +4499,7 @@ index 0000000000000000000000000000000000000000..218f309c23845a452375db316b6b3bab
 +    internal void RefreshFlyoutTimes()
 +    {
 +        _flyoutClock.Stop();
-+        if (!_disposed && _flyoutOpen && _settings.Current.NetworkEnabled)
++        if (!_disposed && _flyoutOpen)
 +            FlyoutChanged?.Invoke(CreateFlyoutSummary(_snapshots));
 +        UpdateFlyoutClock();
 +    }
@@ -4511,12 +4507,12 @@ index 0000000000000000000000000000000000000000..218f309c23845a452375db316b6b3bab
 +    private void UpdateFlyoutClock()
 +    {
 +        _flyoutClock.Stop();
-+        if (_disposed || !_flyoutOpen || !_settings.Current.NetworkEnabled) return;
++        if (_disposed || !_flyoutOpen) return;
 +        TimeSpan? nextTick = null;
 +        var now = _now();
 +        foreach (var snapshot in _snapshots)
 +        {
-+            if (!snapshot.ObservedAt.HasValue || !QuotaFormat.ShowFlyoutSummary(snapshot)) continue;
++            if (!snapshot.ObservedAt.HasValue) continue;
 +            var delay = QuotaFormat.ObservationAgeRefreshDelay(snapshot.ObservedAt, now);
 +            if (nextTick is null || delay < nextTick.Value) nextTick = delay;
 +        }
@@ -4541,16 +4537,15 @@ index 0000000000000000000000000000000000000000..218f309c23845a452375db316b6b3bab
 +
 +    private UIElement? CreateFlyoutSummary(IReadOnlyList<QuotaSnapshot> snapshots)
 +    {
-+        if (!_settings.Current.NetworkEnabled) return null;
 +        StackPanel? summaries = null;
 +        var now = _now();
-+        foreach (var snapshot in snapshots.Where(QuotaFormat.ShowFlyoutSummary).Take(2))
++        foreach (var snapshot in snapshots)
 +        {
 +            summaries ??= new StackPanel();
 +            var headline = QuotaFormat.Headline(snapshot);
 +            var content = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
 +            content.Children.Add(Line(Text("title"), 14));
-+            content.Children.Add(Line(snapshot.DisplayName + " · " + QuotaFormat.Status(_loc, true, snapshot, now), 12));
++            content.Children.Add(Line(snapshot.DisplayName + " · " + QuotaFormat.Status(_loc, _settings.Current.NetworkEnabled, snapshot, now), 12));
 +            if (snapshot is { Status: QuotaStatus.Stale, ObservedAt: { } observedAt })
 +                content.Children.Add(Line(_loc.Format("win.quota.age", Math.Max(0, (int)(now - observedAt).TotalMinutes)), 12));
 +            if (snapshot.Block is not null) content.Children.Add(Line(Text("block") + ": " + snapshot.Block, 12));
@@ -4598,7 +4593,7 @@ index 0000000000000000000000000000000000000000..218f309c23845a452375db316b6b3bab
 +    }
 +}
 diff --git a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
-index d12e66f9ecd0edfb4db610d143d3774a3737678c..cca0e6d0244042cee467a5a67660833f1a30af60 100644
+index 390d1df1..561aeacd 100644
 --- a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
 +++ b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
 @@ -159,6 +159,7 @@ internal sealed class SettingsViewModel : ObservableObject
@@ -4610,7 +4605,7 @@ index d12e66f9ecd0edfb4db610d143d3774a3737678c..cca0e6d0244042cee467a5a67660833f
          Pages.Add(new NavItem("about", "", "settings.about"));
          _selected = Pages[0];
 diff --git a/windows/src/AgentSpeed/Settings/SettingsWindow.xaml b/windows/src/AgentSpeed/Settings/SettingsWindow.xaml
-index 7ccaf855c08f05ecc7ca400732c5f570f128901f..0a4cd50e108db914ce15d3d21d36a18ea812a41f 100644
+index 7ccaf855..0a4cd50e 100644
 --- a/windows/src/AgentSpeed/Settings/SettingsWindow.xaml
 +++ b/windows/src/AgentSpeed/Settings/SettingsWindow.xaml
 @@ -13,12 +13,13 @@
@@ -4651,7 +4646,7 @@ index 7ccaf855c08f05ecc7ca400732c5f570f128901f..0a4cd50e108db914ce15d3d21d36a18e
                      <pages:ReportPage x:Name="ReportPage" DataContext="{Binding Report}" />
                      <pages:SourcesPage x:Name="SourcesPage" />
 diff --git a/windows/src/AgentSpeed/Settings/SettingsWindow.xaml.cs b/windows/src/AgentSpeed/Settings/SettingsWindow.xaml.cs
-index b719fdc3edf4dd5c1458d05d201604874e34d7d9..f98ab2303fda506987f4911c37bc4b30addc15de 100644
+index b719fdc3..f98ab230 100644
 --- a/windows/src/AgentSpeed/Settings/SettingsWindow.xaml.cs
 +++ b/windows/src/AgentSpeed/Settings/SettingsWindow.xaml.cs
 @@ -9,6 +9,7 @@ namespace AgentSpeed.Settings;
@@ -4703,7 +4698,7 @@ index b719fdc3edf4dd5c1458d05d201604874e34d7d9..f98ab2303fda506987f4911c37bc4b30
              var name = ((FrameworkElement)page).Name;
              page.Visibility = string.Equals(name, key + "Page", StringComparison.OrdinalIgnoreCase)
 diff --git a/windows/src/AgentSpeed/Theme/Styles.xaml b/windows/src/AgentSpeed/Theme/Styles.xaml
-index 59a8461b7f6fdd74dcf196403b19e0a8fac70fc9..74b7b7f38b4a41b19c62165d2fbcfe8399eef90b 100644
+index 59a8461b..74b7b7f3 100644
 --- a/windows/src/AgentSpeed/Theme/Styles.xaml
 +++ b/windows/src/AgentSpeed/Theme/Styles.xaml
 @@ -221,7 +221,9 @@
@@ -4719,7 +4714,7 @@ index 59a8461b7f6fdd74dcf196403b19e0a8fac70fc9..74b7b7f38b4a41b19c62165d2fbcfe83
          </Setter>
 diff --git a/windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs b/windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..b217fa338257d31788d6ae6833688afc7c7adbb7
+index 00000000..b217fa33
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/CodexQuotaProviderTests.cs
 @@ -0,0 +1,755 @@
@@ -5480,7 +5475,7 @@ index 0000000000000000000000000000000000000000..b217fa338257d31788d6ae6833688afc
 +}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs b/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..48778a2e56d6247900591ecd2e2fe12ba06bec44
+index 00000000..48778a2e
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
 @@ -0,0 +1,211 @@
@@ -5696,7 +5691,7 @@ index 0000000000000000000000000000000000000000..48778a2e56d6247900591ecd2e2fe12b
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/OrbMenuModelTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/OrbMenuModelTests.cs
-index a287b4835bc7fdf6ee181bd4c581b5f2fc15bfb3..5f7e162df96c195104d2485c8ccbc64b21e37975 100644
+index a287b483..5f7e162d 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/OrbMenuModelTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/OrbMenuModelTests.cs
 @@ -90,7 +90,7 @@ public class OrbMenuModelTests
@@ -5804,7 +5799,7 @@ index a287b4835bc7fdf6ee181bd4c581b5f2fc15bfb3..5f7e162df96c195104d2485c8ccbc64b
      [Fact]
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFailureRetryTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFailureRetryTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..61eccdcca3a08513f53f59bd783ab8259eaf7877
+index 00000000..61eccdcc
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFailureRetryTests.cs
 @@ -0,0 +1,112 @@
@@ -5922,10 +5917,10 @@ index 0000000000000000000000000000000000000000..61eccdcca3a08513f53f59bd783ab825
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..11cc8a2b772e879c449afec901a62fecf5f6d244
+index 00000000..2e71d11d
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,260 @@
 +using AgentSpeed.Core;
 +using AgentSpeed.Presentation.Localization;
 +using AgentSpeed.Presentation.Settings;
@@ -6120,18 +6115,6 @@ index 0000000000000000000000000000000000000000..11cc8a2b772e879c449afec901a62fec
 +        Assert.Equal(Now, hour.ObservedAt);
 +        Assert.Same(snapshot.Windows, hour.Windows);
 +    }
-+
-+    [Fact]
-+    public void FlyoutAppearsOnlyForAttentionStates()
-+    {
-+        Assert.False(QuotaFormat.ShowFlyoutSummary(null));
-+        Assert.False(QuotaFormat.ShowFlyoutSummary(Snapshot(QuotaStatus.Ok, [])));
-+        Assert.False(QuotaFormat.ShowFlyoutSummary(Snapshot(QuotaStatus.Ok, [Window(null)])));
-+        Assert.False(QuotaFormat.ShowFlyoutSummary(Snapshot(QuotaStatus.Ok, [Window(null, .89)])));
-+        Assert.True(QuotaFormat.ShowFlyoutSummary(Snapshot(QuotaStatus.Ok, [Window(null, .9)])));
-+        Assert.True(QuotaFormat.ShowFlyoutSummary(Snapshot(QuotaStatus.NeedsAuth, [])));
-+        Assert.True(QuotaFormat.ShowFlyoutSummary(Snapshot(QuotaStatus.Ok, [], "blocked")));
-+    }
 +    [Theory]
 +    [InlineData(-1, "Pending refresh")]
 +    [InlineData(0, "Pending refresh")]
@@ -6200,7 +6183,7 @@ index 0000000000000000000000000000000000000000..11cc8a2b772e879c449afec901a62fec
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGripMotionTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGripMotionTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..ea6dfa122dc0ad289b7d82905dc83fdf1f58bd96
+index 00000000..ea6dfa12
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchGripMotionTests.cs
 @@ -0,0 +1,179 @@
@@ -6385,7 +6368,7 @@ index 0000000000000000000000000000000000000000..ea6dfa122dc0ad289b7d82905dc83fdf
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..d63f18a5bb21ac1614e3139f0062878ccc542d73
+index 00000000..d63f18a5
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaNotchLayoutTests.cs
 @@ -0,0 +1,109 @@
@@ -6499,7 +6482,7 @@ index 0000000000000000000000000000000000000000..d63f18a5bb21ac1614e3139f0062878c
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportMenuTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportMenuTests.cs
-index aaa5ffb2d5d6e7f80199c061e51dd2112c3266ba..630baf40867b8bdec0b7cf668bc19a84b61382dc 100644
+index aaa5ffb2..630baf40 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportMenuTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportMenuTests.cs
 @@ -29,18 +29,19 @@ public class ReportMenuTests
@@ -6528,7 +6511,7 @@ index aaa5ffb2d5d6e7f80199c061e51dd2112c3266ba..630baf40867b8bdec0b7cf668bc19a84
  
      [Theory]
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
-index 9d8b642420221fd3c19e998cb8dc11b0f7330150..a346f35a60dacf8ae086a478df6161a1a6160263 100644
+index 9d8b6424..a346f35a 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
 @@ -93,6 +93,115 @@ public class SettingsSerializerTests
@@ -6649,7 +6632,7 @@ index 9d8b642420221fd3c19e998cb8dc11b0f7330150..a346f35a60dacf8ae086a478df6161a1
      {
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaDisplayClockTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaDisplayClockTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..dac1a0803df48bb89c2d5f8b9d8afb14889dd588
+index 00000000..dac1a080
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaDisplayClockTests.cs
 @@ -0,0 +1,63 @@
@@ -6718,7 +6701,7 @@ index 0000000000000000000000000000000000000000..dac1a0803df48bb89c2d5f8b9d8afb14
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..80898d31e106dc69a31ea995bdc75daaf28373a3
+index 00000000..80898d31
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 @@ -0,0 +1,47 @@
@@ -6771,7 +6754,7 @@ index 0000000000000000000000000000000000000000..80898d31e106dc69a31ea995bdc75daa
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..681b849fa5012867a492ebea07fe076ced789ca4
+index 00000000..681b849f
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 @@ -0,0 +1,359 @@
@@ -7136,7 +7119,7 @@ index 0000000000000000000000000000000000000000..681b849fa5012867a492ebea07fe076c
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..be4d0544b2f6096ef10ea153d5f323495d03a0b0
+index 00000000..be4d0544
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
 @@ -0,0 +1,151 @@
@@ -7293,7 +7276,7 @@ index 0000000000000000000000000000000000000000..be4d0544b2f6096ef10ea153d5f32349
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..29890dea5f36470a519d50f3871a3d910b0fe9ad
+index 00000000..29890dea
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 @@ -0,0 +1,501 @@
@@ -7800,7 +7783,7 @@ index 0000000000000000000000000000000000000000..29890dea5f36470a519d50f3871a3d91
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..f16807ff676a25127face0139891b7290613266c
+index 00000000..f16807ff
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
 @@ -0,0 +1,101 @@

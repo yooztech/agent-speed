@@ -1,7 +1,7 @@
-From 354252b20aeaae534348defdcda1d30b28744f97 Mon Sep 17 00:00:00 2001
+From 3cc335e64a053371e5cece9ee92bf5822b7a36a0 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:12 +0800
-Subject: [PATCH] Add local and remote Kimi Code quota
+Subject: [PATCH 24/25] Add local and remote Kimi Code quota
 
 Support read-only CLI OAuth and regional subscription API keys, native secure settings, client-managed SSH provisioning, private revision-safe storage and account-isolated quota lifecycle.
 ---
@@ -66,8 +66,9 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../KimiKeySettingsTests.cs                   | 193 +++++++++
  .../QuotaNotchViewTests.cs                    |   1 +
  .../QuotaSettingsPageTests.cs                 |  30 +-
+ .../QuotaSurfaceProviderCollectionTests.cs    |  12 +-
  .../QuotaSurfaceRetryTests.cs                 |  16 +-
- 62 files changed, 4509 insertions(+), 138 deletions(-)
+ 63 files changed, 4517 insertions(+), 142 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/KimiCredentialResponse.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
  create mode 100644 macos/Sources/AgentSpeedCore/KimiAPIKeyStore.swift
@@ -87,7 +88,7 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/KimiKeySettingsTests.cs
 
 diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
-index 29b1caba88b424624ac3718bf9302aef6a0db387..3d84662d767988012ab86fe21eb9ad99c07bc399 100644
+index 29b1caba..3d84662d 100644
 --- a/linux/collector/daemon.cpp
 +++ b/linux/collector/daemon.cpp
 @@ -186,7 +186,7 @@ void command(Client& c, const std::string& line, Publisher& publisher, WidgetPub
@@ -132,7 +133,7 @@ index 29b1caba88b424624ac3718bf9302aef6a0db387..3d84662d767988012ab86fe21eb9ad99
          for (auto it = clients.begin(); it != clients.end();) { if (it->second.dead) { publisher.disconnected(it->second.id); widgets.disconnected(it->second.id); quotas.disconnected(it->second.id); it = clients.erase(it); } else ++it; }
          if (!clients.empty() || publisher.authorized(now) || widgets.authorized(now)) idle = steady;
 diff --git a/linux/collector/quota.LICENSE.txt b/linux/collector/quota.LICENSE.txt
-index 1db9e6d86a905777f8a847977499c6e876f34e66..b6d2c1091cc0ce78d34d31b0ee156e5d57e89001 100644
+index 1db9e6d8..b6d2c109 100644
 --- a/linux/collector/quota.LICENSE.txt
 +++ b/linux/collector/quota.LICENSE.txt
 @@ -1,7 +1,8 @@
@@ -146,7 +147,7 @@ index 1db9e6d86a905777f8a847977499c6e876f34e66..b6d2c1091cc0ce78d34d31b0ee156e5d
  MIT License
  
 diff --git a/linux/collector/quota.cpp b/linux/collector/quota.cpp
-index 40fc425e7d3baea26e2f648513c4e997b2ce9239..0172915d0893b922afbc67594c905ec02e15d7f7 100644
+index 40fc425e..0172915d 100644
 --- a/linux/collector/quota.cpp
 +++ b/linux/collector/quota.cpp
 @@ -37,6 +37,8 @@ using agentspeed::json::Value;
@@ -664,7 +665,7 @@ index 40fc425e7d3baea26e2f648513c4e997b2ce9239..0172915d0893b922afbc67594c905ec0
 +std::vector<std::pair<std::uint64_t, std::string>> Service::replies(std::uint64_t* kimiGeneration) { std::lock_guard<std::mutex> lock(impl_->mutex); if (kimiGeneration) *kimiGeneration = impl_->kimiGeneration; std::vector<std::pair<std::uint64_t, std::string>> result; result.swap(impl_->output); return result; }
  } // namespace collector::quota
 diff --git a/linux/collector/quota.hpp b/linux/collector/quota.hpp
-index 364a0448c7e3b4873025f62feff3abf8b699ccef..65a5af772c22b23b40d0e5462567eca790790078 100644
+index 364a0448..65a5af77 100644
 --- a/linux/collector/quota.hpp
 +++ b/linux/collector/quota.hpp
 @@ -16,12 +16,17 @@ struct Credential {
@@ -713,7 +714,7 @@ index 364a0448c7e3b4873025f62feff3abf8b699ccef..65a5af772c22b23b40d0e5462567eca7
      struct Impl;
      std::unique_ptr<Impl> impl_;
 diff --git a/linux/tests/collector_daemon_test.cpp b/linux/tests/collector_daemon_test.cpp
-index 462b8e27882bc63bf334f4b27d4d51b6d97250f7..30e6313be79825f960bba16b60abb0466ce606c2 100644
+index 462b8e27..30e6313b 100644
 --- a/linux/tests/collector_daemon_test.cpp
 +++ b/linux/tests/collector_daemon_test.cpp
 @@ -13,6 +13,7 @@
@@ -896,7 +897,7 @@ index 462b8e27882bc63bf334f4b27d4d51b6d97250f7..30e6313be79825f960bba16b60abb046
 +
  } // namespace
 diff --git a/linux/tests/quota_test.cpp b/linux/tests/quota_test.cpp
-index b01908719532cc489e56ed6de0f40d420c1e7483..cceaf88adca24795d14ae5571ab8d1d00d4e0868 100644
+index b0190871..cceaf88a 100644
 --- a/linux/tests/quota_test.cpp
 +++ b/linux/tests/quota_test.cpp
 @@ -10,6 +10,7 @@
@@ -1396,7 +1397,7 @@ index b01908719532cc489e56ed6de0f40d420c1e7483..cceaf88adca24795d14ae5571ab8d1d0
 +
  } // namespace
 diff --git a/macos/Resources/Codenotch-LICENSE.txt b/macos/Resources/Codenotch-LICENSE.txt
-index 846b0b88541568ac50b005c31a46ca7b0bcc3f2f..4af0b76c1d90c0742c0bacd75a6b9996d18889f8 100644
+index 846b0b88..4af0b76c 100644
 --- a/macos/Resources/Codenotch-LICENSE.txt
 +++ b/macos/Resources/Codenotch-LICENSE.txt
 @@ -1,6 +1,6 @@
@@ -1408,7 +1409,7 @@ index 846b0b88541568ac50b005c31a46ca7b0bcc3f2f..4af0b76c1d90c0742c0bacd75a6b9996
  https://github.com/vinzdg/codenotch at 835550a342871779135b6484d6899161c5222f7c.
  The following license applies to those portions.
 diff --git a/macos/Resources/strings.macos.json b/macos/Resources/strings.macos.json
-index e4b85a13e09185f61bc9b1ff63aa3d8d8c10884e..9931851d4315d9fc438859d1633804e95a3e05f4 100644
+index e4b85a13..9931851d 100644
 --- a/macos/Resources/strings.macos.json
 +++ b/macos/Resources/strings.macos.json
 @@ -2,6 +2,31 @@
@@ -1444,10 +1445,10 @@ index e4b85a13e09185f61bc9b1ff63aa3d8d8c10884e..9931851d4315d9fc438859d1633804e9
    "mac.quota.empty": {"zh-Hant":"尚無額度資料。","zh-Hans":"尚无额度数据。","en":"No quota data yet.","ja":"使用枠データはまだありません。"},
    "mac.quota.diagnostics": {"zh-Hant":"詳細資料","zh-Hans":"详细信息","en":"Details","ja":"詳細"},
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index fe3f50b8168ce6c4ad53718d2c62723cd5a8a3a8..59492d1088e20b076bdb0de6e4e0b54b2c0cfc99 100644
+index 2367951c..97c77169 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
-@@ -105,7 +105,9 @@ final class AppModel {
+@@ -107,7 +107,9 @@ final class AppModel {
          mainFeed = OrbFeed(gauge: gauge)
          orbs = OrbsController(defaults: settings.storage)
          boards = BoardsController(defaults: settings.storage)
@@ -1460,7 +1461,7 @@ index fe3f50b8168ce6c4ad53718d2c62723cd5a8a3a8..59492d1088e20b076bdb0de6e4e0b54b
          launchAtLogin = LaunchAtLogin()
 diff --git a/macos/Sources/AgentSpeed/App/KimiCredentialResponse.swift b/macos/Sources/AgentSpeed/App/KimiCredentialResponse.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..4b8689205641198758782c51bac08a8572e1396c
+index 00000000..4b868920
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/KimiCredentialResponse.swift
 @@ -0,0 +1,32 @@
@@ -1497,7 +1498,7 @@ index 0000000000000000000000000000000000000000..4b8689205641198758782c51bac08a85
 +enum KimiCredentialOperation: String, Sendable { case get, set, delete }
 +enum KimiCredentialFailure: Error, Equatable { case invalidRequest, storageError, disconnected, unsupported, cancelled }
 diff --git a/macos/Sources/AgentSpeed/App/QuotaController.swift b/macos/Sources/AgentSpeed/App/QuotaController.swift
-index ed8e603231f7e7200332a0b26b5c43e530a71db9..f412d962d49bdc82ce323403cfdec64e724747ad 100644
+index ed8e6032..f412d962 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaController.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaController.swift
 @@ -32,6 +32,86 @@ final class QuotaController {
@@ -1629,7 +1630,7 @@ index ed8e603231f7e7200332a0b26b5c43e530a71db9..f412d962d49bdc82ce323403cfdec64e
          if startup { startupAttempted.insert(reader.provider.id) }
          // Supersede a cache-only load without allowing its late result to overwrite a live read.
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-index ae7566507a4e286fc439e83b0ef7bbad8131d13b..9680131d44228a7ba2888a5c6455076ac9943e9c 100644
+index e88bfd46..c1a74ff9 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 @@ -107,7 +107,12 @@ struct QuotaNotchReading {
@@ -1647,7 +1648,7 @@ index ae7566507a4e286fc439e83b0ef7bbad8131d13b..9680131d44228a7ba2888a5c6455076a
  
  @MainActor @Observable
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
-index 1e07a20b9b60bf3113367f032ef1ece3e979d43f..28c7cf1dee4b6cfc486f9aa38a1ea07bccfe1881 100644
+index 1e07a20b..28c7cf1d 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 @@ -1,7 +1,7 @@
@@ -1720,7 +1721,7 @@ index 1e07a20b9b60bf3113367f032ef1ece3e979d43f..28c7cf1dee4b6cfc486f9aa38a1ea07b
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSources.swift b/macos/Sources/AgentSpeed/App/QuotaSources.swift
-index ec66c5a06fea8d0f2ca52df810cfc1a28e882e25..ca66229982e33c0020d70175630e7df4fd651584 100644
+index ec66c5a0..ca662299 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaSources.swift
 +++ b/macos/Sources/AgentSpeed/App/QuotaSources.swift
 @@ -6,7 +6,7 @@ struct QuotaSourceDefinition: Identifiable, Sendable {
@@ -1733,7 +1734,7 @@ index ec66c5a06fea8d0f2ca52df810cfc1a28e882e25..ca66229982e33c0020d70175630e7df4
  @MainActor func quotaEnabledSources(_ quota: QuotaController) -> [QuotaSourceDefinition] {
      quota.availableSources.filter { quota.allSourcesEnabled || quota.enabledProviderIDs.contains($0.id) }
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
-index ca1eada69cdb605bb98b045981c89e34b6eb858a..9223ad06fe9e8287a6ec61d0117133434b3b37e9 100644
+index ca1eada6..9223ad06 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 @@ -1,5 +1,9 @@
@@ -1780,7 +1781,7 @@ index ca1eada69cdb605bb98b045981c89e34b6eb858a..9223ad06fe9e8287a6ec61d011713343
                  }
                  if buffer.count > 4_194_304 { throw Failure("Collector sent an oversized message") }
 diff --git a/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift b/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
-index 84f0010a82a90f2926774e6dedf69a0b60a3f4b0..39b469be70b7248105d201141a211ccaa53775a8 100644
+index 84f0010a..39b469be 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
 @@ -23,6 +23,86 @@ final class RemoteQuotaTransport {
@@ -1881,7 +1882,7 @@ index 84f0010a82a90f2926774e6dedf69a0b60a3f4b0..39b469be70b7248105d201141a211cca
              cache[id] = value.withRemoteStatus(.stale)
          }
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index 5772750f3ff0496f72bd14aeea6e6f33d14c9b52..4613cf8f7b7c58c9a7992f5880320aa6b0065aab 100644
+index 31dcf469..9bb63166 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
 @@ -18,6 +18,31 @@ enum StringTable {
@@ -1918,7 +1919,7 @@ index 5772750f3ff0496f72bd14aeea6e6f33d14c9b52..4613cf8f7b7c58c9a7992f5880320aa6
          "a11y.board": Entry("排行看板，%@：每秒 %@ 個 token，%@", "排行看板，%@：每秒 %@ 个 token，%@", "Leaderboard, %@: %@ tokens per second, %@", "ランキングボード、%@：毎秒 %@ トークン、%@"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..1cbacbd3f5f9a202b2ea6e430af86db9a4ecb47b
+index 00000000..1cbacbd3
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
 @@ -0,0 +1,141 @@
@@ -2064,7 +2065,7 @@ index 0000000000000000000000000000000000000000..1cbacbd3f5f9a202b2ea6e430af86db9
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-index 0398cf2715c3b655ecd79a04f7fbed3958bd9910..62961ef167058146d64f3edf58f15f3f8d97401e 100644
+index 0398cf27..62961ef1 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 @@ -6,6 +6,7 @@ struct QuotaPane: View {
@@ -2148,7 +2149,7 @@ index 0398cf2715c3b655ecd79a04f7fbed3958bd9910..62961ef167058146d64f3edf58f15f3f
      case .stale: l10n("mac.quota.status.stale")
 diff --git a/macos/Sources/AgentSpeedCore/KimiAPIKeyStore.swift b/macos/Sources/AgentSpeedCore/KimiAPIKeyStore.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..01867fc09ccce8aaa3d34b68e64ce673b9185388
+index 00000000..01867fc0
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/KimiAPIKeyStore.swift
 @@ -0,0 +1,99 @@
@@ -2253,7 +2254,7 @@ index 0000000000000000000000000000000000000000..01867fc09ccce8aaa3d34b68e64ce673
 +}
 diff --git a/macos/Sources/AgentSpeedCore/KimiCredentials.swift b/macos/Sources/AgentSpeedCore/KimiCredentials.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..29b4464b6c67b1198ee72ccfd5866316cae9ba29
+index 00000000..29b4464b
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/KimiCredentials.swift
 @@ -0,0 +1,60 @@
@@ -2319,7 +2320,7 @@ index 0000000000000000000000000000000000000000..29b4464b6c67b1198ee72ccfd5866316
 +}
 diff --git a/macos/Sources/AgentSpeedCore/KimiQuotaProvider.swift b/macos/Sources/AgentSpeedCore/KimiQuotaProvider.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..2c15dfd3b18fba59cd99769f2047710fc96c5819
+index 00000000..2c15dfd3
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/KimiQuotaProvider.swift
 @@ -0,0 +1,215 @@
@@ -2540,7 +2541,7 @@ index 0000000000000000000000000000000000000000..2c15dfd3b18fba59cd99769f2047710f
 +}
 diff --git a/macos/Sources/AgentSpeedCore/KimiUsage.swift b/macos/Sources/AgentSpeedCore/KimiUsage.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..12975c7801bf59853c514a7f7450ffe1d9dcfe7f
+index 00000000..12975c78
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/KimiUsage.swift
 @@ -0,0 +1,84 @@
@@ -2629,7 +2630,7 @@ index 0000000000000000000000000000000000000000..12975c7801bf59853c514a7f7450ffe1
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeedCore/Quota.swift b/macos/Sources/AgentSpeedCore/Quota.swift
-index a5aebf08d35d51c73a49847bd044ee24b8fbe178..dc8e77200e4716cc375d22ca56d534a191dbdfa9 100644
+index a5aebf08..dc8e7720 100644
 --- a/macos/Sources/AgentSpeedCore/Quota.swift
 +++ b/macos/Sources/AgentSpeedCore/Quota.swift
 @@ -141,7 +141,7 @@ extension QuotaWindow {
@@ -2643,7 +2644,7 @@ index a5aebf08d35d51c73a49847bd044ee24b8fbe178..dc8e77200e4716cc375d22ca56d534a1
      }
  }
 diff --git a/macos/Sources/AgentSpeedCore/QuotaPersistence.swift b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
-index 948e28c44a40e7e4f8ce6ff614f53e9ea31dfe9d..53e2898ad0038e4f5d16d5ba827dcede304f3ff4 100644
+index 948e28c4..53e2898a 100644
 --- a/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
 +++ b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
 @@ -28,6 +28,11 @@ struct QuotaPersistence: Sendable {
@@ -2659,7 +2660,7 @@ index 948e28c44a40e7e4f8ce6ff614f53e9ea31dfe9d..53e2898ad0038e4f5d16d5ba827dcede
      func save<T: Encodable>(_ value: T, key: String) -> Bool {
          let file = directory.appendingPathComponent(key + ".json")
 diff --git a/macos/Sources/AgentSpeedCore/RemoteQuota.swift b/macos/Sources/AgentSpeedCore/RemoteQuota.swift
-index 305ee12bfc4c9a584a770df656bf3662592c1bb1..786f23998b9c0f8aea294d18adb53712b0580fa2 100644
+index 305ee12b..786f2399 100644
 --- a/macos/Sources/AgentSpeedCore/RemoteQuota.swift
 +++ b/macos/Sources/AgentSpeedCore/RemoteQuota.swift
 @@ -2,7 +2,7 @@ import Foundation
@@ -2696,7 +2697,7 @@ index 305ee12bfc4c9a584a770df656bf3662592c1bb1..786f23998b9c0f8aea294d18adb53712
      }
 diff --git a/macos/Tests/AgentSpeedAppTests/KimiCredentialTransportTests.swift b/macos/Tests/AgentSpeedAppTests/KimiCredentialTransportTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..d4eca66c178c81bb92c8dbee94426152c610b616
+index 00000000..d4eca66c
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/KimiCredentialTransportTests.swift
 @@ -0,0 +1,109 @@
@@ -2811,7 +2812,7 @@ index 0000000000000000000000000000000000000000..d4eca66c178c81bb92c8dbee94426152
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/KimiKeyControllerTests.swift b/macos/Tests/AgentSpeedAppTests/KimiKeyControllerTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..96cca8ea896bc7ae701f0227572be26302955a6b
+index 00000000..96cca8ea
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/KimiKeyControllerTests.swift
 @@ -0,0 +1,125 @@
@@ -2941,10 +2942,10 @@ index 0000000000000000000000000000000000000000..96cca8ea896bc7ae701f0227572be263
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-index 368f9c520e2c08d9c9ddcdbbf5226db1d5ae135c..8994014779e965ed434f23bd63c10e7fa6781f95 100644
+index c39bac33..b00de233 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-@@ -96,6 +96,22 @@ struct QuotaPresentationTests {
+@@ -84,6 +84,22 @@ struct QuotaPresentationTests {
          #expect(quotaWindowLabel(window(0.5, label: "Code review"), chinese, providerName: remote.displayName).hasPrefix("Code review · "))
      }
  
@@ -2968,7 +2969,7 @@ index 368f9c520e2c08d9c9ddcdbbf5226db1d5ae135c..8994014779e965ed434f23bd63c10e7f
          let english = Localizer(preference: .en)
          #expect(quotaStatus(account("signed-out", status: .needsAuth), english) == english("mac.quota.status.needsAuth", "signed-out"))
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift
-index 619fa13a6a2f022f5c6f1858737b1d1536fa1415..9f97b1072ec6c972880ec7292176e2c09b7021df 100644
+index 619fa13a..9f97b107 100644
 --- a/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift
 @@ -44,6 +44,7 @@ private final class RemoteQuotaFixture {
@@ -3071,7 +3072,7 @@ index 619fa13a6a2f022f5c6f1858737b1d1536fa1415..9f97b1072ec6c972880ec7292176e2c0
  }
 diff --git a/macos/Tests/AgentSpeedCoreTests/KimiAPIKeyTests.swift b/macos/Tests/AgentSpeedCoreTests/KimiAPIKeyTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..b9d2e5935cf377b83ed884906e131f3200cce27b
+index 00000000..b9d2e593
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/KimiAPIKeyTests.swift
 @@ -0,0 +1,156 @@
@@ -3233,7 +3234,7 @@ index 0000000000000000000000000000000000000000..b9d2e5935cf377b83ed884906e131f32
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..791a6c6ab6f3afee754407a9a48df64665f520d4
+index 00000000..791a6c6a
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift
 @@ -0,0 +1,286 @@
@@ -3524,7 +3525,7 @@ index 0000000000000000000000000000000000000000..791a6c6ab6f3afee754407a9a48df646
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
-index ba7d5cfe7a4849cf04ee6e76b6f95086080faba7..3ef102f1d98ecd59e1b689b8b635cfdf0a051d5b 100644
+index ba7d5cfe..3ef102f1 100644
 --- a/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
 +++ b/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
 @@ -24,7 +24,7 @@ private final class ColdQuotaHTTP: @unchecked Sendable {
@@ -3610,7 +3611,7 @@ index ba7d5cfe7a4849cf04ee6e76b6f95086080faba7..3ef102f1d98ecd59e1b689b8b635cfdf
          let harness = try ColdQuotaHarness(id), http = harness.http
          defer { harness.close() }
 diff --git a/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift b/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift
-index 53b36147b6fdeda67b5dd10083053b2f5bc67d0b..2eec8f8076aae543f8158c217d9fe3c233124647 100644
+index 53b36147..2eec8f80 100644
 --- a/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift
 +++ b/macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift
 @@ -75,4 +75,22 @@ struct RemoteQuotaTests {
@@ -3637,7 +3638,7 @@ index 53b36147b6fdeda67b5dd10083053b2f5bc67d0b..2eec8f8076aae543f8158c217d9fe3c2
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 7e4051f97b4327f037c620fd789af24c57155fd2..14d8fe10e92212dbaf94bf7c8410a4272012f71a 100644
+index ec6bee6c..254c6755 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,20 +1,20 @@
@@ -3650,8 +3651,8 @@ index 7e4051f97b4327f037c620fd789af24c57155fd2..14d8fe10e92212dbaf94bf7c8410a427
  
  ## Remote subscription sources
  
--Windows and macOS offer Codex and OpenCode Go for each enabled SSH host in the existing Subscription source selector. The local IDs remain `codex` and `opencode-go`; remote selections use `remote:<host UUID>:<provider ID>`. Host identity, not its editable label or account label, partitions sources. All sources includes enabled remote hosts and future sources; explicit selection includes only its saved IDs. Remote-only operation does not require a local account. Each selected source uses the ordinary account cards, floating quota panel and qualifying summaries, with host provenance; independent allowances are never summed.
-+Windows and macOS offer Codex, OpenCode Go and Kimi Code for each enabled SSH host in the existing Subscription source selector. The local IDs are `codex`, `opencode-go` and `kimi`; remote selections use `remote:<host UUID>:<provider ID>`. Host identity, not its editable label or account label, partitions sources. All sources includes enabled remote hosts and future sources; explicit selection includes only its saved IDs. Remote-only operation does not require a local account. Each selected source uses the ordinary account cards, floating quota panel and qualifying summaries, with host provenance; independent allowances are never summed.
+-Windows and macOS offer Codex and OpenCode Go for each enabled SSH host in the existing Subscription source selector. The local IDs remain `codex` and `opencode-go`; remote selections use `remote:<host UUID>:<provider ID>`. Host identity, not its editable label or account label, partitions sources. All sources includes enabled remote hosts and future sources; explicit selection includes only its saved IDs. Remote-only operation does not require a local account. Each selected source uses the ordinary account cards, floating quota panel and summaries, with host provenance; independent allowances are never summed.
++Windows and macOS offer Codex, OpenCode Go and Kimi Code for each enabled SSH host in the existing Subscription source selector. The local IDs are `codex`, `opencode-go` and `kimi`; remote selections use `remote:<host UUID>:<provider ID>`. Host identity, not its editable label or account label, partitions sources. All sources includes enabled remote hosts and future sources; explicit selection includes only its saved IDs. Remote-only operation does not require a local account. Each selected source uses the ordinary account cards, floating quota panel and summaries, with host provenance; independent allowances are never summed.
  
 -Requests use the existing collector connection, not a separate SSH process. The desktop sends a bounded JSON line with `type: "quota"`, an opaque `requestId`, `providers` (a nonempty subset of `codex` and `opencode-go`) and `refresh`. `refresh: false` reads the current identity's cached observation without supplier HTTP. `refresh: true` requests supplier observations subject to persisted backoff and request floors. No selected, consented quota request means no supplier polling. Automatic mode follows the existing five-minute application cadence; manual requests respect provider deadlines. Hiding Settings or the floating panel does not change polling.
 +Requests use the existing collector connection, not a separate SSH process. The desktop sends a bounded JSON line with `type: "quota"`, an opaque `requestId`, `providers` (a nonempty subset of `codex`, `opencode-go` and `kimi`) and `refresh`. `refresh: false` reads the current identity's cached observation without supplier HTTP. `refresh: true` requests supplier observations subject to persisted backoff and request floors. No selected, consented quota request means no supplier polling. Automatic mode follows the existing five-minute application cadence; manual requests respect provider deadlines. Hiding Settings or the floating panel does not change polling.
@@ -3676,7 +3677,7 @@ index 7e4051f97b4327f037c620fd789af24c57155fd2..14d8fe10e92212dbaf94bf7c8410a427
  ## Snapshot
 @@ -72,7 +72,7 @@ Measure complete, unwrapped reading strings with the same native font used to re
  
- Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any qualifying tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
+ Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
  
 -Subscription is a source-neutral account list and settings group, with real Codex and OpenCode Go adapters; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
 +Subscription is a source-neutral account list and settings group, with real Codex, OpenCode Go and Kimi Code adapters; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
@@ -3716,7 +3717,7 @@ index 7e4051f97b4327f037c620fd789af24c57155fd2..14d8fe10e92212dbaf94bf7c8410a427
  Endpoint and response research consulted [Codenotch](https://github.com/vinzdg/codenotch), particularly `Sources/Providers/CodexLocalProvider.swift` and `Sources/Providers/CodexUsage.swift`. Codenotch is MIT licensed, copyright (c) 2026 Vinz. This specification and its synthetic examples describe observed facts and do not reproduce Codenotch source code. If source code or a substantial portion is copied into the implementation, retain its full MIT copyright and permission notice with that code.
 diff --git a/windows/src/AgentSpeed.Core/KimiCredentialStore.cs b/windows/src/AgentSpeed.Core/KimiCredentialStore.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9919ff0ea547c27606439808ac1e89789e82be7a
+index 00000000..9919ff0e
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/KimiCredentialStore.cs
 @@ -0,0 +1,176 @@
@@ -3898,7 +3899,7 @@ index 0000000000000000000000000000000000000000..9919ff0ea547c27606439808ac1e8978
 +}
 diff --git a/windows/src/AgentSpeed.Core/KimiQuotaProvider.cs b/windows/src/AgentSpeed.Core/KimiQuotaProvider.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb687db93af6f007eaf798fbcc769decedccfc48
+index 00000000..cb687db9
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/KimiQuotaProvider.cs
 @@ -0,0 +1,400 @@
@@ -4303,7 +4304,7 @@ index 0000000000000000000000000000000000000000..cb687db93af6f007eaf798fbcc769dec
 +        stamp.Contains('T') && (stamp.EndsWith('Z') || stamp.Length >= 25 && stamp[^6] is '+' or '-') ? Date(value, name) : null;
 +}
 diff --git a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
-index 4d9962cb6a52205cdb21da6aa0a0b1d2c99b3fca..94ccf3bdb9b35630579e48265fb77230c3e796d1 100644
+index 4d9962cb..94ccf3bd 100644
 --- a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 +++ b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 @@ -19,6 +19,7 @@ public static class QuotaProviders
@@ -4328,7 +4329,7 @@ index 4d9962cb6a52205cdb21da6aa0a0b1d2c99b3fca..94ccf3bdb9b35630579e48265fb77230
      };
  }
 diff --git a/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs b/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
-index cc4edf542720ca273d37c068dbd692e2da968e40..79f142e330b7e2a83c1467c1d64659494a7c5696 100644
+index cc4edf54..79f142e3 100644
 --- a/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
 @@ -30,6 +30,17 @@ public sealed class RemoteQuotaProvider : IQuotaProvider
@@ -4350,7 +4351,7 @@ index cc4edf542720ca273d37c068dbd692e2da968e40..79f142e330b7e2a83c1467c1d6465949
      {
          int current;
 diff --git a/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs b/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs
-index 1ab654a5c03d28e615056fbf75aaed6ba3f1db95..778a8befcb79e1545dd7740510d47a942e5a6daf 100644
+index 1ab654a5..778a8bef 100644
 --- a/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteQuotaSession.cs
 @@ -9,14 +9,18 @@ public sealed class RemoteQuotaSession : IDisposable
@@ -4475,7 +4476,7 @@ index 1ab654a5c03d28e615056fbf75aaed6ba3f1db95..778a8befcb79e1545dd7740510d47a94
              pending.Clear();
          }
 diff --git a/windows/src/AgentSpeed.Core/RemoteQuotaStore.cs b/windows/src/AgentSpeed.Core/RemoteQuotaStore.cs
-index 1cbd9e6d48f8df2ba1c5574e10a6f20eeacf148c..961f7f1ca28522dc0d5108120d758e314332edfe 100644
+index 1cbd9e6d..961f7f1c 100644
 --- a/windows/src/AgentSpeed.Core/RemoteQuotaStore.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteQuotaStore.cs
 @@ -21,6 +21,8 @@ public sealed class RemoteQuotaStore
@@ -4488,7 +4489,7 @@ index 1cbd9e6d48f8df2ba1c5574e10a6f20eeacf148c..961f7f1ca28522dc0d5108120d758e31
      {
          try
 diff --git a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
-index 5bc85a6c3e4ea0865b7a76b85ceaa8d19170e77b..44df2ad46cfe7f4a6d78c38afaf9377564b08914 100644
+index 5bc85a6c..44df2ad4 100644
 --- a/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
 +++ b/windows/src/AgentSpeed.Presentation/Localization/Strings.Windows.json
 @@ -70,7 +70,37 @@
@@ -4530,10 +4531,10 @@ index 5bc85a6c3e4ea0865b7a76b85ceaa8d19170e77b..44df2ad46cfe7f4a6d78c38afaf93775
    "win.quota.details": {"zh-Hant":"來源與詳細資料","zh-Hans":"来源与详细资料","en":"Source and details","ja":"ソースと詳細"},
    "win.quota.age": {"zh-Hant":"%@ 分鐘前取得","zh-Hans":"%@ 分钟前获取","en":"Observed %@ min ago","ja":"%@ 分前に取得"},
 diff --git a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
-index af2b7bf09d56f0b5412af0f0c42ad83102ec4673..e0ef95e5216ceaffed8fc548027e31222e6c5865 100644
+index 49c3bd81..decfe2c6 100644
 --- a/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
 +++ b/windows/src/AgentSpeed.Presentation/Settings/QuotaFormat.cs
-@@ -46,6 +46,10 @@ public static class QuotaFormat
+@@ -41,6 +41,10 @@ public static class QuotaFormat
  
      public static string CompactWindowLabel(Localizer loc, QuotaWindow window, string? providerDisplayName = null)
      {
@@ -4544,7 +4545,7 @@ index af2b7bf09d56f0b5412af0f0c42ad83102ec4673..e0ef95e5216ceaffed8fc548027e3122
          var duration = PeriodDuration(window);
          string period = WindowPeriod(window) switch
          {
-@@ -70,6 +74,8 @@ public static class QuotaFormat
+@@ -65,6 +69,8 @@ public static class QuotaFormat
          if (snapshot is null) return loc["win.quota.empty"];
          if (snapshot.WaitingForRefresh) return loc["win.quota.waiting"];
          if (QuotaProviders.ProviderId(snapshot.Id) == "opencode-go" && snapshot.Status == QuotaStatus.Unsupported) return loc["win.quota.noGoSubscription"];
@@ -4553,7 +4554,7 @@ index af2b7bf09d56f0b5412af0f0c42ad83102ec4673..e0ef95e5216ceaffed8fc548027e3122
          if (snapshot.Status != QuotaStatus.Ok)
              return loc["win.quota." + snapshot.Status.ToString().ToLowerInvariant()];
          if (snapshot.ObservedAt is not { } observedAt) return loc["win.quota.unknown"];
-@@ -143,6 +149,7 @@ public static class QuotaFormat
+@@ -138,6 +144,7 @@ public static class QuotaFormat
  
      public static string WindowLabel(Localizer loc, QuotaWindow window, string? providerDisplayName = null)
      {
@@ -4561,7 +4562,7 @@ index af2b7bf09d56f0b5412af0f0c42ad83102ec4673..e0ef95e5216ceaffed8fc548027e3122
          if (WindowPeriod(window) == QuotaWindowPeriod.FiveHours)
          {
              var fiveHours = loc["win.quota.fiveHourLimit"];
-@@ -162,8 +169,27 @@ public static class QuotaFormat
+@@ -157,8 +164,27 @@ public static class QuotaFormat
              label += " · " + loc.Format("win.quota.days", days.TotalDays.ToString("0.##", loc.Culture));
          return label;
      }
@@ -4591,7 +4592,7 @@ index af2b7bf09d56f0b5412af0f0c42ad83102ec4673..e0ef95e5216ceaffed8fc548027e3122
 +    };
  }
 diff --git a/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
-index d776f8179656ca87f78983c4393c961f74df2f91..8710fbcca6188b544dc104aadc62663cefbac8eb 100644
+index d776f817..8710fbcc 100644
 --- a/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
 +++ b/windows/src/AgentSpeed/Services/RemoteConnectionManager.cs
 @@ -28,6 +28,30 @@ internal sealed class RemoteConnectionManager : IDisposable
@@ -4626,7 +4627,7 @@ index d776f8179656ca87f78983c4393c961f74df2f91..8710fbcca6188b544dc104aadc62663c
      {
          public RemoteHost Host = host;
 diff --git a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
-index 5b468fd9686566fd9740fff69d0ad8f2a66cb555..f9fa250aea3809b86385c7ba8c2276818c19ab0b 100644
+index 5b468fd9..f9fa250a 100644
 --- a/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
 +++ b/windows/src/AgentSpeed/Services/RemoteSshWorker.cs
 @@ -99,6 +99,10 @@ public sealed class RemoteSshWorker
@@ -4642,7 +4643,7 @@ index 5b468fd9686566fd9740fff69d0ad8f2a66cb555..f9fa250aea3809b86385c7ba8c227681
          try { await SendCommandAsync(request, CancellationToken.None).ConfigureAwait(false); }
 diff --git a/windows/src/AgentSpeed/Settings/KimiKeyDialog.cs b/windows/src/AgentSpeed/Settings/KimiKeyDialog.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..3fdb9bfcc6f758fe2a7efc9e56b81e084bb11490
+index 00000000..3fdb9bfc
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/KimiKeyDialog.cs
 @@ -0,0 +1,134 @@
@@ -4781,7 +4782,7 @@ index 0000000000000000000000000000000000000000..3fdb9bfcc6f758fe2a7efc9e56b81e08
 +    }
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt b/windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt
-index 03cb5d84f864bbdbb53020349431c3b2381b0037..49533722dc0593bbf1b889a1c57e6d60925c8324 100644
+index 03cb5d84..49533722 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt
 @@ -1,4 +1,4 @@
@@ -4791,7 +4792,7 @@ index 03cb5d84f864bbdbb53020349431c3b2381b0037..49533722dc0593bbf1b889a1c57e6d60
  revision 835550a342871779135b6484d6899161c5222f7c:
  
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-index fa33edf27c96f6afab2cf7f70c5a1a078638985d..8bec550b8ca36ec875a17ed1d9597709b1dd2414 100644
+index 729d61fc..1db3f30a 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 @@ -27,6 +27,8 @@ internal sealed class QuotaNotchView : FrameworkElement
@@ -4803,7 +4804,7 @@ index fa33edf27c96f6afab2cf7f70c5a1a078638985d..8bec550b8ca36ec875a17ed1d9597709
      private readonly Localizer _loc;
      private readonly bool _card;
      private readonly List<(Geometry Shape, QuotaNotchHit Hit)> _targets = [];
-@@ -501,6 +503,7 @@ internal sealed class QuotaNotchView : FrameworkElement
+@@ -499,6 +501,7 @@ internal sealed class QuotaNotchView : FrameworkElement
      {
          source = QuotaProviders.ProviderId(source);
          if (source == "codex") { DrawGlyph(dc, Codex, center, size, color); return; }
@@ -4812,7 +4813,7 @@ index fa33edf27c96f6afab2cf7f70c5a1a078638985d..8bec550b8ca36ec875a17ed1d9597709
          dc.PushTransform(new MatrixTransform(size / 20, 0, 0, size / 20, center.X - size * .4, center.Y - size / 2));
          dc.PushOpacity(.35); dc.DrawGeometry(color, null, OpenCodeShadow); dc.Pop();
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
-index 5dc74db37ce75efd94317290ac8387731b4c01b4..ea3fdbac3052d06b55ea3413a9d201236552643c 100644
+index 5dc74db3..ea3fdbac 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 @@ -28,18 +28,23 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
@@ -4918,7 +4919,7 @@ index 5dc74db37ce75efd94317290ac8387731b4c01b4..ea3fdbac3052d06b55ea3413a9d20123
          _clockTimer.Tick -= OnClockTick;
          _resetLabels.Clear();
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-index 623f3214d13c20aa1ba94cb8dfe47611ddc2be48..6027bf2486de160a54d3a1035ce6dfc86c0e1bce 100644
+index 48a3c028..53f04c14 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 @@ -23,9 +23,11 @@ internal sealed class QuotaSurface : IDisposable
@@ -5104,8 +5105,8 @@ index 623f3214d13c20aa1ba94cb8dfe47611ddc2be48..6027bf2486de160a54d3a1035ce6dfc8
                  !_readers.TryGetValue(id, out var current) || !ReferenceEquals(current, reader) || reader.Busy) return;
              if (reader.Retry.DueAt is { } deadline && deadline > _now()) { ScheduleRetry(id, reader); return; }
              RefreshReader(id, reader, startup: false);
-@@ -423,7 +539,7 @@ internal sealed class QuotaSurface : IDisposable
-             content.Children.Add(Line(snapshot.DisplayName + " · " + QuotaFormat.Status(_loc, true, snapshot, now), 12));
+@@ -422,7 +538,7 @@ internal sealed class QuotaSurface : IDisposable
+             content.Children.Add(Line(snapshot.DisplayName + " · " + QuotaFormat.Status(_loc, _settings.Current.NetworkEnabled, snapshot, now), 12));
              if (snapshot is { Status: QuotaStatus.Stale, ObservedAt: { } observedAt })
                  content.Children.Add(Line(_loc.Format("win.quota.age", Math.Max(0, (int)(now - observedAt).TotalMinutes)), 12));
 -            if (snapshot.Block is not null) content.Children.Add(Line(Text("block") + ": " + snapshot.Block, 12));
@@ -5115,7 +5116,7 @@ index 623f3214d13c20aa1ba94cb8dfe47611ddc2be48..6027bf2486de160a54d3a1035ce6dfc8
                  var reading = new StackPanel { Opacity = snapshot.Status == QuotaStatus.Stale ? .65 : 1 };
 diff --git a/windows/tests/AgentSpeed.Core.Tests/KimiApiKeyTests.cs b/windows/tests/AgentSpeed.Core.Tests/KimiApiKeyTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..a3b4035acc2629a4116f2352d4ee2e3f25968505
+index 00000000..a3b4035a
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/KimiApiKeyTests.cs
 @@ -0,0 +1,158 @@
@@ -5279,7 +5280,7 @@ index 0000000000000000000000000000000000000000..a3b4035acc2629a4116f2352d4ee2e3f
 +}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/KimiQuotaProviderTests.cs b/windows/tests/AgentSpeed.Core.Tests/KimiQuotaProviderTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9ebfbadf0dc9771e39743506da6f3802892047e2
+index 00000000..9ebfbadf
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/KimiQuotaProviderTests.cs
 @@ -0,0 +1,279 @@
@@ -5563,7 +5564,7 @@ index 0000000000000000000000000000000000000000..9ebfbadf0dc9771e39743506da6f3802
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs b/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
-index 758faf54c199db0eb6b1ff16a46b3010b7a42d7c..c41424112c66b9c9b8cdd23851a4376617820983 100644
+index 758faf54..c4142411 100644
 --- a/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
 +++ b/windows/tests/AgentSpeed.Core.Tests/QuotaColdStartTests.cs
 @@ -16,6 +16,9 @@ public sealed class QuotaColdStartTests
@@ -5640,7 +5641,7 @@ index 758faf54c199db0eb6b1ff16a46b3010b7a42d7c..c41424112c66b9c9b8cdd23851a43766
              if (Retry >= 0) response.Headers.RetryAfter = RetryDate
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteKimiCredentialsTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteKimiCredentialsTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..c3733e007fe5f7baea479670774ea4a7fb12d089
+index 00000000..c3733e00
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteKimiCredentialsTests.cs
 @@ -0,0 +1,130 @@
@@ -5775,7 +5776,7 @@ index 0000000000000000000000000000000000000000..c3733e007fe5f7baea479670774ea4a7
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
-index 4e305138e8a1b6e469998551799460b46951769c..cb350f799d0dca07446cabf980c2f2ca3b4cc280 100644
+index 4e305138..cb350f79 100644
 --- a/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
 @@ -143,6 +143,35 @@ public sealed class RemoteQuotaTests
@@ -5815,7 +5816,7 @@ index 4e305138e8a1b6e469998551799460b46951769c..cb350f799d0dca07446cabf980c2f2ca
      private static QuotaSnapshot Snapshot() => new("codex", "Codex", "exact", QuotaStatus.Ok,
          [new("weekly", "Weekly", 1.25, null, null, null, TimeSpan.FromDays(7))], "weekly", null, "account", "plus", Observed, "codex-cli", null, null, false);
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
-index e026a7e218820a46f1b4a2ab727ca0e175bcf6e6..6e9c76ba38fd6c164c35af54463ff466b3356be4 100644
+index 8569cf9f..ce9f289c 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 @@ -13,6 +13,51 @@ public class QuotaFormatTests
@@ -5871,7 +5872,7 @@ index e026a7e218820a46f1b4a2ab727ca0e175bcf6e6..6e9c76ba38fd6c164c35af54463ff466
      public void LabelsFollowDurationNotWindowSlot()
      {
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/RemoteQuotaSourcesTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/RemoteQuotaSourcesTests.cs
-index b0f99956a3e7735e92e9d3ca015bc9f3ce935afd..78f8f81e87b559af2058217ce3d264a92749e803 100644
+index b0f99956..78f8f81e 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/RemoteQuotaSourcesTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/RemoteQuotaSourcesTests.cs
 @@ -12,14 +12,15 @@ public sealed class RemoteQuotaSourcesTests
@@ -5895,7 +5896,7 @@ index b0f99956a3e7735e92e9d3ca015bc9f3ce935afd..78f8f81e87b559af2058217ce3d264a9
  
      [Fact]
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
-index b52734682ace2b2bab4729a3f5fda5a6708fed8c..984adecb9762b3e06fab245aaba90bf998c31297 100644
+index b5273468..984adecb 100644
 --- a/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
 +++ b/windows/tests/AgentSpeed.Presentation.Tests/SettingsSerializerTests.cs
 @@ -99,7 +99,7 @@ public class SettingsSerializerTests
@@ -5909,7 +5910,7 @@ index b52734682ace2b2bab4729a3f5fda5a6708fed8c..984adecb9762b3e06fab245aaba90bf9
          Assert.Same(AppSettings.Default.QuotaSources, legacy.QuotaSources);
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/KimiKeySettingsTests.cs b/windows/tests/AgentSpeed.Windows.Tests/KimiKeySettingsTests.cs
 new file mode 100644
-index 0000000000000000000000000000000000000000..e7e1a57269e8e724557b99b22e616ced4d11aae5
+index 00000000..e7e1a572
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/KimiKeySettingsTests.cs
 @@ -0,0 +1,193 @@
@@ -6107,7 +6108,7 @@ index 0000000000000000000000000000000000000000..e7e1a57269e8e724557b99b22e616ced
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
-index 5350b606f2fe0662d674335034b6ce9e38e61dc4..14096288b626e617583f62e9f77fde606bf41ed8 100644
+index 5350b606..14096288 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaNotchViewTests.cs
 @@ -11,6 +11,7 @@ public class QuotaNotchViewTests
@@ -6119,7 +6120,7 @@ index 5350b606f2fe0662d674335034b6ce9e38e61dc4..14096288b626e617583f62e9f77fde60
      {
          var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-index fd2fae0d434ad09c133116f0ef2067c349b3594b..90663c85afb66fdc5958e041262142ba006537a2 100644
+index fd2fae0d..90663c85 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 @@ -244,15 +244,18 @@ public class QuotaSettingsPageTests
@@ -6172,8 +6173,41 @@ index fd2fae0d434ad09c133116f0ef2067c349b3594b..90663c85afb66fdc5958e041262142ba
      private static QuotaSnapshot Snapshot(QuotaStatus status, QuotaWindow[] windows) =>
          new("codex", "Codex", "official", status, windows, "a", null, "person@example.com", "Plus", Observed, "local", null, null, false);
  
+diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
+index 44fcfa71..f0f972cf 100644
+--- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
++++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
+@@ -126,11 +126,14 @@ public sealed class QuotaSurfaceProviderCollectionTests
+                     new("session", "", null, null, null, null, TimeSpan.FromHours(5)),
+                     new("weekly", "", .4, .6, .4, null, TimeSpan.FromDays(7)));
+                 var goSecond = Reading(second, "opencode-go");
++                var kimiSecond = Reading(second, "kimi",
++                    new("rolling", "5h limit", .2, .8, .2, null, TimeSpan.FromHours(5)),
++                    new("weekly", "Weekly limit", .1, .9, .1, null, TimeSpan.FromDays(7)));
+                 foreach (var (destination, reading) in new[] {
+                     (first.Destination, codexBuild), (first.Destination, goBuild),
+-                    (second.Destination, codexSecond), (second.Destination, goSecond) })
++                    (second.Destination, codexSecond), (second.Destination, goSecond), (second.Destination, kimiSecond) })
+                     store.Save(destination, reading);
+-                var ids = new[] { codexBuild.Id, goBuild.Id, codexSecond.Id, goSecond.Id };
++                var ids = new[] { codexBuild.Id, goBuild.Id, codexSecond.Id, goSecond.Id, kimiSecond.Id };
+                 using var settings = new SettingsService(Dispatcher.CurrentDispatcher);
+                 settings.MakeEphemeral();
+                 settings.Update(value => value with { ShowQuotaNotch = false, AutoRefreshQuota = false, NetworkEnabled = false,
+@@ -149,8 +152,9 @@ public sealed class QuotaSurfaceProviderCollectionTests
+                 Assert.Contains(texts, text => text.StartsWith("OpenCode Go · Build · ", StringComparison.Ordinal));
+                 Assert.Contains(texts, text => text.StartsWith("Codex · Second · ", StringComparison.Ordinal));
+                 Assert.Contains(texts, text => text.StartsWith("OpenCode Go · Second · ", StringComparison.Ordinal));
+-                Assert.Equal(4, texts.Count(text => text.EndsWith(loc["win.quota.offline"], StringComparison.Ordinal)));
+-                Assert.Equal(7, Descendants(summary!).OfType<ProgressBar>().Count());
++                Assert.Contains(texts, text => text.StartsWith("Kimi Code · Second · ", StringComparison.Ordinal));
++                Assert.Equal(5, texts.Count(text => text.EndsWith(loc["win.quota.offline"], StringComparison.Ordinal)));
++                Assert.Equal(9, Descendants(summary!).OfType<ProgressBar>().Count());
+                 Assert.Contains(texts, text => text.Contains(QuotaFormat.Percent(loc, .9), StringComparison.Ordinal));
+                 Assert.Contains(texts, text => text.Contains(loc["win.quota.unknown"], StringComparison.Ordinal));
+                 var button = Descendants(summary!).OfType<Button>().First();
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
-index 9912817fe5c7e65a4621c0ad9f24c735cf308f57..30ce1fb5d5d4debd70da1ed18bd6717d4bcd2bde 100644
+index 9912817f..30ce1fb5 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs
 @@ -238,6 +238,7 @@ public sealed class QuotaSurfaceRetryTests

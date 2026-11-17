@@ -1,7 +1,7 @@
-From 491fa44dd0b42b1b36b68489ff3b0e9b7eee685b Mon Sep 17 00:00:00 2001
+From d1072d8e8cf5d8dca82ced1d2458ad46e0ac8d86 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:08 +0800
-Subject: [PATCH] Add macOS Codex quota monitoring
+Subject: [PATCH 20/25] Add macOS Codex quota monitoring
 
 ---
  macos/Resources/Codenotch-LICENSE.txt         |  28 +
@@ -17,7 +17,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  .../App/QuotaNotchVisualHarness.swift         | 163 ++++
  .../App/QuotaRefreshScheduler.swift           |  94 ++
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
- .../AgentSpeed/Dashboard/DashboardView.swift  |  72 ++
+ .../AgentSpeed/Dashboard/DashboardView.swift  |  65 ++
  .../AgentSpeed/Localization/StringTable.swift |  91 ++
  .../SettingsWindow/Panes/QuotaPane.swift      | 294 +++++++
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
@@ -25,9 +25,9 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  .../AgentSpeedCore/CodexQuotaProvider.swift   | 360 ++++++++
  macos/Sources/AgentSpeedCore/Quota.swift      | 138 +++
  .../AgentSpeedCore/QuotaPersistence.swift     |  82 ++
- .../QuotaControllerTests.swift                | 585 ++++++++++++
+ .../QuotaControllerTests.swift                | 608 +++++++++++++
  .../AgentSpeedAppTests/QuotaNotchTests.swift  | 259 ++++++
- .../QuotaPresentationTests.swift              | 172 ++++
+ .../QuotaPresentationTests.swift              | 160 ++++
  .../QuotaWarmStartupTests.swift               |  93 ++
  .../CodexQuotaProviderTests.swift             | 236 +++++
  .../QuotaColdStartTests.swift                 | 202 +++++
@@ -37,7 +37,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
  spec/QUOTA.md                                 | 133 +++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 33 files changed, 5252 insertions(+), 2 deletions(-)
+ 33 files changed, 5256 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -65,7 +65,7 @@ Subject: [PATCH] Add macOS Codex quota monitoring
 
 diff --git a/macos/Resources/Codenotch-LICENSE.txt b/macos/Resources/Codenotch-LICENSE.txt
 new file mode 100644
-index 0000000000000000000000000000000000000000..495b4aee4594fe59ee0c92eb89f18c21c27b6d0f
+index 00000000..495b4aee
 --- /dev/null
 +++ b/macos/Resources/Codenotch-LICENSE.txt
 @@ -0,0 +1,28 @@
@@ -98,7 +98,7 @@ index 0000000000000000000000000000000000000000..495b4aee4594fe59ee0c92eb89f18c21
 +OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 +SOFTWARE.
 diff --git a/macos/Resources/strings.macos.json b/macos/Resources/strings.macos.json
-index 0d19457d1edbd386fd6c5487297c77b6dc7366dd..4cf47a4b4cf3b99be25b7052fc500c892ff15761 100644
+index 0d19457d..4cf47a4b 100644
 --- a/macos/Resources/strings.macos.json
 +++ b/macos/Resources/strings.macos.json
 @@ -1,5 +1,42 @@
@@ -145,7 +145,7 @@ index 0d19457d1edbd386fd6c5487297c77b6dc7366dd..4cf47a4b4cf3b99be25b7052fc500c89
      "zh-Hant": "請在「系統設定」›「一般」›「登入項目」中允許 Agent Speed。",
      "zh-Hans": "请在“系统设置”›“通用”›“登录项”中允许 Agent Speed。",
 diff --git a/macos/Sources/AgentSpeed/App/AppDelegate.swift b/macos/Sources/AgentSpeed/App/AppDelegate.swift
-index b6b512f880795edaf2976613edd4075e85a89e0a..80e441620089cbe27b18fbae2be91b4da4292d2d 100644
+index b6b512f8..80e44162 100644
 --- a/macos/Sources/AgentSpeed/App/AppDelegate.swift
 +++ b/macos/Sources/AgentSpeed/App/AppDelegate.swift
 @@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, AppCommands {
@@ -184,7 +184,7 @@ index b6b512f880795edaf2976613edd4075e85a89e0a..80e441620089cbe27b18fbae2be91b4d
          orbs?.shutdown()
          model?.shutdown()
 diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
-index 0df8e8ba24afd186d68f7eb39ce41a8e229d5559..d0d676b810b33275ac40bf742e23609e0c8b3d86 100644
+index 0df8e8ba..d0d676b8 100644
 --- a/macos/Sources/AgentSpeed/App/AppModel.swift
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -65,6 +65,7 @@ final class AppModel {
@@ -237,7 +237,7 @@ index 0df8e8ba24afd186d68f7eb39ce41a8e229d5559..d0d676b810b33275ac40bf742e23609e
          case .sources: "folder"
          case .about: "info.circle"
 diff --git a/macos/Sources/AgentSpeed/App/LaunchOptions.swift b/macos/Sources/AgentSpeed/App/LaunchOptions.swift
-index 740fad3c12ef09512a09e32486be4dfeeabc2eb5..443a880e5d04ca7b558a8294ea60777f0803c471 100644
+index 740fad3c..443a880e 100644
 --- a/macos/Sources/AgentSpeed/App/LaunchOptions.swift
 +++ b/macos/Sources/AgentSpeed/App/LaunchOptions.swift
 @@ -25,6 +25,8 @@ struct LaunchOptions: Sendable {
@@ -262,7 +262,7 @@ index 740fad3c12ef09512a09e32486be4dfeeabc2eb5..443a880e5d04ca7b558a8294ea60777f
                      options.screenshotsDirectory = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
 diff --git a/macos/Sources/AgentSpeed/App/QuotaController.swift b/macos/Sources/AgentSpeed/App/QuotaController.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..2bd429c8f321dfaa2165f962aee8fe436d4b5d49
+index 00000000..2bd429c8
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaController.swift
 @@ -0,0 +1,253 @@
@@ -521,7 +521,7 @@ index 0000000000000000000000000000000000000000..2bd429c8f321dfaa2165f962aee8fe43
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift b/macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..b1a81438ef6eaf22f55adac0355ea9aae5b60118
+index 00000000..b1a81438
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
 @@ -0,0 +1,102 @@
@@ -629,7 +629,7 @@ index 0000000000000000000000000000000000000000..b1a81438ef6eaf22f55adac0355ea9aa
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..075e00a389e66a91b10d2e77da319be05498d78e
+index 00000000..075e00a3
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 @@ -0,0 +1,667 @@
@@ -1302,7 +1302,7 @@ index 0000000000000000000000000000000000000000..075e00a389e66a91b10d2e77da319be0
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift b/macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..9beebd4906924b2e3de470677b4ac60b8805e4a1
+index 00000000..9beebd49
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchContentLayout.swift
 @@ -0,0 +1,45 @@
@@ -1353,7 +1353,7 @@ index 0000000000000000000000000000000000000000..9beebd4906924b2e3de470677b4ac60b
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..ed1c6a9c336f2ea6ee837d4cb28dea5d8a989d52
+index 00000000..ed1c6a9c
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchShape.swift
 @@ -0,0 +1,832 @@
@@ -2191,7 +2191,7 @@ index 0000000000000000000000000000000000000000..ed1c6a9c336f2ea6ee837d4cb28dea5d
 +#endif
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..d239a9b3ce902df9a32e3708a41cce608be022ef
+index 00000000..d239a9b3
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotchVisualHarness.swift
 @@ -0,0 +1,163 @@
@@ -2360,7 +2360,7 @@ index 0000000000000000000000000000000000000000..d239a9b3ce902df9a32e3708a41cce60
 +#endif
 diff --git a/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift b/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..73bf336c0639222190657660c9c29a6f1e4b3420
+index 00000000..73bf336c
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaRefreshScheduler.swift
 @@ -0,0 +1,94 @@
@@ -2460,7 +2460,7 @@ index 0000000000000000000000000000000000000000..73bf336c0639222190657660c9c29a6f
 +}
 diff --git a/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..c120006303960a7b4e117772dd8484e2b183ddfc
+index 00000000..c1200063
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaSourceLogo.swift
 @@ -0,0 +1,19 @@
@@ -2484,10 +2484,10 @@ index 0000000000000000000000000000000000000000..c120006303960a7b4e117772dd8484e2
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-index dacd9698981e9ff4f2ef4e88c6b00e9eb3d655ec..2ac92d9d1d33ef1903b2b2784cdc841ae314a023 100644
+index dacd9698..56217ade 100644
 --- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
 +++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
-@@ -145,8 +145,80 @@ private struct DashboardDetails: View {
+@@ -145,8 +145,73 @@ private struct DashboardDetails: View {
                      .padding(.top, DashboardLayout.sectionSpacing)
                      .transition(.opacity)
              }
@@ -2498,19 +2498,12 @@ index dacd9698981e9ff4f2ef4e88c6b00e9eb3d655ec..2ac92d9d1d33ef1903b2b2784cdc841a
      }
  }
 +
-+func quotaWarningAccounts(_ snapshots: [QuotaSnapshot]) -> [QuotaSnapshot] {
-+    Array(snapshots.filter { account in
-+        account.status == .needsAuth || account.block != nil ||
-+            account.windows.contains { ($0.usedFraction ?? -1) >= 0.9 }
-+    }.prefix(2))
-+}
-+
-+/// A glanceable warning, not a second quota list; the existing Settings page holds the details.
++/// Every selected account's latest observation, including healthy ones; the existing Settings page holds the details.
 +private struct QuotaDashboardSummary: View {
 +    let model: AppModel
 +    @State private var clock = QuotaDisplayClock()
 +
-+    private var accounts: [QuotaSnapshot] { quotaWarningAccounts(model.quota.snapshots) }
++    private var accounts: [QuotaSnapshot] { model.quota.snapshots }
 +
 +    var body: some View {
 +        if !accounts.isEmpty {
@@ -2569,7 +2562,7 @@ index dacd9698981e9ff4f2ef4e88c6b00e9eb3d655ec..2ac92d9d1d33ef1903b2b2784cdc841a
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
-index e98b726698365541f605118f52b1433063ed297a..0b9e132da22134e4b4f0a32f2a91f8206aa11cb1 100644
+index e98b7266..0b9e132d 100644
 --- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
 +++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
 @@ -17,6 +17,7 @@ enum StringTable {
@@ -2679,7 +2672,7 @@ index e98b726698365541f605118f52b1433063ed297a..0b9e132da22134e4b4f0a32f2a91f820
          "mac.settings.about.license": Entry("以 MIT 授權開放原始碼", "以 MIT 许可证开源", "Open source under the MIT License", "MIT ライセンスのオープンソース"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..36ca0e785e56d4a916660fd6cb08f44c70337111
+index 00000000..36ca0e78
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 @@ -0,0 +1,294 @@
@@ -2978,7 +2971,7 @@ index 0000000000000000000000000000000000000000..36ca0e785e56d4a916660fd6cb08f44c
 +    deinit { task?.cancel() }
 +}
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift b/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift
-index c494783c10a5db88278f5ca7b4b6b8e1309d085d..5aac36f0fea1cf88a9bde6b8a606cae8d1cd14b5 100644
+index c494783c..5aac36f0 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/SettingsPaneView.swift
 @@ -5,7 +5,6 @@ struct SettingsPaneView: View {
@@ -2998,7 +2991,7 @@ index c494783c10a5db88278f5ca7b4b6b8e1309d085d..5aac36f0fea1cf88a9bde6b8a606cae8
          case .sources: SourcesPane(model: model)
          case .about: AboutPane(model: model)
 diff --git a/macos/Sources/AgentSpeed/Support/MenuFactory.swift b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
-index 7d20173cd90bd12b4db5ac390df17747ec398078..7075c36d4db6a796b84410546ef2b7f0c575f460 100644
+index 7d20173c..7075c36d 100644
 --- a/macos/Sources/AgentSpeed/Support/MenuFactory.swift
 +++ b/macos/Sources/AgentSpeed/Support/MenuFactory.swift
 @@ -45,6 +45,7 @@ enum MenuFactory {
@@ -3011,7 +3004,7 @@ index 7d20173cd90bd12b4db5ac390df17747ec398078..7075c36d4db6a796b84410546ef2b7f0
              menu.addItem(report)
 diff --git a/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..3ee8aceaa0416743e2b5cbf057370c7909490e80
+index 00000000..3ee8acea
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
 @@ -0,0 +1,360 @@
@@ -3377,7 +3370,7 @@ index 0000000000000000000000000000000000000000..3ee8aceaa0416743e2b5cbf057370c79
 +}
 diff --git a/macos/Sources/AgentSpeedCore/Quota.swift b/macos/Sources/AgentSpeedCore/Quota.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..683831532b163369810041e5be4e68c67a586040
+index 00000000..68383153
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/Quota.swift
 @@ -0,0 +1,138 @@
@@ -3521,7 +3514,7 @@ index 0000000000000000000000000000000000000000..683831532b163369810041e5be4e68c6
 +}
 diff --git a/macos/Sources/AgentSpeedCore/QuotaPersistence.swift b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..25c2bf286ad2a10d815de699a2589dde2208a99a
+index 00000000..25c2bf28
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
 @@ -0,0 +1,82 @@
@@ -3609,10 +3602,10 @@ index 0000000000000000000000000000000000000000..25c2bf286ad2a10d815de699a2589dde
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..ead924c28ea2ac140b1ce2b78be43130e49a9347
+index 00000000..ce6e754c
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -0,0 +1,585 @@
+@@ -0,0 +1,608 @@
 +import Foundation
 +#if canImport(FoundationNetworking)
 +import FoundationNetworking
@@ -3707,8 +3700,12 @@ index 0000000000000000000000000000000000000000..ead924c28ea2ac140b1ce2b78be43130
 +    }
 +    private func snapshot(_ status: QuotaStatus, nextAllowedAt: Date? = nil, waiting: Bool = false) -> QuotaSnapshot {
 +        QuotaSnapshot(id: id, displayName: id, fidelity: "official", status: status,
-+            windows: hasObservation ? [QuotaWindow(id: "rolling", label: "", usedFraction: 0.25, remaining: 0.75,
-+                used: 0.25, resetAt: nil, duration: 18_000)] : [], headlineId: "rolling", block: nil,
++            windows: hasObservation ? [
++                QuotaWindow(id: "rolling", label: "", usedFraction: 0.25, remaining: 0.75,
++                    used: 0.25, resetAt: nil, duration: 18_000),
++                QuotaWindow(id: "weekly", label: "", usedFraction: 0.1, remaining: 0.9,
++                    used: 0.1, resetAt: nil, duration: 604_800)
++            ] : [], headlineId: "rolling", block: nil,
 +            account: nil, plan: nil, observedAt: hasObservation ? observed : nil, source: "fixture", credits: nil,
 +            nextAllowedAt: nextAllowedAt, waitingForRefresh: waiting)
 +    }
@@ -4197,10 +4194,29 @@ index 0000000000000000000000000000000000000000..ead924c28ea2ac140b1ce2b78be43130
 +        #expect(controller.snapshots.first?.status == .ok)
 +        #expect(scheduler.retries.isEmpty)
 +    }
++
++    @Test func summaryKeepsEverySelectedHealthyAccountAndAllWindows() async throws {
++        let remoteID = "remote:11111111-1111-1111-1111-111111111111:codex"
++        try await withFixture(ids: ["codex", "opencode-go", "kimi", remoteID]) { fixture in
++            let controller = fixture.controller
++            await fixture.barrier().value
++            #expect(controller.snapshots.map(\.id) == ["codex", "opencode-go", "kimi", remoteID])
++            #expect(controller.snapshots.allSatisfy { $0.status == .stale && $0.windows.count == 2 })
++            controller.setNetworkEnabled(true)
++            for provider in fixture.providers {
++                let request = try await fixture.request(provider, .startup)
++                #expect(await provider.complete(request))
++            }
++            await fixture.barrier().value
++            #expect(controller.snapshots.map(\.id) == ["codex", "opencode-go", "kimi", remoteID])
++            #expect(controller.snapshots.allSatisfy { $0.status == .ok && $0.windows.count == 2 })
++            #expect(controller.snapshots.allSatisfy { $0.windows.allSatisfy { ($0.usedFraction ?? 1) < 0.9 } })
++        }
++    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..005e82d65b1ce8422ea247d9e81b81b35fc9ec59
+index 00000000..005e82d6
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 @@ -0,0 +1,259 @@
@@ -4465,10 +4481,10 @@ index 0000000000000000000000000000000000000000..005e82d65b1ce8422ea247d9e81b81b3
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..665ae9ee61b6ce976e42dc4afcbe30f03354d7b1
+index 00000000..53f7bafc
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaPresentationTests.swift
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,160 @@
 +import Foundation
 +import Testing
 +@testable import AgentSpeed
@@ -4488,18 +4504,6 @@ index 0000000000000000000000000000000000000000..665ae9ee61b6ce976e42dc4afcbe30f0
 +                           headlineId: windows.first?.id, block: block, account: nil, plan: nil,
 +                           observedAt: nil, source: "local", credits: nil, nextAllowedAt: nil,
 +                           waitingForRefresh: false)
-+    }
-+
-+    @Test func flyoutShowsOnlyWarningsAndLimitsRows() {
-+        let normal = account("normal", windows: [window(0.899)])
-+        let unknown = account("unknown", windows: [window(nil)])
-+        let empty = account("empty")
-+        #expect(quotaWarningAccounts([normal, unknown, empty]).isEmpty)
-+        let near = account("near", windows: [window(0.9)])
-+        let blocked = account("blocked", block: "Paused")
-+        let auth = account("auth", status: .needsAuth)
-+        #expect(quotaWarningAccounts([normal, near, blocked, auth]).map(\.id) == ["near", "blocked"])
-+        #expect(quotaWarningAccounts([auth]).map(\.id) == ["auth"])
 +    }
 +
 +    @Test func persistedObservationSurvivesProviderRestart() async throws {
@@ -4643,7 +4647,7 @@ index 0000000000000000000000000000000000000000..665ae9ee61b6ce976e42dc4afcbe30f0
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..3138f7ec07de6025982a0d82a24f4dd6b04f5050
+index 00000000..3138f7ec
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaWarmStartupTests.swift
 @@ -0,0 +1,93 @@
@@ -4742,7 +4746,7 @@ index 0000000000000000000000000000000000000000..3138f7ec07de6025982a0d82a24f4dd6
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..2ed5f6c6971c71d96c137f87b9a17968dcc441b6
+index 00000000..2ed5f6c6
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/CodexQuotaProviderTests.swift
 @@ -0,0 +1,236 @@
@@ -4984,7 +4988,7 @@ index 0000000000000000000000000000000000000000..2ed5f6c6971c71d96c137f87b9a17968
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..5dc4af735722b1307458a29762a25d2301a00c25
+index 00000000..5dc4af73
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/QuotaColdStartTests.swift
 @@ -0,0 +1,202 @@
@@ -5192,7 +5196,7 @@ index 0000000000000000000000000000000000000000..5dc4af735722b1307458a29762a25d23
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..b38fbee231c5fdb7377382ff5aa6daf4dc0bc63a
+index 00000000..b38fbee2
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/QuotaLifecycleTests.swift
 @@ -0,0 +1,191 @@
@@ -5389,7 +5393,7 @@ index 0000000000000000000000000000000000000000..b38fbee231c5fdb7377382ff5aa6daf4
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift b/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
 new file mode 100644
-index 0000000000000000000000000000000000000000..2182d48108eb65631dfe4b49019442274de81689
+index 00000000..2182d481
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/QuotaTests.swift
 @@ -0,0 +1,48 @@
@@ -5442,7 +5446,7 @@ index 0000000000000000000000000000000000000000..2182d48108eb65631dfe4b4901944227
 +    }
 +}
 diff --git a/macos/scripts/build-app.sh b/macos/scripts/build-app.sh
-index 300ed6d282427f140ca0021e3bcebb8221ec7efb..5ee4c0474e1c1884e3fe8e371dc6edccf4196c30 100755
+index 300ed6d2..5ee4c047 100755
 --- a/macos/scripts/build-app.sh
 +++ b/macos/scripts/build-app.sh
 @@ -180,6 +180,7 @@ plutil -lint -s "$APP_DIR/Contents/Info.plist" || die "The generated Info.plist
@@ -5455,7 +5459,7 @@ index 300ed6d282427f140ca0021e3bcebb8221ec7efb..5ee4c0474e1c1884e3fe8e371dc6edcc
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 0000000000000000000000000000000000000000..754485eeeaf5a5d9fc5ff84f5406b5086a18478e
+index 00000000..8e57de14
 --- /dev/null
 +++ b/spec/QUOTA.md
 @@ -0,0 +1,133 @@
@@ -5508,7 +5512,7 @@ index 0000000000000000000000000000000000000000..754485eeeaf5a5d9fc5ff84f5406b508
 +
 +Measure complete, unwrapped reading strings with the same native font used to render them: AppKit NSFont on macOS and WPF FormattedText on Windows. Multi-window rows share the widest period/scope label and value columns within their account, with a five-unit period dot, four-unit dot-to-label gap and six-unit label-to-value gap. Do not reserve a fixed 90-unit reading width, cap the value column, round away percentage precision, shrink text, truncate long scopes/durations, or force values such as `92.53%` or `96.04%` to wrap to hit a width target. Unknown, authentication and over-limit readings use the same measurement policy; long content may legitimately widen the panel. No additional native measurement work belongs in animation frames.
 +
-+Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any qualifying tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
++Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
 +
 +Subscription is a source-neutral account list and settings group, with the real Codex adapter; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
 +
@@ -5551,7 +5555,7 @@ index 0000000000000000000000000000000000000000..754485eeeaf5a5d9fc5ff84f5406b508
 +
 +The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
 +
-+The existing transient menu-bar popover or tray flyout may show a compact quota summary when a known window is at least 90% used, a block is present, or status is `needsAuth`. Show at most two qualifying providers, but include every available quota window within each displayed provider; open the existing Settings quota page for details.
++The existing transient menu-bar popover or tray flyout shows a compact summary of every selected account, including healthy ones, and every available quota window within each account. Authentication, block, low-allowance, unknown and offline states stay explicit; there is no account-count cap. With networking disabled, previously hydrated snapshots remain visible with the offline status instead of disappearing. Open the existing Settings quota page for details.
 +
 +Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
 +
@@ -5594,7 +5598,7 @@ index 0000000000000000000000000000000000000000..754485eeeaf5a5d9fc5ff84f5406b508
 +Endpoint and response research consulted [Codenotch](https://github.com/vinzdg/codenotch), particularly `Sources/Providers/CodexLocalProvider.swift` and `Sources/Providers/CodexUsage.swift`. Codenotch is MIT licensed, copyright (c) 2026 Vinz. This specification and its synthetic examples describe observed facts and do not reproduce Codenotch source code. If source code or a substantial portion is copied into the implementation, retain its full MIT copyright and permission notice with that code.
 diff --git a/spec/fixtures/codex-credit-quota.json b/spec/fixtures/codex-credit-quota.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..ab97242823f64ab0011219a6197c3200421ceb10
+index 00000000..ab972428
 --- /dev/null
 +++ b/spec/fixtures/codex-credit-quota.json
 @@ -0,0 +1,8 @@
@@ -5608,7 +5612,7 @@ index 0000000000000000000000000000000000000000..ab97242823f64ab0011219a6197c3200
 +}
 diff --git a/spec/fixtures/codex-quota.json b/spec/fixtures/codex-quota.json
 new file mode 100644
-index 0000000000000000000000000000000000000000..ba85a8b2982a806b3e4949d1cc55d14b7c7ad448
+index 00000000..ba85a8b2
 --- /dev/null
 +++ b/spec/fixtures/codex-quota.json
 @@ -0,0 +1,26 @@

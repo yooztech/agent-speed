@@ -217,11 +217,13 @@ The Windows implementation has no WebView2 runtime, browser process, JavaScript
 bridge or composition-capture surface. Its native input region follows the
 actual visible geometry rather than a transparent host rectangle. Settings retains the
 supplied account-card/progress-bar design. The existing transient dashboard
-flyout shows at most two summaries near a limit, when blocked, or when sign-in
-is required; clicking one opens Settings. Status-item bodies, taskbar widgets,
-orbs and History do not carry quota data.
+flyout shows every selected account, including healthy ones, with all of its
+actual quota windows; low-allowance, blocked, sign-in-required, unknown and
+offline states stay explicit, and cached snapshots remain visible with
+networking disabled. Clicking one opens Settings. Status-item bodies, taskbar
+widgets, orbs and History do not carry quota data.
 Local and enabled SSH-host Codex/OpenCode Go/Kimi Code accounts share the Subscription
-source selector, cards, floating quota panel and qualifying summaries. Remote
+source selector, cards, floating quota panel and summaries. Remote
 sources are identified by host UUID plus provider, not host label; All sources
 includes enabled remote hosts, while explicit selections remain host-scoped.
 The remote collector reads credentials on its host, queries the supplier there
@@ -271,6 +273,22 @@ was not transmitted and missing observations remained unknown. All 23 patches
 replay from the pin, and all 3,126 replayed source files match the checked prepared
 tree byte-for-byte. Real supplier accounts, native macOS SDK/desktop and Windows
 desktop interactions remain unverified. No package, Actions or Release was made.
+
+The complete-subscription-summary correction belongs to 0020 (macOS dashboard)
+and 0021 (Windows flyout); 0022 keeps only its multi-window/OpenCode Go
+increment, and its former Windows `Take(2)` hunk is removed. The dashboard and
+tray summaries now show every selected account, including healthy ones, with
+all returned windows and their original reset times; low-allowance,
+authentication, block, unknown and offline states stay explicit, and cached
+snapshots remain visible with the offline status when networking is disabled.
+Focused Linux-hosted Presentation checks passed 80 tests covering the
+healthy-account/window contract and remote source selection. The complete
+25-patch queue replays from the pin; the eight quota-owned files match the
+checked prepared tree byte-for-byte. The only replayed-tree differences are the
+concurrently updated 0011 orb-source files, which this task did not touch.
+The Windows application and native test assembly cross-compile with zero
+warnings/errors; native WPF execution and macOS Swift/SDK tests remain
+unverified. No package, Actions or Release was made.
 
 #### Provider implementation reference: Codenotch first
 
