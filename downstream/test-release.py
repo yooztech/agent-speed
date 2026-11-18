@@ -788,7 +788,11 @@ class NetworkRetryTests(unittest.TestCase):
         net = driver.release_network
         for message in ('connection reset by peer', 'HTTP 429', 'HTTP 503', 'HTTP 403: API rate limit exceeded', 'temporary failure in name resolution',
                         "Temporary failure resolving 'azure.archive.ubuntu.com'",
-                        "E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/main/c/cmake/cmake_3.22.1_all.deb  Temporary failure resolving 'azure.archive.ubuntu.com'"):
+                        "E: Failed to fetch https://security.ubuntu.com/ubuntu/pool/main/c/cmake/cmake_3.22.1_all.deb  Temporary failure resolving 'azure.archive.ubuntu.com'",
+                        "fatal: unable to access 'https://github.com/zoefix/agent-speed.git/': The requested URL returned error: 502",
+                        "error: RPC failed; curl 56 GnuTLS recv error (-110): The TLS connection was non-properly terminated.",
+                        "fatal: unable to access 'https://github.com/': Empty reply from server",
+                        "error: RPC failed; curl 92 HTTP/2 stream 0 was not closed cleanly: INTERNAL_ERROR (err 2)"):
             self.assertTrue(net.is_transient(subprocess.CalledProcessError(1, ['gh'], stderr=message)), message)
         for message in ('HTTP 401', 'HTTP 403: permission denied', 'HTTP 404', 'validation failed'):
             self.assertFalse(net.is_transient(subprocess.CalledProcessError(1, ['gh'], stderr=message)), message)

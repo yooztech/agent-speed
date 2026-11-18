@@ -36,6 +36,24 @@ class CloneRetryTests(unittest.TestCase):
             self.assertEqual(calls, [300, 300])
             self.assertTrue((output / 'complete').exists())
 
+    def test_unclassified_clone_failure_still_retries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'checkout'
+            calls = []
+
+            def clone(args, **kwargs):
+                calls.append(1)
+                if len(calls) == 1:
+                    raise subprocess.CalledProcessError(
+                        128, args, stderr="fatal: unable to access 'https://github.com/': unknown transport failure")
+                (output / 'complete').write_text('complete')
+                return ''
+
+            with patch.object(manage.release_network, 'run_once', side_effect=clone), \
+                 patch.object(manage.release_network.time, 'sleep'), patch.object(manage, 'run'):
+                self.assertEqual(manage.prepare(output, 'a' * 40, []), output)
+            self.assertEqual(len(calls), 2)
+
     def test_permanent_failure_is_not_retried(self):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / 'checkout'

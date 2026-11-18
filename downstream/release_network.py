@@ -6,14 +6,37 @@ import sys
 import time
 
 _TRANSIENT = re.compile(
-    r'connection (?:reset|refused|timed out|aborted)|could not resolve host|'
+    r'connection (?:reset|refused|timed out|aborted|closed)|could not resolve host|'
     r'(?:unexpected|early) EOF|EOF occurred in violation of protocol|'
     r'temporary failure (?:in name resolution|resolving)|name or service not known|'
     r'network (?:is unreachable|error)|timed? out|timeout|'
     r'HTTP[/ ](?:408|429|500|502|503|504)\b|'
     r'\b(?:408|429|500|502|503|504)\b[^\n]*(?:HTTP|response|status)|'
     r'HTTP[/ ]403\b[^\n]*(?:rate limit|secondary rate)|'
-    r'(?:rate limit|secondary rate)[^\n]*HTTP[/ ]403\b', re.I)
+    r'(?:rate limit|secondary rate)[^\n]*HTTP[/ ]403\b|'
+    r'returned error:\s*(?:408|429|5\d\d)\b|'
+    r'\bRPC failed\b|\b(?:Recv|Send) failure\b|'
+    r'empty reply from server|transfer closed with outstanding read data|'
+    r'remote end hung up|early EOF|fetch-pack|index-pack failed|'
+    r'(?:SSL_connect|SSL_ERROR|SSL_read|SSL_write|TLS connection|gnutls|'
+    r'could not resolve proxy|failed to connect to .+ port)|'
+    r'HTTP/2 stream', re.I)
+
+# Do not turn deterministic credential/configuration failures into retry storms.
+_PERMANENT = re.compile(
+    r'authentication failed|permission denied|could not read Username|'
+    r'terminal prompts disabled|repository .* not found|'
+    r'not a git repository|invalid URL|does not appear to be a git repository', re.I)
+
+
+def _text(exc):
+    stderr = exc.stderr or ''
+    stdout = exc.stdout or ''
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors='replace')
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode(errors='replace')
+    return stderr + '\n' + stdout
 
 
 def is_transient(exc):
@@ -21,13 +44,7 @@ def is_transient(exc):
         return True
     if not isinstance(exc, subprocess.CalledProcessError):
         return False
-    stderr = exc.stderr or ''
-    stdout = exc.stdout or ''
-    if isinstance(stderr, bytes):
-        stderr = stderr.decode(errors='replace')
-    if isinstance(stdout, bytes):
-        stdout = stdout.decode(errors='replace')
-    return bool(_TRANSIENT.search(stderr + '\n' + stdout))
+    return bool(_TRANSIENT.search(_text(exc)))
 
 
 def run_once(args, *, cwd=None, capture=True, timeout=60, deadline=None, env=None):
@@ -53,14 +70,19 @@ def run_once(args, *, cwd=None, capture=True, timeout=60, deadline=None, env=Non
     return result.stdout
 
 
-def retry(operation, *, label, deadline=None, attempts=4):
+def retry(operation, *, label, deadline=None, attempts=4, retry_any=False):
     for attempt in range(attempts):
         if deadline is not None and time.monotonic() >= deadline:
             raise TimeoutError(f'{label}: deadline exceeded')
         try:
             return operation()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            if not is_transient(exc) or attempt + 1 >= attempts:
+            permanent = isinstance(exc, subprocess.CalledProcessError) and bool(_PERMANENT.search(_text(exc)))
+            # A public-repository clone can fail with a git/curl message that is
+            # still transient but not worth enumerating forever. Retry those
+            # failures unless the text proves the request is deterministic.
+            transient = (retry_any and not permanent) or is_transient(exc)
+            if not transient or attempt + 1 >= attempts:
                 raise
             delay = 2 ** attempt
             if deadline is not None and time.monotonic() + delay >= deadline:

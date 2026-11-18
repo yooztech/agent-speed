@@ -111,7 +111,7 @@ def prepare(output, base, names):
         return identity
 
     for attempt in range(PREPARE_ATTEMPTS):
-        identity = release_network.retry(clone, label="clone upstream")
+        identity = release_network.retry(clone, label="clone upstream", retry_any=True)
         try:
             run(["git", "checkout", "--detach", base], cwd=output)
             # macOS runners have dropped loose-object writes right after clone completion;
@@ -197,6 +197,15 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+    except subprocess.CalledProcessError as error:
+        print(f"error: {error}", file=sys.stderr)
+        detail = error.stderr or error.stdout or ""
+        if isinstance(detail, bytes):
+            detail = detail.decode(errors="replace")
+        detail = detail.strip()
+        if detail:
+            print(detail[:8000], file=sys.stderr)
+        sys.exit(1)
+    except (ValueError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         sys.exit(1)
