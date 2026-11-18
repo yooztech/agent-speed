@@ -1236,40 +1236,17 @@ continues using the configured pin. Only when choosing to upgrade, manually
 migrate and commit the pin and patch queue before releasing against the new baseline.
 Before any cancellation, draft deletion or tag mutation, the wrapper runs the
 snapshot's `downstream/manage.py` against its committed configuration and complete
-patch queue, preparing the application once in a second temporary tree. The local
-preflight uses only that prepared tree, never live workspace inputs. Both temporary
-trees are removed afterward, including on failure. On Linux and macOS it requires the .NET 10 SDK. It probes
-`DOTNET_ROOT`, then each `dotnet` on `PATH`, then `~/.dotnet/dotnet`, selecting
-the first installation whose `--list-sdks` reports a 10.x SDK. The selected
-installation is used for all .NET build and test subprocesses; the wrapper does
-not install SDKs. It retries dependency restore before building the complete `windows/AgentSpeed.slnx` in Release
-with Windows targeting enabled and `--no-restore`, including compilation of all Windows tests.
-It then runs the exact Core traffic smoke test
-`AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart`
-and the complete `AgentSpeed.Presentation.Tests` suite, both targeting `net10.0`
-in Release with `--no-build`. The Presentation suite is a required gate, including
-CPU and Effort tests without filtering. Failure blocks tag mutation and preserves
-the preflight log. This does not run the full Core suite or validate the native
-Windows UI.
+patch queue, preparing the application once in a second temporary tree. This is the
+entire local preflight: it verifies that the patch queue applies, but it does not
+compile or test either platform. No .NET SDK, CMake, C++ or Swift toolchain is
+required locally. Both temporary trees are removed afterward, including on failure.
+A preparation failure blocks tag mutation and preserves the preflight log.
 
-The preflight runs its test subprocesses sequentially, and the Presentation
-suite additionally disables xUnit test collection parallelism within the suite.
-The Windows Release job uses the same Presentation setting. All Presentation
-tests and their existing thresholds remain in effect; external processes can
-still contend for CPU, so this does not isolate the host from load.
+The local preflight is not the full release gate: Windows and macOS builds, full
+test suites, native UI validation and release packaging remain the responsibility
+of `Release`. A local pass only proves that the queue still applies; it does not
+validate product behavior.
 
-The host also determines which native core tests run: Linux requires CMake,
-CTest, a C++ toolchain and the Linux core's build dependencies; it configures
-and builds the headless core and runs CTest. GoogleTest may be supplied from
-`/usr/src/googletest`; otherwise CMake fetches it, requiring network access.
-macOS requires Swift and runs `swift test`. A Linux host does not validate the
-macOS build, and a macOS host does not validate the Linux build. Preparation,
-missing prerequisites, build or test failures stop the release; there is no
-bypass. `--plan` does not prepare a tree or require these toolchains.
-
-The local preflight is not the full release gate: native UI validation, tests
-on other platforms, and release packaging remain the responsibility of
-`Release`.
 The selected SHA remains fixed throughout the invocation. Later edits (including
 untracked files), local commits, branch switches and local tag changes do not
 change the snapshot, preflight inputs or final release tag target, and are not

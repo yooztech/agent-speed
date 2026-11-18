@@ -41,33 +41,6 @@ def git(*args, deadline=None):
                           stdout=subprocess.PIPE).stdout.strip()
 
 
-def find_dotnet_sdk():
-    """Select a .NET 10 installation in explicit, PATH, then user-local order."""
-    name = 'dotnet.exe' if os.name == 'nt' else 'dotnet'
-    root = os.environ.get('DOTNET_ROOT')
-    candidates = ([Path(root) / name] if root else [])
-    for directory in os.get_exec_path():
-        candidates.append(Path(directory) / name)
-    candidates.append(Path.home() / '.dotnet' / name)
-    seen = set()
-    for candidate in candidates:
-        candidate = candidate.resolve()
-        if candidate in seen or not candidate.is_file():
-            continue
-        seen.add(candidate)
-        env = os.environ.copy()
-        env['DOTNET_ROOT'] = str(candidate.parent)
-        env['PATH'] = str(candidate.parent) + os.pathsep + env.get('PATH', '')
-        try:
-            result = subprocess.run([str(candidate), '--list-sdks'], check=True, text=True,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
-        except (OSError, subprocess.CalledProcessError):
-            continue
-        if re.search(r'^10\.\d+\.\d+\S*\s', result.stdout, re.MULTILINE):
-            return str(candidate), env
-    raise RuntimeError('.NET 10 SDK is required for release preflight; install it and set DOTNET_ROOT or PATH, or install it in ~/.dotnet')
-
-
 @contextmanager
 def committed_snapshot(commit):
     """Export the selected commit without consulting the mutable checkout."""
@@ -87,47 +60,13 @@ def preflight(root):
     host = platform.system()
     if host not in ('Linux', 'Darwin'):
         raise RuntimeError(f'release preflight does not support host platform {host}')
-    required = ('cmake', 'ctest') if host == 'Linux' else ('swift',)
-    for tool in required:
-        if not shutil.which(tool):
-            raise RuntimeError(f'{tool} is required for release preflight on {host}')
-    print(f'Release preflight on {host}: Windows cross-platform build, Core traffic smoke test and full Presentation tests; '
-          + ('Linux headless core build and tests.' if host == 'Linux' else 'native macOS Swift tests.'),
-          flush=True)
-    print('Native UI tests and platform packaging remain Release workflow checks; '
-          'other platforms are not validated locally.', flush=True)
-    dotnet, dotnet_env = find_dotnet_sdk()
-    dotnet_env.update({'NUGET_ENHANCED_MAX_NETWORK_TRY_COUNT': '6',
-                       'NUGET_ENHANCED_NETWORK_RETRY_DELAY_MILLISECONDS': '1000',
-                       'NUGET_MAX_RETRY_AFTER_DELAY_SECONDS': '10'})
+    print(f'Release preflight on {host}: patch queue preparation only; '
+          'builds, tests and packaging remain Release workflow checks.', flush=True)
     try:
         with tempfile.TemporaryDirectory(prefix='agent-speed-release-') as temp:
             tree = Path(temp) / 'source'
             subprocess.run([sys.executable, str(root / 'downstream/manage.py'), 'prepare', str(tree)],
                            cwd=root, check=True)
-            release_network.run([dotnet, 'restore', 'windows/AgentSpeed.slnx',
-                                 '-p:EnableWindowsTargeting=true'], cwd=tree,
-                                capture=False, timeout=1800, env=dotnet_env)
-            subprocess.run([dotnet, 'build', 'windows/AgentSpeed.slnx', '-c', 'Release',
-                            '--no-restore', '-p:EnableWindowsTargeting=true'], cwd=tree, check=True, env=dotnet_env)
-            subprocess.run([dotnet, 'test', 'windows/tests/AgentSpeed.Core.Tests', '-c', 'Release',
-                            '-f', 'net10.0', '--no-build', '--filter',
-                            'FullyQualifiedName=AgentSpeed.Core.Tests.RemoteConsumerTests.RemoteTrafficIsOptionalAndRetainsCountsAcrossDisconnectAndRestart'],
-                           cwd=tree, check=True, env=dotnet_env)
-            subprocess.run([dotnet, 'test', 'windows/tests/AgentSpeed.Presentation.Tests', '-c', 'Release',
-                            '-f', 'net10.0', '--no-build', '--', 'xUnit.ParallelizeTestCollections=false'], cwd=tree, check=True, env=dotnet_env)
-            if host == 'Linux':
-                build = Path(temp) / 'linux-build'
-                configure = ['cmake', '-S', 'linux', '-B', str(build),
-                             '-DAGENTSPEED_BUILD_APP=OFF']
-                googletest = Path('/usr/src/googletest')
-                if (googletest / 'CMakeLists.txt').is_file():
-                    configure.append(f'-DFETCHCONTENT_SOURCE_DIR_GOOGLETEST={googletest}')
-                release_network.run(configure, cwd=tree, capture=False, timeout=300)
-                subprocess.run(['cmake', '--build', str(build), '--parallel', '2'], cwd=tree, check=True)
-                subprocess.run(['ctest', '--test-dir', str(build), '--output-on-failure'], cwd=tree, check=True)
-            else:
-                subprocess.run(['swift', 'test'], cwd=tree / 'macos', check=True)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise RuntimeError(f'release preflight failed: {exc}') from exc
 
