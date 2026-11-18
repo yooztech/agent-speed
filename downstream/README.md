@@ -1021,15 +1021,18 @@ Local saved keys use Keychain on macOS and current-user DPAPI on Windows; remote
 keys use the `commandcode_credentials` control and are stored atomically as
 `~/.agent-speed/quota/commandcode.json` with mode `0600` and a per-save revision
 that resets persisted rejection and backoff. It then requests
-`/alpha/whoami?limits=1`, `/alpha/billing/credits` and
-`/alpha/billing/subscriptions` with the discovered organization scope. The
-monthly allowance is the outer window (granted credits minus `monthlyCredits`,
-reset at the reported period end), followed by the weekly and 5-hour
-`used`/`cap` windows; `purchasedCredits + freeCredits` stays a separate balance
-and is never folded into a window or percentage. Unknown or missing plan data
-reports unsupported instead of a synthesized percentage, `planId` allowances are
-only a fallback when `monthlyCreditsGranted` is absent, and `belowThreshold` is
-not treated as exhaustion. Credential digests key the account cache and persisted
+`/alpha/whoami?limits=1`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`
+and `/alpha/usage/summary` with the discovered organization scope; the summary
+request also carries `since` derived from the subscription period start. The
+monthly allowance is the outer window: real period spend over spend plus
+remaining monthly credits, `totalCost / (totalCost + monthlyCredits)`, reset at
+the reported period end. `monthlyCreditsGranted` is the only fallback when that
+summary is absent, and a plan id never supplies an amount or percentage. The
+weekly and 5-hour `used`/`cap` windows follow; `purchasedCredits + freeCredits`
+stays a separate balance and is never folded into a window or percentage. A 404
+or empty summary body keeps the credits and rolling reading instead of failing
+the poll. Missing fields report unsupported instead of a synthesized percentage,
+and `belowThreshold` is not treated as exhaustion. Credential digests key the account cache and persisted
 backoff, so key rotation cannot commit the previous account's observation within
 one in-flight refresh. Remote collectors read their own host credentials and
 return structured observations only. The reader and its views are adapted from
@@ -1053,6 +1056,26 @@ because no Swift toolchain is available on this host, as do live Command Code
 accounts. All 26 patches replay from the pinned baseline, and all 3,164 tracked
 files match the reviewed prepared tree byte-for-byte. No package, Actions run or
 Release was created.
+
+A real account exposed the monthly error: the shared plan table reported 33 % used
+while the supplier's own page reported 4 % for the same period, because the
+account's credits did not match the nominal plan allotment. The corrected reader
+uses `/alpha/usage/summary` spend over spend plus remaining credits, and reverifies
+17 collector Command Code cases (including managed-key suites), 115 Windows Core
+Command Code/remote/cold-start cases, 81 Presentation quota-format/source cases,
+the Windows solution build with zero warnings/errors, and 20 real Swift provider
+cases through the Linux projection. Native WPF/AppKit appearance, macOS SDK
+execution and live accounts remain unverified; no package or Release was created.
+
+A real account exposed the monthly error: the shared plan table reported 33 % used
+while the supplier's own page reported 4 % for the same period, because the
+account's credits did not match the nominal plan allotment. The corrected reader
+uses `/alpha/usage/summary` spend over spend plus remaining credits, and reverifies
+17 collector Command Code cases (including managed-key suites), 115 Windows Core
+Command Code/remote/cold-start cases, 81 Presentation quota-format/source cases,
+the Windows solution build with zero warnings/errors, and 20 real Swift provider
+cases through the Linux projection. Native WPF/AppKit appearance, macOS SDK
+execution and live accounts remain unverified; no package or Release was created.
 
 ### Standalone collector release assets (unreleased)
 

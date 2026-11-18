@@ -1,18 +1,18 @@
-From c8dbae2d7aa82bb154d0f087eca66a9aba725d91 Mon Sep 17 00:00:00 2001
+From 3871a9fa44cd733993bbc3b7e14b3808c095abb2 Mon Sep 17 00:00:00 2001
 From: agent-speed <dev@agent-speed.local>
 Date: Wed, 18 Nov 2026 13:56:35 +0800
-Subject: [PATCH] Add Command Code quota monitoring
+Subject: [PATCH 26/26] Add Command Code quota monitoring
 
-Read Command Code credentials without writing them: a key saved from Subscription Settings on the local app or an enabled SSH host wins, then COMMAND_CODE_API_KEY, then ~/.commandcode/auth.json. Query the /alpha whoami, credits and subscriptions routes on Windows, macOS and the Linux collector. Map remaining monthly, weekly and 5-hour allowances; keep purchased/free credits as a separate balance. Remote management uses the commandcode_credentials control with a 0600 revisioned store; local keys use Keychain or current-user DPAPI.
+Read Command Code credentials without writing them: a key saved from Subscription Settings on the local app or an enabled SSH host wins, then COMMAND_CODE_API_KEY, then ~/.commandcode/auth.json. Query the /alpha whoami, credits, subscriptions and usage/summary routes on Windows, macOS and the Linux collector. The monthly window is real period spend over spend plus remaining monthly credits; only an absent summary falls back to monthlyCreditsGranted, and a plan id never implies a percentage. Weekly and 5-hour windows keep used/cap, purchased/free credits stay a separate balance. Remote management uses the commandcode_credentials control with a 0600 revisioned store; local keys use Keychain or current-user DPAPI.
 
 Adapted from Codenotch (MIT, commit 835550a342871779135b6484d6899161c5222f7c); license notices updated. Provider id is commandcode and remote sources keep credentials on the collector host.
 ---
  linux/collector/daemon.cpp                    |  23 +-
  linux/collector/quota.LICENSE.txt             |   3 +-
- linux/collector/quota.cpp                     | 472 +++++++++++++--
+ linux/collector/quota.cpp                     | 511 ++++++++++++--
  linux/collector/quota.hpp                     |  17 +-
- linux/tests/collector_daemon_test.cpp         |  66 +++
- linux/tests/quota_test.cpp                    | 548 +++++++++++++++++-
+ linux/tests/collector_daemon_test.cpp         |  66 ++
+ linux/tests/quota_test.cpp                    | 600 ++++++++++++++++-
  macos/Resources/Codenotch-LICENSE.txt         |   5 +-
  macos/Resources/strings.macos.json            |  18 +
  macos/Sources/AgentSpeed/App/AppModel.swift   |   5 +-
@@ -23,29 +23,29 @@ Adapted from Codenotch (MIT, commit 835550a342871779135b6484d6899161c5222f7c); l
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  14 +-
  .../AgentSpeed/App/RemoteQuotaProvider.swift  |  85 ++-
  .../AgentSpeed/Localization/StringTable.swift |  18 +
- .../Panes/CommandCodeKeyEditor.swift          | 137 +++++
+ .../Panes/CommandCodeKeyEditor.swift          | 137 ++++
  .../SettingsWindow/Panes/QuotaPane.swift      |  19 +
  .../CommandCodeAPIKeyStore.swift              | 111 ++++
  .../CommandCodeCredentials.swift              |  52 ++
- .../CommandCodeQuotaProvider.swift            | 357 ++++++++++++
- .../AgentSpeedCore/CommandCodeUsage.swift     | 255 ++++++++
+ .../CommandCodeQuotaProvider.swift            | 409 ++++++++++++
+ .../AgentSpeedCore/CommandCodeUsage.swift     | 246 +++++++
  macos/Sources/AgentSpeedCore/Quota.swift      |   6 +-
  .../AgentSpeedCore/QuotaPersistence.swift     |   4 +-
  .../Sources/AgentSpeedCore/RemoteQuota.swift  |   3 +-
- .../CommandCodeCredentialTransportTests.swift | 141 +++++
+ .../CommandCodeCredentialTransportTests.swift | 141 ++++
  .../CommandCodeKeyControllerTests.swift       | 151 +++++
  .../QuotaPresentationTests.swift              |   3 +
  .../RemoteQuotaTransportTests.swift           |  12 +-
- .../CommandCodeAPIKeyTests.swift              | 211 +++++++
- .../CommandCodeQuotaProviderTests.swift       | 417 +++++++++++++
+ .../CommandCodeAPIKeyTests.swift              | 211 ++++++
+ .../CommandCodeQuotaProviderTests.swift       | 518 +++++++++++++++
  .../KimiQuotaProviderTests.swift              |   2 +-
  .../QuotaColdStartTests.swift                 |  48 +-
  .../RemoteQuotaTests.swift                    |  21 +-
  spec/QUOTA.md                                 |  36 +-
- .../CommandCodeCredentialStore.cs             | 180 ++++++
- .../CommandCodeQuotaProvider.cs               | 537 +++++++++++++++++
+ .../CommandCodeCredentialStore.cs             | 180 +++++
+ .../CommandCodeQuotaProvider.cs               | 578 ++++++++++++++++
  windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   5 +-
- .../src/AgentSpeed.Core/RemoteQuotaSession.cs |  67 +++
+ .../src/AgentSpeed.Core/RemoteQuotaSession.cs |  67 ++
  .../Localization/Strings.Windows.json         |  21 +
  .../Settings/QuotaFormat.cs                   |   4 +-
  .../Services/RemoteConnectionManager.cs       |  20 +
@@ -56,15 +56,15 @@ Adapted from Codenotch (MIT, commit 835550a342871779135b6484d6899161c5222f7c); l
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  29 +-
  .../src/AgentSpeed/Settings/QuotaSurface.cs   | 121 +++-
  .../CommandCodeApiKeyTests.cs                 | 222 +++++++
- .../CommandCodeQuotaProviderTests.cs          | 525 +++++++++++++++++
- .../RemoteCommandCodeCredentialsTests.cs      | 133 +++++
+ .../CommandCodeQuotaProviderTests.cs          | 625 ++++++++++++++++++
+ .../RemoteCommandCodeCredentialsTests.cs      | 133 ++++
  .../QuotaFormatTests.cs                       |  20 +-
  .../RemoteQuotaSourcesTests.cs                |   9 +-
  .../SettingsSerializerTests.cs                |   2 +-
- .../CommandCodeKeySettingsTests.cs            | 210 +++++++
+ .../CommandCodeKeySettingsTests.cs            | 210 ++++++
  .../QuotaNotchViewTests.cs                    |   1 +
  .../QuotaSettingsPageTests.cs                 |   1 +
- 57 files changed, 5580 insertions(+), 132 deletions(-)
+ 57 files changed, 5956 insertions(+), 132 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/CommandCodeCredentialResponse.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/CommandCodeKeyEditor.swift
  create mode 100644 macos/Sources/AgentSpeedCore/CommandCodeAPIKeyStore.swift
@@ -148,7 +148,7 @@ index b6d2c109..3c3f0d75 100644
  MIT License
  
 diff --git a/linux/collector/quota.cpp b/linux/collector/quota.cpp
-index f89f14d7..f10e62b8 100644
+index f89f14d7..6d2eb3fc 100644
 --- a/linux/collector/quota.cpp
 +++ b/linux/collector/quota.cpp
 @@ -37,8 +37,8 @@ using agentspeed::json::Value;
@@ -175,7 +175,21 @@ index f89f14d7..f10e62b8 100644
  std::optional<double> number(Value v, bool strings = false) {
      if (auto n = v.finiteNumber()) return n;
      if (strings) if (auto s = v.string(); s && !s->empty() && s->size() <= 128) {
-@@ -115,6 +121,62 @@ std::optional<std::int64_t> reset(Value v, std::int64_t now) {
+@@ -103,6 +109,13 @@ std::string iso(std::int64_t ms) {
+     char tail[10]; std::snprintf(tail, sizeof(tail), ".%03dZ", static_cast<int>(ms % 1000));
+     return std::string(result) + tail;
+ }
++// Command Code's period filter is second-precision ISO-8601, the shape the native
++// clients send (`/alpha/usage/summary?since=...`).
++std::string isoSeconds(std::int64_t ms) {
++    std::time_t seconds = ms / 1000; std::tm tm{}; gmtime_r(&seconds, &tm);
++    char result[32]; std::strftime(result, sizeof(result), "%Y-%m-%dT%H:%M:%SZ", &tm);
++    return result;
++}
+ Json str(const std::optional<std::string>& s) { return s ? Json::of(*s) : Json::null(); }
+ Json num(std::optional<double> n) { return n && std::isfinite(*n) ? Json::decimal(*n, 15) : Json::null(); }
+ Json integer(std::optional<std::int64_t> n) { return n ? Json::of(*n) : Json::null(); }
+@@ -115,6 +128,62 @@ std::optional<std::int64_t> reset(Value v, std::int64_t now) {
          return now + static_cast<std::int64_t>(*s * 1000);
      return std::nullopt;
  }
@@ -195,9 +209,9 @@ index f89f14d7..f10e62b8 100644
 +    return out;
 +}
 +// Real plan ids are prefixed (`individual-go`, `team-pro`) and may carry a
-+// version suffix. Only ids documented in the contract map to an allocation;
-+// anything else, including `individual-ultra`, yields no invented amount.
-+struct CommandCodePlan { std::optional<double> credits; std::optional<std::string> name; };
++// version suffix. This only names the tier like the CLI does; quota amounts
++// always come from the supplier's own spend and credit fields.
++struct CommandCodePlan { std::optional<std::string> name; };
 +CommandCodePlan commandCodePlan(const std::optional<std::string>& id) {
 +    if (!id) return {};
 +    const auto value = trim(*id);
@@ -205,7 +219,7 @@ index f89f14d7..f10e62b8 100644
 +    std::string key;
 +    for (unsigned char c : value) key += static_cast<char>(std::tolower(c));
 +    // Real ids are prefixed (`individual-go`, `individual-go-v1`, `team-pro`);
-+    // only the documented families map to an included-credit allocation.
++    // only the documented families map to the CLI's display names.
 +    bool team = false;
 +    for (const char* prefix : {"individual-", "individual_", "team-", "team_"}) {
 +        const std::string text(prefix);
@@ -218,17 +232,17 @@ index f89f14d7..f10e62b8 100644
 +        const auto rest = static_cast<std::string::difference_type>(version) + 1;
 +        if (std::all_of(compact.begin() + rest, compact.end(), [](unsigned char c) { return std::isdigit(c); })) compact.erase(version);
 +    }
-+    if (team) return compact == "pro" || compact == "teampro" ? CommandCodePlan{40, "Team Pro"} : CommandCodePlan{{}, value};
-+    if (compact == "teampro") return {40, "Team Pro"};
-+    if (compact == "go") return {10, "Go"};
-+    if (compact == "goat") return {100, "GOAT"};
-+    if (compact == "pro") return {110, "Pro"};
-+    if (compact == "provider") return {15, "Provider"};
-+    if (compact == "max10x" || compact == "max10") return {150, "Max 10x"};
-+    if (compact == "max20x" || compact == "max20") return {300, "Max 20x"};
-+    if (compact == "ultra") return {{}, "Ultra"};
-+    // Unknown (for example `individual-mystery`): keep the label, invent no allowance.
-+    return {{}, value};
++    if (team) return compact == "pro" || compact == "teampro" ? CommandCodePlan{"Teams Pro"} : CommandCodePlan{value};
++    if (compact == "teampro") return {"Teams Pro"};
++    if (compact == "go") return {"Go"};
++    if (compact == "goat") return {"GOAT"};
++    if (compact == "pro") return {"Pro"};
++    if (compact == "provider") return {"Provider"};
++    if (compact == "max10x" || compact == "max10") return {"Max"};
++    if (compact == "max20x" || compact == "max20") return {"Max"};
++    if (compact == "ultra") return {"Ultra"};
++    // Unknown (for example `individual-mystery`): keep the trimmed raw id.
++    return {value};
 +}
 +std::optional<std::string> scalar(Value v) {
 +    if (auto s = text(v)) { auto value = trim(*s); if (!value.empty()) return value; }
@@ -238,7 +252,7 @@ index f89f14d7..f10e62b8 100644
  std::optional<double> fraction(Value v, bool strings = false) { auto n = number(v, strings); return n ? std::optional<double>(*n / 100) : std::nullopt; }
  Window window(std::string id, std::string label, std::optional<double> fraction, std::optional<std::int64_t> reset, std::optional<double> duration) {
      return {std::move(id), std::move(label), fraction, fraction ? std::optional<double>(1 - *fraction) : std::nullopt, fraction, duration, reset};
-@@ -299,15 +361,54 @@ StoredKimi storedKimi(const Paths& paths) {
+@@ -299,15 +368,54 @@ StoredKimi storedKimi(const Paths& paths) {
      c.revision = *revision;
      return {true, true, std::move(c)};
  }
@@ -250,8 +264,7 @@ index f89f14d7..f10e62b8 100644
 +    if (directory.value < 0) return {};
 +    Fd fd(openat(directory.value, "commandcode.json", O_RDONLY | O_NONBLOCK | O_CLOEXEC | O_NOFOLLOW));
 +    if (fd.value < 0) return errno == ENOENT ? StoredCommandCode{true, false, {}} : StoredCommandCode{};
-     struct stat st{};
--    if (fstatat(directory, "kimi.json", &st, AT_SYMLINK_NOFOLLOW)) return errno == ENOENT;
++    struct stat st{};
 +    if (fstat(fd.value, &st) || !privateRegular(st) || st.st_size <= 0 || st.st_size > 16384) return {};
 +    std::string body; body.reserve(static_cast<std::size_t>(st.st_size)); char buffer[4096];
 +    for (;;) {
@@ -274,7 +287,8 @@ index f89f14d7..f10e62b8 100644
 +    return {true, true, std::move(c)};
 +}
 +bool keyTargetSafe(int directory, const char* name) {
-+    struct stat st{};
+     struct stat st{};
+-    if (fstatat(directory, "kimi.json", &st, AT_SYMLINK_NOFOLLOW)) return errno == ENOENT;
 +    if (fstatat(directory, name, &st, AT_SYMLINK_NOFOLLOW)) return errno == ENOENT;
      return privateRegular(st);
  }
@@ -298,7 +312,7 @@ index f89f14d7..f10e62b8 100644
      Fd fd(openat(directory, temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
      if (fd.value < 0) return false;
      struct stat st{}; bool ok = !fstat(fd.value, &st) && privateRegular(st); std::size_t offset = 0;
-@@ -317,7 +418,7 @@ bool storeKimi(int directory, const std::string& body) {
+@@ -317,7 +425,7 @@ bool storeKimi(int directory, const std::string& body) {
          else if (n < 0 && errno == EINTR) continue;
          else ok = false;
      }
@@ -307,7 +321,7 @@ index f89f14d7..f10e62b8 100644
      if (!ok) { unlinkat(directory, temporary.c_str(), 0); return false; }
      return fsync(directory) == 0;
  }
-@@ -394,10 +495,12 @@ void saveFile(int directory, const std::string& name, const std::string& body) {
+@@ -394,10 +502,12 @@ void saveFile(int directory, const std::string& name, const std::string& body) {
  }
  std::optional<Snapshot> cachedSnapshot(Value v, const std::string& id) {
      if (!v.isObject() || !v["id"].equals(id) || !v["status"].equals("ok") || !v["fidelity"].equals("official") ||
@@ -323,7 +337,7 @@ index f89f14d7..f10e62b8 100644
      std::set<std::string> ids;
      for (auto w : v["windows"].elements()) {
          auto wid = text(w["id"]), label = text(w["label"]);
-@@ -417,7 +520,7 @@ bool Credential::operator==(const Credential& c) const { return token == c.token
+@@ -417,7 +527,7 @@ bool Credential::operator==(const Credential& c) const { return token == c.token
  Paths paths(const std::string& home) {
      const char* codex = std::getenv("CODEX_HOME"), *xdg = std::getenv("XDG_DATA_HOME"), *db = std::getenv("OPENCODE_DB"), *kimi = std::getenv("KIMI_CODE_HOME");
      Paths p{home, std::string(codex && *codex ? codex : home + "/.codex") + "/auth.json", std::string(xdg && *xdg ? xdg : home + "/.local/share") + "/opencode", "",
@@ -332,7 +346,7 @@ index f89f14d7..f10e62b8 100644
      if (!db || !*db) p.goDatabase = p.goDirectory + "/opencode.db";
      else if (std::string(db) != ":memory:") p.goDatabase = db[0] == '/' ? db : p.goDirectory + "/" + db;
      return p;
-@@ -431,20 +534,37 @@ KimiSettings manageKimiCredentials(const Paths& paths, const std::string& operat
+@@ -431,20 +541,37 @@ KimiSettings manageKimiCredentials(const Paths& paths, const std::string& operat
      if (operation != "delete" && (operation != "set" || !keyRegion(region) || !apiKeyValid(apiKey))) return {};
      Fd directory(keyDirectory(paths.home, operation == "set"));
      if (directory.value == -2 && operation == "delete") return {true, false, {}};
@@ -378,7 +392,7 @@ index f89f14d7..f10e62b8 100644
  std::optional<Credential> credentials(const std::string& provider, const Paths& p) {
      if (provider == "codex") {
          auto data = fileAt(AT_FDCWD, p.codexAuth); Document doc;
-@@ -475,6 +595,28 @@ std::optional<Credential> credentials(const std::string& provider, const Paths&
+@@ -475,6 +602,28 @@ std::optional<Credential> credentials(const std::string& provider, const Paths&
          c.context = "oauth:china:" + (session && !session->empty() ? "session:" + digest(*session) : "token:" + digest(c.token));
          return c;
      }
@@ -407,7 +421,7 @@ index f89f14d7..f10e62b8 100644
      if (provider != "opencode-go") return std::nullopt;
      bool selected = false; auto stored = databaseCredential(p.goDatabase, selected);
      if (selected) return stored;
-@@ -492,7 +634,7 @@ Json Snapshot::json() const {
+@@ -492,7 +641,7 @@ Json Snapshot::json() const {
      if (credits) credit = Json::object({{"hasCredits", bit(credits->hasCredits)}, {"unlimited", bit(credits->unlimited)}, {"limit", num(credits->limit)}, {"used", num(credits->used)}, {"usedFraction", num(credits->usedFraction)}, {"resetAt", stamp(credits->resetAt)}, {"balance", str(credits->balance)}});
      Json identity;
      if (accountIdentity) identity = Json::object({{"id", Json::of(accountIdentity->id)}, {"displayName", Json::of(accountIdentity->displayName)}});
@@ -416,7 +430,7 @@ index f89f14d7..f10e62b8 100644
  }
  Snapshot parseCodex(const std::string& json, std::int64_t now) {
      Document doc; if (json.size() > kBody || !doc.parse(json) || !doc.root().isObject()) throw std::runtime_error("quota response");
-@@ -589,6 +731,93 @@ Snapshot parseKimi(const std::string& json, std::int64_t now) {
+@@ -589,6 +738,104 @@ Snapshot parseKimi(const std::string& json, std::int64_t now) {
      }
      return s;
  }
@@ -437,11 +451,12 @@ index f89f14d7..f10e62b8 100644
 +    if (!organization.empty()) url += (path.find('?') == std::string::npos ? "?" : "&") + std::string("orgId=") + queryEscape(organization);
 +    return url;
 +}
-+Snapshot parseCommandCode(const std::string& whoami, const std::string& credits, const std::string& subscriptions, std::int64_t now) {
++Snapshot parseCommandCode(const std::string& whoami, const std::string& credits, const std::string& subscriptions, std::int64_t now, const std::string& summary) {
 +    auto profile = parseCommandCodeProfile(whoami);
-+    Document creditDoc, subscriptionDoc;
++    Document creditDoc, subscriptionDoc, summaryDoc;
 +    if (credits.size() > kBody || !creditDoc.parse(credits) || !creditDoc.root().isObject() ||
-+        subscriptions.size() > kBody || !subscriptionDoc.parse(subscriptions) || !subscriptionDoc.root().isObject())
++        subscriptions.size() > kBody || !subscriptionDoc.parse(subscriptions) || !subscriptionDoc.root().isObject() ||
++        summary.size() > kBody || !summaryDoc.parse(summary) || !summaryDoc.root().isObject())
 +        throw std::runtime_error("quota response");
 +    auto creditRoot = creditDoc.root(), subscriptionRoot = subscriptionDoc.root();
 +    // Billing routes answer at the root or under a data envelope depending on the
@@ -465,16 +480,26 @@ index f89f14d7..f10e62b8 100644
 +    auto purchased = number(field("purchasedCredits"), true);
 +    auto free = number(field("freeCredits"), true);
 +    auto parsedPlan = commandCodePlan(plan);
-+    std::optional<double> grant = granted && *granted >= 0 ? granted : parsedPlan.credits;
++    // `/alpha/usage/summary` reports real period spend; like the credits fields it
++    // may sit at the root or under `data`, and numeric strings count.
++    auto summaryRoot = summaryDoc.root();
++    auto summaryValue = summaryRoot["data"].isObject() ? summaryRoot["data"] : summaryRoot;
++    auto totalCost = number(summaryRoot["totalCost"], true);
++    if (!totalCost) totalCost = number(summaryValue["totalCost"], true);
 +    Snapshot s = empty("commandcode", "ok");
 +    s.account = profile.account; s.plan = parsedPlan.name;
 +    const auto periodEnd = date(subscriptionValue["currentPeriodEnd"]);
-+    if (grant && *grant > 0 && monthly) {
-+        const double usedFraction = (*grant - *monthly) / *grant;
-+        std::optional<double> duration;
-+        if (auto start = date(subscriptionValue["currentPeriodStart"]); start && periodEnd && *periodEnd > *start)
-+            duration = static_cast<double>(*periodEnd - *start) / 1000.0;
-+        s.windows.push_back(window("monthly", "Monthly limit", usedFraction, periodEnd, duration));
++    std::optional<double> duration;
++    if (auto start = date(subscriptionValue["currentPeriodStart"]); start && periodEnd && *periodEnd > *start)
++        duration = static_cast<double>(*periodEnd - *start) / 1000.0;
++    if (totalCost && monthly && *totalCost + *monthly > 0) {
++        // Spend over (spend + included credits) is the site's monthly percentage;
++        // a plan's granted allotment is never a substitute for real spend.
++        s.windows.push_back(window("monthly", "Monthly limit", *totalCost / (*totalCost + *monthly), periodEnd, duration));
++        s.headlineId = "monthly";
++    } else if (!totalCost && granted && *granted > 0 && monthly) {
++        // No summary on this account: the server-reported grant is the only fallback.
++        s.windows.push_back(window("monthly", "Monthly limit", (*granted - *monthly) / *granted, periodEnd, duration));
 +        s.headlineId = "monthly";
 +    }
 +    auto windowLimits = creditRoot["windowLimits"].isObject() ? creditRoot["windowLimits"] : creditsData["windowLimits"];
@@ -510,7 +535,7 @@ index f89f14d7..f10e62b8 100644
  std::pair<std::optional<std::int64_t>, std::optional<std::int64_t>> parseResetCredits(const std::string& json) {
      Document doc; if (json.size() > kBody || !doc.parse(json)) return {};
      auto root = doc.root(); auto count = root["available_count"].ordinal(); std::optional<std::int64_t> expiry;
-@@ -606,15 +835,18 @@ std::pair<std::optional<std::int64_t>, std::optional<std::int64_t>> parseResetCr
+@@ -606,15 +853,18 @@ std::pair<std::optional<std::int64_t>, std::optional<std::int64_t>> parseResetCr
  
  struct Provider::Impl {
      std::string id; Paths paths; Transport transport; Now now; Fd directory;
@@ -532,7 +557,7 @@ index f89f14d7..f10e62b8 100644
          if (directory.value < 0) return;
          auto data = fileAt(directory.value, id + "-" + key + ".json", true); Document doc;
          if (!data || !doc.parse(*data)) return;
-@@ -624,13 +856,15 @@ struct Provider::Impl {
+@@ -624,13 +874,15 @@ struct Provider::Impl {
          coldFailures = static_cast<int>(std::clamp<std::int64_t>(v["coldFailures"].ordinal().value_or(0), 0, 4));
          rejectedToken = text(v["rejectedToken"]).value_or(""); resetRejectedToken = text(v["resetRejectedToken"]).value_or("");
          auto status = text(v["rejectedStatus"]); if (status == "unsupported" || status == "needsAuth" || status == "accessDenied") rejectedStatus = *status;
@@ -549,15 +574,15 @@ index f89f14d7..f10e62b8 100644
      }
      Snapshot retained() const {
          auto s = snapshot.value_or(empty(id)); s.nextAllowedAt = next;
-@@ -653,8 +887,60 @@ struct Provider::Impl {
+@@ -653,8 +905,81 @@ struct Provider::Impl {
      Snapshot authentication(bool apiKey = false) const {
          auto result = empty(id, "needsAuth");
          if (id == "kimi" && apiKey) result.block = "Kimi API key unavailable or rejected. Check the saved region and API key in Settings.";
 +        if (id == "commandcode") result.block = apiKey
 +            ? "Command Code credentials were rejected. Sign in again or set a new COMMAND_CODE_API_KEY."
 +            : "Command Code credentials not found. Sign in with the Command Code CLI or set COMMAND_CODE_API_KEY.";
-         return result;
-     }
++        return result;
++    }
 +    Snapshot commandCodeAttempt(const Credential& c, std::int64_t& serverDelay) {
 +        auto fetch = [&](const std::string& url) {
 +            auto reply = transport(url, c, false);
@@ -586,8 +611,29 @@ index f89f14d7..f10e62b8 100644
 +        if (!(credits.status >= 200 && credits.status < 300)) return fail(credits);
 +        auto subscriptions = fetch(commandCodeUrl("/alpha/billing/subscriptions", profile.organization));
 +        if (!(subscriptions.status >= 200 && subscriptions.status < 300)) return fail(subscriptions);
++        // The summary is the only real spend figure, so it is read last, scoped to the
++        // org and the subscription's period start. A 404 or blank body means this
++        // account has no summary; the credits/subscriptions reading still stands.
++        std::optional<std::int64_t> periodStart;
++        {
++            Document doc;
++            if (subscriptions.body.size() <= kBody && doc.parse(subscriptions.body)) {
++                auto root = doc.root();
++                auto value = root["data"].isObject() ? root["data"] : root;
++                periodStart = date(value["currentPeriodStart"]);
++            }
++        }
++        auto summaryUrl = commandCodeUrl("/alpha/usage/summary", profile.organization);
++        if (periodStart)
++            summaryUrl += (summaryUrl.find('?') == std::string::npos ? "?" : "&") + std::string("since=") + queryEscape(isoSeconds(*periodStart));
++        auto summary = fetch(summaryUrl);
++        std::string summaryBody = "{}";
++        if (summary.status != 404) {
++            if (!(summary.status >= 200 && summary.status < 300)) return fail(summary);
++            if (!trim(summary.body).empty()) summaryBody = summary.body;
++        }
 +        auto observed = now();
-+        auto result = parseCommandCode(who.body, credits.body, subscriptions.body, observed);
++        auto result = parseCommandCode(who.body, credits.body, subscriptions.body, observed, summaryBody);
 +        if (result.status == "unsupported") {
 +            snapshot.reset(); success = false; coldFailures = 0; rejectedStatus = "unsupported";
 +            rejectedReason = "Command Code has no usage limits on this account yet";
@@ -597,8 +643,8 @@ index f89f14d7..f10e62b8 100644
 +            next.reset(); retry.reset(); failures = 0; coldFailures = 0; success = true; snapshot = result;
 +        }
 +        result.nextAllowedAt = next;
-+        return result;
-+    }
+         return result;
+     }
 +    Snapshot commit(const std::optional<Credential>& c, Snapshot result) {
 +        // Never commit or reply with an old account after a concurrent auth/workspace change.
 +        std::unique_lock<std::recursive_mutex> commitLock(credentialMutex, std::defer_lock);
@@ -610,7 +656,7 @@ index f89f14d7..f10e62b8 100644
      Snapshot read(bool refresh) {
          auto current = credentials(id, paths);
          auto result = readUsage(refresh, current);
-@@ -670,6 +956,13 @@ struct Provider::Impl {
+@@ -670,6 +995,13 @@ struct Provider::Impl {
              auto stored = storedKimi(paths);
              identified = !stored.ok || stored.present;
          }
@@ -624,7 +670,7 @@ index f89f14d7..f10e62b8 100644
          result.configured = identified;
          if (credentials(id, paths) != current) return read(false);
          return result;
-@@ -681,6 +974,10 @@ struct Provider::Impl {
+@@ -681,6 +1013,10 @@ struct Provider::Impl {
                  std::lock_guard<std::recursive_mutex> lock(credentialMutex);
                  auto stored = storedKimi(paths); return authentication(!stored.ok || stored.present);
              }
@@ -635,7 +681,7 @@ index f89f14d7..f10e62b8 100644
              return authentication();
          }
          load(accountKey(*c)); const auto token = digest(c->token);
-@@ -690,10 +987,20 @@ struct Provider::Impl {
+@@ -690,10 +1026,20 @@ struct Provider::Impl {
          // Refuse network work if the private, persistent pacing store is unavailable.
          if (refresh && directory.value < 0) return empty(id);
          if (rejectedToken == token || rejectedStatus == "needsAuth") return authentication(!c->oauth);
@@ -658,7 +704,7 @@ index f89f14d7..f10e62b8 100644
          try {
              const std::string url = id == "codex" ? "https://chatgpt.com/backend-api/wham/usage" : id == "kimi" ? (c->region == "international" ? "https://api.kimi.ai/coding/v1/usages" : "https://api.kimi.com/coding/v1/usages") : c->oauth ? "https://opencode.ai/inference/go/v1/usage" : "https://opencode.ai/zen/go/v1/usage";
              auto reply = transport(url, *c, false);
-@@ -738,12 +1045,7 @@ struct Provider::Impl {
+@@ -738,12 +1084,7 @@ struct Provider::Impl {
                  result = empty(id, "unsupported"); result.block = "No Kimi Code plan on this account"; result.nextAllowedAt = next;
              } else { backoff(serverDelay, reply.status == 429); result = retained(); }
          } catch (...) { backoff(serverDelay); result = retained(); }
@@ -672,7 +718,7 @@ index f89f14d7..f10e62b8 100644
      }
  };
  Provider::Provider(std::string id, Paths paths, Transport transport, Now now) : impl_(std::make_unique<Impl>(std::move(id), std::move(paths), std::move(transport), std::move(now))) {}
-@@ -753,7 +1055,7 @@ Snapshot Provider::read(bool refresh) { return impl_->read(refresh); }
+@@ -753,7 +1094,7 @@ Snapshot Provider::read(bool refresh) { return impl_->read(refresh); }
  struct Service::Impl {
      struct Request { std::uint64_t subscriber; std::string id; std::vector<std::string> providers; std::map<std::string, std::shared_ptr<const std::string>> snapshots; };
      struct Job { bool refresh; std::vector<std::uint64_t> requests; bool running = false; std::uint64_t generation = 0; };
@@ -681,7 +727,7 @@ index f89f14d7..f10e62b8 100644
      struct ConfigurationRequest { std::uint64_t subscriber; std::string id; };
      std::deque<Configuration> configurations;
      std::map<std::uint64_t, ConfigurationRequest> configurationPending;
-@@ -761,14 +1063,26 @@ struct Service::Impl {
+@@ -761,14 +1102,26 @@ struct Service::Impl {
      std::uint64_t kimiGeneration = 0;
      bool kimiNeedsRefresh = false;
      const std::shared_ptr<const std::string> clearedKimi = std::make_shared<const std::string>(empty("kimi").json().compact());
@@ -714,7 +760,7 @@ index f89f14d7..f10e62b8 100644
          for (auto& reply : output) {
              Document doc; if (!doc.parse(reply.second) || !doc.root()["type"].equals("quota")) continue;
              auto snapshots = doc.root()["snapshots"]; bool rewritten = false;
-@@ -777,7 +1091,7 @@ struct Service::Impl {
+@@ -777,7 +1130,7 @@ struct Service::Impl {
              for (auto snapshot : snapshots.elements()) {
                  if (!first) line += ',';
                  first = false;
@@ -723,7 +769,7 @@ index f89f14d7..f10e62b8 100644
                  else line += snapshot.raw();
              }
              if (rewritten) { line += "]}"; reply.second = std::move(line); }
-@@ -801,15 +1115,23 @@ struct Service::Impl {
+@@ -801,15 +1154,23 @@ struct Service::Impl {
                  }
                  // No network locks or supplier work participate in provisioning.
                  std::lock_guard<std::recursive_mutex> credentialsLock(credentialMutex);
@@ -751,7 +797,7 @@ index f89f14d7..f10e62b8 100644
                      configurationPending.erase(it);
                  }
              }
-@@ -819,15 +1141,27 @@ struct Service::Impl {
+@@ -819,15 +1180,27 @@ struct Service::Impl {
              Provider provider(id, paths, transport, now);
              for (;;) {
                  std::shared_ptr<Job> job; std::uint64_t generation; bool suppressCache;
@@ -783,15 +829,14 @@ index f89f14d7..f10e62b8 100644
                      }
                      for (auto requestId : job->requests) {
                          auto it = pending.find(requestId); if (it == pending.end()) continue;
-@@ -869,10 +1203,33 @@ bool Service::control(const std::string& line, std::uint64_t subscriber) {
+@@ -869,10 +1242,33 @@ bool Service::control(const std::string& line, std::uint64_t subscriber) {
          for (const auto& item : impl_->pending) if (item.second.subscriber == subscriber) { if (item.second.id == *id) return false; ++count; }
          for (const auto& item : impl_->configurationPending) if (item.second.subscriber == subscriber) { if (item.second.id == *id) return false; ++count; }
          if (count >= 4 || impl_->pending.size() + impl_->configurationPending.size() + impl_->output.size() >= 256) return false;
 -        if (!valid) { impl_->output.emplace_back(subscriber, Impl::configurationReply(*id, {}, "invalid_request")); return true; }
 +        if (!valid) { impl_->output.emplace_back(subscriber, Impl::configurationReply("kimi", *id, false, false, std::nullopt, "invalid_request")); return true; }
-         auto sequence = ++impl_->sequence;
-         impl_->configurationPending.emplace(sequence, Impl::ConfigurationRequest{subscriber, *id});
--        impl_->configurations.push_back({sequence, *operation, region.value_or(""), key.value_or("")});
++        auto sequence = ++impl_->sequence;
++        impl_->configurationPending.emplace(sequence, Impl::ConfigurationRequest{subscriber, *id});
 +        impl_->configurations.push_back({sequence, "kimi", *operation, region.value_or(""), key.value_or("")});
 +        impl_->changed.notify_all(); return true;
 +    }
@@ -813,13 +858,14 @@ index f89f14d7..f10e62b8 100644
 +        for (const auto& item : impl_->configurationPending) if (item.second.subscriber == subscriber) { if (item.second.id == *id) return false; ++count; }
 +        if (count >= 4 || impl_->pending.size() + impl_->configurationPending.size() + impl_->output.size() >= 256) return false;
 +        if (!valid) { impl_->output.emplace_back(subscriber, Impl::configurationReply("commandcode", *id, false, false, std::nullopt, "invalid_request")); return true; }
-+        auto sequence = ++impl_->sequence;
-+        impl_->configurationPending.emplace(sequence, Impl::ConfigurationRequest{subscriber, *id});
+         auto sequence = ++impl_->sequence;
+         impl_->configurationPending.emplace(sequence, Impl::ConfigurationRequest{subscriber, *id});
+-        impl_->configurations.push_back({sequence, *operation, region.value_or(""), key.value_or("")});
 +        impl_->configurations.push_back({sequence, "commandcode", *operation, "", key.value_or("")});
          impl_->changed.notify_all(); return true;
      }
      if (!v["type"].equals("quota") || !v["refresh"].isBool() || !v["providers"].isArray() || v["providers"].size() == 0 || v["providers"].size() > kProviders.size()) return false;
-@@ -894,8 +1251,10 @@ bool Service::control(const std::string& line, std::uint64_t subscriber) {
+@@ -894,8 +1290,10 @@ bool Service::control(const std::string& line, std::uint64_t subscriber) {
          auto& queue = impl_->jobs[static_cast<std::size_t>(std::find(kProviders.begin(), kProviders.end(), id) - kProviders.begin())];
          std::shared_ptr<Impl::Job> job;
          // Concurrent explicit refreshes coalesce; cache-only requests never upgrade to HTTP.
@@ -832,7 +878,7 @@ index f89f14d7..f10e62b8 100644
          job->requests.push_back(key);
      }
      impl_->changed.notify_all(); return true;
-@@ -912,5 +1271,10 @@ void Service::disconnected(std::uint64_t subscriber) {
+@@ -912,5 +1310,10 @@ void Service::disconnected(std::uint64_t subscriber) {
          if (!job.running && job.requests.empty()) it = queue.erase(it); else ++it;
      }
  }
@@ -845,7 +891,7 @@ index f89f14d7..f10e62b8 100644
 +}
  } // namespace collector::quota
 diff --git a/linux/collector/quota.hpp b/linux/collector/quota.hpp
-index 40e50a2c..3d2bd205 100644
+index 40e50a2c..ecd9ef68 100644
 --- a/linux/collector/quota.hpp
 +++ b/linux/collector/quota.hpp
 @@ -20,13 +20,21 @@ struct Credential {
@@ -876,7 +922,7 @@ index 40e50a2c..3d2bd205 100644
  Snapshot parseGo(const std::string& json, std::int64_t now);
  Snapshot parseKimi(const std::string& json, std::int64_t now);
 +Snapshot parseCommandCode(const std::string& whoami, const std::string& credits,
-+    const std::string& subscriptions, std::int64_t now);
++    const std::string& subscriptions, std::int64_t now, const std::string& summary = "{}");
  std::pair<std::optional<std::int64_t>, std::optional<std::int64_t>> parseResetCredits(const std::string& json);
  class Provider {
  public:
@@ -975,16 +1021,17 @@ index 30e6313b..84f05d0d 100644
 +
  } // namespace
 diff --git a/linux/tests/quota_test.cpp b/linux/tests/quota_test.cpp
-index 55f863e7..670c3413 100644
+index 55f863e7..8c663022 100644
 --- a/linux/tests/quota_test.cpp
 +++ b/linux/tests/quota_test.cpp
-@@ -26,12 +26,15 @@ constexpr std::int64_t now = 1794744000000LL;
+@@ -26,12 +26,16 @@ constexpr std::int64_t now = 1794744000000LL;
  const char* codex = R"({"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":125,"limit_window_seconds":18000,"reset_after_seconds":20},"secondary_window":{"used_percent":0,"limit_window_seconds":604800}},"credits":{"balance":"0","has_credits":false}})";
  const char* go = R"({"usage":{"rolling":{"percent":0,"resetsAt":"2026-11-16T00:00:00.611Z"},"weekly":{"percent":110},"monthly":{"percent":25,"resetsAt":"2026-03-31T00:00:00Z"}}})";
  const char* kimi = R"({"usages":{"limit_5h":{"used_ratio":0,"reset_time":"2026-11-16T00:00:00.611Z"},"limit_7d":{"used_ratio":"1.25"},"limit_month_total":{"used_ratio":0.2},"limit_month_code":{"used_ratio":0.3}}})";
 +const char* commandCodeWhoami = R"({"org":{"id":"org-cc","login":"acme"},"user":{"userName":"alice"}})";
 +const char* commandCodeCredits = R"({"credits":{"monthlyCredits":8,"monthlyCreditsGranted":10,"purchasedCredits":1.5,"freeCredits":0,"planId":"individual-go","windowLimits":{"fiveHour":{"used":1,"cap":2,"resetAt":1794747600000},"weekly":{"used":3,"cap":4,"resetAt":1794800000000}}}})";
 +const char* commandCodeSubscriptions = R"({"data":{"planId":"individual-go","status":"active","currentPeriodStart":"2026-11-01T00:00:00Z","currentPeriodEnd":"2026-12-01T00:00:00Z"}})";
++const char* commandCodeSummary = R"({"totalCost":4,"totalCount":12})";
  void put(const fs::path& path, const std::string& value) { fs::create_directories(path.parent_path()); std::ofstream(path) << value; }
  class Home {
  public:
@@ -995,7 +1042,7 @@ index 55f863e7..670c3413 100644
      void codexAuth(const std::string& token = "synthetic-codex", const std::string& account = "account-a") const {
          put(paths().codexAuth, "{\"tokens\":{\"access_token\":\"" + token + "\",\"account_id\":\"" + account + "\"}}");
      }
-@@ -39,6 +42,9 @@ public:
+@@ -39,6 +43,9 @@ public:
      void kimiAuth(const std::string& token = "synthetic-kimi", const std::string& session = "synthetic-session", std::int64_t expires = now / 1000 + 3600) const {
          put(paths().kimiAuth, "{\"access_token\":\"" + token + "\",\"refresh_token\":\"" + session + "\",\"expires_at\":" + std::to_string(expires) + "}");
      }
@@ -1005,7 +1052,7 @@ index 55f863e7..670c3413 100644
      std::string root;
  };
  class Environment {
-@@ -49,7 +55,13 @@ public:
+@@ -49,7 +56,14 @@ public:
      std::optional<std::string> old;
  };
  q::HttpReply success(const std::string& url, const q::Credential&, bool reset) {
@@ -1014,13 +1061,14 @@ index 55f863e7..670c3413 100644
 +    if (url.find("api.commandcode.ai") != std::string::npos) {
 +        if (url.find("/whoami") != std::string::npos) return {200, commandCodeWhoami, ""};
 +        if (url.find("/billing/credits") != std::string::npos) return {200, commandCodeCredits, ""};
++        if (url.find("/usage/summary") != std::string::npos) return {200, commandCodeSummary, ""};
 +        return {200, commandCodeSubscriptions, ""};
 +    }
 +    return {200, url.find("chatgpt.com") != std::string::npos ? codex : url.find("api.kimi.com") != std::string::npos ? kimi : go, ""};
  }
  std::vector<std::pair<std::uint64_t, std::string>> replies(q::Service& service, std::size_t count) {
      std::vector<std::pair<std::uint64_t, std::string>> out;
-@@ -1013,4 +1025,536 @@ TEST(CollectorKimiKeys, RemovalInvalidatesKimiWhileAnotherSupplierDelaysAnAssemb
+@@ -1013,4 +1027,586 @@ TEST(CollectorKimiKeys, RemovalInvalidatesKimiWhileAnotherSupplierDelaysAnAssemb
      EXPECT_EQ(doc.root()["snapshots"].at(1)["windows"].size(), 0u); EXPECT_TRUE(doc.root()["snapshots"].at(1)["observedAt"].isNull());
  }
  
@@ -1080,26 +1128,24 @@ index 55f863e7..670c3413 100644
 +    EXPECT_TRUE(doc.root()["accountIdentity"].isNull());
 +
 +    auto fallback = q::parseCommandCode(R"({"user":{"userName":"bob"}})", R"({"credits":{"monthlyCredits":20,"planId":"team-pro"}})", "{}", now);
-+    ASSERT_EQ(fallback.windows.size(), 1u); EXPECT_EQ(fallback.plan, "Team Pro"); EXPECT_EQ(fallback.account, "bob");
-+    ASSERT_TRUE(fallback.windows[0].usedFraction); EXPECT_NEAR(*fallback.windows[0].usedFraction, .5, 1e-12);
-+    EXPECT_FALSE(fallback.windows[0].resetAt); EXPECT_FALSE(fallback.windows[0].duration);
-+    EXPECT_EQ(fallback.headlineId, "monthly");
-+    // Included monthly credits alone are a window, not an extra credits object.
++    // No summary and no server-reported grant: the plan is named, never a percentage.
++    EXPECT_EQ(fallback.plan, "Teams Pro"); EXPECT_EQ(fallback.account, "bob");
++    EXPECT_TRUE(fallback.windows.empty()); EXPECT_FALSE(fallback.headlineId);
++    EXPECT_EQ(fallback.status, "unsupported"); EXPECT_FALSE(fallback.observedAt);
 +    EXPECT_FALSE(fallback.credits);
 +
-+    struct PlanCase { const char* id; const char* name; double grant; };
-+    for (const auto& plan : {PlanCase{"individual-go", "Go", 10}, PlanCase{"individual-go-v1", "Go", 10},
-+            PlanCase{"individual-goat", "GOAT", 100}, PlanCase{"individual-pro", "Pro", 110},
-+            PlanCase{"individual-provider", "Provider", 15}, PlanCase{"individual-max-10x", "Max 10x", 150},
-+            PlanCase{"individual-max-20x", "Max 20x", 300}, PlanCase{"team-pro", "Team Pro", 40},
-+            PlanCase{"individual-pro-v2", "Pro", 110}, PlanCase{"individual-max-10x-v12", "Max 10x", 150}}) {
++    struct PlanCase { const char* id; const char* name; };
++    for (const auto& plan : {PlanCase{"individual-go", "Go"}, PlanCase{"individual-go-v1", "Go"},
++            PlanCase{"individual-goat", "GOAT"}, PlanCase{"individual-pro", "Pro"},
++            PlanCase{"individual-provider", "Provider"}, PlanCase{"individual-max-10x", "Max"},
++            PlanCase{"individual-max-20x", "Max"}, PlanCase{"team-pro", "Teams Pro"},
++            PlanCase{"individual-pro-v2", "Pro"}, PlanCase{"individual-max-10x-v12", "Max"}}) {
 +        SCOPED_TRACE(plan.id);
-+        auto body = std::string(R"({"credits":{"monthlyCredits":)") + std::to_string(plan.grant / 2.0) +
-+            R"(,"planId":")" + plan.id + R"("}})";
-+        auto read = q::parseCommandCode("{}", body, "{}", now);
++        auto body = std::string(R"({"credits":{"monthlyCredits":8,"planId":")") + plan.id + R"("}})";
++        auto read = q::parseCommandCode("{}", body, "{}", now, R"({"totalCost":4})");
 +        ASSERT_EQ(read.windows.size(), 1u);
 +        ASSERT_TRUE(read.windows[0].usedFraction);
-+        EXPECT_NEAR(*read.windows[0].usedFraction, .5, 1e-12);
++        EXPECT_NEAR(*read.windows[0].usedFraction, 4.0 / 12.0, 1e-12);
 +        ASSERT_TRUE(read.plan); EXPECT_EQ(*read.plan, plan.name);
 +        EXPECT_FALSE(read.credits);
 +    }
@@ -1168,6 +1214,38 @@ index 55f863e7..670c3413 100644
 +    EXPECT_EQ(q::commandCodeUrl("/alpha/whoami?limits=1", "a b"), "https://api.commandcode.ai/alpha/whoami?limits=1&orgId=a%20b");
 +}
 +
++TEST(CollectorQuotaParser, CommandCodeMonthlyUsesSummarySpend) {
++    // Real spend over (spend + included credits), never a plan's granted allotment.
++    auto summary = q::parseCommandCode("{}", R"({"credits":{"monthlyCredits":96}})",
++        commandCodeSubscriptions, now, R"({"totalCost":4})");
++    ASSERT_EQ(summary.status, "ok"); ASSERT_EQ(summary.windows.size(), 1u);
++    EXPECT_EQ(summary.windows[0].id, "monthly"); EXPECT_EQ(summary.windows[0].label, "Monthly limit");
++    ASSERT_TRUE(summary.windows[0].usedFraction); EXPECT_NEAR(*summary.windows[0].usedFraction, .04, 1e-12);
++    ASSERT_TRUE(summary.windows[0].remaining); EXPECT_NEAR(*summary.windows[0].remaining, .96, 1e-12);
++    ASSERT_TRUE(summary.windows[0].used); EXPECT_NEAR(*summary.windows[0].used, .04, 1e-12);
++    EXPECT_EQ(summary.windows[0].resetAt, agentspeed::parseTimestamp("2026-12-01T00:00:00Z"));
++    ASSERT_TRUE(summary.windows[0].duration); EXPECT_NEAR(*summary.windows[0].duration, 30 * 86400, 1e-9);
++    EXPECT_EQ(summary.headlineId, "monthly");
++
++    // Numeric strings and the `data` envelope are accepted like the credits fields.
++    auto nested = q::parseCommandCode("{}", R"({"credits":{"monthlyCredits":"96"}})", "{}", now,
++        R"({"data":{"totalCost":"4"}})");
++    ASSERT_EQ(nested.windows.size(), 1u);
++    ASSERT_TRUE(nested.windows[0].usedFraction); EXPECT_NEAR(*nested.windows[0].usedFraction, .04, 1e-12);
++
++    // Without a summary only the server-reported grant can describe spend.
++    auto granted = q::parseCommandCode("{}", R"({"credits":{"monthlyCredits":67,"monthlyCreditsGranted":100}})", "{}", now);
++    ASSERT_EQ(granted.windows.size(), 1u);
++    ASSERT_TRUE(granted.windows[0].usedFraction); EXPECT_NEAR(*granted.windows[0].usedFraction, .33, 1e-12);
++    ASSERT_TRUE(granted.windows[0].remaining); EXPECT_NEAR(*granted.windows[0].remaining, .67, 1e-12);
++
++    // No summary and no grant: the plan is named, but no percentage is invented.
++    auto planOnly = q::parseCommandCode("{}", R"({"credits":{"monthlyCredits":5,"planId":"individual-pro"}})", "{}", now);
++    EXPECT_TRUE(planOnly.windows.empty()); EXPECT_FALSE(planOnly.headlineId);
++    EXPECT_EQ(planOnly.status, "unsupported"); EXPECT_FALSE(planOnly.observedAt);
++    ASSERT_TRUE(planOnly.plan); EXPECT_EQ(*planOnly.plan, "Pro");
++}
++
 +TEST(CollectorQuotaProvider, CommandCodeWhoamiThenOrgScopedBillingAndCache) {
 +    Home home; Environment environment("COMMAND_CODE_API_KEY");
 +    unsetenv("COMMAND_CODE_API_KEY"); home.commandCodeAuth();
@@ -1179,11 +1257,14 @@ index 55f863e7..670c3413 100644
 +    q::Provider provider("commandcode", home.paths(), transport, [&] { return time; });
 +    auto value = provider.read(true); ASSERT_EQ(value.status, "ok");
 +    ASSERT_EQ(value.windows.size(), 3u); EXPECT_EQ(value.account, "acme"); EXPECT_FALSE(value.accountIdentity);
++    ASSERT_TRUE(value.windows[0].usedFraction);
++    EXPECT_NEAR(*value.windows[0].usedFraction, 4.0 / (4.0 + 8.0), 1e-12);
 +    EXPECT_FALSE(value.nextAllowedAt);
-+    ASSERT_EQ(urls.size(), 3u);
++    ASSERT_EQ(urls.size(), 4u);
 +    EXPECT_EQ(urls[0], "https://api.commandcode.ai/alpha/whoami?limits=1");
 +    EXPECT_EQ(urls[1], "https://api.commandcode.ai/alpha/billing/credits?orgId=org-cc");
 +    EXPECT_EQ(urls[2], "https://api.commandcode.ai/alpha/billing/subscriptions?orgId=org-cc");
++    EXPECT_EQ(urls[3], "https://api.commandcode.ai/alpha/usage/summary?orgId=org-cc&since=2026-11-01T00%3A00%3A00Z");
 +    // Environment and CLI credentials keep the token-scoped context; the key is
 +    // derived from context + token so a saved-key revision cannot reuse this cache.
 +    EXPECT_TRUE(fs::exists(home.root + "/.agent-speed/quota/commandcode-" + sha256("commandcode:local\nsynthetic-command-code") + ".json"));
@@ -1193,8 +1274,25 @@ index 55f863e7..670c3413 100644
 +    }
 +    q::Provider restored("commandcode", home.paths(), transport, [&] { return time; });
 +    auto cached = restored.read(false); EXPECT_EQ(cached.status, "stale"); EXPECT_EQ(cached.observedAt, now);
-+    EXPECT_EQ(urls.size(), 3u);
-+    EXPECT_EQ(restored.read(true).status, "ok"); EXPECT_EQ(urls.size(), 6u);
++    EXPECT_EQ(urls.size(), 4u);
++    EXPECT_EQ(restored.read(true).status, "ok"); EXPECT_EQ(urls.size(), 8u);
++}
++
++TEST(CollectorQuotaProvider, CommandCodeMissingSummaryKeepsCreditReading) {
++    Environment environment("COMMAND_CODE_API_KEY"); unsetenv("COMMAND_CODE_API_KEY");
++    for (const auto& reply : {q::HttpReply{404, "", ""}, q::HttpReply{200, "", ""}, q::HttpReply{200, "  \n", ""}}) {
++        Home home; home.commandCodeAuth();
++        auto transport = [&](const std::string& url, const q::Credential& c, bool reset) {
++            if (url.find("/usage/summary") != std::string::npos) return reply;
++            return success(url, c, reset);
++        };
++        q::Provider provider("commandcode", home.paths(), transport, [] { return now; });
++        auto value = provider.read(true); ASSERT_EQ(value.status, "ok");
++        ASSERT_EQ(value.windows.size(), 3u);
++        ASSERT_TRUE(value.windows[0].usedFraction);
++        // No summary: only the reported grant describes spend, (10 - 8) / 10.
++        EXPECT_NEAR(*value.windows[0].usedFraction, .2, 1e-12);
++    }
 +}
 +
 +TEST(CollectorQuotaProvider, CommandCodeAuthUnsupportedRetryAndStaleSemantics) {
@@ -1293,7 +1391,7 @@ index 55f863e7..670c3413 100644
 +        EXPECT_TRUE(snapshot["status"].equals("ok"));
 +        EXPECT_EQ(snapshot["windows"].size(), 3u);
 +    }
-+    EXPECT_EQ(calls, 3);
++    EXPECT_EQ(calls, 4);
 +    ASSERT_TRUE(service.control(command("four-cache", false, "\"commandcode\""), 8));
 +    auto cached = replies(service, 1); ASSERT_EQ(cached.size(), 1u); EXPECT_EQ(cached[0].first, 8u);
 +    if (!cached.empty()) {
@@ -1301,7 +1399,7 @@ index 55f863e7..670c3413 100644
 +        EXPECT_TRUE(doc.root()["snapshots"].at(0)["status"].equals("stale"));
 +        EXPECT_EQ(doc.root()["snapshots"].at(0)["windows"].size(), 3u);
 +    }
-+    EXPECT_EQ(calls, 3);
++    EXPECT_EQ(calls, 4);
 +    EXPECT_FALSE(service.control(command("duplicate", false, "\"codex\",\"opencode-go\",\"kimi\",\"commandcode\",\"commandcode\""), 9));
 +}
 +
@@ -2474,10 +2572,10 @@ index 00000000..6d73bd88
 +}
 diff --git a/macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift b/macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift
 new file mode 100644
-index 00000000..36b5bbe4
+index 00000000..1e4cabb1
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift
-@@ -0,0 +1,357 @@
+@@ -0,0 +1,409 @@
 +import Foundation
 +#if canImport(FoundationNetworking)
 +import FoundationNetworking
@@ -2646,8 +2744,8 @@ index 00000000..36b5bbe4
 +                return failure(identity, schedule: &schedule, retryAfter: retry)
 +            }
 +
-+            // Both billing reads share the fixed origin and one org filter. Read them in order so
-+            // a rejected or throttled first read never spends a second request.
++            // Every billing read shares the fixed origin and one org filter. Read them in order so
++            // a rejected or throttled earlier read never spends a later request.
 +            let credits = try await transport(Self.authorized(Self.billingURL("credits", orgID: account.orgID),
 +                                                              token: credential.token))
 +            guard isCurrent(credential, generation: expected) else { return readCachedSnapshot() }
@@ -2682,9 +2780,32 @@ index 00000000..36b5bbe4
 +                return failure(identity, schedule: &schedule, retryAfter: retry)
 +            }
 +
++            // The summary needs the subscription's period start, so it is read last. It is the
++            // only real spend figure; 404/empty means this account has no summary and the
++            // credits/subscriptions reading still stands.
++            let summary = try await transport(Self.authorized(Self.summaryURL(orgID: account.orgID,
++                                                                             since: CommandCodeUsage.periodStart(subscription.0)),
++                                                              token: credential.token))
++            guard isCurrent(credential, generation: expected) else { return readCachedSnapshot() }
++            retry = Self.longer(retry, Self.retryAfter(summary.1.value(forHTTPHeaderField: "Retry-After"), now: now()))
++            let summaryBody: Data?
++            switch summary.1.statusCode {
++            case 200...299:
++                summaryBody = Self.nonEmpty(summary.0)
++            case 404:
++                summaryBody = nil
++            case 401, 403:
++                return rejected(identity, schedule: &schedule)
++            case 429:
++                return failure(identity, schedule: &schedule, retryAfter: retry, rateLimited: true)
++            default:
++                return failure(identity, schedule: &schedule, retryAfter: retry)
++            }
++
 +            do {
 +                let result = try CommandCodeUsage.parse(whoami: whoamiData, credits: credits.0,
-+                                                        subscription: subscription.0, at: now())
++                                                        subscription: subscription.0,
++                                                        summary: summaryBody ?? Data("{}".utf8), at: now())
 +                guard isCurrent(credential, generation: expected) else { return readCachedSnapshot() }
 +                guard result.status != .unsupported else {
 +                    return unsupported(identity, schedule: &schedule)
@@ -2798,6 +2919,35 @@ index 00000000..36b5bbe4
 +        return components.url!
 +    }
 +
++    /// `/alpha/usage/summary` is scoped to the org and, when the subscription reports one,
++    /// the current period start. `since` is ISO-8601 escaped down to unreserved characters.
++    private static func summaryURL(orgID: String?, since: Date?) -> URL {
++        var items: [String] = []
++        if let orgID, !orgID.isEmpty { items.append("orgId=" + escaped(orgID)) }
++        if let since {
++            let formatter = ISO8601DateFormatter()
++            formatter.formatOptions = [.withInternetDateTime]
++            items.append("since=" + escaped(formatter.string(from: since)))
++        }
++        var components = URLComponents(url: CommandCodeUsage.origin.appendingPathComponent("alpha/usage/summary"),
++                                       resolvingAgainstBaseURL: false)!
++        components.percentEncodedQuery = items.isEmpty ? nil : items.joined(separator: "&")
++        return components.url!
++    }
++
++    private static func escaped(_ value: String) -> String {
++        var allowed = CharacterSet.alphanumerics
++        allowed.insert(charactersIn: "-._~")
++        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
++    }
++
++    /// A blank summary body is an absent summary, not a parse failure.
++    private static func nonEmpty(_ data: Data) -> Data? {
++        guard let text = String(data: data, encoding: .utf8),
++              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
++        return data
++    }
++
 +    private static func authorized(_ url: URL, token: String) -> URLRequest {
 +        var request = URLRequest(url: url)
 +        request.httpMethod = "GET"
@@ -2837,10 +2987,10 @@ index 00000000..36b5bbe4
 +}
 diff --git a/macos/Sources/AgentSpeedCore/CommandCodeUsage.swift b/macos/Sources/AgentSpeedCore/CommandCodeUsage.swift
 new file mode 100644
-index 00000000..9e451023
+index 00000000..de9bb439
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CommandCodeUsage.swift
-@@ -0,0 +1,255 @@
+@@ -0,0 +1,246 @@
 +import Foundation
 +import CoreFoundation
 +
@@ -2864,7 +3014,10 @@ index 00000000..9e451023
 +                        account: safeLabel(org?["login"] as? String) ?? safeLabel(user?["userName"] as? String))
 +    }
 +
-+    static func parse(whoami: Data, credits: Data, subscription: Data, at time: Date) throws -> QuotaSnapshot {
++    /// `summary` is `GET /alpha/usage/summary`. An absent summary only falls back to the
++    /// credit grant; a plan table is never a percentage.
++    static func parse(whoami: Data, credits: Data, subscription: Data,
++                      summary: Data = Data("{}".utf8), at time: Date) throws -> QuotaSnapshot {
 +        _ = try object(whoami)
 +        let whoamiIdentity = identity(whoami) ?? Identity(orgID: nil, account: nil)
 +
@@ -2897,17 +3050,31 @@ index 00000000..9e451023
 +        let periodStart = date(subscriptionValue["currentPeriodStart"])
 +        let periodEnd = date(subscriptionValue["currentPeriodEnd"])
 +        let plan = subscriptionPlan ?? creditPlan
-+        let grant = granted ?? allowance(for: subscriptionPlan) ?? allowance(for: creditPlan)
++        // `totalCost` is real spend for the period; like the credits readers it may sit
++        // at the root or under `data`, and numeric strings count.
++        let summaryRoot = (try? object(summary)) ?? [:]
++        let summaryValue = summaryRoot["data"] as? [String: Any] ?? summaryRoot
++        let totalCost = number(summaryRoot["totalCost"]) ?? number(summaryValue["totalCost"])
 +
 +        var windows: [QuotaWindow] = []
-+        if let grant, grant > 0, let monthlyCredits {
-+            let duration = periodStart.flatMap { start in
-+                periodEnd.flatMap { end in end > start ? end.timeIntervalSince(start) : nil }
-+            }
++        let duration = periodStart.flatMap { start in
++            periodEnd.flatMap { end in end > start ? end.timeIntervalSince(start) : nil }
++        }
++        if let totalCost, let monthlyCredits, totalCost + monthlyCredits > 0 {
++            // Monthly ring = spend over (spend + included credits), i.e. the site's
++            // "used" percentage rather than a plan's granted allotment.
++            let cap = totalCost + monthlyCredits
 +            windows.append(QuotaWindow(id: "monthly", label: "Monthly limit",
-+                                       usedFraction: (grant - monthlyCredits) / grant,
-+                                       remaining: monthlyCredits / grant,
-+                                       used: (grant - monthlyCredits) / grant,
++                                       usedFraction: totalCost / cap,
++                                       remaining: monthlyCredits / cap,
++                                       used: totalCost / cap,
++                                       resetAt: periodEnd, duration: duration))
++        } else if totalCost == nil, let granted, granted > 0, let monthlyCredits {
++            // No summary on this account: only the server-reported grant can describe spend.
++            windows.append(QuotaWindow(id: "monthly", label: "Monthly limit",
++                                       usedFraction: (granted - monthlyCredits) / granted,
++                                       remaining: monthlyCredits / granted,
++                                       used: (granted - monthlyCredits) / granted,
 +                                       resetAt: periodEnd, duration: duration))
 +        }
 +        if let weekly = rolling(limits["weekly"], id: "weekly", label: "Weekly limit", duration: 604_800) {
@@ -2948,43 +3115,16 @@ index 00000000..9e451023
 +                             waitingForRefresh: false, configured: true)
 +    }
 +
-+    static func parse(whoami: Data, credits: Data, subscriptions: Data, at time: Date) throws -> QuotaSnapshot {
-+        try parse(whoami: whoami, credits: credits, subscription: subscriptions, at: time)
++    static func parse(whoami: Data, credits: Data, subscriptions: Data,
++                      summary: Data = Data("{}".utf8), at time: Date) throws -> QuotaSnapshot {
++        try parse(whoami: whoami, credits: credits, subscription: subscriptions, summary: summary, at: time)
 +    }
 +
-+    /// Plan ids arrive prefixed per tier (`individual-go`, `individual-max-10x`,
-+    /// `team-pro`, ...), so compare the normalized tier rather than the whole string.
-+    static func allowance(for plan: String?) -> Double? {
-+        switch planKind(plan) {
-+        case .go: return 10
-+        case .goat: return 100
-+        case .pro: return 110
-+        case .provider: return 15
-+        case .max10x: return 150
-+        case .max20x: return 300
-+        case .teamPro: return 40
-+        // `individual-ultra` has no published included-credit grant: omit the
-+        // monthly percentage instead of inventing an allowance.
-+        case .ultra, nil: return nil
-+        }
-+    }
-+
-+    private enum PlanKind {
-+        case go, goat, pro, provider, max10x, max20x, ultra, teamPro
-+    }
-+
-+    private static func planKind(_ plan: String?) -> PlanKind? {
-+        switch tier(plan) {
-+        case "go": return .go
-+        case "goat": return .goat
-+        case "pro": return .pro
-+        case "provider": return .provider
-+        case "max-10x": return .max10x
-+        case "max-20x": return .max20x
-+        case "ultra": return .ultra
-+        case "team-pro": return .teamPro
-+        default: return nil
-+        }
++    /// Period start of the subscription, used to scope `/alpha/usage/summary`.
++    static func periodStart(_ subscription: Data) -> Date? {
++        guard let root = try? object(subscription) else { return nil }
++        let value = root["data"] as? [String: Any] ?? root
++        return date(value["currentPeriodStart"])
 +    }
 +
 +    /// Command Code scopes consumer tiers under `individual-` and may append a
@@ -3007,17 +3147,18 @@ index 00000000..9e451023
 +                           remaining: 1 - used / cap, used: used / cap, resetAt: reset, duration: duration)
 +    }
 +
++    /// Display names follow the CLI's own plan map; anything unrecognised keeps the
++    /// trimmed raw id, so a new tier is still named instead of being dropped.
 +    private static func planName(_ value: String) -> String {
-+        switch planKind(value) {
-+        case .go: return "Go"
-+        case .goat: return "GOAT"
-+        case .pro: return "Pro"
-+        case .provider: return "Provider"
-+        case .max10x: return "Max 10x"
-+        case .max20x: return "Max 20x"
-+        case .ultra: return "Ultra"
-+        case .teamPro: return "Team Pro"
-+        case nil: return value
++        switch tier(value) {
++        case "go": return "Go"
++        case "goat": return "GOAT"
++        case "pro": return "Pro"
++        case "provider": return "Provider"
++        case "max-10x", "max-20x": return "Max"
++        case "ultra": return "Ultra"
++        case "team-pro": return "Teams Pro"
++        default: return value
 +        }
 +    }
 +
@@ -3731,10 +3872,10 @@ index 00000000..6cf9cca1
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/CommandCodeQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/CommandCodeQuotaProviderTests.swift
 new file mode 100644
-index 00000000..ffc72a63
+index 00000000..7f83092a
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/CommandCodeQuotaProviderTests.swift
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,518 @@
 +import Foundation
 +import Testing
 +#if canImport(FoundationNetworking)
@@ -3746,12 +3887,14 @@ index 00000000..ffc72a63
 +    static let whoami = "/alpha/whoami"
 +    static let credits = "/alpha/billing/credits"
 +    static let subscriptions = "/alpha/billing/subscriptions"
++    static let summary = "/alpha/usage/summary"
 +    private let lock = NSLock()
 +    private var time = Date(timeIntervalSince1970: 1_800_000_000)
 +    private var requests: [URLRequest] = []
 +    private var queues: [String: [Int]] = [:]
 +    private var defaults: [String: Int] = [
-+        CommandCodeFixture.whoami: 200, CommandCodeFixture.credits: 200, CommandCodeFixture.subscriptions: 200
++        CommandCodeFixture.whoami: 200, CommandCodeFixture.credits: 200, CommandCodeFixture.subscriptions: 200,
++        CommandCodeFixture.summary: 200
 +    ]
 +    private var retry: [String: String] = [:]
 +    private var bodies: [String: String] = [
@@ -3832,9 +3975,11 @@ index 00000000..ffc72a63
 +                                 now: { fixture.now() }, transport: { fixture.fetch($0) })
 +    }
 +
-+    private func parse(_ whoami: String? = nil, credits: String, subscription: String = "{}") throws -> QuotaSnapshot {
++    private func parse(_ whoami: String? = nil, credits: String, subscription: String = "{}",
++                       summary: String = "{}") throws -> QuotaSnapshot {
 +        try CommandCodeUsage.parse(whoami: Data((whoami ?? #"{"org":{"id":"org-1","login":"octo"},"user":{"userName":"octocat"}}"#).utf8),
 +                                   credits: Data(credits.utf8), subscription: Data(subscription.utf8),
++                                   summary: Data(summary.utf8),
 +                                   at: Date(timeIntervalSince1970: 1_800_000_000))
 +    }
 +
@@ -3884,9 +4029,10 @@ index 00000000..ffc72a63
 +        #expect(extras.credits?.limit == nil && extras.credits?.usedFraction == nil && extras.credits?.resetAt == nil)
 +
 +        // A monthly window alone must not create a credit footer.
-+        let monthlyOnly = try parse(credits: #"{"credits":{"monthlyCredits":40}}"#,
++        let monthlyOnly = try parse(credits: #"{"credits":{"monthlyCredits":40,"monthlyCreditsGranted":100}}"#,
 +                                    subscription: #"{"planId":"individual-go"}"#)
 +        #expect(monthlyOnly.windows.map(\.id) == ["monthly"])
++        #expect(monthlyOnly.windows[0].usedFraction == 0.6)
 +        #expect(monthlyOnly.credits == nil)
 +
 +        let zero = try parse(credits: #"{"credits":{"monthlyCredits":0,"purchasedCredits":0,"freeCredits":0}}"#)
@@ -3894,25 +4040,71 @@ index 00000000..ffc72a63
 +        #expect(zero.credits?.balance == "0" && zero.credits?.hasCredits == false)
 +    }
 +
-+    @Test func planAllowanceFallbackMatchesPrefixedPlanIdsAndUnknownPlansNeverInventMonthly() throws {
-+        // Plan ids are tier-prefixed in the wild; the allowance matches on the suffix.
-+        let expected: [(String, Double, String)] = [
-+            ("individual-go", 10, "Go"),
-+            ("individual-go-v1", 10, "Go"),
-+            ("individual-pro-v2", 110, "Pro"),
-+            ("individual-max-10x-v12", 150, "Max 10x"),
-+            ("individual-goat", 100, "GOAT"),
-+            ("individual-pro", 110, "Pro"),
-+            ("individual-provider", 15, "Provider"),
-+            ("individual-max-10x", 150, "Max 10x"),
-+            ("team-pro", 40, "Team Pro")
++    @Test func monthlyUsesRealSpendFromTheSummaryInsteadOfAGrantedAllotment() throws {
++        // The site's monthly ring is spend over (spend + included credits).
++        let value = try parse(credits: #"{"credits":{"monthlyCredits":96,"monthlyCreditsGranted":100,"planId":"individual-pro"}}"#,
++                              subscription: #"{"planId":"Pro","currentPeriodStart":"2027-01-01T00:00:00Z","currentPeriodEnd":"2027-02-01T00:00:00Z"}"#,
++                              summary: #"{"totalCost":4,"totalCount":12}"#)
++        #expect(value.windows.map(\.id) == ["monthly"])
++        #expect(value.windows[0].usedFraction == 0.04 && value.windows[0].remaining == 0.96)
++        #expect(value.windows[0].used == 0.04)
++        #expect(value.windows[0].duration == 2_678_400)
++        #expect(value.windows[0].resetAt == ISO8601DateFormatter().date(from: "2027-02-01T00:00:00Z"))
++        #expect(value.plan == "Pro" && value.credits == nil)
++
++        // Numeric strings and the `data` envelope count like every other reader.
++        let nested = try parse(credits: #"{"credits":{"monthlyCredits":96}}"#,
++                               summary: #"{"data":{"totalCost":"4"}}"#)
++        #expect(nested.windows.count == 1)
++        #expect(nested.windows[0].usedFraction == 0.04 && nested.windows[0].remaining == 0.96)
++
++        // Spend after the included credits run out is still a real fraction.
++        let spent = try parse(credits: #"{"credits":{"monthlyCredits":0}}"#, summary: #"{"totalCost":5}"#)
++        #expect(spent.windows.map(\.id) == ["monthly"])
++        #expect(spent.windows[0].usedFraction == 1 && spent.windows[0].remaining == 0)
++    }
++
++    @Test func monthlyWithoutSummaryFallsBackOnlyToTheGrantedAllotment() throws {
++        let value = try parse(credits: #"{"credits":{"monthlyCredits":67,"monthlyCreditsGranted":100}}"#)
++        #expect(value.windows.map(\.id) == ["monthly"])
++        let window = try #require(value.windows.first)
++        let used = try #require(window.usedFraction)
++        let remaining = try #require(window.remaining)
++        #expect(abs(used - 0.33) < 1e-12)
++        #expect(abs(remaining - 0.67) < 1e-12)
++        #expect(window.used == window.usedFraction)
++    }
++
++    @Test func monthlyWindowIsNeverInventedFromAPlanID() throws {
++        // No summary and no reported grant: nothing measured, so no percentage.
++        let value = try parse(credits: #"{"credits":{"monthlyCredits":20,"planId":"individual-pro"}}"#,
++                              subscription: #"{"planId":"individual-pro"}"#)
++        #expect(value.status == .unsupported && value.windows.isEmpty && value.observedAt == nil)
++        #expect(value.plan == "Pro")
++        #expect(value.credits == nil)
++    }
++
++    @Test func planNamesFollowTheCLIMapAndUnknownPlansKeepTheirRawID() throws {
++        let expected: [(String, String)] = [
++            ("individual-go", "Go"),
++            ("individual-go-v1", "Go"),
++            ("individual-goat", "GOAT"),
++            ("individual-pro", "Pro"),
++            ("individual-pro-v2", "Pro"),
++            ("individual-provider", "Provider"),
++            ("individual-max-10x", "Max"),
++            ("individual-max-10x-v12", "Max"),
++            ("individual-max-20x", "Max"),
++            ("individual-ultra", "Ultra"),
++            ("team-pro", "Teams Pro"),
++            ("individual-mystery", "individual-mystery")
 +        ]
-+        for (planID, grant, name) in expected {
-+            let value = try parse(credits: #"{"credits":{"monthlyCredits":\#(grant / 2)}}"#,
++        for (planID, name) in expected {
++            let value = try parse(credits: #"{"credits":{"monthlyCredits":50,"monthlyCreditsGranted":100}}"#,
 +                                  subscription: #"{"planId":"\#(planID)"}"#)
-+            #expect(value.windows.map(\.id) == ["monthly"], "\(planID) must fall back to its plan allowance")
-+            #expect(value.windows[0].usedFraction == 0.5, "\(planID) uses its own allowance")
-+            #expect(value.plan == name)
++            #expect(value.plan == name, "\(planID) uses the CLI plan name")
++            #expect(value.windows.map(\.id) == ["monthly"], "\(planID) uses the reported grant, not a plan table")
++            #expect(value.windows[0].usedFraction == 0.5, "\(planID) never hardcodes an allowance")
 +            #expect(value.credits == nil, "\(planID) monthly-only must not show a credit footer")
 +        }
 +        // Fields outside `data.credits` still count when the credits object exists.
@@ -3922,22 +4114,18 @@ index 00000000..ffc72a63
 +        #expect(envelope.windows[1].usedFraction == 0.25 && envelope.windows[1].used == 0.25)
 +        #expect(envelope.credits?.balance == "2")
 +
-+        // `individual-ultra` is a real id but has no published grant: name it and
-+        // leave the monthly percentage out rather than inventing one.
-+        let ultra = try parse(credits: #"{"credits":{"monthlyCredits":20,"planId":"individual-ultra"}}"#,
-+                              subscription: #"{"planId":"individual-ultra"}"#)
-+        #expect(ultra.status == .unsupported && ultra.windows.isEmpty && ultra.plan == "Ultra")
-+        #expect(ultra.observedAt == nil && ultra.credits == nil)
-+        #expect(CommandCodeUsage.allowance(for: "individual-ultra") == nil)
-+
-+        // The API-reported grant always wins over the plan table.
++        // The API-reported grant always wins over anything else.
 +        let reported = try parse(credits: #"{"credits":{"monthlyCredits":30,"monthlyCreditsGranted":300}}"#,
 +                                 subscription: #"{"planId":"individual-go"}"#)
 +        #expect(reported.windows.first?.usedFraction == 0.9)
-+        #expect(CommandCodeUsage.allowance(for: "Max 20x") == 300)
-+        #expect(CommandCodeUsage.allowance(for: "provider") == 15)
 +
-+        // An unknown plan leaves the monthly percentage out rather than inventing one.
++        // No summary and no reported grant: the plan is named but no percentage is invented.
++        let unnamed = try parse(credits: #"{"credits":{"monthlyCredits":20,"planId":"individual-ultra"}}"#,
++                                subscription: #"{"planId":"individual-ultra"}"#)
++        #expect(unnamed.status == .unsupported && unnamed.windows.isEmpty && unnamed.plan == "Ultra")
++        #expect(unnamed.observedAt == nil && unnamed.credits == nil)
++
++        // An unknown plan keeps its raw id rather than inventing a monthly percentage.
 +        let unknown = try parse(credits: #"{"credits":{"monthlyCredits":10,"planId":"individual-mystery"}}"#,
 +                                subscription: #"{"planId":"individual-mystery"}"#)
 +        #expect(unknown.status == .unsupported && unknown.windows.isEmpty && unknown.credits == nil)
@@ -3947,7 +4135,6 @@ index 00000000..ffc72a63
 +                                          subscription: #"{"planId":"individual-mystery"}"#)
 +        #expect(unknownWithExtras.windows.isEmpty && unknownWithExtras.plan == "individual-mystery")
 +        #expect(unknownWithExtras.credits?.balance == "4")
-+        #expect(CommandCodeUsage.allowance(for: "what") == nil)
 +    }
 +
 +    @Test func environmentKeyWinsAndWhitespaceFallsBackToBorrowedFile() async throws {
@@ -4003,16 +4190,23 @@ index 00000000..ffc72a63
 +        let fixture = CommandCodeFixture()
 +        #expect(await provider(directory, fixture).refresh().status == .ok)
 +        let requests = fixture.captured()
-+        #expect(requests.count == 3)
-+        #expect(requests.map { $0.url?.host } == ["api.commandcode.ai", "api.commandcode.ai", "api.commandcode.ai"])
++        #expect(requests.count == 4)
++        #expect(requests.map { $0.url?.host }
++            == ["api.commandcode.ai", "api.commandcode.ai", "api.commandcode.ai", "api.commandcode.ai"])
 +        #expect(requests.map { $0.url?.path } == [CommandCodeFixture.whoami, CommandCodeFixture.credits,
-+                                                  CommandCodeFixture.subscriptions])
++                                                  CommandCodeFixture.subscriptions, CommandCodeFixture.summary])
 +        #expect(URLComponents(url: requests[0].url!, resolvingAgainstBaseURL: false)?.queryItems
 +            == [URLQueryItem(name: "limits", value: "1")])
-+        for request in requests.dropFirst() {
++        for request in requests[1...2] {
 +            #expect(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
 +                == [URLQueryItem(name: "orgId", value: "org-1")])
 +        }
++        // The summary is scoped to the org and the subscription period start.
++        #expect(URLComponents(url: requests[3].url!, resolvingAgainstBaseURL: false)?.queryItems
++            == [URLQueryItem(name: "orgId", value: "org-1"),
++                URLQueryItem(name: "since", value: "2027-01-01T00:00:00Z")])
++        #expect(requests[3].url?.absoluteString
++            == "https://api.commandcode.ai/alpha/usage/summary?orgId=org-1&since=2027-01-01T00%3A00%3A00Z")
 +        #expect(requests.allSatisfy { $0.httpMethod == "GET" })
 +        #expect(requests.allSatisfy { $0.timeoutInterval == 15 })
 +        #expect(requests.allSatisfy { $0.value(forHTTPHeaderField: "Accept") == "application/json" })
@@ -4033,6 +4227,54 @@ index 00000000..ffc72a63
 +        #expect(await provider(directory, fixture).refresh().status == .ok)
 +        #expect(fixture.captured()[1].url?.query == nil)
 +        #expect(fixture.captured()[2].url?.query == nil)
++        // Only the period filter remains once the org is unknown.
++        #expect(fixture.captured()[3].url?.absoluteString
++            == "https://api.commandcode.ai/alpha/usage/summary?since=2027-01-01T00%3A00%3A00Z")
++    }
++
++    @Test func summaryQueryOmitsAnUnparsablePeriodStart() async throws {
++        let directory = try temporaryDirectory()
++        defer { try? FileManager.default.removeItem(at: directory) }
++        try writeAuth(directory)
++        let fixture = CommandCodeFixture()
++        fixture.body(#"{"planId":"Pro","currentPeriodStart":"not-a-date"}"#, path: CommandCodeFixture.subscriptions)
++        #expect(await provider(directory, fixture).refresh().status == .ok)
++        let summary = try #require(fixture.captured().last)
++        #expect(summary.url?.path == CommandCodeFixture.summary)
++        #expect(summary.url?.absoluteString
++            == "https://api.commandcode.ai/alpha/usage/summary?orgId=org-1")
++    }
++
++    @Test func providerPublishesTheSummarizedMonthlySpend() async throws {
++        let directory = try temporaryDirectory()
++        defer { try? FileManager.default.removeItem(at: directory) }
++        try writeAuth(directory)
++        let fixture = CommandCodeFixture()
++        fixture.body(#"{"credits":{"monthlyCredits":96,"monthlyCreditsGranted":100}}"#, path: CommandCodeFixture.credits)
++        fixture.body(#"{"totalCost":4}"#, path: CommandCodeFixture.summary)
++        let value = await provider(directory, fixture).refresh()
++        #expect(value.status == .ok && value.windows.map(\.id) == ["monthly"])
++        #expect(value.windows[0].usedFraction == 0.04 && value.windows[0].remaining == 0.96)
++    }
++
++    @Test func missingSummaryKeepsTheCreditsAndSubscriptionsReading() async throws {
++        for missing in ["404", "blank"] {
++            let directory = try temporaryDirectory()
++            defer { try? FileManager.default.removeItem(at: directory) }
++            try writeAuth(directory)
++            let fixture = CommandCodeFixture()
++            if missing == "404" {
++                fixture.respond(404, path: CommandCodeFixture.summary)
++            } else {
++                fixture.body("   \n", path: CommandCodeFixture.summary)
++            }
++            let value = await provider(directory, fixture).refresh()
++            #expect(value.status == .ok && value.observedAt != nil)
++            #expect(value.windows.map(\.id) == ["monthly", "weekly", "fiveHour"])
++            // Falls back to the granted allotment (100) minus the remaining credits (70).
++            #expect(value.windows[0].usedFraction == 0.3)
++            #expect(fixture.captured().count == 4)
++        }
 +    }
 +
 +    @Test func unauthorizedClearsTheAccountSnapshotAndRemembersRejectedToken() async throws {
@@ -4056,7 +4298,7 @@ index 00000000..ffc72a63
 +
 +        try writeAuth(directory, token: "renewed-key")
 +        #expect(await restarted.refresh().status == .ok)
-+        #expect(fixture.captured().count == count + 3)
++        #expect(fixture.captured().count == count + 4)
 +    }
 +
 +    @Test func rateLimitHonorsRetryAfterAndSupplierFloorAcrossRestart() async throws {
@@ -4149,7 +4391,7 @@ index 00000000..ffc72a63
 +            for await status in group { #expect(status == .ok) }
 +        }
 +        #expect(fixture.polls() == 1)
-+        #expect(fixture.captured().count == 3)
++        #expect(fixture.captured().count == 4)
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift
@@ -4326,7 +4568,7 @@ index 2eec8f80..11c75e31 100644
      }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 29b59265..e8351c8f 100644
+index 29b59265..8eb51875 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,20 +1,20 @@
@@ -4380,11 +4622,11 @@ index 29b59265..e8351c8f 100644
 +
 +Command Code follows Codenotch's `CommandCodeCredentials.swift`, `CommandCodeProvider.swift`, `CommandCodeUsage.swift` and `CommandCodeProfile.swift` at the pinned reference commit. The credential is Command Code's own API key. An AgentSpeed-managed key saved from Settings wins; otherwise a nonempty `COMMAND_CODE_API_KEY`; otherwise the read-only `~/.commandcode/auth.json` field `apiKey`. A saved-key store that exists but is unreadable, unsafe or corrupt is a credential error and never silently falls back to the environment token or CLI file. Command Code owns login and key rotation. The same key authenticates the CLI and Provider API. Never spawn the CLI, scrape its interactive `/usage` text, extract browser cookies, write the credential file or request a model completion to read quota.
 +
-+Queries run on the source's owning host against the fixed origin `https://api.commandcode.ai`, with bearer authorization, `Accept: application/json`, a fifteen-second timeout and no redirects. The account response is `GET /alpha/whoami?limits=1`; use only its organization ID and safe user/organization labels. Then query `GET /alpha/billing/credits` and `GET /alpha/billing/subscriptions`, adding `orgId` only when nonempty. Optional monthly-credit totals come from `monthlyCreditsGranted`; known plan IDs may supply only the documented included-credit allocation. Never infer a percentage for an unknown plan or invent a monthly amount. The billing routes are the CLI's internal `/alpha` surface, not the documented Provider API or a stable public contract. No supported noninteractive quota command exists yet, so treat alpha schema changes as an adapter failure, not a reason to switch to cookie or terminal scraping.
++Queries run on the source's owning host against the fixed origin `https://api.commandcode.ai`, with bearer authorization, `Accept: application/json`, a fifteen-second timeout per request and no redirects. The account response is `GET /alpha/whoami?limits=1`; use only its organization ID and safe user/organization labels. Then query `GET /alpha/billing/credits`, `GET /alpha/billing/subscriptions` and `GET /alpha/usage/summary`, adding `orgId` only when nonempty and `since` (the subscription's `currentPeriodStart`) only for the summary request when that timestamp parses. The summary request follows the subscription request because it needs the period start. Plan IDs are display labels only; they never supply a credit amount or percentage. The billing and summary routes are the CLI's internal `/alpha` surface, not the documented Provider API or a stable public contract. No supported noninteractive quota command exists yet, so treat alpha schema changes as an adapter failure, not a reason to switch to cookie or terminal scraping.
 +
-+`credits.monthlyCredits` is included monthly credit remaining. Monthly used fraction is `(grant - remaining) / grant`, and the reset is the subscription's `currentPeriodEnd`. The billing period duration may be derived only from valid `currentPeriodStart` and `currentPeriodEnd`. `purchasedCredits + freeCredits` is a separate on-demand balance: it never receives a fabricated percentage or reset and never counts toward the rolling windows, because Command Code spends and limits it separately. `windowLimits.fiveHour` and `windowLimits.weekly` each contribute an individual window when `used` is numeric and `cap` is positive; `usedFraction = used / cap` is not clamped, `remaining = 1 - usedFraction`, duration is five hours or seven days, and `resetAt` is Unix milliseconds with zero/absent meaning unknown. Preserve known zero and over-limit readings. Include every actual window rather than selecting only the tightest.
++`credits.monthlyCredits` is monthly credit remaining and `/alpha/usage/summary` `totalCost` is usage charged in the period. Monthly used fraction is `totalCost / (totalCost + monthlyCredits)`; the reset is the subscription's `currentPeriodEnd`. When the summary is unavailable and `monthlyCreditsGranted` is positive, that grant is the only fallback: `(granted - monthlyCredits) / granted`. With neither, omit the monthly window rather than deriving one from the plan ID; a plan-derived percentage was measured at 33 % for an account whose supplier page reported 4 %. The billing period duration may be derived only from valid `currentPeriodStart` and `currentPeriodEnd`. `purchasedCredits + freeCredits` is a separate on-demand balance: it never receives a fabricated percentage or reset and never counts toward the rolling windows, because Command Code spends and limits it separately. `windowLimits.fiveHour` and `windowLimits.weekly` each contribute an individual window when `used` is numeric and `cap` is positive; `usedFraction = used / cap` is not clamped, `remaining = 1 - usedFraction`, duration is five hours or seven days, and `resetAt` is Unix milliseconds with zero/absent meaning unknown. Preserve known zero and over-limit readings. Include every actual window rather than selecting only the tightest.
 +
-+HTTP 401/403 is `needsAuth`; clear the previous observation and remember the rejected credential so an unchanged key cannot expose another account's values. A 404 is `unsupported`. HTTP 429 respects Retry-After and otherwise establishes at least a sixty-second persisted deadline. Transport, service and decoding failures preserve only credential-matching stale observations with their original timestamps; otherwise they are errors with cold/server backoff. A successful poll imposes no hard refresh floor. Automatic application polling remains five minutes, concurrent refreshes coalesce, and credentials, schedules and structured observations never enter logs, wire snapshots or raw supplier payloads. Command Code carries no verified nonsecret account claim for remote `accountIdentity`; keep it null. The status flags `belowThreshold` and `windowLimits.exceeded` are not authoritative for exhaustion; use the reported balances and window values.
++HTTP 401/403 is `needsAuth`; clear the previous observation and remember the rejected credential so an unchanged key cannot expose another account's values. A 404 is `unsupported`. A 404 or empty body from `/alpha/usage/summary` alone means no summary data, so keep the credit and rolling results instead of failing the poll. HTTP 429 respects Retry-After and otherwise establishes at least a sixty-second persisted deadline. Transport, service and decoding failures preserve only credential-matching stale observations with their original timestamps; otherwise they are errors with cold/server backoff. A successful poll imposes no hard refresh floor. Automatic application polling remains five minutes, concurrent refreshes coalesce, and credentials, schedules and structured observations never enter logs, wire snapshots or raw supplier payloads. Command Code carries no verified nonsecret account claim for remote `accountIdentity`; keep it null. The status flags `belowThreshold` and `windowLimits.exceeded` are not authoritative for exhaustion; use the reported balances and window values.
 +
 +Command Code allows multiple isolated CLI homes in Codenotch, but this adapter exposes the currently selected default account only. Adding multiple bindable accounts requires an explicit source-identity and account-claim design; do not derive one from the API key or labels.
 +
@@ -4591,10 +4833,10 @@ index 00000000..836f18f2
 +}
 diff --git a/windows/src/AgentSpeed.Core/CommandCodeQuotaProvider.cs b/windows/src/AgentSpeed.Core/CommandCodeQuotaProvider.cs
 new file mode 100644
-index 00000000..1e087844
+index 00000000..3b17fd38
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/CommandCodeQuotaProvider.cs
-@@ -0,0 +1,537 @@
+@@ -0,0 +1,578 @@
 +using System.Globalization;
 +using System.Net;
 +using System.Net.Http.Headers;
@@ -4768,7 +5010,9 @@ index 00000000..1e087844
 +            var orgId = Organization(whoami);
 +            var credits = await Get(Billing("credits", orgId), credential.Token, cancellationToken).ConfigureAwait(false);
 +            var subscriptions = await Get(Billing("subscriptions", orgId), credential.Token, cancellationToken).ConfigureAwait(false);
-+            result = Parse(whoami, credits, subscriptions, now());
++            var summary = await GetSummary(Route("/alpha/usage/summary", orgId, Since(subscriptions)),
++                credential.Token, cancellationToken).ConfigureAwait(false);
++            result = Parse(whoami, credits, subscriptions, summary, now());
 +            if (result.Status == QuotaStatus.Unsupported) RejectPlan(schedule, result.Block ?? NoMeteredUsageReason);
 +            else
 +            {
@@ -4838,6 +5082,15 @@ index 00000000..1e087844
 +        return await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
 +    }
 +
++    /// <summary>The usage summary is optional: a missing route or an empty body means the account has no summary yet.</summary>
++    private async Task<string?> GetSummary(Uri uri, string token, CancellationToken cancellationToken)
++    {
++        string body;
++        try { body = await Get(uri, token, cancellationToken).ConfigureAwait(false); }
++        catch (HttpStatusException error) when (error.Status == HttpStatusCode.NotFound) { return null; }
++        return string.IsNullOrWhiteSpace(body) ? null : body;
++    }
++
 +    private static double RetrySeconds(HttpResponseMessage response, DateTimeOffset time) => Math.Max(0,
 +        response.Headers.RetryAfter?.Delta?.TotalSeconds ?? (response.Headers.RetryAfter?.Date - time)?.TotalSeconds ?? 0);
 +
@@ -4848,8 +5101,29 @@ index 00000000..1e087844
 +    }
 +
 +    private static Uri Billing(string resource, string? organization) =>
-+        new(Origin, "/alpha/billing/" + resource +
-+            (string.IsNullOrEmpty(organization) ? "" : "?orgId=" + Uri.EscapeDataString(organization)));
++        Route("/alpha/billing/" + resource, organization);
++
++    private static Uri Route(string path, string? organization, string? since = null)
++    {
++        var query = new StringBuilder();
++        if (!string.IsNullOrEmpty(organization)) query.Append("orgId=").Append(Uri.EscapeDataString(organization));
++        if (!string.IsNullOrEmpty(since))
++        {
++            if (query.Length > 0) query.Append('&');
++            query.Append("since=").Append(Uri.EscapeDataString(since));
++        }
++        return new(Origin, path + (query.Length == 0 ? "" : "?" + query.ToString()));
++    }
++
++    private static string? Since(string subscriptionsJson)
++    {
++        using var document = JsonDocument.Parse(subscriptionsJson);
++        var root = document.RootElement;
++        if (root.ValueKind != JsonValueKind.Object) throw new JsonException("Invalid Command Code subscription response.");
++        var subscription = Property(root, "data") is { ValueKind: JsonValueKind.Object } data ? data : root;
++        return Date(subscription, "currentPeriodStart") is { } start
++            ? start.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture) : null;
++    }
 +
 +    private static string? Organization(string json)
 +    {
@@ -4869,7 +5143,8 @@ index 00000000..1e087844
 +        return text.Length == 0 ? null : text;
 +    }
 +
-+    internal static QuotaSnapshot Parse(string whoamiJson, string creditsJson, string subscriptionsJson, DateTimeOffset time)
++    internal static QuotaSnapshot Parse(string whoamiJson, string creditsJson, string subscriptionsJson, string? summaryJson,
++        DateTimeOffset time)
 +    {
 +        using var whoamiDocument = JsonDocument.Parse(whoamiJson);
 +        if (whoamiDocument.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException("Invalid Command Code account response.");
@@ -4899,14 +5174,29 @@ index 00000000..1e087844
 +        var periodStart = Date(subscription, "currentPeriodStart");
 +        var periodEnd = Date(subscription, "currentPeriodEnd");
 +
-+        // A returned grant wins even when it is zero: never override the account's own number with a plan table.
-+        var grant = monthlyGranted is >= 0 ? monthlyGranted : Allowance(subscriptionPlan) ?? Allowance(creditPlan);
-+        var windows = new List<QuotaWindow>(3);
-+        if (grant is > 0 && monthlyRemaining is { } remaining)
++        // The official ring is real spend over the monthly cap: totalCost + remaining monthly credits.
++        double? totalCost = null;
++        if (summaryJson is { } summaryText && !string.IsNullOrWhiteSpace(summaryText))
 +        {
-+            var total = grant.Value;
-+            var duration = periodStart is { } start && periodEnd is { } end && end > start ? end - start : (TimeSpan?)null;
-+            windows.Add(new("monthly", "Monthly limit", (total - remaining) / total, remaining / total, (total - remaining) / total, periodEnd, duration));
++            using var summaryDocument = JsonDocument.Parse(summaryText);
++            if (summaryDocument.RootElement.ValueKind != JsonValueKind.Object)
++                throw new JsonException("Invalid Command Code usage summary response.");
++            totalCost = Numeric(summaryDocument.RootElement, "totalCost")
++                ?? Numeric(Property(summaryDocument.RootElement, "data"), "totalCost");
++        }
++
++        var duration = periodStart is { } start && periodEnd is { } end && end > start ? end - start : (TimeSpan?)null;
++        var windows = new List<QuotaWindow>(3);
++        if (totalCost is { } cost && monthlyRemaining is { } monthly && cost + monthly > 0)
++        {
++            var cap = cost + monthly;
++            windows.Add(new("monthly", "Monthly limit", cost / cap, monthly / cap, cost / cap, periodEnd, duration));
++        }
++        // Without a summary only the account's own grant is trustworthy; a plan id never implies a percentage.
++        else if (totalCost is null && monthlyGranted is { } granted && granted > 0 && monthlyRemaining is { } remaining)
++        {
++            var used = (granted - remaining) / granted;
++            windows.Add(new("monthly", "Monthly limit", used, remaining / granted, used, periodEnd, duration));
 +        }
 +        var limits = new[] { Property(creditsRoot, "windowLimits"), Property(creditsData, "windowLimits"), Property(envelope, "windowLimits") }
 +            .FirstOrDefault(value => value.ValueKind == JsonValueKind.Object);
@@ -4942,20 +5232,13 @@ index 00000000..1e087844
 +        Numeric(value, name) is { } milliseconds && milliseconds > 0 && milliseconds <= 253402300799999
 +            ? DateTimeOffset.UnixEpoch.AddMilliseconds(milliseconds) : null;
 +
-+    private static double? Allowance(string? planId) => Tier(planId) switch
-+    {
-+        "go" => 10, "goat" => 100, "pro" => 110, "provider" => 15,
-+        "max-10x" => 150, "max-20x" => 300, "team-pro" => 40,
-+        _ => null
-+    };
-+
 +    private static string? PlanName(string? planId)
 +    {
 +        if (string.IsNullOrWhiteSpace(planId)) return null;
 +        return Tier(planId) switch
 +        {
 +            "go" => "Go", "goat" => "GOAT", "pro" => "Pro", "provider" => "Provider",
-+            "max-10x" => "Max 10x", "max-20x" => "Max 20x", "team-pro" => "Team Pro", "ultra" => "Ultra",
++            "max" => "Max", "ultra" => "Ultra", "teams-pro" => "Teams Pro",
 +            _ => planId.Trim()
 +        };
 +    }
@@ -5833,7 +6116,7 @@ index f76a30ee..5ba25920 100644
          if (!_available.Any(p => p.Id == id)) return;
 diff --git a/windows/tests/AgentSpeed.Core.Tests/CommandCodeApiKeyTests.cs b/windows/tests/AgentSpeed.Core.Tests/CommandCodeApiKeyTests.cs
 new file mode 100644
-index 00000000..f41fda3c
+index 00000000..f5c378c3
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/CommandCodeApiKeyTests.cs
 @@ -0,0 +1,222 @@
@@ -5860,7 +6143,7 @@ index 00000000..f41fda3c
 +        var result = await provider.RefreshAsync();
 +        Assert.Equal(QuotaStatus.Ok, result.Status);
 +        Assert.True(result.Configured);
-+        Assert.Equal(3, fixture.Handler.Tokens.Count);
++        Assert.Equal(4, fixture.Handler.Tokens.Count);
 +        Assert.All(fixture.Handler.Tokens, token => Assert.Equal("managed-key", token));
 +        var schedules = fixture.ScheduleFiles();
 +        Assert.DoesNotContain("managed-key", string.Join("", schedules.Select(File.ReadAllText)));
@@ -5923,7 +6206,7 @@ index 00000000..f41fda3c
 +        fixture.Store.Set("same-key");
 +        Assert.NotEqual(CommandCodeQuotaProvider.KeyRejectedReason, provider.ReadCachedSnapshot().Block);
 +        Assert.Equal(QuotaStatus.Ok, (await provider.RefreshAsync()).Status);
-+        Assert.Equal(3, fixture.Handler.Calls - calls);
++        Assert.Equal(4, fixture.Handler.Calls - calls);
 +        fixture.Store.Delete();
 +        fixture.Handler.Tokens.Clear();
 +        Assert.Equal(QuotaStatus.Ok, (await provider.RefreshAsync()).Status);
@@ -6061,11 +6344,10 @@ index 00000000..f41fda3c
 +}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/CommandCodeQuotaProviderTests.cs b/windows/tests/AgentSpeed.Core.Tests/CommandCodeQuotaProviderTests.cs
 new file mode 100644
-index 00000000..27c06b46
+index 00000000..c7138438
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/CommandCodeQuotaProviderTests.cs
-@@ -0,0 +1,525 @@
-+using System.Globalization;
+@@ -0,0 +1,625 @@
 +using System.Net;
 +using System.Net.Http.Headers;
 +using System.Text.Json;
@@ -6084,11 +6366,12 @@ index 00000000..27c06b46
 +    private const string Subscription = """
 +        {"data":{"planId":"individual-pro","status":"active","currentPeriodStart":"2026-11-01T00:00:00Z","currentPeriodEnd":"2026-12-01T00:00:00Z"}}
 +        """;
++    private const string Summary = """{"totalCost":25,"totalCount":3}""";
 +
 +    [Fact]
 +    public void ParserKeepsMonthlyWeeklyAndFiveHourWindowsWithExtraCreditsSeparate()
 +    {
-+        var snapshot = CommandCodeQuotaProvider.Parse(Whoami, Credits, Subscription, Time);
++        var snapshot = CommandCodeQuotaProvider.Parse(Whoami, Credits, Subscription, Summary, Time);
 +        Assert.Equal("commandcode", snapshot.Id);
 +        Assert.Equal("Command Code", snapshot.DisplayName);
 +        Assert.Equal("command-code · local credentials", snapshot.Source);
@@ -6137,7 +6420,8 @@ index 00000000..27c06b46
 +    {
 +        var snapshot = CommandCodeQuotaProvider.Parse("""{"org":{"login":"Acme"}}""",
 +            """{"credits":{"monthlyCredits":150,"monthlyCreditsGranted":100},"windowLimits":{"weekly":{"used":0,"cap":10},"fiveHour":{"used":99,"cap":10,"resetAt":0}}}""",
-+            """{"planId":"individual-max-20x","currentPeriodStart":"2026-11-01T00:00:00Z","currentPeriodEnd":"2026-12-01T00:00:00Z"}""", Time);
++            """{"planId":"individual-max-20x","currentPeriodStart":"2026-11-01T00:00:00Z","currentPeriodEnd":"2026-12-01T00:00:00Z"}""",
++            null, Time);
 +        var monthly = Assert.Single(snapshot.Windows, window => window.Id == "monthly");
 +        Assert.Equal(-.5, monthly.UsedFraction);
 +        Assert.Equal(1.5, monthly.Remaining);
@@ -6149,34 +6433,34 @@ index 00000000..27c06b46
 +        Assert.Equal(9.9, fiveHour.UsedFraction!.Value, 12);
 +        Assert.Equal(-8.9, fiveHour.Remaining!.Value, 12);
 +        Assert.Null(fiveHour.ResetAt);
-+        Assert.Equal("Max 20x", snapshot.Plan);
++        Assert.Equal("individual-max-20x", snapshot.Plan);
 +        Assert.Equal("monthly", snapshot.HeadlineId);
 +    }
 +
 +    [Theory]
-+    [InlineData("individual-go", 10)]
-+    [InlineData("individual-go-v1", 10)]
-+    [InlineData("individual-goat", 100)]
-+    [InlineData("individual-pro", 110)]
-+    [InlineData("individual-provider", 15)]
-+    [InlineData("individual-max-10x", 150)]
-+    [InlineData("individual-max-20x", 300)]
-+    [InlineData("team-pro", 40)]
-+    public void KnownPlansSupplyOnlyTheDocumentedMonthlyAllowance(string plan, double grant)
++    [InlineData("individual-go", "Go")]
++    [InlineData("individual-go-v2", "Go")]
++    [InlineData("individual-goat", "GOAT")]
++    [InlineData("individual-pro", "Pro")]
++    [InlineData("individual-provider", "Provider")]
++    [InlineData("individual-max", "Max")]
++    [InlineData("individual-ultra", "Ultra")]
++    [InlineData("teams-pro", "Teams Pro")]
++    [InlineData("individual-mystery", "individual-mystery")]
++    public void PlanNamesMatchTheCliLabelMap(string plan, string expected)
 +    {
-+        var snapshot = CommandCodeQuotaProvider.Parse("""{}""",
-+            $$$$"""{"credits":{"monthlyCredits":{{{{(grant / 2).ToString(CultureInfo.InvariantCulture)}}}}}}""",
-+            $$$$"""{"data":{"planId":"{{{{plan}}}}"}}""", Time);
-+        var monthly = Assert.Single(snapshot.Windows);
-+        Assert.Equal(.5, monthly.UsedFraction);
-+        Assert.Equal(.5, monthly.Remaining);
++        var snapshot = CommandCodeQuotaProvider.Parse("""{}""", """{"credits":{}}""",
++            $$$$"""{"data":{"planId":"{{{{plan}}}}"}}""", null, Time);
++        Assert.Equal(QuotaStatus.Unsupported, snapshot.Status);
++        Assert.Equal(expected, snapshot.Plan);
++        Assert.Empty(snapshot.Windows);
 +    }
 +
 +    [Fact]
 +    public void UltraIsNamedButNeverGivenAnInventedMonthlyAllowance()
 +    {
 +        var snapshot = CommandCodeQuotaProvider.Parse("""{}""",
-+            """{"credits":{"monthlyCredits":20}}""", """{"data":{"planId":"individual-ultra"}}""", Time);
++            """{"credits":{"monthlyCredits":20}}""", """{"data":{"planId":"individual-ultra"}}""", null, Time);
 +        Assert.Equal(QuotaStatus.Unsupported, snapshot.Status);
 +        Assert.Empty(snapshot.Windows);
 +        Assert.Null(snapshot.ObservedAt);
@@ -6184,11 +6468,53 @@ index 00000000..27c06b46
 +        Assert.Null(snapshot.Credits);
 +    }
 +
++    [Theory]
++    [InlineData("""{"totalCost":4}""")]
++    [InlineData("""{"totalCost":"4"}""")]
++    [InlineData("""{"data":{"totalCost":4}}""")]
++    public void SummarySpendOverTheCapDrivesTheMonthlyWindow(string summary)
++    {
++        var snapshot = CommandCodeQuotaProvider.Parse("""{}""",
++            """{"credits":{"monthlyCredits":96}}""", Subscription, summary, Time);
++        var monthly = Assert.Single(snapshot.Windows, window => window.Id == "monthly");
++        Assert.Equal(.04, monthly.UsedFraction!.Value, 12);
++        Assert.Equal(.96, monthly.Remaining!.Value, 12);
++        Assert.Equal(.04, monthly.Used!.Value, 12);
++        Assert.Equal(DateTimeOffset.Parse("2026-12-01T00:00:00Z"), monthly.ResetAt);
++        Assert.Equal(TimeSpan.FromDays(30), monthly.Duration);
++        Assert.Equal("monthly", snapshot.HeadlineId);
++    }
++
++    [Fact]
++    public void MissingSummaryFallsBackToTheReturnedGrantAndRemainingCredits()
++    {
++        var snapshot = CommandCodeQuotaProvider.Parse("""{}""",
++            """{"credits":{"monthlyCredits":67,"monthlyCreditsGranted":100}}""", Subscription, null, Time);
++        var monthly = Assert.Single(snapshot.Windows, window => window.Id == "monthly");
++        Assert.Equal(.33, monthly.UsedFraction!.Value, 12);
++        Assert.Equal(.67, monthly.Remaining!.Value, 12);
++        Assert.Equal(.33, monthly.Used!.Value, 12);
++    }
++
++    [Fact]
++    public void MissingSummaryAndGrantNeverInventAMonthlyPercentageFromThePlan()
++    {
++        var snapshot = CommandCodeQuotaProvider.Parse("""{}""",
++            """{"credits":{"monthlyCredits":67}}""", """{"data":{"planId":"individual-pro"}}""", null, Time);
++        Assert.Equal(QuotaStatus.Unsupported, snapshot.Status);
++        Assert.Empty(snapshot.Windows);
++        Assert.Null(snapshot.HeadlineId);
++        Assert.Null(snapshot.ObservedAt);
++        Assert.Equal("Pro", snapshot.Plan);
++        Assert.Null(snapshot.Credits);
++    }
++
 +    [Fact]
 +    public void MonthlyOnlyNeverCreatesACreditsFooter()
 +    {
 +        var snapshot = CommandCodeQuotaProvider.Parse("""{}""",
-+            """{"credits":{"monthlyCredits":75}}""", """{"data":{"planId":"individual-pro"}}""", Time);
++            """{"credits":{"monthlyCredits":75,"monthlyCreditsGranted":100}}""", """{"data":{"planId":"individual-pro"}}""",
++            """{"totalCost":25}""", Time);
 +        Assert.Single(snapshot.Windows, window => window.Id == "monthly");
 +        Assert.Null(snapshot.Credits);
 +    }
@@ -6197,11 +6523,12 @@ index 00000000..27c06b46
 +    public void ReturnedGrantAndUnknownPlanNeverInventMonthlyPercentage()
 +    {
 +        var overridden = CommandCodeQuotaProvider.Parse("""{}""",
-+            """{"credits":{"monthlyCredits":25,"monthlyCreditsGranted":50}}""", """{"data":{"planId":"individual-pro"}}""", Time);
++            """{"credits":{"monthlyCredits":25,"monthlyCreditsGranted":50}}""", """{"data":{"planId":"individual-pro"}}""",
++            null, Time);
 +        Assert.Equal(.5, Assert.Single(overridden.Windows, window => window.Id == "monthly").UsedFraction);
 +
 +        var unknown = CommandCodeQuotaProvider.Parse("""{}""",
-+            """{"credits":{"monthlyCredits":20}}""", """{"data":{"planId":"mystery"}}""", Time);
++            """{"credits":{"monthlyCredits":20}}""", """{"data":{"planId":"mystery"}}""", null, Time);
 +        Assert.Equal(QuotaStatus.Unsupported, unknown.Status);
 +        Assert.Empty(unknown.Windows);
 +        Assert.Null(unknown.HeadlineId);
@@ -6213,14 +6540,14 @@ index 00000000..27c06b46
 +    [Fact]
 +    public void CreditsOnlyAndNoCreditsAreDifferentObservations()
 +    {
-+        var zero = CommandCodeQuotaProvider.Parse("""{}""", """{"credits":{"monthlyCredits":0}}""", """{}""", Time);
++        var zero = CommandCodeQuotaProvider.Parse("""{}""", """{"credits":{"monthlyCredits":0}}""", """{}""", null, Time);
 +        Assert.Equal(QuotaStatus.Unsupported, zero.Status);
 +        Assert.Empty(zero.Windows);
 +        Assert.Null(zero.HeadlineId);
 +        Assert.Null(zero.ObservedAt);
 +        Assert.Null(zero.Credits);
 +
-+        var empty = CommandCodeQuotaProvider.Parse("""{}""", """{"credits":{},"windowLimits":{}}""", """{}""", Time);
++        var empty = CommandCodeQuotaProvider.Parse("""{}""", """{"credits":{},"windowLimits":{}}""", """{}""", null, Time);
 +        Assert.Equal(QuotaStatus.Unsupported, empty.Status);
 +        Assert.Empty(empty.Windows);
 +        Assert.Null(empty.Credits);
@@ -6232,7 +6559,7 @@ index 00000000..27c06b46
 +    {
 +        var snapshot = CommandCodeQuotaProvider.Parse("""{"org":{"id":"o"},"user":{"userName":"casey"}}""",
 +            """{"credits":{"monthlyCredits":10,"monthlyCreditsGranted":20}}""",
-+            """{"planId":"individual-goat","currentPeriodStart":"2026-11-01T00:00:00Z","currentPeriodEnd":"2026-11-30T00:00:00Z"}""", Time);
++            """{"planId":"individual-goat","currentPeriodStart":"2026-11-01T00:00:00Z","currentPeriodEnd":"2026-11-30T00:00:00Z"}""", null, Time);
 +        Assert.Equal("casey", snapshot.Account);
 +        Assert.Equal("GOAT", snapshot.Plan);
 +        Assert.Equal(TimeSpan.FromDays(29), Assert.Single(snapshot.Windows).Duration);
@@ -6242,7 +6569,14 @@ index 00000000..27c06b46
 +    [InlineData("not json")]
 +    [InlineData("[]")]
 +    public void MalformedDocumentsAreDecodeFailuresNotZero(string json) =>
-+        Assert.ThrowsAny<JsonException>(() => CommandCodeQuotaProvider.Parse(json, json, json, Time));
++        Assert.ThrowsAny<JsonException>(() => CommandCodeQuotaProvider.Parse(json, json, json, json, Time));
++
++    [Theory]
++    [InlineData("not json")]
++    [InlineData("[]")]
++    public void MalformedSummaryIsADecodeFailureNotZero(string summary) =>
++        Assert.ThrowsAny<JsonException>(() =>
++            CommandCodeQuotaProvider.Parse(Whoami, Credits, Subscription, summary, Time));
 +
 +    [Fact]
 +    public async Task EnvironmentKeyWinsAndWhitespaceFallsBackToTheReadOnlyFile()
@@ -6253,7 +6587,7 @@ index 00000000..27c06b46
 +            var snapshot = await provider.RefreshAsync();
 +            Assert.Equal(QuotaStatus.Ok, snapshot.Status);
 +            Assert.Equal("environment-key", fixture.Handler.Token);
-+            Assert.Equal(new[] { "/alpha/whoami", "/alpha/billing/credits", "/alpha/billing/subscriptions" },
++            Assert.Equal(new[] { "/alpha/whoami", "/alpha/billing/credits", "/alpha/billing/subscriptions", "/alpha/usage/summary" },
 +                fixture.Handler.Paths.Select(path => path.Split('?')[0]));
 +        }
 +        fixture.Handler.Token = null;
@@ -6262,7 +6596,7 @@ index 00000000..27c06b46
 +            Assert.Equal(QuotaStatus.Ok, (await provider.RefreshAsync()).Status);
 +            Assert.Equal("file-key", fixture.Handler.Token);
 +        }
-+        Assert.Equal(6, fixture.Handler.Calls);
++        Assert.Equal(8, fixture.Handler.Calls);
 +    }
 +
 +    [Theory]
@@ -6299,14 +6633,24 @@ index 00000000..27c06b46
 +    }
 +
 +    [Fact]
-+    public async Task OrgIdQueryIsPresentOnlyWhenWhoamiHasOne()
++    public async Task FourRoutesCarryOrgIdAndTheParsedPeriodStart()
 +    {
 +        using var fixture = new Fixture();
 +        using (var provider = fixture.Provider())
 +        {
 +            Assert.Equal(QuotaStatus.Ok, (await provider.RefreshAsync()).Status);
++            Assert.Equal(new[] { "/alpha/whoami", "/alpha/billing/credits", "/alpha/billing/subscriptions", "/alpha/usage/summary" },
++                fixture.Handler.Paths.Select(path => path.Split('?')[0]));
 +            Assert.Equal("?orgId=org_123", fixture.Handler.Queries["/alpha/billing/credits"]);
 +            Assert.Equal("?orgId=org_123", fixture.Handler.Queries["/alpha/billing/subscriptions"]);
++            Assert.Equal("?orgId=org_123&since=2026-11-01T00%3A00%3A00Z",
++                fixture.Handler.Queries["/alpha/usage/summary"]);
++        }
++        fixture.Handler.Subscription = """{"data":{"planId":"individual-pro","status":"active"}}""";
++        using (var provider = fixture.Provider())
++        {
++            Assert.Equal(QuotaStatus.Ok, (await provider.RefreshAsync()).Status);
++            Assert.Equal("?orgId=org_123", fixture.Handler.Queries["/alpha/usage/summary"]);
 +        }
 +        fixture.Handler.Whoami = """{"org":{},"user":{"userName":"casey"}}""";
 +        using (var provider = fixture.Provider())
@@ -6314,8 +6658,8 @@ index 00000000..27c06b46
 +            Assert.Equal(QuotaStatus.Ok, (await provider.RefreshAsync()).Status);
 +            Assert.Equal("", fixture.Handler.Queries["/alpha/billing/credits"]);
 +            Assert.Equal("", fixture.Handler.Queries["/alpha/billing/subscriptions"]);
++            Assert.Equal("", fixture.Handler.Queries["/alpha/usage/summary"]);
 +        }
-+        Assert.DoesNotContain(fixture.Handler.Paths, path => path.Contains("usage/summary", StringComparison.Ordinal));
 +    }
 +
 +    [Fact]
@@ -6325,7 +6669,7 @@ index 00000000..27c06b46
 +        using (var provider = fixture.Provider())
 +        {
 +            Assert.Equal(QuotaStatus.Ok, (await provider.RefreshAsync()).Status);
-+            Assert.Equal(3, fixture.Handler.Calls);
++            Assert.Equal(4, fixture.Handler.Calls);
 +        }
 +        fixture.Handler.Status = 401;
 +        using (var provider = fixture.Provider())
@@ -6337,12 +6681,12 @@ index 00000000..27c06b46
 +            Assert.Null(rejected.Account);
 +            Assert.Null(rejected.ObservedAt);
 +            Assert.Equal(CommandCodeQuotaProvider.RejectedReason, provider.ReadCachedSnapshot().Block);
-+            Assert.Equal(4, fixture.Handler.Calls);
++            Assert.Equal(5, fixture.Handler.Calls);
 +        }
 +        using (var restarted = fixture.Provider())
 +        {
 +            Assert.Equal(QuotaStatus.NeedsAuth, (await restarted.RefreshStartupAsync()).Status);
-+            Assert.Equal(4, fixture.Handler.Calls);
++            Assert.Equal(5, fixture.Handler.Calls);
 +        }
 +        fixture.Handler.Status = 200;
 +        File.WriteAllText(fixture.Auth, """{"apiKey":"replacement-key"}""");
@@ -6350,7 +6694,7 @@ index 00000000..27c06b46
 +        {
 +            Assert.Equal(QuotaStatus.Ok, (await provider.RefreshAsync()).Status);
 +            Assert.Equal("replacement-key", fixture.Handler.Token);
-+            Assert.Equal(7, fixture.Handler.Calls);
++            Assert.Equal(9, fixture.Handler.Calls);
 +        }
 +    }
 +
@@ -6373,7 +6717,7 @@ index 00000000..27c06b46
 +        fixture.Clock = Time.AddSeconds(90);
 +        fixture.Handler.Status = 200;
 +        Assert.Equal(QuotaStatus.Ok, (await restarted.RefreshAsync()).Status);
-+        Assert.Equal(4, fixture.Handler.Calls);
++        Assert.Equal(5, fixture.Handler.Calls);
 +    }
 +
 +    [Fact]
@@ -6512,6 +6856,40 @@ index 00000000..27c06b46
 +            : status == 404 ? CommandCodeQuotaProvider.NoSubscriptionReason : null, snapshot.Block);
 +    }
 +
++    [Fact]
++    public async Task SummaryNotFoundOrEmptyKeepsTheBillingReading()
++    {
++        foreach (var empty in new[] { false, true })
++        {
++            using var fixture = new Fixture();
++            if (empty) fixture.Handler.Summary = "";
++            else fixture.Handler.SummaryStatus = 404;
++            using var provider = fixture.Provider();
++            var snapshot = await provider.RefreshAsync();
++            Assert.Equal(QuotaStatus.Ok, snapshot.Status);
++            Assert.Equal(4, fixture.Handler.Calls);
++            var monthly = Assert.Single(snapshot.Windows, window => window.Id == "monthly");
++            Assert.Equal(.25, monthly.UsedFraction);
++            Assert.Equal(.75, monthly.Remaining);
++        }
++    }
++
++    [Theory]
++    [InlineData(401, QuotaStatus.NeedsAuth)]
++    [InlineData(403, QuotaStatus.NeedsAuth)]
++    [InlineData(429, QuotaStatus.Error)]
++    [InlineData(500, QuotaStatus.Error)]
++    public async Task SummaryFailuresOtherThanNotFoundKeepTheFailurePath(int status, QuotaStatus expected)
++    {
++        using var fixture = new Fixture();
++        fixture.Handler.SummaryStatus = status;
++        using var provider = fixture.Provider();
++        var snapshot = await provider.RefreshAsync();
++        Assert.Equal(expected, snapshot.Status);
++        Assert.Equal(4, fixture.Handler.Calls);
++        Assert.Equal(status is 401 or 403 ? CommandCodeQuotaProvider.RejectedReason : null, snapshot.Block);
++    }
++
 +    private sealed class Fixture : IDisposable
 +    {
 +        private readonly string root = Path.Combine(Path.GetTempPath(), "commandcode-quota-" + Guid.NewGuid().ToString("N"));
@@ -6536,12 +6914,14 @@ index 00000000..27c06b46
 +    {
 +        public int Calls, BillingStatus = 200;
 +        public int Status = 200;
++        public int? SummaryStatus;
 +        public double? Retry;
 +        public string? Failure;
 +        public string? Token;
 +        public string Whoami = CommandCodeQuotaProviderTests.Whoami;
 +        public string Credits = CommandCodeQuotaProviderTests.Credits;
 +        public string Subscription = CommandCodeQuotaProviderTests.Subscription;
++        public string? Summary = CommandCodeQuotaProviderTests.Summary;
 +        public TaskCompletionSource? Block;
 +        public readonly List<string> Paths = [];
 +        public readonly Dictionary<string, string> Queries = new(StringComparer.Ordinal);
@@ -6557,7 +6937,9 @@ index 00000000..27c06b46
 +            Tokens[path] = Token ?? "";
 +            if (Block is { } block) await block.Task.WaitAsync(cancellationToken);
 +            if (Failure == "network") throw new HttpRequestException("Synthetic unavailable transport");
-+            var status = path.EndsWith("/whoami", StringComparison.Ordinal) || BillingStatus == 200 ? Status : BillingStatus;
++            var status = path.EndsWith("/whoami", StringComparison.Ordinal) ? Status
++                : path.EndsWith("/usage/summary", StringComparison.Ordinal) && SummaryStatus is { } summaryStatus ? summaryStatus
++                : BillingStatus == 200 ? Status : BillingStatus;
 +            var response = new HttpResponseMessage((HttpStatusCode)status);
 +            if (status == 429 && Retry is { } seconds) response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(seconds));
 +            if (status is not (200 or 429)) return response;
@@ -6565,7 +6947,8 @@ index 00000000..27c06b46
 +            {
 +                "/alpha/whoami" => Whoami,
 +                "/alpha/billing/credits" => Credits,
-+                _ => Subscription
++                "/alpha/billing/subscriptions" => Subscription,
++                _ => Summary ?? ""
 +            };
 +            response.Content = new StringContent(body);
 +            return response;
@@ -7051,6 +7434,3 @@ index 8953398f..ab94d92b 100644
      public void RemoteSourcesUseExistingAccountCardsAndHostScopedSelection(string provider)
      {
          OnStaThread(() =>
--- 
-2.41.0
-
