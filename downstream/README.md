@@ -237,7 +237,7 @@ includes enabled remote hosts, while explicit selections remain host-scoped.
 The remote collector reads credentials on its host, queries the supplier there
 and returns only structured quota observations over the existing SSH connection.
 Borrowed tool sessions remain read-only; remote secrets are never read back to
-the desktop. The explicit Kimi key setup action described below sends a newly
+the desktop. The explicit Kimi or Command Code key setup action described below sends a newly
 entered key from desktop Settings to the selected host over encrypted SSH stdin.
 Quota polling is independent of speed sampling and obeys the existing network
 consent, automatic/manual selection and persisted provider retry deadlines.
