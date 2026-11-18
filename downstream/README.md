@@ -1013,9 +1013,14 @@ or Linux-only result. No release is authorized by this development work.
 
 
 Patch 0026 adds Command Code as the fourth subscription reader on Windows, macOS
-and the collector. It reads `COMMAND_CODE_API_KEY` first and then
-`~/.commandcode/auth.json` (`%USERPROFILE%\.commandcode\auth.json` on Windows)
-without writing, refreshing or re-authenticating, then requests
+and the collector. A key saved from Subscription Settings on the local app or an
+enabled SSH host is authoritative; otherwise it reads `COMMAND_CODE_API_KEY`,
+then `~/.commandcode/auth.json` (`%USERPROFILE%\.commandcode\auth.json` on
+Windows) without writing, refreshing or re-authenticating the official store.
+Local saved keys use Keychain on macOS and current-user DPAPI on Windows; remote
+keys use the `commandcode_credentials` control and are stored atomically as
+`~/.agent-speed/quota/commandcode.json` with mode `0600` and a per-save revision
+that resets persisted rejection and backoff. It then requests
 `/alpha/whoami?limits=1`, `/alpha/billing/credits` and
 `/alpha/billing/subscriptions` with the discovered organization scope. The
 monthly allowance is the outer window (granted credits minus `monthlyCredits`,
@@ -1037,17 +1042,16 @@ billing-envelope fallbacks, generic plan-version suffixes, a fraction in every
 window `used`, one fifteen-second budget per request instead of per poll, and
 collector handling of inner JSON nulls, stringified epochs, the `Ultra` label,
 120-character account labels and a persisted unsupported reason.
-Focused verification passes seven collector quota cases (credential precedence,
-parser extras, organization-scoped routing, auth/Retry-After, cold sequence,
-in-flight rotation, fourth-provider isolation), 80 Windows Core cases and 81
-Windows Presentation cases. Thirteen real Swift provider tests also execute on
-Linux through a projection of the unchanged quota closure with Crypto/CSQLite
-shims and a registry stub; the projection excludes only the Security-backed
-registry, so macOS SDK type checking and AppKit rendering remain unverified, as
-do live Command Code accounts. The Windows application and native test assembly
-cross-compile with zero warnings/errors. All 26 patches replay from the pinned
-baseline, and all 3,153 source files match the reviewed prepared tree
-byte-for-byte. No package, Actions run or Release was created.
+Focused verification after adding managed keys passes 76 collector cases
+(`*Quota*:*Kimi*:DaemonProcessTest.*`, including the new managed-key control,
+storage, precedence and invalidation tests), the Windows solution builds with
+zero warnings/errors, and 123 Windows Core CommandCode/Kimi cases pass. The new
+Windows-only DPAPI/dialog tests compile but are not executed on Linux. macOS
+Swift type checking, Keychain access and SwiftUI rendering remain unverified
+because no Swift toolchain is available on this host, as do live Command Code
+accounts. All 26 patches replay from the pinned baseline, and all 3,164 tracked
+files match the reviewed prepared tree byte-for-byte. No package, Actions run or
+Release was created.
 
 ### Standalone collector release assets (unreleased)
 
