@@ -3060,7 +3060,7 @@ new file mode 100644
 index 00000000..f018456a
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
-@@ -0,0 +1,776 @@
+@@ -0,0 +1,778 @@
 +using System.ComponentModel;
 +using System.Diagnostics;
 +using System.Windows;
@@ -3296,7 +3296,9 @@ index 00000000..f018456a
 +        _placing = true;
 +        try
 +        {
-+            var state = new QuotaNotchRenderState(_snapshots, _enabledSources, _network, _dark, _edge,
++            var visibleSources = _enabledSources
++                .Where(source => _snapshots.Any(snapshot => snapshot.Id == source)).ToArray();
++            var state = new QuotaNotchRenderState(_snapshots, visibleSources, _network, _dark, _edge,
 +                _expansion, _activeSource, Grip: _gripMotion.Frame, DisplayNow: _displayNow, GripAcquired: _gripIntent.Acquired);
 +            if (_mainState != state)
 +            {

@@ -641,7 +641,7 @@ new file mode 100644
 index 00000000..a514fba9
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
-@@ -0,0 +1,676 @@
+@@ -0,0 +1,680 @@
 +import AgentSpeedCore
 +import AppKit
 +import Observation
@@ -1060,7 +1060,11 @@ index 00000000..a514fba9
 +        let current = revision
 +        let state = withObservationTracking {
 +            (model.quota.floatingVisible, model.accessibility.reduceMotion, model.settings.appearance,
-+             model.quota.snapshots, quotaEnabledSources(model.quota), model.quota.keepExpanded,
++             model.quota.snapshots,
++             quotaEnabledSources(model.quota).filter { provider in
++                 model.quota.snapshots.contains { $0.id == provider.id }
++             },
++             model.quota.keepExpanded,
 +             model.quota.networkEnabled, model.l10n.language)
 +        } onChange: { [weak self] in
 +            Task { @MainActor [weak self] in
