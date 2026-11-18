@@ -1,91 +1,9 @@
-From a3ac511025f4d5084df317c968c5248807da6ea2 Mon Sep 17 00:00:00 2001
+From fdbde5a79a9eb250b713951634292a9aec9eb34f Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Wed, 18 Nov 2026 13:56:08 +0800
 Subject: [PATCH 24/26] Add local and remote Kimi Code quota
 
 Support read-only CLI OAuth and regional subscription API keys, native secure settings, client-managed SSH provisioning, private revision-safe storage and account-isolated quota lifecycle.
----
- linux/collector/daemon.cpp                    |  20 +-
- linux/collector/quota.LICENSE.txt             |   3 +-
- linux/collector/quota.cpp                     | 360 ++++++++++++++--
- linux/collector/quota.hpp                     |  12 +-
- linux/tests/collector_daemon_test.cpp         |  96 ++++-
- linux/tests/quota_test.cpp                    | 388 ++++++++++++++++-
- macos/Resources/Codenotch-LICENSE.txt         |   2 +-
- macos/Resources/strings.macos.json            |  25 ++
- macos/Sources/AgentSpeed/App/AppModel.swift   |   4 +-
- .../App/KimiCredentialResponse.swift          |  32 ++
- .../AgentSpeed/App/QuotaController.swift      |  90 +++-
- macos/Sources/AgentSpeed/App/QuotaNotch.swift |   7 +-
- .../AgentSpeed/App/QuotaSourceLogo.swift      |  51 ++-
- .../Sources/AgentSpeed/App/QuotaSources.swift |   2 +-
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  14 +-
- .../AgentSpeed/App/RemoteQuotaProvider.swift  |  83 ++++
- .../AgentSpeed/Localization/StringTable.swift |  25 ++
- .../SettingsWindow/Panes/KimiKeyEditor.swift  | 141 ++++++
- .../SettingsWindow/Panes/QuotaPane.swift      |  30 +-
- .../AgentSpeedCore/KimiAPIKeyStore.swift      |  99 +++++
- .../AgentSpeedCore/KimiCredentials.swift      |  60 +++
- .../AgentSpeedCore/KimiQuotaProvider.swift    | 215 ++++++++++
- macos/Sources/AgentSpeedCore/KimiUsage.swift  |  84 ++++
- macos/Sources/AgentSpeedCore/Quota.swift      |   4 +-
- .../AgentSpeedCore/QuotaPersistence.swift     |   5 +
- .../Sources/AgentSpeedCore/RemoteQuota.swift  |  11 +-
- .../KimiCredentialTransportTests.swift        | 109 +++++
- .../KimiKeyControllerTests.swift              | 125 ++++++
- .../QuotaPresentationTests.swift              |  16 +
- .../RemoteQuotaTransportTests.swift           |  44 +-
- .../AgentSpeedCoreTests/KimiAPIKeyTests.swift | 156 +++++++
- .../KimiQuotaProviderTests.swift              | 286 +++++++++++++
- .../QuotaColdStartTests.swift                 |  19 +-
- .../RemoteQuotaTests.swift                    |  18 +
- spec/QUOTA.md                                 |  36 +-
- .../AgentSpeed.Core/KimiCredentialStore.cs    | 176 ++++++++
- .../src/AgentSpeed.Core/KimiQuotaProvider.cs  | 400 ++++++++++++++++++
- windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   4 +-
- .../AgentSpeed.Core/RemoteQuotaProvider.cs    |  11 +
- .../src/AgentSpeed.Core/RemoteQuotaSession.cs |  82 +++-
- .../src/AgentSpeed.Core/RemoteQuotaStore.cs   |   2 +
- .../Localization/Strings.Windows.json         |  30 ++
- .../Settings/QuotaFormat.cs                   |  28 +-
- .../Services/RemoteConnectionManager.cs       |  24 ++
- .../AgentSpeed/Services/RemoteSshWorker.cs    |   4 +
- .../src/AgentSpeed/Settings/KimiKeyDialog.cs  | 134 ++++++
- .../Settings/QuotaNotch.LICENSE.txt           |   2 +-
- .../src/AgentSpeed/Settings/QuotaNotchView.cs |   3 +
- .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  37 +-
- .../src/AgentSpeed/Settings/QuotaSurface.cs   | 126 +++++-
- .../AgentSpeed.Core.Tests/KimiApiKeyTests.cs  | 158 +++++++
- .../KimiQuotaProviderTests.cs                 | 279 ++++++++++++
- .../QuotaColdStartTests.cs                    |  18 +-
- .../RemoteKimiCredentialsTests.cs             | 130 ++++++
- .../AgentSpeed.Core.Tests/RemoteQuotaTests.cs |  29 ++
- .../QuotaFormatTests.cs                       |  45 ++
- .../RemoteQuotaSourcesTests.cs                |   9 +-
- .../SettingsSerializerTests.cs                |   2 +-
- .../KimiKeySettingsTests.cs                   | 193 +++++++++
- .../QuotaNotchViewTests.cs                    |   1 +
- .../QuotaSettingsPageTests.cs                 |  30 +-
- .../QuotaSurfaceProviderCollectionTests.cs    |  29 +-
- .../QuotaSurfaceRetryTests.cs                 |  16 +-
- 63 files changed, 4528 insertions(+), 146 deletions(-)
- create mode 100644 macos/Sources/AgentSpeed/App/KimiCredentialResponse.swift
- create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
- create mode 100644 macos/Sources/AgentSpeedCore/KimiAPIKeyStore.swift
- create mode 100644 macos/Sources/AgentSpeedCore/KimiCredentials.swift
- create mode 100644 macos/Sources/AgentSpeedCore/KimiQuotaProvider.swift
- create mode 100644 macos/Sources/AgentSpeedCore/KimiUsage.swift
- create mode 100644 macos/Tests/AgentSpeedAppTests/KimiCredentialTransportTests.swift
- create mode 100644 macos/Tests/AgentSpeedAppTests/KimiKeyControllerTests.swift
- create mode 100644 macos/Tests/AgentSpeedCoreTests/KimiAPIKeyTests.swift
- create mode 100644 macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift
- create mode 100644 windows/src/AgentSpeed.Core/KimiCredentialStore.cs
- create mode 100644 windows/src/AgentSpeed.Core/KimiQuotaProvider.cs
- create mode 100644 windows/src/AgentSpeed/Settings/KimiKeyDialog.cs
- create mode 100644 windows/tests/AgentSpeed.Core.Tests/KimiApiKeyTests.cs
- create mode 100644 windows/tests/AgentSpeed.Core.Tests/KimiQuotaProviderTests.cs
- create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemoteKimiCredentialsTests.cs
- create mode 100644 windows/tests/AgentSpeed.Windows.Tests/KimiKeySettingsTests.cs
 ---
  linux/collector/daemon.cpp                    |  20 +-
  linux/collector/quota.LICENSE.txt             |   3 +-
@@ -1875,7 +1793,7 @@ index ca1eada6..9223ad06 100644
                  }
                  if buffer.count > 4_194_304 { throw Failure("Collector sent an oversized message") }
 diff --git a/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift b/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
-index 5263ebe5..9bf6f606 100644
+index e7491020..22d4b66e 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
 +++ b/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
 @@ -23,6 +23,86 @@ final class RemoteQuotaTransport {
@@ -4008,7 +3926,7 @@ index 00000000..9919ff0e
 +}
 diff --git a/windows/src/AgentSpeed.Core/KimiQuotaProvider.cs b/windows/src/AgentSpeed.Core/KimiQuotaProvider.cs
 new file mode 100644
-index 00000000..f68529ca
+index 00000000..09fdb05d
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/KimiQuotaProvider.cs
 @@ -0,0 +1,409 @@
@@ -4447,10 +4365,10 @@ index 365e42ab..b2cf7c48 100644
      };
  }
 diff --git a/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs b/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
-index 113e207c..aac5fd08 100644
+index 4098ee3e..3bc54ca6 100644
 --- a/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
 +++ b/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
-@@ -30,6 +30,17 @@ public sealed class RemoteQuotaProvider : IQuotaProvider
+@@ -32,6 +32,17 @@ public sealed class RemoteQuotaProvider : IQuotaProvider
      public Task<QuotaSnapshot> RefreshAsync() => ReadAsync(true);
      public Task<QuotaSnapshot> RefreshStartupAsync() => ReadAsync(true);
  
@@ -4461,7 +4379,7 @@ index 113e207c..aac5fd08 100644
 +            Cancel();
 +            if (destination is not null) store?.Invalidate(definition.Id, destination);
 +            snapshot = new(definition.Id, definition.DisplayName, "unknown", QuotaStatus.Error, [], null,
-+                null, null, null, null, definition.Source, null, null, false, Configured: false);
++                null, null, null, null, definition.Source, null, null, false);
 +        }
 +    }
 +

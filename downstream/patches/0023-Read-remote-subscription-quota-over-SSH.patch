@@ -1,77 +1,8 @@
-From 5fa1bb2536d6cb0c96601a5ce8f5e5078c48992a Mon Sep 17 00:00:00 2001
+From 638eb3f875b9feff32edca3992d12ff85edbfa63 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Wed, 18 Nov 2026 13:54:27 +0800
 Subject: [PATCH 23/26] Read remote subscription quota over SSH
 
----
- README.md                                     |  11 +
- README.zh-CN.md                               |   1 +
- linux/collector/CMakeLists.txt                |   5 +-
- linux/collector/daemon.cpp                    |  13 +-
- linux/collector/publisher.cpp                 |   2 +-
- linux/collector/quota.LICENSE.txt             |  26 +
- linux/collector/quota.cpp                     | 625 +++++++++++++++++
- linux/collector/quota.hpp                     |  78 +++
- linux/tests/CMakeLists.txt                    |   1 +
- linux/tests/collector_daemon_test.cpp         |  78 ++-
- linux/tests/quota_test.cpp                    | 644 ++++++++++++++++++
- macos/Sources/AgentSpeed/App/AppModel.swift   |   6 +
- .../AgentSpeed/App/QuotaController.swift      |  42 +-
- macos/Sources/AgentSpeed/App/QuotaNotch.swift |   8 +-
- .../AgentSpeed/App/QuotaSourceLogo.swift      |   3 +-
- .../Sources/AgentSpeed/App/QuotaSources.swift |  13 +
- macos/Sources/AgentSpeed/App/RemoteHost.swift |  25 +
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  65 +-
- .../AgentSpeed/App/RemoteQuotaProvider.swift  | 185 +++++
- .../SettingsWindow/Panes/QuotaPane.swift      |  16 +-
- macos/Sources/AgentSpeedCore/Quota.swift      |  11 +-
- .../AgentSpeedCore/QuotaPersistence.swift     |   3 +-
- .../Sources/AgentSpeedCore/RemoteQuota.swift  |  71 ++
- .../QuotaControllerTests.swift                |  50 ++
- .../QuotaPresentationTests.swift              |  15 +
- .../RemoteQuotaTransportTests.swift           | 283 ++++++++
- .../RemoteQuotaTests.swift                    |  78 +++
- spec/NETWORK.md                               |  36 +
- spec/QUOTA.md                                 |  27 +-
- windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |  24 +-
- .../AgentSpeed.Core/RemoteQuotaProvider.cs    | 101 +++
- .../src/AgentSpeed.Core/RemoteQuotaSession.cs | 146 ++++
- .../src/AgentSpeed.Core/RemoteQuotaStore.cs   | 105 +++
- .../Settings/AppSettings.cs                   |   5 +-
- .../Settings/QuotaFormat.cs                   |   2 +-
- .../Settings/QuotaSources.cs                  |  20 +
- windows/src/AgentSpeed/App/AppController.cs   |   2 +-
- .../Services/RemoteConnectionManager.cs       |  15 +
- .../AgentSpeed/Services/RemoteSshWorker.cs    |  37 +-
- .../src/AgentSpeed/Settings/QuotaNotchView.cs |   9 +-
- .../AgentSpeed/Settings/QuotaNotchWindow.cs   |   7 +-
- .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  15 +-
- .../src/AgentSpeed/Settings/QuotaSurface.cs   |  83 ++-
- .../RemoteQuotaPersistenceTests.cs            | 105 +++
- .../AgentSpeed.Core.Tests/RemoteQuotaTests.cs | 160 +++++
- .../RemoteQuotaSourcesTests.cs                |  45 ++
- .../QuotaNotchViewTests.cs                    |  16 +
- .../QuotaSettingsPageTests.cs                 |  19 +
- .../QuotaSurfaceProviderCollectionTests.cs    | 146 ++++
- .../QuotaSurfaceRetryTests.cs                 | 274 ++++++++
- 50 files changed, 3659 insertions(+), 98 deletions(-)
- create mode 100644 linux/collector/quota.LICENSE.txt
- create mode 100644 linux/collector/quota.cpp
- create mode 100644 linux/collector/quota.hpp
- create mode 100644 linux/tests/quota_test.cpp
- create mode 100644 macos/Sources/AgentSpeed/App/QuotaSources.swift
- create mode 100644 macos/Sources/AgentSpeed/App/RemoteHost.swift
- create mode 100644 macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
- create mode 100644 macos/Sources/AgentSpeedCore/RemoteQuota.swift
- create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteQuotaTransportTests.swift
- create mode 100644 macos/Tests/AgentSpeedCoreTests/RemoteQuotaTests.swift
- create mode 100644 windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
- create mode 100644 windows/src/AgentSpeed.Core/RemoteQuotaSession.cs
- create mode 100644 windows/src/AgentSpeed.Core/RemoteQuotaStore.cs
- create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaSources.cs
- create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemoteQuotaPersistenceTests.cs
- create mode 100644 windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
- create mode 100644 windows/tests/AgentSpeed.Presentation.Tests/RemoteQuotaSourcesTests.cs
 ---
  README.md                                     |  11 +
  README.zh-CN.md                               |   1 +
@@ -91,7 +22,7 @@ Subject: [PATCH 23/26] Read remote subscription quota over SSH
  .../Sources/AgentSpeed/App/QuotaSources.swift |  13 +
  macos/Sources/AgentSpeed/App/RemoteHost.swift |  25 +
  .../Sources/AgentSpeed/App/RemoteHosts.swift  |  65 +-
- .../AgentSpeed/App/RemoteQuotaProvider.swift  | 186 +++++
+ .../AgentSpeed/App/RemoteQuotaProvider.swift  | 187 +++++
  .../SettingsWindow/Panes/QuotaPane.swift      |  16 +-
  macos/Sources/AgentSpeedCore/Quota.swift      |  10 +-
  .../AgentSpeedCore/QuotaPersistence.swift     |   2 +-
@@ -103,7 +34,7 @@ Subject: [PATCH 23/26] Read remote subscription quota over SSH
  spec/NETWORK.md                               |  36 +
  spec/QUOTA.md                                 |  27 +-
  windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |  24 +-
- .../AgentSpeed.Core/RemoteQuotaProvider.cs    | 101 +++
+ .../AgentSpeed.Core/RemoteQuotaProvider.cs    | 103 +++
  .../src/AgentSpeed.Core/RemoteQuotaSession.cs | 147 ++++
  .../src/AgentSpeed.Core/RemoteQuotaStore.cs   | 105 +++
  .../Settings/AppSettings.cs                   |   5 +-
@@ -117,13 +48,13 @@ Subject: [PATCH 23/26] Read remote subscription quota over SSH
  .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  14 +-
  .../src/AgentSpeed/Settings/QuotaSurface.cs   |  83 ++-
  .../RemoteQuotaPersistenceTests.cs            | 105 +++
- .../AgentSpeed.Core.Tests/RemoteQuotaTests.cs | 160 +++++
+ .../AgentSpeed.Core.Tests/RemoteQuotaTests.cs | 163 +++++
  .../RemoteQuotaSourcesTests.cs                |  45 ++
  .../QuotaNotchViewTests.cs                    |  16 +
  .../QuotaSettingsPageTests.cs                 |  19 +
  .../QuotaSurfaceProviderCollectionTests.cs    | 146 ++++
  .../QuotaSurfaceRetryTests.cs                 | 274 ++++++++
- 50 files changed, 3676 insertions(+), 98 deletions(-)
+ 50 files changed, 3682 insertions(+), 98 deletions(-)
  create mode 100644 linux/collector/quota.LICENSE.txt
  create mode 100644 linux/collector/quota.cpp
  create mode 100644 linux/collector/quota.hpp
@@ -2198,10 +2129,10 @@ index 1484778c..ca1eada6 100644
              }
 diff --git a/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift b/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
 new file mode 100644
-index 00000000..5263ebe5
+index 00000000..e7491020
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/RemoteQuotaProvider.swift
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,187 @@
 +import AgentSpeedCore
 +import Foundation
 +
@@ -2362,10 +2293,11 @@ index 00000000..5263ebe5
 +    private func empty(hostID: UUID, providerID: String) -> QuotaSnapshot {
 +        let name = quotaSources.first { $0.id == providerID }?.name ?? providerID
 +        let hostName = hosts.first { $0.id == hostID }?.displayName(in: hosts) ?? hostID.uuidString
++        // No reading yet means the credential configuration on the host is unknown, not absent;
++        // claiming otherwise would drop an offline source from the account list.
 +        return QuotaSnapshot(id: providerID, displayName: name, fidelity: "official", status: .error,
 +                             windows: [], headlineId: nil, block: nil, account: nil, plan: nil, observedAt: nil,
-+                             source: "remote collector", credits: nil, nextAllowedAt: nil, waitingForRefresh: false,
-+                             configured: false)
++                             source: "remote collector", credits: nil, nextAllowedAt: nil, waitingForRefresh: false)
 +            .scopedToRemote(hostID: hostID, hostName: hostName)
 +    }
 +}
@@ -2567,10 +2499,10 @@ index 00000000..e7fa1c78
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-index c4acaa75..916926e1 100644
+index d29a5481..5c0725fc 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -527,6 +527,56 @@ struct QuotaControllerTests {
+@@ -531,6 +531,56 @@ struct QuotaControllerTests {
          #expect(transport.count() == 2)
          #expect(scheduler.retries.isEmpty)
      }
@@ -3162,10 +3094,10 @@ index ba294c99..365e42ab 100644
          "codex" => new CodexQuotaProvider(),
 diff --git a/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs b/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
 new file mode 100644
-index 00000000..113e207c
+index 00000000..4098ee3e
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/RemoteQuotaProvider.cs
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,103 @@
 +namespace AgentSpeed.Core;
 +
 +/// <summary>A host-scoped observation reader; all supplier access remains in the collector.</summary>
@@ -3188,10 +3120,12 @@ index 00000000..113e207c
 +        this.request = request;
 +        this.store = store;
 +        this.destination = store is null ? null : destination ?? throw new ArgumentNullException(nameof(destination));
++        // No reading yet means the credential configuration on the host is unknown, not absent;
++        // claiming otherwise would drop an offline source from the account list.
 +        snapshot = store?.Read(definition.Id, this.destination!) is { } cached
 +            ? cached with { DisplayName = definition.DisplayName, Source = definition.Source }
 +            : new(definition.Id, definition.DisplayName, "unknown", QuotaStatus.Error, [], null,
-+                "Waiting for remote collector", null, null, null, definition.Source, null, null, false, Configured: false);
++                "Waiting for remote collector", null, null, null, definition.Source, null, null, false);
 +    }
 +
 +    public QuotaSnapshot ReadCachedSnapshot() { lock (gate) return snapshot; }
@@ -4171,10 +4105,10 @@ index 00000000..f2c771d4
 +}
 diff --git a/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
 new file mode 100644
-index 00000000..4e305138
+index 00000000..3e9a5026
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/RemoteQuotaTests.cs
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,163 @@
 +using System.Text.Json;
 +using System.Text.Json.Nodes;
 +using AgentSpeed.Core;
@@ -4287,6 +4221,9 @@ index 00000000..4e305138
 +        var completion = new TaskCompletionSource<QuotaSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
 +        using var provider = new RemoteQuotaProvider(new(id, "Codex · Production", "CX", "Production · SSH"), (_, _) => completion.Task);
 +        Assert.Null(provider.ReadCachedSnapshot().ObservedAt);
++        // Without a reading the host's credential configuration is unknown, not absent; only an
++        // identified absence may drop the source from the account list.
++        Assert.Null(provider.ReadCachedSnapshot().Configured);
 +        var refresh = provider.RefreshAsync();
 +        completion.SetResult(Snapshot());
 +        var observation = await refresh;

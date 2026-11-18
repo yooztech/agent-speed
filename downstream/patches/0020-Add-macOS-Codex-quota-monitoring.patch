@@ -1,4 +1,4 @@
-From 65a5964a0296ac2c9ad06fd17fd93c020706332e Mon Sep 17 00:00:00 2001
+From 76b3b783c86a000e2c4ccfd25751cd0412b21823 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:08 +0800
 Subject: [PATCH 20/26] Add macOS Codex quota monitoring
@@ -25,7 +25,7 @@ Subject: [PATCH 20/26] Add macOS Codex quota monitoring
  .../AgentSpeedCore/CodexQuotaProvider.swift   | 362 ++++++++
  macos/Sources/AgentSpeedCore/Quota.swift      | 143 +++
  .../AgentSpeedCore/QuotaPersistence.swift     |  83 ++
- .../QuotaControllerTests.swift                | 628 +++++++++++++
+ .../QuotaControllerTests.swift                | 630 +++++++++++++
  .../AgentSpeedAppTests/QuotaNotchTests.swift  | 262 ++++++
  .../QuotaPresentationTests.swift              | 170 ++++
  .../QuotaWarmStartupTests.swift               |  93 ++
@@ -37,7 +37,7 @@ Subject: [PATCH 20/26] Add macOS Codex quota monitoring
  spec/QUOTA.md                                 | 136 +++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 33 files changed, 5337 insertions(+), 2 deletions(-)
+ 33 files changed, 5339 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -3647,10 +3647,10 @@ index 00000000..bb623608
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 new file mode 100644
-index 00000000..b1c60c1e
+index 00000000..61f49571
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -0,0 +1,628 @@
+@@ -0,0 +1,630 @@
 +import Foundation
 +#if canImport(FoundationNetworking)
 +import FoundationNetworking
@@ -3866,6 +3866,8 @@ index 00000000..b1c60c1e
 +        try await withFixture(ids: ["codex", "test-source"], configured: [true, false]) { fixture in
 +            let controller = fixture.controller
 +            let codex = fixture.providers[0], unconfigured = fixture.providers[1]
++            // Cached reads are asynchronous; the account slots exist only after they return.
++            await fixture.barrier().value
 +            #expect(controller.snapshots.map(\.id) == ["codex"])
 +            #expect(controller.unconfiguredProviderIDs == ["test-source"])
 +            controller.setNetworkEnabled(true)
