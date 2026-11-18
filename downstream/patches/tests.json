@@ -437,5 +437,19 @@
     ],
     "related": [],
     "reason": "Test-only correction to the upstream HistoryService lifecycle regression: assert actual Ready publication, worker termination/restart and rejection after disposal instead of an undocumented five-second stopwatch limit. Isolate all 16 source roots so neighboring history tests never scan real host transcripts. No Windows or macOS production behavior changes, timeout increases, test skips or CI reruns. The actual six-test HistoryServiceTests class passes locally."
+  },
+  "0026-Add-Command-Code-quota-monitoring.patch": {
+    "regression": [
+      {"platform": "linux", "run": "cmake -S linux -B build-quota -DAGENTSPEED_BUILD_APP=OFF && cmake --build build-quota --target agentspeed_tests agentspeed-collector -j2 && build-quota/tests/agentspeed_tests --gtest_filter='CollectorQuotaCredentials.CommandCode*:CollectorQuotaParser.CommandCode*:CollectorQuotaProvider.CommandCode*:CollectorQuotaService.CommandCode*'"},
+      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~CommandCodeQuotaProviderTests|FullyQualifiedName~RemoteQuotaTests|FullyQualifiedName~QuotaColdStartTests'"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~CommandCodeQuotaProviderTests|FullyQualifiedName~RemoteQuotaTests|FullyQualifiedName~QuotaColdStartTests'"},
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'CommandCode|RemoteQuotaTests|RemoteQuotaTransportTests|QuotaColdStartTests'"}
+    ],
+    "related": [
+      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Presentation.Tests -c Release -f net10.0 --filter 'FullyQualifiedName~RemoteQuotaSourcesTests|FullyQualifiedName~QuotaFormatTests'"},
+      {"platform": "windows", "run": "dotnet test windows/tests/AgentSpeed.Windows.Tests -c Release --filter 'FullyQualifiedName~QuotaSurfaceProviderCollectionTests|FullyQualifiedName~QuotaSettingsPageTests|FullyQualifiedName~QuotaNotchViewTests'"},
+      {"platform": "macos", "run": "swift test --package-path macos --filter 'QuotaPresentationTests|QuotaControllerTests'"}
+    ],
+    "reason": "Command Code is the fourth local Windows/macOS and remote collector subscription-quota supplier: it reads COMMAND_CODE_API_KEY or ~/.commandcode/auth.json without writing, refreshes or re-authenticating, queries the CLI's /alpha whoami, credits and subscriptions routes with the organization scope, and maps remaining monthly, weekly and 5-hour allowances plus a separate purchased/free credit balance. Account identity is the credential digest, cache and persisted backoff are per account, and remote collectors read their own host credentials while returning only structured observations. Adapted from Codenotch commit 835550a (MIT) with license notices. The /alpha routes are the CLI's internal contract, so missing or unknown fields degrade to unsupported instead of synthesizing a monthly percentage; plan-name allowances are only a fallback when monthlyCreditsGranted is absent. Native WPF/AppKit appearance, live Command Code accounts and macOS SDK execution remain unverified."
   }
 }

@@ -230,7 +230,7 @@ actual quota windows; low-allowance, blocked, sign-in-required, unknown and
 offline states stay explicit, and cached snapshots remain visible with
 networking disabled. Clicking one opens Settings. Status-item bodies, taskbar
 widgets, orbs and History do not carry quota data.
-Local and enabled SSH-host Codex/OpenCode Go/Kimi Code accounts share the Subscription
+Local and enabled SSH-host Codex/OpenCode Go/Kimi Code/Command Code accounts share the Subscription
 source selector, cards, floating quota panel and summaries. Remote
 sources are identified by host UUID plus provider, not host label; All sources
 includes enabled remote hosts, while explicit selections remain host-scoped.
@@ -1011,6 +1011,43 @@ click-through outside the drawn shapes, responsive clicks/dragging, DPI changes
 and the pinned visual appearance; do not mark those checks passed from a browser
 or Linux-only result. No release is authorized by this development work.
 
+
+Patch 0026 adds Command Code as the fourth subscription reader on Windows, macOS
+and the collector. It reads `COMMAND_CODE_API_KEY` first and then
+`~/.commandcode/auth.json` (`%USERPROFILE%\.commandcode\auth.json` on Windows)
+without writing, refreshing or re-authenticating, then requests
+`/alpha/whoami?limits=1`, `/alpha/billing/credits` and
+`/alpha/billing/subscriptions` with the discovered organization scope. The
+monthly allowance is the outer window (granted credits minus `monthlyCredits`,
+reset at the reported period end), followed by the weekly and 5-hour
+`used`/`cap` windows; `purchasedCredits + freeCredits` stays a separate balance
+and is never folded into a window or percentage. Unknown or missing plan data
+reports unsupported instead of a synthesized percentage, `planId` allowances are
+only a fallback when `monthlyCreditsGranted` is absent, and `belowThreshold` is
+not treated as exhaustion. Credential digests key the account cache and persisted
+backoff, so key rotation cannot commit the previous account's observation within
+one in-flight refresh. Remote collectors read their own host credentials and
+return structured observations only. The reader and its views are adapted from
+Codenotch commit `835550a342871779135b6484d6899161c5222f7c` (MIT); the notices in
+`QuotaNotch.LICENSE.txt`, `quota.LICENSE.txt` and `Codenotch-LICENSE.txt` are
+updated. The `/alpha` routes are the CLI's internal contract rather than a
+published API, so absent fields degrade to unsupported instead of inventing a
+monthly percentage. Review of all three readers also aligned them on per-field
+billing-envelope fallbacks, generic plan-version suffixes, a fraction in every
+window `used`, one fifteen-second budget per request instead of per poll, and
+collector handling of inner JSON nulls, stringified epochs, the `Ultra` label,
+120-character account labels and a persisted unsupported reason.
+Focused verification passes seven collector quota cases (credential precedence,
+parser extras, organization-scoped routing, auth/Retry-After, cold sequence,
+in-flight rotation, fourth-provider isolation), 80 Windows Core cases and 81
+Windows Presentation cases. Thirteen real Swift provider tests also execute on
+Linux through a projection of the unchanged quota closure with Crypto/CSQLite
+shims and a registry stub; the projection excludes only the Security-backed
+registry, so macOS SDK type checking and AppKit rendering remain unverified, as
+do live Command Code accounts. The Windows application and native test assembly
+cross-compile with zero warnings/errors. All 26 patches replay from the pinned
+baseline, and all 3,153 source files match the reviewed prepared tree
+byte-for-byte. No package, Actions run or Release was created.
 
 ### Standalone collector release assets (unreleased)
 
