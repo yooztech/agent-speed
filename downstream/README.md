@@ -466,12 +466,10 @@ deletes the layout-pin test and unused constants, materializes CoreGraphics stro
 outlines before path operations, and uses controlled refresh ticks and actual task
 completion for lifecycle tests instead of short sleeps or polling deadlines. It
 does not restore live-window, synthetic-pointer or capture gates on either platform.
-The existing resting-arc test retains center pass-through and painted-arc input
-checks. Linux syntax/portable checks are not native AppKit/SwiftUI verification;
-the changed native geometry still requires macOS execution.
-The resting-arc regression checks the final grip input and host hit routing,
-including painted arc points, rather than requiring each internal contour to
-exclude the center. This removal does not establish native verification.
+The existing painted-arc input-path and resting-arc contour tests were removed
+entirely; no hit-region or painted-contour assertions remain. Linux
+syntax/portable checks are not native AppKit/SwiftUI verification; the changed
+native geometry still requires macOS execution.
 The four formal controller lifecycle tests pass on Linux with Swift 6.2.4 using
 the real controller, scheduler, providers and test source in a disposable package.
 All seven changed Swift files pass syntax parsing. The 22-patch queue also replays
@@ -1056,16 +1054,6 @@ because no Swift toolchain is available on this host, as do live Command Code
 accounts. All 26 patches replay from the pinned baseline, and all 3,164 tracked
 files match the reviewed prepared tree byte-for-byte. No package, Actions run or
 Release was created.
-
-A real account exposed the monthly error: the shared plan table reported 33 % used
-while the supplier's own page reported 4 % for the same period, because the
-account's credits did not match the nominal plan allotment. The corrected reader
-uses `/alpha/usage/summary` spend over spend plus remaining credits, and reverifies
-17 collector Command Code cases (including managed-key suites), 115 Windows Core
-Command Code/remote/cold-start cases, 81 Presentation quota-format/source cases,
-the Windows solution build with zero warnings/errors, and 20 real Swift provider
-cases through the Linux projection. Native WPF/AppKit appearance, macOS SDK
-execution and live accounts remain unverified; no package or Release was created.
 
 A real account exposed the monthly error: the shared plan table reported 33 % used
 while the supplier's own page reported 4 % for the same period, because the
