@@ -1045,7 +1045,8 @@ collector handling of inner JSON nulls, stringified epochs, the `Ultra` label,
 Focused verification after adding managed keys passes 76 collector cases
 (`*Quota*:*Kimi*:DaemonProcessTest.*`, including the new managed-key control,
 storage, precedence and invalidation tests), the Windows solution builds with
-zero warnings/errors, and 123 Windows Core CommandCode/Kimi cases pass. The new
+zero warnings/errors, and 123 Windows Core CommandCode/Kimi cases plus 653
+Windows Presentation quota/settings/display cases pass. The new
 Windows-only DPAPI/dialog tests compile but are not executed on Linux. macOS
 Swift type checking, Keychain access and SwiftUI rendering remain unverified
 because no Swift toolchain is available on this host, as do live Command Code
