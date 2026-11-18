@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 import release_network
 
@@ -80,8 +81,22 @@ def registry(names, require_commands=True):
     return entries
 
 
+PREPARE_ATTEMPTS = 2
+PREPARE_RETRY_DELAY = 1
+CHECKOUT_SETTLE_DELAY = 1
+
+
 def prepare(output, base, names):
     output = new_directory(output)
+
+    def discard(identity):
+        try:
+            current = output.stat()
+        except FileNotFoundError:
+            return
+        if not output.is_symlink() and (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
+            shutil.rmtree(output)
+
     def clone():
         # Reserve the destination atomically; never remove a directory we did not create.
         output.mkdir()
@@ -91,21 +106,29 @@ def prepare(output, base, names):
                 ["git", "clone", "--no-checkout", CONFIG["upstream_url"], str(output)],
                 timeout=300)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            try:
-                current = output.stat()
-            except FileNotFoundError:
-                pass
-            else:
-                if not output.is_symlink() and (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
-                    shutil.rmtree(output)
+            discard(identity)
             raise
+        return identity
 
-    release_network.retry(clone, label="clone upstream")
-    run(["git", "checkout", "--detach", base], cwd=output)
-    for name in names:
-        run(["git", "-c", "user.name=Downstream Patch Queue", "-c",
-             "user.email=downstream@localhost", "am", "--", str(PATCHES / name)], cwd=output)
-    return output
+    for attempt in range(PREPARE_ATTEMPTS):
+        identity = release_network.retry(clone, label="clone upstream")
+        try:
+            run(["git", "checkout", "--detach", base], cwd=output)
+            # macOS runners have dropped loose-object writes right after clone completion;
+            # let the fresh tree settle before am starts writing objects.
+            time.sleep(CHECKOUT_SETTLE_DELAY)
+            for name in names:
+                run(["git", "-c", "user.name=Downstream Patch Queue", "-c",
+                     "user.email=downstream@localhost", "am", "--", str(PATCHES / name)], cwd=output)
+            return output
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            discard(identity)
+            if attempt + 1 >= PREPARE_ATTEMPTS:
+                raise
+            print(f"prepare: attempt {attempt + 1} failed; retrying from a fresh clone",
+                  file=sys.stderr, flush=True)
+            time.sleep(PREPARE_RETRY_DELAY)
+    raise AssertionError("unreachable")
 
 
 def export(source, destination, base):

@@ -62,6 +62,59 @@ class CloneRetryTests(unittest.TestCase):
             run.assert_not_called()
             self.assertEqual(marker.read_text(), 'keep')
 
+    def test_am_failure_recreates_tree_and_retries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'checkout'
+            clones = []
+            am_calls = []
+
+            def clone(args, **kwargs):
+                clones.append(args)
+                (output / 'state').write_text('fresh')
+                return ''
+
+            def run(args, cwd=None, **kwargs):
+                if 'am' in args:
+                    am_calls.append(args)
+                    if len(am_calls) == 1:
+                        raise subprocess.CalledProcessError(
+                            1, args, stderr='unable to create temporary file: No such file or directory')
+                return ''
+
+            with patch.object(manage.release_network, 'run_once', side_effect=clone), \
+                 patch.object(manage, 'run', side_effect=run), \
+                 patch.object(manage.time, 'sleep') as sleep:
+                self.assertEqual(manage.prepare(output, 'a' * 40, ['0001-test.patch']), output)
+
+            self.assertEqual(len(clones), 2)
+            self.assertEqual(len(am_calls), 2)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 1, 1])
+            self.assertTrue((output / 'state').exists())
+
+    def test_repeated_am_failure_stops_after_one_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'checkout'
+            clones = []
+
+            def clone(args, **kwargs):
+                clones.append(args)
+                (output / 'state').write_text('fresh')
+                return ''
+
+            def run(args, cwd=None, **kwargs):
+                if 'am' in args:
+                    raise subprocess.CalledProcessError(1, args, stderr='unable to create temporary file')
+                return ''
+
+            with patch.object(manage.release_network, 'run_once', side_effect=clone), \
+                 patch.object(manage, 'run', side_effect=run), \
+                 patch.object(manage.time, 'sleep'):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    manage.prepare(output, 'a' * 40, ['0001-test.patch'])
+
+            self.assertEqual(len(clones), 2)
+            self.assertFalse(output.exists())
+
 
 if __name__ == '__main__':
     unittest.main()
