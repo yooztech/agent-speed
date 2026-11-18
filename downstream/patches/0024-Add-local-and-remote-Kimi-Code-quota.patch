@@ -4296,7 +4296,7 @@ index 00000000..f68529ca
 +            if (Numeric(detail, "used_ratio") is not { } ratio || ratio < 0) return;
 +            Replace(new(id, label, ratio, null, null, ResetDate(detail, "reset_time"), duration));
 +        }
-+        if (windows.Count == 0) return Empty(QuotaStatus.Unsupported, block: NoLimitsReason);
++        if (windows.Count == 0) return new("kimi", "Kimi Code", "official", QuotaStatus.Unsupported, [], "rolling", NoLimitsReason, null, null, null, Source, null, null, false, Configured: true);
 +        var level = Text(Property(Property(root, "user"), "membership"), "level");
 +        if (level?.StartsWith("LEVEL_", StringComparison.Ordinal) == true) level = level[6..];
 +        var plan = string.IsNullOrWhiteSpace(level) ? null : CultureInfo.InvariantCulture.TextInfo.ToTitleCase(level.Replace('_', ' ').ToLowerInvariant());
@@ -4397,7 +4397,7 @@ index 00000000..f68529ca
 +        }
 +    }
 +
-+    private static QuotaSnapshot StaleOrError(Schedule schedule) => schedule.Snapshot is { ObservedAt: not null } snapshot
++    private QuotaSnapshot StaleOrError(Schedule schedule) => schedule.Snapshot is { ObservedAt: not null } snapshot
 +        ? snapshot with { Status = QuotaStatus.Stale, NextAllowedAt = schedule.NextAllowedAt, WaitingForRefresh = false }
 +        : Empty(QuotaStatus.Error, schedule.NextAllowedAt);
 +    private QuotaSnapshot Empty(QuotaStatus status, DateTimeOffset? next = null, string? block = null) =>

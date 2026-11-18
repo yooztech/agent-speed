@@ -1900,7 +1900,7 @@ index 00000000..1e3a7261
 +        }
 +    }
 +
-+    private static QuotaSnapshot StaleOrError(Schedule schedule) => schedule.Snapshot is { ObservedAt: not null } snapshot
++    private QuotaSnapshot StaleOrError(Schedule schedule) => schedule.Snapshot is { ObservedAt: not null } snapshot
 +        ? snapshot with { Status = QuotaStatus.Stale, NextAllowedAt = schedule.NextAllowedAt, WaitingForRefresh = false }
 +        : Empty(QuotaStatus.Error, schedule.NextAllowedAt);
 +    private QuotaSnapshot Empty(QuotaStatus status, DateTimeOffset? next = null) =>
