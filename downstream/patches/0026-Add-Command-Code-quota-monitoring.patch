@@ -3550,7 +3550,7 @@ index 00000000..a5b4456e
 +        #expect(fixture.controller.enabledProviderIDs.isEmpty)
 +        let result = try (await fixture.controller.saveCommandCode(sourceID: "commandcode", apiKey: "verify-key")).get()
 +        if case .verified = result {} else { Issue.record("Supplier validation did not report verified") }
-+        #expect(fixture.http.count() - baseline == 3)
++        #expect(fixture.http.count() - baseline == 4)
 +        #expect(fixture.controller.enabledProviderIDs.isEmpty && !fixture.controller.allSourcesEnabled)
 +        #expect(fixture.controller.snapshots.isEmpty)
 +    }
