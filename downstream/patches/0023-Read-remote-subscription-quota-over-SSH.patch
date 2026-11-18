@@ -4466,7 +4466,7 @@ index b759efe5..44fcfa71 100644
 +            completion.SetResult(new("codex", "Codex", "exact", QuotaStatus.Ok,
 +                [new("weekly", "Weekly", .98, null, null, null, TimeSpan.FromDays(7))], "weekly", null, "late-account", "plus",
 +                DateTimeOffset.UtcNow, "codex-cli", null, null, false));
-+            PumpFor(TimeSpan.FromMilliseconds(50));
++            PumpUntilStable(() => requests);
 +            Assert.DoesNotContain(Descendants(page).OfType<TextBlock>(), text => text.Text.Contains("late-account", StringComparison.Ordinal));
 +            Assert.Equal(1, requests);
 +            if (revoke == "host") Assert.Equal(new[] { id }, settings.Current.QuotaSources);

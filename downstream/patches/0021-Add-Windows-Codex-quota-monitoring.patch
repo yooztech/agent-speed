@@ -55,9 +55,9 @@ Subject: [PATCH 21/26] Add Windows Codex quota monitoring
  .../QuotaNotchViewTests.cs                    |  47 ++
  .../QuotaSettingsPageTests.cs                 | 379 +++++++++
  .../QuotaSurfaceRetryTests.cs                 | 151 ++++
- .../QuotaSurfaceTests.cs                      | 504 ++++++++++++
+ .../QuotaSurfaceTests.cs                      | 526 ++++++++++++
  .../QuotaWarmStartupTests.cs                  | 101 +++
- 53 files changed, 7030 insertions(+), 54 deletions(-)
+ 53 files changed, 7054 insertions(+), 54 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
@@ -7254,7 +7254,7 @@ new file mode 100644
 index 00000000..a67942a2
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
-@@ -0,0 +1,504 @@
+@@ -0,0 +1,526 @@
 +using System.IO;
 +using System.Net;
 +using System.Net.Http;
@@ -7331,28 +7331,28 @@ index 00000000..a67942a2
 +
 +                settings.Update(s => s with { AutoRefreshQuota = false });
 +                time = time.AddMinutes(6);
-+                PumpFor(TimeSpan.FromMilliseconds(100));
++                PumpUntilStable(() => handler.UsageCalls);
 +                Assert.Equal(3, handler.UsageCalls);
 +                settings.Update(s => s with { AutoRefreshQuota = true });
 +                AwaitPoll(4);
 +
 +                settings.Update(s => s with { NetworkEnabled = false });
 +                time = time.AddMinutes(6);
-+                PumpFor(TimeSpan.FromMilliseconds(100));
++                PumpUntilStable(() => handler.UsageCalls);
 +                Assert.Equal(4, handler.UsageCalls);
 +                settings.Update(s => s with { NetworkEnabled = true });
 +                AwaitPoll(5);
 +
 +                settings.Update(s => s with { QuotaSources = [], QuotaAllSources = false });
 +                time = time.AddMinutes(6);
-+                PumpFor(TimeSpan.FromMilliseconds(100));
++                PumpUntilStable(() => handler.UsageCalls);
 +                Assert.Equal(5, handler.UsageCalls);
 +                settings.Update(s => s with { QuotaSources = ["codex"], QuotaAllSources = false });
 +                AwaitPoll(6);
 +
 +                surface.Dispose();
 +                time = time.AddMinutes(6);
-+                PumpFor(TimeSpan.FromMilliseconds(100));
++                PumpUntilStable(() => handler.UsageCalls);
 +                Assert.Equal(6, handler.UsageCalls);
 +            }
 +            catch (Exception ex) { failure = ex; }
@@ -7478,7 +7478,7 @@ index 00000000..a67942a2
 +                    Find("showNotch").IsChecked = true;
 +                    Assert.Same(window, VisibleWindow());
 +                    AssertBody(window);
-+                    PumpFor(TimeSpan.FromMilliseconds(30));
++                    PumpUntil(() => handler.UsageCalls == 1);
 +                    Assert.Equal(1, providers);
 +                    Assert.Equal(1, handler.UsageCalls);
 +                    Assert.Equal(1, handler.ResetCalls);
@@ -7549,7 +7549,7 @@ index 00000000..a67942a2
 +                surface.SetPageActive(true);
 +                surface.SetFlyoutActive(true);
 +                surface.ApplySettings();
-+                PumpFor(TimeSpan.FromMilliseconds(30));
++                PumpUntil(() => handler.UsageCalls == 2);
 +                Assert.Equal(2, handler.UsageCalls);
 +                handler.Block.SetResult();
 +                PumpUntil(() => Texts().Contains("fresh-plan"));
@@ -7565,7 +7565,7 @@ index 00000000..a67942a2
 +                settings.Update(s => s with { NetworkEnabled = true });
 +                var refresh = Assert.Single(Descendants(page).OfType<Button>(), button => Equals(button.Content, loc["win.quota.refresh"]));
 +                refresh.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-+                PumpFor(TimeSpan.FromMilliseconds(30));
++                PumpUntilStable(() => handler.UsageCalls);
 +                Assert.Equal(2, handler.UsageCalls);
 +                // The next explicit refresh validates identity before showing data or sending HTTP.
 +                File.Delete(credentials);
@@ -7609,7 +7609,7 @@ index 00000000..a67942a2
 +                Assert.Contains("offline-cache", Texts());
 +                Assert.Contains(loc.Format("win.quota.updatedAt", QuotaFormat.AbsoluteTime(loc, observed)), Texts());
 +                surface.SetPageActive(true);
-+                PumpFor(TimeSpan.FromMilliseconds(30));
++                PumpUntil(() => handler.UsageCalls == 1);
 +                Assert.Equal(1, handler.UsageCalls);
 +                handler.Plan = "after-consent";
 +                handler.Block = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -7757,6 +7757,28 @@ index 00000000..a67942a2
 +                    : """{"available_count":2}""")
 +            };
 +        }
++    }
++
++    private static void PumpUntilStable(Func<int> value)
++    {
++        var deadline = DateTime.UtcNow.AddSeconds(5);
++        var stableSince = DateTime.UtcNow;
++        var last = value();
++        while (DateTime.UtcNow < deadline)
++        {
++            PumpFor(TimeSpan.FromMilliseconds(10));
++            var current = value();
++            if (current != last)
++            {
++                last = current;
++                stableSince = DateTime.UtcNow;
++            }
++            else if (DateTime.UtcNow - stableSince >= TimeSpan.FromMilliseconds(100))
++            {
++                return;
++            }
++        }
++        Assert.Fail("Quota HTTP calls did not settle before the deadline.");
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs

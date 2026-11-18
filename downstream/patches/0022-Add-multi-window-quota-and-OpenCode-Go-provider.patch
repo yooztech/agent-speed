@@ -44,10 +44,10 @@ Subject: [PATCH 22/26] Add multi-window quota and OpenCode Go provider
  .../SettingsSerializerTests.cs                |  24 +-
  .../QuotaNotchViewTests.cs                    |  13 +
  .../QuotaSettingsPageTests.cs                 |  64 ++-
- .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
+ .../QuotaSurfaceProviderCollectionTests.cs    | 192 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
  .../QuotaSurfaceTests.cs                      | 139 +++++-
- 43 files changed, 2569 insertions(+), 256 deletions(-)
+ 43 files changed, 2596 insertions(+), 261 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -98,10 +98,10 @@ Subject: [PATCH 22/26] Add multi-window quota and OpenCode Go provider
  .../SettingsSerializerTests.cs                |  24 +-
  .../QuotaNotchViewTests.cs                    |  13 +
  .../QuotaSettingsPageTests.cs                 |  64 ++-
- .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
+ .../QuotaSurfaceProviderCollectionTests.cs    | 192 +++++++
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
  .../QuotaSurfaceTests.cs                      | 139 +++++-
- 43 files changed, 2575 insertions(+), 263 deletions(-)
+ 43 files changed, 2596 insertions(+), 261 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -3643,7 +3643,7 @@ new file mode 100644
 index 00000000..b759efe5
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,192 @@
 +using System.IO;
 +using System.Net;
 +using System.Net.Http;
@@ -3706,7 +3706,7 @@ index 00000000..b759efe5
 +            PumpUntil(() => !PageText().Contains(loc["win.quota.stale"]));
 +            Assert.Equal(2, fixture.Codex.UsageCalls); Assert.Equal(2, fixture.Go.UsageCalls);
 +            settings.Update(value => value with { QuotaSources = ["codex", "opencode-go"] });
-+            PumpFor(TimeSpan.FromMilliseconds(40));
++            PumpUntilStable(() => fixture.Codex.UsageCalls + fixture.Go.UsageCalls);
 +            // Re-enabling a source does not grant a second application startup observation in manual mode.
 +            Assert.Equal(2, fixture.Codex.UsageCalls); Assert.Equal(2, fixture.Go.UsageCalls);
 +            // A user refresh, unlike automatic cadence or source changes, immediately re-reads successful Go usage.
@@ -3739,7 +3739,7 @@ index 00000000..b759efe5
 +            settings.Update(value => value with { NetworkEnabled = false });
 +            PumpUntil(() => fixture.Codex.Cancellations == 1);
 +            fixture.Go.Block.SetResult(); fixture.Codex.Block.SetResult();
-+            PumpFor(TimeSpan.FromMilliseconds(40));
++            PumpUntilStable(() => fixture.Codex.UsageCalls + fixture.Go.UsageCalls);
 +            Assert.False(Directory.Exists(fixture.GoSchedule));
 +            Assert.False(Directory.Exists(fixture.CodexSchedule));
 +        });
@@ -3813,6 +3813,27 @@ index 00000000..b759efe5
 +        var frame = new DispatcherFrame();
 +        var timer = new DispatcherTimer { Interval = duration };
 +        timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; }; timer.Start(); Dispatcher.PushFrame(frame);
++    }
++    private static void PumpUntilStable(Func<int> value)
++    {
++        var deadline = DateTime.UtcNow.AddSeconds(5);
++        var stableSince = DateTime.UtcNow;
++        var last = value();
++        while (DateTime.UtcNow < deadline)
++        {
++            PumpFor(TimeSpan.FromMilliseconds(10));
++            var current = value();
++            if (current != last)
++            {
++                last = current;
++                stableSince = DateTime.UtcNow;
++            }
++            else if (DateTime.UtcNow - stableSince >= TimeSpan.FromMilliseconds(100))
++            {
++                return;
++            }
++        }
++        Assert.Fail("Quota HTTP calls did not settle before the deadline.");
 +    }
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceRetryTests.cs

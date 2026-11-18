@@ -32,7 +32,7 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../AgentSpeedCore/QuotaPersistence.swift     |   5 +
  .../Sources/AgentSpeedCore/RemoteQuota.swift  |  11 +-
  .../KimiCredentialTransportTests.swift        | 109 +++++
- .../KimiKeyControllerTests.swift              | 125 ++++++
+ .../KimiKeyControllerTests.swift              | 129 ++++++
  .../QuotaPresentationTests.swift              |  16 +
  .../RemoteQuotaTransportTests.swift           |  44 +-
  .../AgentSpeedCoreTests/KimiAPIKeyTests.swift | 156 +++++++
@@ -68,7 +68,7 @@ Support read-only CLI OAuth and regional subscription API keys, native secure se
  .../QuotaSettingsPageTests.cs                 |  30 +-
  .../QuotaSurfaceProviderCollectionTests.cs    |  29 +-
  .../QuotaSurfaceRetryTests.cs                 |  16 +-
- 63 files changed, 4578 insertions(+), 147 deletions(-)
+ 63 files changed, 4582 insertions(+), 147 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/KimiCredentialResponse.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/KimiKeyEditor.swift
  create mode 100644 macos/Sources/AgentSpeedCore/KimiAPIKeyStore.swift
@@ -2829,7 +2829,7 @@ new file mode 100644
 index 00000000..96cca8ea
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/KimiKeyControllerTests.swift
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,129 @@
 +import Foundation
 +import Testing
 +#if canImport(FoundationNetworking)
@@ -2885,7 +2885,7 @@ index 00000000..96cca8ea
 +    func clean() { controller.dispose(); defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
 +}
 +
-+@Suite("Kimi key settings controller")
++@Suite("Kimi key settings controller", .serialized)
 +@MainActor
 +struct KimiKeyControllerTests {
 +    @Test func verifiedSaveDismissesEditorExactlyOnceWithoutAnInlineSuccessMessage() {
@@ -2917,10 +2917,12 @@ index 00000000..96cca8ea
 +    @Test func saveVerifiesOnlySelectedDestinationEvenWhenQuotaSourceIsDisabled() async throws {
 +        let fixture = try KeyControllerFixture(); defer { fixture.clean() }
 +        fixture.controller.setNetworkEnabled(true)
++        await fixture.controller.operationBarrier().value
++        let baseline = fixture.http.count()
 +        #expect(fixture.controller.enabledProviderIDs.isEmpty)
 +        let result = try (await fixture.controller.saveKimi(sourceID: "kimi", region: .china, apiKey: "verify-key")).get()
 +        if case .verified = result {} else { Issue.record("Supplier validation did not report verified") }
-+        #expect(fixture.http.count() == 1)
++        #expect(fixture.http.count() - baseline == 1)
 +        #expect(fixture.controller.enabledProviderIDs.isEmpty && !fixture.controller.allSourcesEnabled)
 +        #expect(fixture.controller.snapshots.isEmpty)
 +    }
@@ -2930,10 +2932,12 @@ index 00000000..96cca8ea
 +        fixture.controller.setNetworkEnabled(true)
 +        _ = try (await fixture.controller.saveKimi(sourceID: "kimi", region: .china, apiKey: "old-key")).get()
 +        #expect(fixture.controller.snapshots.first?.status == .ok)
++        await fixture.controller.operationBarrier().value
 +        let calls = fixture.http.count()
 +        let removed = try (await fixture.controller.removeKimi(sourceID: "kimi")).get()
 +        #expect(!removed.configured && removed.region == nil)
 +        #expect(fixture.controller.snapshots.isEmpty)
++        await fixture.controller.operationBarrier().value
 +        #expect(fixture.http.count() == calls)
 +        #expect(await fixture.provider.readCachedSnapshot().windows.isEmpty)
 +        let restarted = QuotaController(defaults: fixture.defaults, providers: [fixture.provider], kimiKeyStore: fixture.store)
