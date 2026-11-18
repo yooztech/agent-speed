@@ -1,7 +1,7 @@
-From 5bcf5b35d20bc86b16891fde4372e68219e4b588 Mon Sep 17 00:00:00 2001
+From f10e1d50f5a1b92c2c981517f9af18e4bd079283 Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
-Date: Mon, 16 Nov 2026 12:22:10 +0800
-Subject: [PATCH 22/25] Add multi-window quota and OpenCode Go provider
+Date: Wed, 18 Nov 2026 13:53:38 +0800
+Subject: [PATCH 22/26] Add multi-window quota and OpenCode Go provider
 
 ---
  macos/Package.swift                           |   5 +-
@@ -48,6 +48,60 @@ Subject: [PATCH 22/25] Add multi-window quota and OpenCode Go provider
  .../QuotaSurfaceRetryTests.cs                 |  10 +-
  .../QuotaSurfaceTests.cs                      | 139 +++++-
  43 files changed, 2569 insertions(+), 256 deletions(-)
+ create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
+ create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
+ create mode 100644 macos/Sources/CSQLite/module.modulemap
+ create mode 100644 macos/Sources/CSQLite/shim.h
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/OpenCodeGoQuotaProviderTests.swift
+ create mode 100644 windows/src/AgentSpeed.Core/IQuotaProvider.cs
+ create mode 100644 windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/OpenCodeGoQuotaProviderTests.cs
+ create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceProviderCollectionTests.cs
+---
+ macos/Package.swift                           |   5 +-
+ macos/Resources/Codenotch-LICENSE.txt         |   2 +-
+ macos/Resources/strings.macos.json            |   4 +-
+ macos/Sources/AgentSpeed/App/QuotaNotch.swift |  74 ++-
+ .../AgentSpeed/App/QuotaNotchShape.swift      |   8 +-
+ .../App/QuotaNotchVisualHarness.swift         |   8 +-
+ .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +-
+ .../AgentSpeed/Localization/StringTable.swift |   1 +
+ .../SettingsWindow/Panes/QuotaPane.swift      |   4 +-
+ .../OpenCodeGoCredentials.swift               |  98 ++++
+ .../OpenCodeGoQuotaProvider.swift             | 291 ++++++++++++
+ macos/Sources/AgentSpeedCore/Quota.swift      |   2 +-
+ macos/Sources/CSQLite/module.modulemap        |   5 +
+ macos/Sources/CSQLite/shim.h                  |   1 +
+ .../QuotaControllerTests.swift                |  26 +-
+ .../AgentSpeedAppTests/QuotaNotchTests.swift  |  16 +-
+ .../QuotaPresentationTests.swift              |   4 +-
+ .../OpenCodeGoQuotaProviderTests.swift        | 256 ++++++++++
+ .../QuotaColdStartTests.swift                 |  19 +-
+ .../QuotaLifecycleTests.swift                 |  28 +-
+ .../AgentSpeedCoreTests/QuotaTests.swift      |   8 +
+ spec/QUOTA.md                                 |  20 +-
+ .../src/AgentSpeed.Core/CodexQuotaProvider.cs |   2 +-
+ windows/src/AgentSpeed.Core/IQuotaProvider.cs |  10 +
+ .../OpenCodeGoQuotaProvider.cs                | 420 ++++++++++++++++
+ windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   8 +
+ .../Localization/Strings.Windows.json         |   4 +
+ .../Settings/QuotaFormat.cs                   |  63 ++-
+ .../Settings/QuotaNotchGeometry.cs            |   5 +-
+ .../Settings/QuotaNotch.LICENSE.txt           |   3 +-
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs |  98 +++-
+ .../AgentSpeed/Settings/QuotaSettingsPage.cs  |  12 +-
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   | 296 +++++++-----
+ windows/src/AgentSpeed/Theme/Styles.xaml      |  37 ++
+ .../OpenCodeGoQuotaProviderTests.cs           | 449 ++++++++++++++++++
+ .../QuotaColdStartTests.cs                    |  16 +-
+ .../QuotaFormatTests.cs                       |  95 +++-
+ .../SettingsSerializerTests.cs                |  24 +-
+ .../QuotaNotchViewTests.cs                    |  13 +
+ .../QuotaSettingsPageTests.cs                 |  64 ++-
+ .../QuotaSurfaceProviderCollectionTests.cs    | 171 +++++++
+ .../QuotaSurfaceRetryTests.cs                 |  10 +-
+ .../QuotaSurfaceTests.cs                      | 139 +++++-
+ 43 files changed, 2575 insertions(+), 263 deletions(-)
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoCredentials.swift
  create mode 100644 macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
  create mode 100644 macos/Sources/CSQLite/module.modulemap
@@ -337,10 +391,10 @@ index 670a6d70..0886ffc5 100644
          "mac.quota.keepExpanded": Entry("保持展開", "保持展开", "Keep expanded", "展開したままにする"),
          "mac.quota.allSources": Entry("全部來源", "全部来源", "All sources", "すべてのソース"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-index ee2722a4..26efb2b5 100644
+index 8c3f6d4b..0d089dd7 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-@@ -81,7 +81,7 @@ struct QuotaSourceDefinition: Identifiable, Sendable {
+@@ -82,7 +82,7 @@ struct QuotaSourceDefinition: Identifiable, Sendable {
      let name: String
  }
  
@@ -349,7 +403,7 @@ index ee2722a4..26efb2b5 100644
  
  @MainActor func quotaEnabledSources(_ quota: QuotaController) -> [QuotaSourceDefinition] {
      quotaSources.filter { quota.allSourcesEnabled || quota.enabledProviderIDs.contains($0.id) }
-@@ -244,7 +244,7 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
+@@ -245,7 +245,7 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
      case .stale: l10n("mac.quota.status.stale")
      case .needsAuth: l10n("mac.quota.status.needsAuth")
      case .accessDenied: l10n("mac.quota.status.accessDenied")
@@ -464,10 +518,10 @@ index 00000000..31948d64
 +}
 diff --git a/macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift b/macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
 new file mode 100644
-index 00000000..257d644a
+index 00000000..bb51a5af
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/OpenCodeGoQuotaProvider.swift
-@@ -0,0 +1,290 @@
+@@ -0,0 +1,291 @@
 +import Foundation
 +import CoreFoundation
 +#if canImport(CryptoKit)
@@ -718,7 +772,7 @@ index 00000000..257d644a
 +        return QuotaSnapshot(id: "opencode-go", displayName: "OpenCode Go", fidelity: "official", status: .ok,
 +                             windows: windows, headlineId: "rolling", block: blocked ? "OpenCode Go allowance reached" : nil,
 +                             account: nil, plan: "Go", observedAt: time, source: "go/v1/usage", credits: nil,
-+                             nextAllowedAt: nil, waitingForRefresh: false)
++                             nextAllowedAt: nil, waitingForRefresh: false, configured: true)
 +    }
 +
 +    private static func authorizedRequest(_ url: URL, credential: OpenCodeGoCredentials) -> URLRequest {
@@ -755,14 +809,15 @@ index 00000000..257d644a
 +    private func snapshot(_ status: QuotaStatus, next: Date? = nil) -> QuotaSnapshot {
 +        QuotaSnapshot(id: "opencode-go", displayName: "OpenCode Go", fidelity: "official", status: status,
 +                      windows: [], headlineId: nil, block: nil, account: nil, plan: nil, observedAt: nil,
-+                      source: "go/v1/usage", credits: nil, nextAllowedAt: next, waitingForRefresh: false)
++                      source: "go/v1/usage", credits: nil, nextAllowedAt: next, waitingForRefresh: false,
++                      configured: OpenCodeGoCredentials.load(directory: directory, databaseURL: databaseURL) != nil)
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeedCore/Quota.swift b/macos/Sources/AgentSpeedCore/Quota.swift
-index 68383153..5cd7e03b 100644
+index 0622f4c1..f2d1afa3 100644
 --- a/macos/Sources/AgentSpeedCore/Quota.swift
 +++ b/macos/Sources/AgentSpeedCore/Quota.swift
-@@ -133,6 +133,6 @@ extension QuotaWindow {
+@@ -138,6 +138,6 @@ extension QuotaWindow {
  
  public enum QuotaProviderRegistry {
      public static func makeProviders() -> [any QuotaProvider] {
@@ -789,19 +844,32 @@ index 00000000..f52e1f09
 @@ -0,0 +1 @@
 +#include <sqlite3.h>
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-index ce6e754c..3e03d356 100644
+index b1c60c1e..c4acaa75 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -189,7 +189,7 @@ private final class ControllerFixture {
+@@ -45,11 +45,9 @@ private actor ControllerQuotaProvider: QuotaProvider {
+     private var finished = false
+     private let observed = Date(timeIntervalSince1970: 1_800_000_000)
+     private var hasObservation: Bool
+-    private let configured: Bool?
+ 
+-    init(_ id: String, cold: Bool = false, configured: Bool? = nil) {
++    init(_ id: String, cold: Bool = false) {
+         self.id = id
+-        self.configured = configured
+         hasObservation = !cold
+         let stream = AsyncStream<Request>.makeStream()
+         requests = stream.stream
+@@ -193,7 +191,7 @@ private final class ControllerFixture {
  @Suite("Quota controller lifecycle", .timeLimit(.minutes(1)))
  @MainActor
  struct QuotaControllerTests {
 -    private func withFixture(ids: [String] = ["codex", "test-source"], automatic: Bool = false, cold: Bool = false,
 +    private func withFixture(ids: [String] = ["codex", "opencode-go"], automatic: Bool = false, cold: Bool = false,
+                              configured: [Bool?] = [],
                               _ body: @MainActor (ControllerFixture) async throws -> Void) async throws {
-         let fixture = ControllerFixture(ids: ids, automatic: automatic, cold: cold)
-         try await withTaskCancellationHandler {
-@@ -228,7 +228,7 @@ struct QuotaControllerTests {
+         let fixture = ControllerFixture(ids: ids, automatic: automatic, cold: cold, configured: configured)
+@@ -248,7 +246,7 @@ struct QuotaControllerTests {
              controller.setNetworkEnabled(false)
              controller.setNetworkEnabled(true)
              controller.enabledProviderIDs = ["codex"]
@@ -810,7 +878,7 @@ index ce6e754c..3e03d356 100644
              await fixture.barrier().value
              #expect(controller.snapshots.count == 2)
              #expect(!controller.isRefreshing)
-@@ -259,14 +259,14 @@ struct QuotaControllerTests {
+@@ -279,14 +277,14 @@ struct QuotaControllerTests {
              let oldResponses = fixture.barrier()
              let goCancellations = await go.counts().cancellations
  
@@ -828,7 +896,7 @@ index ce6e754c..3e03d356 100644
              #expect(controller.snapshots.first?.status == .ok)
              #expect(await go.counts().cancellations == goCancellations, "Removing Codex must not cancel OpenCode Go")
  
-@@ -321,10 +321,10 @@ struct QuotaControllerTests {
+@@ -341,10 +339,10 @@ struct QuotaControllerTests {
          try await withFixture { fixture in
              let controller = fixture.controller
              controller.allSourcesEnabled = false
@@ -842,7 +910,7 @@ index ce6e754c..3e03d356 100644
              controller.keepExpanded = true
              controller.floatingVisible = false
              controller.autoRefreshEnabled = false
-@@ -332,11 +332,11 @@ struct QuotaControllerTests {
+@@ -352,11 +350,11 @@ struct QuotaControllerTests {
              #expect(restored.keepExpanded)
              #expect(!restored.floatingVisible)
              #expect(!restored.autoRefreshEnabled)
@@ -858,7 +926,7 @@ index ce6e754c..3e03d356 100644
              #expect(restored.snapshots.isEmpty)
          }
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
-index 9f3dd42e..01fdaac7 100644
+index 44215e8d..674fa750 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaNotchTests.swift
 @@ -15,7 +15,7 @@ struct QuotaNotchTests {
@@ -1341,7 +1409,7 @@ index 2182d481..460bec0d 100644
 +    }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index ea8bdc1a..385bacea 100644
+index cc7bda34..581a48c6 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,4 +1,4 @@
@@ -1350,7 +1418,7 @@ index ea8bdc1a..385bacea 100644
  
  This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
  
-@@ -49,7 +49,7 @@ Measure complete, unwrapped reading strings with the same native font used to re
+@@ -52,7 +52,7 @@ Measure complete, unwrapped reading strings with the same native font used to re
  
  Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
  
@@ -1359,7 +1427,7 @@ index ea8bdc1a..385bacea 100644
  
  Windows and macOS Subscription follow the approved account-card layout using their native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
  
-@@ -92,7 +92,9 @@ Pointer entry during the arc's initial emergence also retains its exact last-pai
+@@ -95,7 +95,9 @@ Pointer entry during the arc's initial emergence also retains its exact last-pai
  
  Subscription Settings no longer exposes runtime diagnostics or a credential-storage footnote. Safe initialization/placement stage and exception type/HResult state may remain internal to the native host for tests; no page callback or hidden replacement diagnostic UI is retained. Pointer events and finite transitions drive the panel lifecycle; it has no continuous cursor, browser bridge, or bitmap polling loop. Provider refresh and backoff remain independent of this rendering lifecycle.
  
@@ -1370,7 +1438,7 @@ index ea8bdc1a..385bacea 100644
  
  The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
  
-@@ -136,6 +138,18 @@ On both platforms, each successful usage poll also queries `GET https://chatgpt.
+@@ -139,6 +141,18 @@ On both platforms, each successful usage poll also queries `GET https://chatgpt.
  Synthetic, credential-free examples: [`fixtures/codex-quota.json`](fixtures/codex-quota.json) shows main windows, an extra, a code-review window with unknown usage, and spend control; [`fixtures/codex-credit-quota.json`](fixtures/codex-credit-quota.json) shows missing rolling windows and a known zero balance. Their timestamps are examples, not current reset predictions. These are illustrative endpoint payloads, not captures of a real account.
  Both endpoint fixtures are raw provider responses, not snapshots; parsing either produces snapshot fidelity `official`.
  
@@ -1390,7 +1458,7 @@ index ea8bdc1a..385bacea 100644
  
  Endpoint and response research consulted [Codenotch](https://github.com/vinzdg/codenotch), particularly `Sources/Providers/CodexLocalProvider.swift` and `Sources/Providers/CodexUsage.swift`. Codenotch is MIT licensed, copyright (c) 2026 Vinz. This specification and its synthetic examples describe observed facts and do not reproduce Codenotch source code. If source code or a substantial portion is copied into the implementation, retain its full MIT copyright and permission notice with that code.
 diff --git a/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
-index ae4bb284..db976cf1 100644
+index 2581c44f..71dc7c20 100644
 --- a/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
 +++ b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
 @@ -9,7 +9,7 @@ using System.Text.Json.Serialization;
@@ -1420,10 +1488,10 @@ index 00000000..f82d2af0
 +}
 diff --git a/windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs b/windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs
 new file mode 100644
-index 00000000..397344af
+index 00000000..1e3a7261
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/OpenCodeGoQuotaProvider.cs
-@@ -0,0 +1,419 @@
+@@ -0,0 +1,420 @@
 +using System.Globalization;
 +using System.Net;
 +using System.Net.Http.Headers;
@@ -1738,7 +1806,7 @@ index 00000000..397344af
 +        }
 +        if (!windows.Any(window => window.UsedFraction.HasValue)) throw new JsonException("No readable Go usage meters.");
 +        return new("opencode-go", "OpenCode Go", "official", QuotaStatus.Ok, windows, null,
-+            limited ? "rate-limited" : null, null, "Go", time, Source, null, null, false);
++            limited ? "rate-limited" : null, null, "Go", time, Source, null, null, false, Configured: true);
 +    }
 +
 +    private sealed class Schedule
@@ -1835,8 +1903,9 @@ index 00000000..397344af
 +    private static QuotaSnapshot StaleOrError(Schedule schedule) => schedule.Snapshot is { ObservedAt: not null } snapshot
 +        ? snapshot with { Status = QuotaStatus.Stale, NextAllowedAt = schedule.NextAllowedAt, WaitingForRefresh = false }
 +        : Empty(QuotaStatus.Error, schedule.NextAllowedAt);
-+    private static QuotaSnapshot Empty(QuotaStatus status, DateTimeOffset? next = null) =>
-+        new("opencode-go", "OpenCode Go", "official", status, [], null, null, null, null, null, Source, null, next, false);
++    private QuotaSnapshot Empty(QuotaStatus status, DateTimeOffset? next = null) =>
++        new("opencode-go", "OpenCode Go", "official", status, [], null, null, null, null, null, Source, null, next, false,
++            Configured: ReadCredentials() is not null);
 +    private static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 +    private static JsonElement Property(JsonElement value, string name) => value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out var property) ? property : default;
 +    private static string? Text(JsonElement value, string name) => Property(value, name) is { ValueKind: JsonValueKind.String } property ? property.GetString() : null;
@@ -1844,10 +1913,10 @@ index 00000000..397344af
 +    private static DateTimeOffset? Date(JsonElement value, string name) => DateTimeOffset.TryParse(Text(value, name), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var date) ? date : null;
 +}
 diff --git a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
-index 91e5af4c..3be921eb 100644
+index 1fd06a59..ba294c99 100644
 --- a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 +++ b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
-@@ -16,5 +16,13 @@ public static class QuotaProviders
+@@ -18,5 +18,13 @@ public static class QuotaProviders
  {
      public static IReadOnlyList<QuotaProviderDefinition> Supported { get; } = Array.AsReadOnly<QuotaProviderDefinition>([
          new("codex", "Codex", "CX", "openai · codex-cli"),
@@ -2187,10 +2256,10 @@ index 54e1c9da..7efab836 100644
      {
          using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("AgentSpeed.QuotaCodex.svg") ?? throw new InvalidOperationException("Missing embedded Codex vector.");
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
-index 99a3917a..e5d2a673 100644
+index 5addeb4a..3cc6a8b1 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
-@@ -37,6 +37,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
+@@ -38,6 +38,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
          _keepNotchExpandedChanged = keepNotchExpandedChanged;
          _now = now ?? (() => DateTimeOffset.UtcNow);
          Resources["QuotaCodexSourceBrush"] = MediaColors.Frozen(MediaColors.ToColor(HeatPalette.SourceColor(SourceKind.Codex)));
@@ -2198,7 +2267,7 @@ index 99a3917a..e5d2a673 100644
          _clockTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
          _clockTimer.Tick += OnClockTick;
      }
-@@ -135,6 +136,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
+@@ -139,6 +140,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
              var dot = new Ellipse { Width = 8, Height = 8, Margin = new Thickness(0, 0, 8, 0), VerticalAlignment = VerticalAlignment.Center };
              // Keep the provider identity colored even when the native checkbox is disabled by “all”.
              if (provider.Id == "codex") dot.SetResourceReference(Shape.FillProperty, "QuotaCodexSourceBrush");
@@ -2206,7 +2275,7 @@ index 99a3917a..e5d2a673 100644
              else dot.SetResourceReference(Shape.FillProperty, Blue);
              content.Children.Add(dot);
              content.Children.Add(Text(provider.DisplayName, 14, state.AllSources ? "TextFillColorDisabledBrush" : Muted));
-@@ -195,7 +197,8 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
+@@ -199,7 +201,8 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
          if (snapshot is null || (!hasData && !observedEmpty))
          {
              var key = !state.NetworkEnabled ? "offline" : state.IsRefreshing ? "refreshing" : snapshot is null || snapshot.Status == QuotaStatus.Ok && !snapshot.WaitingForRefresh ? "initial" :
@@ -2216,7 +2285,7 @@ index 99a3917a..e5d2a673 100644
              var message = T(key);
              if (!string.IsNullOrWhiteSpace(snapshot?.Block) && !string.Equals(snapshot.Block, message, StringComparison.Ordinal))
                  message += " · " + snapshot.Block;
-@@ -205,7 +208,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
+@@ -209,7 +212,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
          if (!state.NetworkEnabled || snapshot.Status != QuotaStatus.Ok || snapshot.WaitingForRefresh)
              outer.Children.Add(Text(QuotaFormat.Status(_loc, state.NetworkEnabled, snapshot, _now()), 12, Muted, margin: new Thickness(0, 5, 0, 0)));
          if (!string.IsNullOrWhiteSpace(snapshot.Block)) outer.Children.Add(Text(snapshot.Block, 12, Muted, margin: new Thickness(0, 4, 0, 0)));
@@ -2225,7 +2294,7 @@ index 99a3917a..e5d2a673 100644
          if (observedEmpty) outer.Children.Add(Text(T("noReadings"), 14, Muted, margin: new Thickness(0, 13, 0, 0)));
          if (snapshot.Credits is { } spend && (spend.Limit.HasValue || spend.Used.HasValue || spend.UsedFraction.HasValue || spend.ResetAt.HasValue))
          {
-@@ -256,8 +259,9 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
+@@ -260,8 +263,9 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
          var reading = new StackPanel { Margin = new Thickness(0, 18, 0, 0) };
          var label = QuotaFormat.WindowLabel(_loc, window, providerDisplayName);
          var heading = new DockPanel();
@@ -2236,7 +2305,7 @@ index 99a3917a..e5d2a673 100644
          DockPanel.SetDock(value, Dock.Right); heading.Children.Add(value); heading.Children.Add(Text(label, 14, Ink)); reading.Children.Add(heading);
          if (window.UsedFraction is { } used)
          {
-@@ -268,7 +272,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
+@@ -272,7 +276,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
              columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(fill, GridUnitType.Star) });
              columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1 - fill, GridUnitType.Star) });
              var bar = new Border { CornerRadius = new CornerRadius(3) };
@@ -2246,7 +2315,7 @@ index 99a3917a..e5d2a673 100644
              System.Windows.Automation.AutomationProperties.SetName(track, label + ": " + remainingText);
              reading.Children.Add(track);
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-index 87b3d2a7..839420bb 100644
+index c402c195..b851595f 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 @@ -1,5 +1,7 @@
@@ -2375,7 +2444,7 @@ index 87b3d2a7..839420bb 100644
 +                reader.Busy = false;
              }
 -            // Hydrate before the first render or native window show, even without network consent.
--            if (added || networkChanged) _snapshots = [_provider.ReadCachedSnapshot()];
+-            if (added || networkChanged) _snapshots = Configured([_provider.ReadCachedSnapshot()]);
 +            // Hydrate every enabled account before the first render, even without network consent.
 +            if (networkChanged) reader.Snapshot = reader.Provider.ReadCachedSnapshot();
          }
@@ -2392,7 +2461,7 @@ index 87b3d2a7..839420bb 100644
          else if (added || startAutomatic || networkChanged && _networkEnabled) RefreshAutomatically();
      }
  
-@@ -204,83 +215,95 @@ internal sealed class QuotaSurface : IDisposable
+@@ -204,83 +215,98 @@ internal sealed class QuotaSurface : IDisposable
      private void UpdateTimer()
      {
          if (!_disposed && _settings.Current.NetworkEnabled && _settings.Current.AutoRefreshQuota &&
@@ -2426,7 +2495,9 @@ index 87b3d2a7..839420bb 100644
  
 -    private async void RefreshCore(bool startup)
 +    private void RefreshCore(bool startup, bool automatic = false)
-+    {
+     {
+-        if (_disposed || _busy || !_settings.Current.NetworkEnabled || _provider is null) return;
+-        _retryScheduler.Cancel("codex");
 +        if (_disposed || !_settings.Current.NetworkEnabled) return;
 +        foreach (var (id, reader) in _readers.ToArray())
 +        {
@@ -2438,9 +2509,7 @@ index 87b3d2a7..839420bb 100644
 +    }
 +
 +    private async void RefreshReader(string id, Reader reader, bool startup)
-     {
--        if (_disposed || _busy || !_settings.Current.NetworkEnabled || _provider is null) return;
--        _retryScheduler.Cancel("codex");
++    {
 +        var generation = reader.Generation;
 +        _retryScheduler.Cancel(id);
          var startedAt = _now();
@@ -2448,7 +2517,7 @@ index 87b3d2a7..839420bb 100644
 -        var generation = _generation;
 -        _busy = true;
 -        var before = provider.ReadCachedSnapshot();
--        _snapshots = [before];
+-        _snapshots = Configured([before]);
 +        reader.Busy = true;
 +        reader.Snapshot = reader.Provider.ReadCachedSnapshot();
 +        var before = reader.Snapshot;
@@ -2464,7 +2533,7 @@ index 87b3d2a7..839420bb 100644
 -            var result = await (startup ? provider.RefreshStartupAsync() : provider.RefreshAsync());
 -            if (IsCurrent())
 -            {
--                _snapshots = [result];
+-                _snapshots = Configured([result]);
 -                if (_settings.Current.AutoRefreshQuota)
 -                {
 -                    _retry.Complete(before, result, startedAt, _now());
@@ -2524,12 +2593,15 @@ index 87b3d2a7..839420bb 100644
      }
  
 +    private void CollectSnapshots() => _snapshots = QuotaProviders.Supported
-+        .Where(definition => _readers.ContainsKey(definition.Id)).Select(definition => _readers[definition.Id].Snapshot).ToArray();
++        .Where(definition => _readers.ContainsKey(definition.Id))
++        .Select(definition => _readers[definition.Id].Snapshot)
++        // A provider without identified credential configuration never occupies an account slot.
++        .Where(snapshot => snapshot.Configured != false).ToArray();
 +
      private string Text(string key) => _loc["win.quota." + key];
      private string Percent(double? value) => QuotaFormat.Percent(_loc, value);
      private string Date(DateTimeOffset value) => value.ToLocalTime().ToString("g", _loc.Culture);
-@@ -289,6 +312,14 @@ internal sealed class QuotaSurface : IDisposable
+@@ -289,6 +315,14 @@ internal sealed class QuotaSurface : IDisposable
          Text = text, FontSize = size, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 3)
      };
  
@@ -2544,13 +2616,25 @@ index 87b3d2a7..839420bb 100644
      internal bool IsFlyoutTimeRefreshActive => _flyoutClock.IsEnabled;
      internal TimeSpan FlyoutTimeRefreshDelay => _flyoutClock.Interval;
  
-@@ -330,46 +361,89 @@ internal sealed class QuotaSurface : IDisposable
+@@ -321,10 +355,6 @@ internal sealed class QuotaSurface : IDisposable
+     }
+ 
+ 
+-    /// <summary>A provider without identified credential configuration never occupies an account slot.</summary>
+-    private static IReadOnlyList<QuotaSnapshot> Configured(IEnumerable<QuotaSnapshot> values) =>
+-        values.Where(snapshot => snapshot.Configured != false).ToArray();
+-
+     private void Render()
+     {
+         if (_disposed) return;
+@@ -334,47 +364,90 @@ internal sealed class QuotaSurface : IDisposable
          UpdateFlyoutClock();
          _page?.Update(new QuotaPageState(snapshots, _settings.Current.QuotaSources,
              _settings.Current.AutoRefreshQuota, _settings.Current.NetworkEnabled,
 -            _busy, _settings.Current.ShowQuotaNotch, _settings.Current.KeepQuotaNotchExpanded,
 +            IsBusy, _settings.Current.ShowQuotaNotch, _settings.Current.KeepQuotaNotchExpanded,
-             _notchFailure is null ? null : Text("notchInitializationFailed"), _settings.Current.QuotaAllSources));
+             _notchFailure is null ? null : Text("notchInitializationFailed"), _settings.Current.QuotaAllSources,
+             snapshots.Select(snapshot => snapshot.Id).ToArray()));
      }
  
      private UIElement? CreateFlyoutSummary(IReadOnlyList<QuotaSnapshot> snapshots)
@@ -2662,7 +2746,7 @@ index 87b3d2a7..839420bb 100644
      }
  
      public void Dispose()
-@@ -380,10 +454,13 @@ internal sealed class QuotaSurface : IDisposable
+@@ -385,10 +458,13 @@ internal sealed class QuotaSurface : IDisposable
          _retryScheduler.Clear();
          _flyoutClock.Stop();
          _flyoutClock.Tick -= OnFlyoutClockTick;
@@ -3451,7 +3535,7 @@ index 80898d31..e9e5216c 100644
      {
          Exception? failure = null;
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-index 681b849f..859b9d57 100644
+index d7002daa..fb363f64 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 @@ -63,6 +63,35 @@ public class QuotaSettingsPageTests
@@ -3490,7 +3574,7 @@ index 681b849f..859b9d57 100644
      [Fact]
      public void EmptyStatesDoNotInventReadings()
      {
-@@ -96,16 +125,26 @@ public class QuotaSettingsPageTests
+@@ -112,16 +141,26 @@ public class QuotaSettingsPageTests
      {
          OnStaThread(() =>
          {
@@ -3519,7 +3603,7 @@ index 681b849f..859b9d57 100644
              Assert.Contains(elements.OfType<TextBlock>(), text => text.Text == "native failure");
              Assert.DoesNotContain(elements, element => element is Expander || element is TextBox || element is AgentSpeed.Controls.SettingsCard);
              Assert.DoesNotContain(elements.OfType<TextBlock>(), text => text.Text.Contains("Credentials", StringComparison.Ordinal));
-@@ -182,19 +221,26 @@ public class QuotaSettingsPageTests
+@@ -198,19 +237,26 @@ public class QuotaSettingsPageTests
      {
          OnStaThread(() =>
          {

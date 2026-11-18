@@ -1,13 +1,13 @@
-From 40e1ed5ba0d05d1650e89fb38883386ed7f93eec Mon Sep 17 00:00:00 2001
+From bc26f6bc72da92c65262ebf2221f3c76dedb568e Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:09 +0800
-Subject: [PATCH 21/25] Add Windows Codex quota monitoring
+Subject: [PATCH 21/26] Add Windows Codex quota monitoring
 
 ---
  spec/QUOTA.md                                 |  34 +-
  .../AgentSpeed.Core/AgentSpeed.Core.csproj    |   1 +
- .../src/AgentSpeed.Core/CodexQuotaProvider.cs | 425 ++++++++++
- windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |  20 +
+ .../src/AgentSpeed.Core/CodexQuotaProvider.cs | 427 ++++++++++
+ windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |  22 +
  .../Localization/Strings.Windows.json         |  86 ++
  .../Menus/MenuAction.cs                       |   3 +
  .../Menus/OrbMenuModel.cs                     |   2 +-
@@ -35,8 +35,8 @@ Subject: [PATCH 21/25] Add Windows Codex quota monitoring
  .../src/AgentSpeed/Settings/QuotaNotchView.cs | 477 +++++++++++
  .../AgentSpeed/Settings/QuotaNotchWindow.cs   | 776 ++++++++++++++++++
  .../Settings/QuotaRetryScheduler.cs           |  35 +
- .../AgentSpeed/Settings/QuotaSettingsPage.cs  | 315 +++++++
- .../src/AgentSpeed/Settings/QuotaSurface.cs   | 393 +++++++++
+ .../AgentSpeed/Settings/QuotaSettingsPage.cs  | 319 +++++++
+ .../src/AgentSpeed/Settings/QuotaSurface.cs   | 398 +++++++++
  .../AgentSpeed/Settings/SettingsViewModel.cs  |   1 +
  .../AgentSpeed/Settings/SettingsWindow.xaml   |  12 +-
  .../Settings/SettingsWindow.xaml.cs           |  27 +-
@@ -52,11 +52,11 @@ Subject: [PATCH 21/25] Add Windows Codex quota monitoring
  .../SettingsSerializerTests.cs                | 109 +++
  .../QuotaDisplayClockTests.cs                 |  63 ++
  .../QuotaNotchViewTests.cs                    |  47 ++
- .../QuotaSettingsPageTests.cs                 | 359 ++++++++
+ .../QuotaSettingsPageTests.cs                 | 379 +++++++++
  .../QuotaSurfaceRetryTests.cs                 | 151 ++++
  .../QuotaSurfaceTests.cs                      | 504 ++++++++++++
  .../QuotaWarmStartupTests.cs                  | 101 +++
- 52 files changed, 7067 insertions(+), 54 deletions(-)
+ 52 files changed, 7100 insertions(+), 54 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
@@ -91,7 +91,7 @@ Subject: [PATCH 21/25] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 8e57de14..ea8bdc1a 100644
+index 56a859d2..cc7bda34 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,8 @@
@@ -105,16 +105,16 @@ index 8e57de14..ea8bdc1a 100644
  
  ## Snapshot
  
-@@ -23,7 +23,7 @@ A snapshot has the following logical fields. Optional values are nullable; a mis
- | `nextAllowedAt` | Nullable earliest next permitted refresh time, if the provider is backing off. |
+@@ -24,7 +24,7 @@ A snapshot has the following logical fields. Optional values are nullable; a mis
+ | `configured` | Nullable boolean: `false` means the source machine identified no credential configuration for this provider (no session file, key, environment token or collector credential). An absent value keeps legacy behaviour. |
  | `waitingForRefresh` | True only when a persisted successful polling interval prevents a refresh and no observation is available in this process. Status remains `error` for compatibility; display this condition as waiting, not a failed request. |
  | `credits` | Nullable credit information: `hasCredits` and `unlimited` are nullable booleans, `balance` is a nullable decimal string. `limit` and `used` are nullable numeric absolute amounts in provider-reported spend units, with no inferred currency; `usedFraction` and `resetAt` describe the individual spend-control allowance. A balance of `"0"` is known zero, not unknown. The allowance's `usedFraction` is not clamped and may exceed 1. |
 -| `resetCreditsAvailable` | Nullable nonnegative count of available rate-limit reset cards, queried from the separate reset-credits endpoint on macOS. Independent of usage credit balance and spend allowance; missing or failed lookups are unknown, never zero. |
 +| `resetCreditsAvailable` | Nullable nonnegative count of available rate-limit reset cards, queried from the separate reset-credits endpoint on both platforms. Independent of usage credit balance and spend allowance; missing or failed lookups are unknown, never zero. |
  
- A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`, and `duration`. `id` is stable and unique within a snapshot; `label` is display text. For Codex windows, `usedFraction` and `used` are the reported percentage divided by 100, and `remaining` is 1 minus that fraction. These nullable fractions are not absolute counts and are not clamped: usage may exceed 1 and remaining may be negative. Zero is known zero, not unknown. `resetAt` is a nullable absolute instant and `duration` is a nullable window length in seconds. Unknown fields remain null, including an unknown fraction on an otherwise valid window.
+ A provider is never a permanent slot: the account list includes a source only while its latest snapshot reports identified credential configuration (`configured` is not `false`). A missing, logged-out or uninstalled CLI must not produce a placeholder card; the source keeps polling in the background so a later CLI login can surface it. The source switch list still lists every implemented provider so selection can be prepared in advance. A collector reports `configured` from credentials present on the collector host.
  
-@@ -39,7 +39,7 @@ A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`,
+@@ -42,7 +42,7 @@ A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`,
  * `error`: a network, decoding, service, or other failure that does not establish a more specific state.
  
  An authentication failure must not be represented as zero usage. If old data is retained, it must be visibly stale; a previous timestamp must never be advanced on an unsuccessful refresh. Rate limiting is a transient failure, not an empty successful observation. Respect server retry guidance and avoid repeatedly querying the endpoint while it is rate-limited.
@@ -123,7 +123,7 @@ index 8e57de14..ea8bdc1a 100644
  
  ## Desktop presentation
  
-@@ -51,15 +51,15 @@ Quota is presented in the existing Settings window as source-neutral account car
+@@ -54,15 +54,15 @@ Quota is presented in the existing Settings window as source-neutral account car
  
  Subscription is a source-neutral account list and settings group, with the real Codex adapter; do not invent accounts, providers or readings. Account cards do not collapse: use a compact identity/known-plan header, full-width quota windows and one wrapping footer for known credit balance, available reset-card count and the original absolute local update timestamp. Keep spend-control allowances explicitly labelled and separate. Missing optional values do not create repeated unknown labels, fictional quota windows or measured-zero tracks. A provider without an observation gets one concise state-specific explanation. Known zero and retained stale readings remain visible, with original observation time and stale status. Source provenance, fidelity and next-permitted-request timestamps are not account-card content. Preserve Light, Dark and System settings.
  
@@ -142,7 +142,7 @@ index 8e57de14..ea8bdc1a 100644
  
  Automatic polling schedules per-source retries when a refresh returns a transiently unavailable observation (`error` or `stale`), rather than waiting for the next ordinary five-minute tick. Cold start means the current account/source has no validated successful observation; an available account-bound cached observation is displayed stale immediately and is not cold. Before the first successful observation, genuine transport, service and decoding failures retry after 5, 10, 20 and then at most 30 seconds per attempt. Both the native scheduler and the credential-owning provider enforce this short cadence: a five-second UI wake blocked by a hidden sixty-second provider floor does not satisfy the contract. Remote connection readiness triggers the existing immediate selected-source startup read. The first successful observation clears cold-start pacing and restores normal polling; failures with an already available observation retain the ordinary backoff policy.
  
-@@ -70,11 +70,15 @@ For migration, a legacy schedule without a validated version-1 account snapshot
+@@ -73,11 +73,15 @@ For migration, a legacy schedule without a validated version-1 account snapshot
  
  Both floating panels retain full-strength provider logos, allowance rings and numerical readings when showing an old observation, including after a refresh failure, with network access disabled or when the observation is more than fifteen minutes old. Stale status, the original observation time and details remain visible; full brightness never marks old data as fresh. Ring background tracks, unknown-reading styling and the normal expansion/collapse fade are independent and unchanged.
  
@@ -161,7 +161,7 @@ index 8e57de14..ea8bdc1a 100644
  
  The outlined resting arc has 8.49 DIP of true radial clearance from the outlined circular body flare; the temporary full disc has 17.23 DIP. Neutral outlined dot paint spans X 21.7–55.7 and Y `BodyEnd + 35.95`–`BodyEnd + 57.45`, a 34-by-21.5-DIP envelope; settled hover paint is 36.4 by 23.9 DIP. Hit padding, radial bridge, activation fan and liquid core/neck consumers use the actual production dot/grid geometry, not independently enlarged SVGs or a blanket input rectangle. `GripPaintClearance` measures the actual quarter curve including its endpoints, not the full circle or a bounding rectangle; `ArcGripPaintClearance` measures the retained outlined arc against all six outlined dots, including hover. These production methods drive regressions and the frame probe. The animation canvas still conservatively reserves 32.97 DIP beyond the flare for transient disc/filter bounds, without making that envelope interactive or moving the screen anchor.
  
-@@ -90,7 +94,11 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
+@@ -93,7 +97,11 @@ Subscription Settings no longer exposes runtime diagnostics or a credential-stor
  
  The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
  
@@ -174,7 +174,7 @@ index 8e57de14..ea8bdc1a 100644
  
  Claims of pixel-identical rendering require comparison of native screenshots against the pinned Codenotch reference at the same DPI, presentation state, and account data. No current native screenshot comparison proves pixel identity.
  
-@@ -105,7 +113,7 @@ swift test --package-path macos --filter QuotaNotchTests
+@@ -108,7 +116,7 @@ swift test --package-path macos --filter QuotaNotchTests
  swift run --package-path macos --configuration debug AgentSpeed --quota-notch-visual-checks /tmp/quota-notch-native
  ```
  
@@ -183,7 +183,7 @@ index 8e57de14..ea8bdc1a 100644
  
  The optional captures use fixed synthetic frames and credential-free observations, not live requests or substitute browser graphics. They exercise folded, resting arc, emerging arc, temporary disc, dividing drops, six drops, held, stale, offline, aged, unknown and authentication states. Stale, offline and aged renders are compared with matching fresh native controls so the logo, rings and readings retain full brightness without pinning layout coordinates. The harness also checks tight native bounds, opaque paint against the shared input mask, the resting arc's transparent hole and every revealed drop's draggable target. Its four localized details captures cover English, Simplified Chinese, Traditional Chinese and Japanese.
  
-@@ -123,7 +131,7 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
+@@ -126,7 +134,7 @@ Unknown usage and reset values are shown as `—` or unknown, never as zero or a
  `GET https://chatgpt.com/backend-api/wham/usage` uses the local Codex session's bearer access token and `ChatGPT-Account-Id`; `Accept: application/json` requests JSON. Never place either credential in fixtures or logs. `plan_type` is the plan when supplied. The main `rate_limit.primary_window` and `rate_limit.secondary_window` are independent; parse each without discarding a valid sibling because another is null or malformed. A window's numeric `used_percent` converts to `usedFraction` by dividing by 100 without clamping. `limit_window_seconds` gives duration. `reset_at` is Unix epoch seconds; when absent, `reset_after_seconds` is relative to the observation time. Null or omitted data stays unknown. A non-null 0 percentage is a valid measurement.
  `additional_rate_limits` is an array of feature-scoped rate-limit objects (`limit_name`, `metered_feature`, `rate_limit`), not a replacement for the main account windows. `code_review_rate_limit` may contain another pair. Preserve source scope when representing these windows. A malformed extra must not destroy usable main data. `spend_control.individual_limit` is a separate credit-backed allowance: its `limit` and `used` can be decimal strings, `used_percent` is a percentage, and `reset_at` is epoch seconds. The response's `credits` balance is distinct from that allowance and from unused reset credits at the separate `/wham/rate-limit-reset-credits` endpoint; none is interchangeable with another.
  
@@ -205,10 +205,10 @@ index fe867767..7e567f9b 100644
  </Project>
 diff --git a/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
 new file mode 100644
-index 00000000..ae4bb284
+index 00000000..2581c44f
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
-@@ -0,0 +1,425 @@
+@@ -0,0 +1,427 @@
 +using System.Globalization;
 +using System.Net;
 +using System.Net.Http.Headers;
@@ -557,8 +557,9 @@ index 00000000..ae4bb284
 +    }
 +    private QuotaSnapshot StaleOrError(string key, DateTimeOffset? next) =>
 +        cached.TryGetValue(key, out var value) && value.ObservedAt != null ? value with { Status = QuotaStatus.Stale, NextAllowedAt = next, WaitingForRefresh = false } : Empty(QuotaStatus.Error, next);
-+    private static QuotaSnapshot Empty(QuotaStatus status, DateTimeOffset? next = null, bool waiting = false) =>
-+        new("codex", "Codex", "official", status, [], null, null, null, null, null, "wham/usage", null, next, waiting);
++    private QuotaSnapshot Empty(QuotaStatus status, DateTimeOffset? next = null, bool waiting = false) =>
++        new("codex", "Codex", "official", status, [], null, null, null, null, null, "wham/usage", null, next, waiting,
++            Configured: ReadCredentials() is not null);
 +
 +    internal static QuotaSnapshot Parse(string json, DateTimeOffset time)
 +    {
@@ -607,7 +608,8 @@ index 00000000..ae4bb284
 +                Epoch(Number(spend, "reset_at", true)), balance.ValueKind == JsonValueKind.String ? balance.GetString() : balance.ValueKind == JsonValueKind.Number ? balance.GetRawText() : null);
 +        }
 +        return new("codex", "Codex", "official", QuotaStatus.Ok, windows, windows.Find(w => w.Id.StartsWith("main:", StringComparison.Ordinal))?.Id,
-+            null, null, Text(root, "plan_type"), time, "wham/usage", credits, null, false);
++            null, null, Text(root, "plan_type"), time, "wham/usage", credits, null, false,
++            Configured: true);
 +    }
 +    private static JsonElement Property(JsonElement obj, string name) => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(name, out var value) ? value : default;
 +    private static string? Text(JsonElement obj, string name) { var v = Property(obj, name); return v.ValueKind == JsonValueKind.String ? v.GetString() : null; }
@@ -636,10 +638,10 @@ index 00000000..ae4bb284
 +internal partial class QuotaSnapshotJsonContext : JsonSerializerContext;
 diff --git a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 new file mode 100644
-index 00000000..91e5af4c
+index 00000000..1fd06a59
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,22 @@
 +namespace AgentSpeed.Core;
 +
 +public enum QuotaStatus { Ok, Stale, NeedsAuth, AccessDenied, Unsupported, Error }
@@ -649,7 +651,9 @@ index 00000000..91e5af4c
 +public sealed record QuotaSnapshot(string Id, string DisplayName, string Fidelity, QuotaStatus Status,
 +    IReadOnlyList<QuotaWindow> Windows, string? HeadlineId, string? Block, string? Account, string? Plan,
 +    DateTimeOffset? ObservedAt, string Source, QuotaCredits? Credits, DateTimeOffset? NextAllowedAt, bool WaitingForRefresh,
-+    int? ResetCreditsAvailable = null, DateTimeOffset? ResetCreditsNextExpiry = null);
++    int? ResetCreditsAvailable = null, DateTimeOffset? ResetCreditsNextExpiry = null,
++    /// <summary>False when no credential configuration was identified on the source machine.</summary>
++    bool? Configured = null);
 +
 +public sealed record QuotaProviderDefinition(string Id, string DisplayName, string Badge, string Source, bool Experimental = false);
 +
@@ -3876,10 +3880,10 @@ index 00000000..0862c294
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 new file mode 100644
-index 00000000..99a3917a
+index 00000000..5addeb4a
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,319 @@
 +using System.Windows;
 +using System.Windows.Controls;
 +using System.Windows.Shapes;
@@ -3893,7 +3897,8 @@ index 00000000..99a3917a
 +namespace AgentSpeed.Settings;
 +
 +internal sealed record QuotaPageState(IReadOnlyList<QuotaSnapshot> Snapshots, IReadOnlyList<string> EnabledSources,
-+    bool AutoRefresh, bool NetworkEnabled, bool IsRefreshing, bool ShowNotch, bool KeepNotchExpanded, string? NotchError, bool AllSources);
++    bool AutoRefresh, bool NetworkEnabled, bool IsRefreshing, bool ShowNotch, bool KeepNotchExpanded, string? NotchError, bool AllSources,
++    IReadOnlyList<string>? IdentifiedSources = null);
 +
 +/// <summary>The account list and subscription preferences in Settings.</summary>
 +internal sealed class QuotaSettingsPage : Border, IDisposable
@@ -3964,7 +3969,10 @@ index 00000000..99a3917a
 +        caption.VerticalAlignment = VerticalAlignment.Center;
 +        toolbar.Children.Add(caption); root.Children.Add(toolbar);
 +
-+        var enabled = QuotaProviders.Supported.Where(p => state.AllSources || state.EnabledSources.Contains(p.Id)).ToArray();
++        var enabled = QuotaProviders.Supported
++            .Where(p => (state.AllSources || state.EnabledSources.Contains(p.Id)) &&
++                (state.IdentifiedSources is null || state.IdentifiedSources.Contains(p.Id)))
++            .ToArray();
 +        if (enabled.Length == 0)
 +            root.Children.Add(Group(Text(T("enableSource"), 14, Muted, margin: new Thickness(16, 15, 16, 15))));
 +        foreach (var provider in enabled)
@@ -4197,10 +4205,10 @@ index 00000000..99a3917a
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSurface.cs b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
 new file mode 100644
-index 00000000..87b3d2a7
+index 00000000..c402c195
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaSurface.cs
-@@ -0,0 +1,393 @@
+@@ -0,0 +1,398 @@
 +using System.Windows;
 +using System.Windows.Controls;
 +using System.Windows.Threading;
@@ -4352,7 +4360,7 @@ index 00000000..87b3d2a7
 +                _busy = false;
 +            }
 +            // Hydrate before the first render or native window show, even without network consent.
-+            if (added || networkChanged) _snapshots = [_provider.ReadCachedSnapshot()];
++            if (added || networkChanged) _snapshots = Configured([_provider.ReadCachedSnapshot()]);
 +        }
 +        if (_settings.Current.ShowQuotaNotch && _notchFailure is null)
 +        {
@@ -4440,7 +4448,7 @@ index 00000000..87b3d2a7
 +        var generation = _generation;
 +        _busy = true;
 +        var before = provider.ReadCachedSnapshot();
-+        _snapshots = [before];
++        _snapshots = Configured([before]);
 +        Render();
 +        bool IsCurrent() => !_disposed && _settings.Current.NetworkEnabled && generation == _generation;
 +        try
@@ -4449,7 +4457,7 @@ index 00000000..87b3d2a7
 +            var result = await (startup ? provider.RefreshStartupAsync() : provider.RefreshAsync());
 +            if (IsCurrent())
 +            {
-+                _snapshots = [result];
++                _snapshots = Configured([result]);
 +                if (_settings.Current.AutoRefreshQuota)
 +                {
 +                    _retry.Complete(before, result, startedAt, _now());
@@ -4524,6 +4532,10 @@ index 00000000..87b3d2a7
 +    }
 +
 +
++    /// <summary>A provider without identified credential configuration never occupies an account slot.</summary>
++    private static IReadOnlyList<QuotaSnapshot> Configured(IEnumerable<QuotaSnapshot> values) =>
++        values.Where(snapshot => snapshot.Configured != false).ToArray();
++
 +    private void Render()
 +    {
 +        if (_disposed) return;
@@ -4534,7 +4546,8 @@ index 00000000..87b3d2a7
 +        _page?.Update(new QuotaPageState(snapshots, _settings.Current.QuotaSources,
 +            _settings.Current.AutoRefreshQuota, _settings.Current.NetworkEnabled,
 +            _busy, _settings.Current.ShowQuotaNotch, _settings.Current.KeepQuotaNotchExpanded,
-+            _notchFailure is null ? null : Text("notchInitializationFailed"), _settings.Current.QuotaAllSources));
++            _notchFailure is null ? null : Text("notchInitializationFailed"), _settings.Current.QuotaAllSources,
++            snapshots.Select(snapshot => snapshot.Id).ToArray()));
 +    }
 +
 +    private UIElement? CreateFlyoutSummary(IReadOnlyList<QuotaSnapshot> snapshots)
@@ -6756,10 +6769,10 @@ index 00000000..80898d31
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 new file mode 100644
-index 00000000..681b849f
+index 00000000..d7002daa
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,379 @@
 +using System.Runtime.ExceptionServices;
 +using System.Windows;
 +using System.Windows.Controls;
@@ -6850,6 +6863,22 @@ index 00000000..681b849f
 +            Assert.Contains(LogicalDescendants(disabled).OfType<TextBlock>(), t => t.Text == Loc["win.quota.enableSource"]);
 +            Assert.Single(LogicalDescendants(disabled).OfType<CheckBox>(), c => System.Windows.Automation.AutomationProperties.GetName(c) == "Codex");
 +            Assert.Empty(LogicalDescendants(disabled).OfType<Expander>());
++        });
++    }
++
++    [Fact]
++    public void UnconfiguredSourceNeverOccupiesAnAccountSlotOrAPlaceholder()
++    {
++        OnStaThread(() =>
++        {
++            var missing = Snapshot(QuotaStatus.NeedsAuth, []) with { Configured = false };
++            var page = Page(new QuotaPageState([missing], ["codex"], true, true, false, false, false, null, true,
++                IdentifiedSources: []), 440);
++            Assert.False(HasAccount(page));
++            var configured = Snapshot(QuotaStatus.NeedsAuth, []) with { Configured = true };
++            var shown = Page(new QuotaPageState([configured], ["codex"], true, true, false, false, false, null, true,
++                IdentifiedSources: ["codex"]), 440);
++            Assert.True(HasAccount(shown));
 +        });
 +    }
 +
@@ -7086,6 +7115,10 @@ index 00000000..681b849f
 +        page.UpdateLayout();
 +        return page;
 +    }
++
++    private static bool HasAccount(QuotaSettingsPage page) =>
++        Descendants(page).OfType<StackPanel>().Any(panel =>
++            System.Windows.Automation.AutomationProperties.GetName(panel) == "Codex");
 +
 +    private static FrameworkElement FindAccount(QuotaSettingsPage page) => Assert.Single(Descendants(page).OfType<StackPanel>(), p => System.Windows.Automation.AutomationProperties.GetName(p) == "Codex");
 +

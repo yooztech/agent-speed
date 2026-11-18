@@ -1,6 +1,6 @@
-From 88cf90e2d1b6b4fd6f53409f4c2983d5527deacc Mon Sep 17 00:00:00 2001
+From a9eb6d254023123b024ab7068b74826afa45c540 Mon Sep 17 00:00:00 2001
 From: agent-speed <dev@agent-speed.local>
-Date: Wed, 18 Nov 2026 12:59:30 +0800
+Date: Wed, 18 Nov 2026 13:56:35 +0800
 Subject: [PATCH 26/26] Add Command Code quota monitoring
 
 Read Command Code CLI credentials (COMMAND_CODE_API_KEY or ~/.commandcode/auth.json) without writing them and query the /alpha whoami, credits and subscriptions routes on Windows, macOS and the Linux collector. Map remaining monthly, weekly and 5-hour allowances; keep purchased/free credits as a separate balance.
@@ -49,6 +49,49 @@ Adapted from Codenotch (MIT, commit 835550a342871779135b6484d6899161c5222f7c); l
  create mode 100644 macos/Tests/AgentSpeedCoreTests/CommandCodeQuotaProviderTests.swift
  create mode 100644 windows/src/AgentSpeed.Core/CommandCodeQuotaProvider.cs
  create mode 100644 windows/tests/AgentSpeed.Core.Tests/CommandCodeQuotaProviderTests.cs
+---
+ linux/collector/quota.LICENSE.txt             |   3 +-
+ linux/collector/quota.cpp                     | 268 ++++++++-
+ linux/collector/quota.hpp                     |  10 +-
+ linux/tests/quota_test.cpp                    | 295 +++++++++-
+ macos/Resources/Codenotch-LICENSE.txt         |   5 +-
+ macos/Resources/strings.macos.json            |   2 +
+ .../AgentSpeed/App/QuotaSourceLogo.swift      |  74 +++
+ .../Sources/AgentSpeed/App/QuotaSources.swift |   2 +-
+ .../AgentSpeed/Localization/StringTable.swift |   2 +
+ .../SettingsWindow/Panes/QuotaPane.swift      |   8 +
+ .../CommandCodeCredentials.swift              |  45 ++
+ .../CommandCodeQuotaProvider.swift            | 334 +++++++++++
+ .../AgentSpeedCore/CommandCodeUsage.swift     | 255 +++++++++
+ macos/Sources/AgentSpeedCore/Quota.swift      |   2 +-
+ .../Sources/AgentSpeedCore/RemoteQuota.swift  |   3 +-
+ .../QuotaPresentationTests.swift              |   3 +
+ .../RemoteQuotaTransportTests.swift           |  12 +-
+ .../CommandCodeQuotaProviderTests.swift       | 417 ++++++++++++++
+ .../KimiQuotaProviderTests.swift              |   2 +-
+ .../QuotaColdStartTests.swift                 |  48 +-
+ .../RemoteQuotaTests.swift                    |  21 +-
+ spec/QUOTA.md                                 |  20 +-
+ .../CommandCodeQuotaProvider.cs               | 476 ++++++++++++++++
+ windows/src/AgentSpeed.Core/QuotaSnapshot.cs  |   2 +
+ .../Localization/Strings.Windows.json         |   2 +
+ .../Settings/QuotaFormat.cs                   |   4 +-
+ .../Settings/QuotaNotch.LICENSE.txt           |   2 +-
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs |   8 +
+ .../AgentSpeed/Settings/QuotaSettingsPage.cs  |   4 +-
+ .../CommandCodeQuotaProviderTests.cs          | 525 ++++++++++++++++++
+ .../QuotaFormatTests.cs                       |  20 +-
+ .../RemoteQuotaSourcesTests.cs                |   9 +-
+ .../SettingsSerializerTests.cs                |   2 +-
+ .../QuotaNotchViewTests.cs                    |   1 +
+ .../QuotaSettingsPageTests.cs                 |   1 +
+ 35 files changed, 2819 insertions(+), 68 deletions(-)
+ create mode 100644 macos/Sources/AgentSpeedCore/CommandCodeCredentials.swift
+ create mode 100644 macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift
+ create mode 100644 macos/Sources/AgentSpeedCore/CommandCodeUsage.swift
+ create mode 100644 macos/Tests/AgentSpeedCoreTests/CommandCodeQuotaProviderTests.swift
+ create mode 100644 windows/src/AgentSpeed.Core/CommandCodeQuotaProvider.cs
+ create mode 100644 windows/tests/AgentSpeed.Core.Tests/CommandCodeQuotaProviderTests.cs
 
 diff --git a/linux/collector/quota.LICENSE.txt b/linux/collector/quota.LICENSE.txt
 index b6d2c109..3c3f0d75 100644
@@ -65,7 +108,7 @@ index b6d2c109..3c3f0d75 100644
  MIT License
  
 diff --git a/linux/collector/quota.cpp b/linux/collector/quota.cpp
-index 0172915d..9f9e68d6 100644
+index f89f14d7..27787e3b 100644
 --- a/linux/collector/quota.cpp
 +++ b/linux/collector/quota.cpp
 @@ -37,8 +37,8 @@ using agentspeed::json::Value;
@@ -208,8 +251,8 @@ index 0172915d..9f9e68d6 100644
      if (credits) credit = Json::object({{"hasCredits", bit(credits->hasCredits)}, {"unlimited", bit(credits->unlimited)}, {"limit", num(credits->limit)}, {"used", num(credits->used)}, {"usedFraction", num(credits->usedFraction)}, {"resetAt", stamp(credits->resetAt)}, {"balance", str(credits->balance)}});
      Json identity;
      if (accountIdentity) identity = Json::object({{"id", Json::of(accountIdentity->id)}, {"displayName", Json::of(accountIdentity->displayName)}});
--    return Json::object({{"id", Json::of(id)}, {"displayName", Json::of(id == "codex" ? "Codex" : id == "kimi" ? "Kimi Code" : "OpenCode Go")}, {"fidelity", Json::of("official")}, {"status", Json::of(status)}, {"windows", Json::array(std::move(windowsJson))}, {"headlineId", str(headlineId)}, {"block", str(block)}, {"account", str(account)}, {"accountIdentity", std::move(identity)}, {"plan", str(plan)}, {"observedAt", stamp(observedAt)}, {"source", Json::of(source(id))}, {"credits", std::move(credit)}, {"nextAllowedAt", stamp(nextAllowedAt)}, {"waitingForRefresh", Json::of(waitingForRefresh)}, {"resetCreditsAvailable", integer(resetCreditsAvailable)}, {"resetCreditsNextExpiry", stamp(resetCreditsNextExpiry)}});
-+    return Json::object({{"id", Json::of(id)}, {"displayName", Json::of(id == "codex" ? "Codex" : id == "kimi" ? "Kimi Code" : id == "commandcode" ? "Command Code" : "OpenCode Go")}, {"fidelity", Json::of("official")}, {"status", Json::of(status)}, {"windows", Json::array(std::move(windowsJson))}, {"headlineId", str(headlineId)}, {"block", str(block)}, {"account", str(account)}, {"accountIdentity", std::move(identity)}, {"plan", str(plan)}, {"observedAt", stamp(observedAt)}, {"source", Json::of(source(id))}, {"credits", std::move(credit)}, {"nextAllowedAt", stamp(nextAllowedAt)}, {"waitingForRefresh", Json::of(waitingForRefresh)}, {"resetCreditsAvailable", integer(resetCreditsAvailable)}, {"resetCreditsNextExpiry", stamp(resetCreditsNextExpiry)}});
+-    return Json::object({{"id", Json::of(id)}, {"displayName", Json::of(id == "codex" ? "Codex" : id == "kimi" ? "Kimi Code" : "OpenCode Go")}, {"fidelity", Json::of("official")}, {"status", Json::of(status)}, {"windows", Json::array(std::move(windowsJson))}, {"headlineId", str(headlineId)}, {"block", str(block)}, {"account", str(account)}, {"accountIdentity", std::move(identity)}, {"plan", str(plan)}, {"observedAt", stamp(observedAt)}, {"source", Json::of(source(id))}, {"credits", std::move(credit)}, {"nextAllowedAt", stamp(nextAllowedAt)}, {"waitingForRefresh", Json::of(waitingForRefresh)}, {"configured", Json::of(configured)}, {"resetCreditsAvailable", integer(resetCreditsAvailable)}, {"resetCreditsNextExpiry", stamp(resetCreditsNextExpiry)}});
++    return Json::object({{"id", Json::of(id)}, {"displayName", Json::of(id == "codex" ? "Codex" : id == "kimi" ? "Kimi Code" : id == "commandcode" ? "Command Code" : "OpenCode Go")}, {"fidelity", Json::of("official")}, {"status", Json::of(status)}, {"windows", Json::array(std::move(windowsJson))}, {"headlineId", str(headlineId)}, {"block", str(block)}, {"account", str(account)}, {"accountIdentity", std::move(identity)}, {"plan", str(plan)}, {"observedAt", stamp(observedAt)}, {"source", Json::of(source(id))}, {"credits", std::move(credit)}, {"nextAllowedAt", stamp(nextAllowedAt)}, {"waitingForRefresh", Json::of(waitingForRefresh)}, {"configured", Json::of(configured)}, {"resetCreditsAvailable", integer(resetCreditsAvailable)}, {"resetCreditsNextExpiry", stamp(resetCreditsNextExpiry)}});
  }
  Snapshot parseCodex(const std::string& json, std::int64_t now) {
      Document doc; if (json.size() > kBody || !doc.parse(json) || !doc.root().isObject()) throw std::runtime_error("quota response");
@@ -407,7 +450,7 @@ index 0172915d..9f9e68d6 100644
      Snapshot read(bool refresh) {
          auto current = credentials(id, paths);
          auto result = readUsage(refresh, current);
-@@ -681,10 +906,20 @@ struct Provider::Impl {
+@@ -690,10 +915,20 @@ struct Provider::Impl {
          // Refuse network work if the private, persistent pacing store is unavailable.
          if (refresh && directory.value < 0) return empty(id);
          if (rejectedToken == token || rejectedStatus == "needsAuth") return authentication(!c->oauth);
@@ -430,7 +473,7 @@ index 0172915d..9f9e68d6 100644
          try {
              const std::string url = id == "codex" ? "https://chatgpt.com/backend-api/wham/usage" : id == "kimi" ? (c->region == "international" ? "https://api.kimi.ai/coding/v1/usages" : "https://api.kimi.com/coding/v1/usages") : c->oauth ? "https://opencode.ai/inference/go/v1/usage" : "https://opencode.ai/zen/go/v1/usage";
              auto reply = transport(url, *c, false);
-@@ -729,12 +964,7 @@ struct Provider::Impl {
+@@ -738,12 +973,7 @@ struct Provider::Impl {
                  result = empty(id, "unsupported"); result.block = "No Kimi Code plan on this account"; result.nextAllowedAt = next;
              } else { backoff(serverDelay, reply.status == 429); result = retained(); }
          } catch (...) { backoff(serverDelay); result = retained(); }
@@ -445,7 +488,7 @@ index 0172915d..9f9e68d6 100644
  };
  Provider::Provider(std::string id, Paths paths, Transport transport, Now now) : impl_(std::make_unique<Impl>(std::move(id), std::move(paths), std::move(transport), std::move(now))) {}
 diff --git a/linux/collector/quota.hpp b/linux/collector/quota.hpp
-index 65a5af77..cb2f4339 100644
+index 40e50a2c..df2bf749 100644
 --- a/linux/collector/quota.hpp
 +++ b/linux/collector/quota.hpp
 @@ -20,8 +20,12 @@ struct Credential {
@@ -462,7 +505,7 @@ index 65a5af77..cb2f4339 100644
  std::optional<Credential> credentials(const std::string& provider, const Paths& paths);
  // Metadata only: saved secrets are never returned to a settings client.
  struct KimiSettings { bool ok = false, configured = false; std::optional<std::string> region; };
-@@ -58,6 +62,8 @@ struct Snapshot {
+@@ -60,6 +64,8 @@ struct Snapshot {
  Snapshot parseCodex(const std::string& json, std::int64_t now);
  Snapshot parseGo(const std::string& json, std::int64_t now);
  Snapshot parseKimi(const std::string& json, std::int64_t now);
@@ -471,7 +514,7 @@ index 65a5af77..cb2f4339 100644
  std::pair<std::optional<std::int64_t>, std::optional<std::int64_t>> parseResetCredits(const std::string& json);
  class Provider {
  public:
-@@ -68,7 +74,7 @@ private:
+@@ -70,7 +76,7 @@ private:
      struct Impl;
      std::unique_ptr<Impl> impl_;
  };
@@ -481,7 +524,7 @@ index 65a5af77..cb2f4339 100644
  class Service {
  public:
 diff --git a/linux/tests/quota_test.cpp b/linux/tests/quota_test.cpp
-index cceaf88a..c2f81692 100644
+index 55f863e7..eda452d0 100644
 --- a/linux/tests/quota_test.cpp
 +++ b/linux/tests/quota_test.cpp
 @@ -26,12 +26,15 @@ constexpr std::int64_t now = 1794744000000LL;
@@ -526,7 +569,7 @@ index cceaf88a..c2f81692 100644
  }
  std::vector<std::pair<std::uint64_t, std::string>> replies(q::Service& service, std::size_t count) {
      std::vector<std::pair<std::uint64_t, std::string>> out;
-@@ -1001,4 +1013,283 @@ TEST(CollectorKimiKeys, RemovalInvalidatesKimiWhileAnotherSupplierDelaysAnAssemb
+@@ -1013,4 +1025,283 @@ TEST(CollectorKimiKeys, RemovalInvalidatesKimiWhileAnotherSupplierDelaysAnAssemb
      EXPECT_EQ(doc.root()["snapshots"].at(1)["windows"].size(), 0u); EXPECT_TRUE(doc.root()["snapshots"].at(1)["observedAt"].isNull());
  }
  
@@ -954,10 +997,10 @@ index e61996d8..61e5e060 100644
          "mac.quota.kimi.region": Entry("地區", "地区", "Region", "地域"),
          "mac.quota.kimi.china": Entry("中國", "中国", "China", "中国"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-index ef7c1111..acf0f470 100644
+index 55f4aabf..05bd409e 100644
 --- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-@@ -202,6 +202,10 @@ func quotaUsageIndicatorState(_ window: QuotaWindow) -> QuotaUsageIndicatorState
+@@ -203,6 +203,10 @@ func quotaUsageIndicatorState(_ window: QuotaWindow) -> QuotaUsageIndicatorState
      if QuotaSourceIdentity.providerID(account.id) == "kimi", account.status == .needsAuth {
          return l10n(block == KimiQuotaProvider.apiKeyReason ? "mac.quota.kimi.keyAuth" : "mac.quota.kimi.renewSession")
      }
@@ -968,7 +1011,7 @@ index ef7c1111..acf0f470 100644
      return block
  }
  
-@@ -255,6 +259,10 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
+@@ -256,6 +260,10 @@ func quotaPercent(_ fraction: Double, locale: Locale) -> String {
          }
          if account.status == .unsupported { return l10n("mac.quota.kimi.noPlan") }
      }
@@ -1032,7 +1075,7 @@ index 00000000..ecc023a3
 +}
 diff --git a/macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift b/macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift
 new file mode 100644
-index 00000000..47650f42
+index 00000000..8d2a668c
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift
 @@ -0,0 +1,334 @@
@@ -1296,7 +1339,7 @@ index 00000000..47650f42
 +                             waitingForRefresh: value.waitingForRefresh,
 +                             resetCreditsAvailable: value.resetCreditsAvailable,
 +                             resetCreditsNextExpiry: value.resetCreditsNextExpiry,
-+                             accountIdentity: value.accountIdentity)
++                             accountIdentity: value.accountIdentity, configured: value.configured)
 +    }
 +
 +    private static func unlabelled(_ value: QuotaSnapshot) -> QuotaSnapshot {
@@ -1307,14 +1350,14 @@ index 00000000..47650f42
 +                      waitingForRefresh: value.waitingForRefresh,
 +                      resetCreditsAvailable: value.resetCreditsAvailable,
 +                      resetCreditsNextExpiry: value.resetCreditsNextExpiry,
-+                      accountIdentity: value.accountIdentity)
++                      accountIdentity: value.accountIdentity, configured: value.configured)
 +    }
 +
 +    private func snapshot(_ status: QuotaStatus, next: Date? = nil, reason: String? = nil) -> QuotaSnapshot {
 +        QuotaSnapshot(id: id, displayName: "Command Code", fidelity: "official", status: status,
 +                      windows: [], headlineId: nil, block: reason, account: nil, plan: nil,
 +                      observedAt: nil, source: Self.source, credits: nil, nextAllowedAt: next,
-+                      waitingForRefresh: false)
++                      waitingForRefresh: false, configured: credentials() != nil)
 +    }
 +
 +    private static var whoamiURL: URL {
@@ -1372,7 +1415,7 @@ index 00000000..47650f42
 +}
 diff --git a/macos/Sources/AgentSpeedCore/CommandCodeUsage.swift b/macos/Sources/AgentSpeedCore/CommandCodeUsage.swift
 new file mode 100644
-index 00000000..14e55d96
+index 00000000..25d923cb
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CommandCodeUsage.swift
 @@ -0,0 +1,255 @@
@@ -1467,7 +1510,7 @@ index 00000000..14e55d96
 +                                 status: .unsupported, windows: [], headlineId: nil, block: nil,
 +                                 account: whoamiIdentity.account, plan: plan.map(planName), observedAt: nil,
 +                                 source: source, credits: nil, nextAllowedAt: nil,
-+                                 waitingForRefresh: false)
++                                 waitingForRefresh: false, configured: true)
 +        }
 +
 +        let headline: String?
@@ -1632,10 +1675,10 @@ index 00000000..14e55d96
 +    }
 +}
 diff --git a/macos/Sources/AgentSpeedCore/Quota.swift b/macos/Sources/AgentSpeedCore/Quota.swift
-index dc8e7720..f54ebc46 100644
+index 6b241b41..d0144db5 100644
 --- a/macos/Sources/AgentSpeedCore/Quota.swift
 +++ b/macos/Sources/AgentSpeedCore/Quota.swift
-@@ -142,6 +142,6 @@ extension QuotaWindow {
+@@ -146,6 +146,6 @@ extension QuotaWindow {
  
  public enum QuotaProviderRegistry {
      public static func makeProviders(kimiKeyStore: any KimiAPIKeyStoring = KimiKeychainStore()) -> [any QuotaProvider] {
@@ -1644,7 +1687,7 @@ index dc8e7720..f54ebc46 100644
      }
  }
 diff --git a/macos/Sources/AgentSpeedCore/RemoteQuota.swift b/macos/Sources/AgentSpeedCore/RemoteQuota.swift
-index 786f2399..be7a6480 100644
+index 058ff122..c9aa4808 100644
 --- a/macos/Sources/AgentSpeedCore/RemoteQuota.swift
 +++ b/macos/Sources/AgentSpeedCore/RemoteQuota.swift
 @@ -2,7 +2,7 @@ import Foundation
@@ -1722,10 +1765,10 @@ index 9f97b107..0d22fe67 100644
              fixture.controller.enabledProviderIDs = [fixture.codex]
 diff --git a/macos/Tests/AgentSpeedCoreTests/CommandCodeQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/CommandCodeQuotaProviderTests.swift
 new file mode 100644
-index 00000000..c54efa78
+index 00000000..ffc72a63
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedCoreTests/CommandCodeQuotaProviderTests.swift
-@@ -0,0 +1,406 @@
+@@ -0,0 +1,417 @@
 +import Foundation
 +import Testing
 +#if canImport(FoundationNetworking)
@@ -1971,9 +2014,20 @@ index 00000000..c54efa78
 +            for value in [await reader.readCachedSnapshot(), await reader.refresh()] {
 +                #expect(value.status == .needsAuth && value.block == CommandCodeQuotaProvider.signInReason)
 +                #expect(value.windows.isEmpty && value.observedAt == nil)
++                #expect(value.configured == false)
 +            }
 +            #expect(fixture.captured().isEmpty)
 +        }
++    }
++
++    @Test func configuredFollowsCredentialPresenceNotTransientFailures() async throws {
++        let directory = try temporaryDirectory()
++        defer { try? FileManager.default.removeItem(at: directory) }
++        let missing = provider(directory, CommandCodeFixture())
++        #expect(await missing.readCachedSnapshot().configured == false)
++        try writeAuth(directory)
++        let present = provider(directory, CommandCodeFixture())
++        #expect(await present.readCachedSnapshot().configured == true)
 +    }
 +
 +    @Test func fixedOriginOrgQueryAndReadOnlyRequestShape() async throws {
@@ -2133,7 +2187,7 @@ index 00000000..c54efa78
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift b/macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift
-index 791a6c6a..02bcfe18 100644
+index 99007fe0..54ba9738 100644
 --- a/macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift
 +++ b/macos/Tests/AgentSpeedCoreTests/KimiQuotaProviderTests.swift
 @@ -70,7 +70,7 @@ struct KimiQuotaProviderTests {
@@ -2306,7 +2360,7 @@ index 2eec8f80..11c75e31 100644
      }
  }
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 1c688fed..eba593dc 100644
+index 29b59265..e2230603 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -6,9 +6,9 @@ On macOS and Windows, the local Codex provider reads `auth.json` from a non-empt
@@ -2321,7 +2375,7 @@ index 1c688fed..eba593dc 100644
  
  The collector responds only to the requesting subscriber with `type: "quota"`, the matching `requestId` and a `snapshots` array containing one result for every requested provider. Snapshot fields follow the contract below, with bare provider IDs, camelCase keys, UTC ISO-8601 dates, durations in seconds and nullable unknown values. Responses contain structured observations only: never credential contents, authorization headers or raw supplier payloads. The desktop maps provider IDs into host-scoped source IDs and keeps supplier branding separate from source identity.
  
-@@ -72,7 +72,7 @@ Measure complete, unwrapped reading strings with the same native font used to re
+@@ -75,7 +75,7 @@ Measure complete, unwrapped reading strings with the same native font used to re
  
  Quota is presented in the existing Settings window as source-neutral account cards. Every actual window is visible on Settings, floating bodies, floating details and any tray/menu summary; `headlineId` remains metadata, not permission to hide other windows. Sort known durations from longest to shortest, with stable identifiers breaking ties and preserving distinct feature scopes. Labels and durations identify windows, never provider response slots. Display remaining and used together where space permits; do not calculate an aggregate percentage across independent limits.
  
@@ -2330,7 +2384,7 @@ index 1c688fed..eba593dc 100644
  
  Windows and macOS Subscription follow the approved account-card layout using their native controls: the account list is primary, with a separate refresh toolbar. Remaining percentages use the same readable type size as quota labels. Each known reset shows its absolute local time and the time remaining until that instant; an elapsed reset is pending refresh, not a negative duration. Countdown text updates locally while the page is active without making provider requests or rebuilding the page. Settings use restrained aligned rows and a source editor with All sources, its include-future-sources explanation, and individual source choices. All sources is persisted independently of the explicit selected-source list and disables the individual choices while enabled. The page has neither a diagnostics disclosure nor a credential-storage footer. Actual floating-panel failure messages remain visible.
  
-@@ -88,7 +88,7 @@ Automatic polling schedules per-source retries when a refresh returns a transien
+@@ -91,7 +91,7 @@ Automatic polling schedules per-source retries when a refresh returns a transien
  
  A provider's future `nextAllowedAt` is authoritative. HTTP 429 retains its conservative supplier rate-limit protection even without a valid header, and an explicit `Retry-After` on any transient response (including a 503 or OpenCode Console probe) cannot be shortened to the cold-start cap. Optional Codex reset-credit throttling remains binding without invalidating successfully observed usage. Persisted deadlines survive restarts; a legacy future deadline of unknown cause is not blindly shortened because it may be a rate limit. After that deadline, new results use the explicit cold/server pacing rules. Cache hydration and blocked requests do not count as additional HTTP failures. Expired deadlines cannot produce a tight loop. Authentication, permission and unsupported states do not enter rapid retry.
  
@@ -2339,7 +2393,7 @@ index 1c688fed..eba593dc 100644
  For migration, a legacy schedule without a validated version-1 account snapshot cannot distinguish a normal successful floor from an optional reset-credit 429 extension. Preserve its future `nextAllowedAt` rather than granting the startup bypass. After that deadline, a successful request upgrades the structured snapshot and independent retry deadline; subsequent application starts may bypass only the ordinary successful floor.
  
  Both floating panels retain full-strength provider logos, allowance rings and numerical readings when showing an old observation, including after a refresh failure, with network access disabled or when the observation is more than fifteen minutes old. Stale status, the original observation time and details remain visible; full brightness never marks old data as fresh. Ring background tracks, unknown-reading styling and the normal expansion/collapse fade are independent and unchanged.
-@@ -197,6 +197,18 @@ Remote management is a separate correlated control message, not a quota snapshot
+@@ -200,6 +200,18 @@ Remote management is a separate correlated control message, not a quota snapshot
  
  Reply only to the requesting subscriber with `type: "kimi_credentials_result"`, matching `requestId` and `status: "ok"` or `"error"`. Successful replies report `configured` and `region` (null when absent); failures report a fixed `errorCode` (`"invalid_request"` or `"storage_error"`) without raw exception text. No response includes the key, fragments, a fingerprint or filesystem paths. A set/delete acknowledgment means durable storage/removal succeeded, not that supplier authentication succeeded. These operations never request supplier HTTP. Native clients separately refresh the selected source when consent permits, preserving backoff. Bound requests by timeout and host/connection generation, reject late results after disconnect or destination changes, and report older unsupported collectors honestly rather than claiming success. Same-UID collector peers can manage this same-UID store; it is not a privilege boundary against another process owned by that user.
  
@@ -2360,10 +2414,10 @@ index 1c688fed..eba593dc 100644
  Endpoint and response research consulted [Codenotch](https://github.com/vinzdg/codenotch), particularly `Sources/Providers/CodexLocalProvider.swift` and `Sources/Providers/CodexUsage.swift`. Codenotch is MIT licensed, copyright (c) 2026 Vinz. This specification and its synthetic examples describe observed facts and do not reproduce Codenotch source code. If source code or a substantial portion is copied into the implementation, retain its full MIT copyright and permission notice with that code.
 diff --git a/windows/src/AgentSpeed.Core/CommandCodeQuotaProvider.cs b/windows/src/AgentSpeed.Core/CommandCodeQuotaProvider.cs
 new file mode 100644
-index 00000000..668d950f
+index 00000000..46f45b24
 --- /dev/null
 +++ b/windows/src/AgentSpeed.Core/CommandCodeQuotaProvider.cs
-@@ -0,0 +1,475 @@
+@@ -0,0 +1,476 @@
 +using System.Globalization;
 +using System.Net;
 +using System.Net.Http.Headers;
@@ -2643,7 +2697,7 @@ index 00000000..668d950f
 +        var unsupported = windows.Count == 0 && !hasExtras;
 +        return new("commandcode", "Command Code", "official", unsupported ? QuotaStatus.Unsupported : QuotaStatus.Ok,
 +            windows, headline, unsupported ? NoMeteredUsageReason : null, account, PlanName(planId),
-+            unsupported ? null : time, Source, credits, null, false);
++            unsupported ? null : time, Source, credits, null, false, Configured: true);
 +    }
 +
 +    private static QuotaWindow? Window(JsonElement detail, string id, string label, TimeSpan duration)
@@ -2815,8 +2869,9 @@ index 00000000..668d950f
 +    private static QuotaSnapshot StaleOrError(Schedule schedule) => schedule.Snapshot is { ObservedAt: not null } snapshot
 +        ? snapshot with { Status = QuotaStatus.Stale, NextAllowedAt = schedule.NextAllowedAt, WaitingForRefresh = false }
 +        : Empty(QuotaStatus.Error, schedule.NextAllowedAt);
-+    private static QuotaSnapshot Empty(QuotaStatus status, DateTimeOffset? next = null, string? block = null) =>
-+        new("commandcode", "Command Code", "official", status, [], null, block, null, null, null, Source, null, next, false);
++    private QuotaSnapshot Empty(QuotaStatus status, DateTimeOffset? next = null, string? block = null) =>
++        new("commandcode", "Command Code", "official", status, [], null, block, null, null, null, Source, null, next, false,
++            Configured: ReadCredentials() is not null);
 +    private static string Digest(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 +    private static JsonElement Property(JsonElement value, string name) => value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out var property) ? property : default;
 +    private static string? Text(JsonElement value, string name) => Property(value, name) is { ValueKind: JsonValueKind.String } property ? property.GetString() : null;
@@ -2840,10 +2895,10 @@ index 00000000..668d950f
 +        DateTimeOffset.TryParse(Text(value, name), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var date) ? date : null;
 +}
 diff --git a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
-index 94ccf3bd..4ae1e3c7 100644
+index b2cf7c48..cbb73e6a 100644
 --- a/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
 +++ b/windows/src/AgentSpeed.Core/QuotaSnapshot.cs
-@@ -20,6 +20,7 @@ public static class QuotaProviders
+@@ -22,6 +22,7 @@ public static class QuotaProviders
          new("codex", "Codex", "CX", "openai · codex-cli"),
          new("opencode-go", "OpenCode Go", "OC", "opencode · local credentials"),
          new("kimi", "Kimi Code", "K", "Kimi Code"),
@@ -2851,7 +2906,7 @@ index 94ccf3bd..4ae1e3c7 100644
      ]);
  
      public static string RemoteSourceId(Guid hostId, string providerId) =>
-@@ -47,6 +48,7 @@ public static class QuotaProviders
+@@ -49,6 +50,7 @@ public static class QuotaProviders
          "codex" => new CodexQuotaProvider(),
          "opencode-go" => new OpenCodeGoQuotaProvider(),
          "kimi" => new KimiQuotaProvider(kimiKeys),
@@ -2938,7 +2993,7 @@ index e3277d3b..98e3fa49 100644
          var geometry = Geometry.Parse("F0 " + path); geometry.Freeze(); return geometry;
      }
 diff --git a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
-index ea3fdbac..4e95e25a 100644
+index 034a62db..8f4afe3f 100644
 --- a/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 +++ b/windows/src/AgentSpeed/Settings/QuotaSettingsPage.cs
 @@ -45,6 +45,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
@@ -2949,7 +3004,7 @@ index ea3fdbac..4e95e25a 100644
          _clockTimer.Tick += OnClockTick;
      }
  
-@@ -161,6 +162,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
+@@ -164,6 +165,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
              if (QuotaProviders.ProviderId(provider.Id) == "codex") dot.SetResourceReference(Shape.FillProperty, "QuotaCodexSourceBrush");
              else if (QuotaProviders.ProviderId(provider.Id) == "opencode-go") dot.SetResourceReference(Shape.FillProperty, "QuotaOpenCodeSourceBrush");
              else if (QuotaProviders.ProviderId(provider.Id) == "kimi") dot.SetResourceReference(Shape.FillProperty, "QuotaKimiSourceBrush");
@@ -2957,7 +3012,7 @@ index ea3fdbac..4e95e25a 100644
              else dot.SetResourceReference(Shape.FillProperty, Blue);
              content.Children.Add(dot);
              content.Children.Add(Text(provider.DisplayName, 14, state.AllSources ? "TextFillColorDisabledBrush" : Muted));
-@@ -223,7 +225,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
+@@ -226,7 +228,7 @@ internal sealed class QuotaSettingsPage : Border, IDisposable
              var key = !state.NetworkEnabled ? "offline" : state.IsRefreshing ? "refreshing" : snapshot is null || snapshot.Status == QuotaStatus.Ok && !snapshot.WaitingForRefresh ? "initial" :
                  snapshot.WaitingForRefresh ? (state.AutoRefresh ? "providerWait" : "providerWaitManual") : snapshot.Status == QuotaStatus.NeedsAuth && QuotaProviders.ProviderId(provider.Id) == "codex" ? "codexSignIn" :
                  snapshot.Status == QuotaStatus.Unsupported && QuotaProviders.ProviderId(provider.Id) == "opencode-go" ? "noGoSubscription" : snapshot.Status.ToString().ToLowerInvariant();
@@ -2968,10 +3023,10 @@ index ea3fdbac..4e95e25a 100644
              var block = QuotaFormat.Block(_loc, snapshot?.Block);
 diff --git a/windows/tests/AgentSpeed.Core.Tests/CommandCodeQuotaProviderTests.cs b/windows/tests/AgentSpeed.Core.Tests/CommandCodeQuotaProviderTests.cs
 new file mode 100644
-index 00000000..5f490f86
+index 00000000..27c06b46
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Core.Tests/CommandCodeQuotaProviderTests.cs
-@@ -0,0 +1,507 @@
+@@ -0,0 +1,525 @@
 +using System.Globalization;
 +using System.Net;
 +using System.Net.Http.Headers;
@@ -3478,6 +3533,24 @@ index 00000000..5f490f86
 +            return response;
 +        }
 +    }
++
++    [Fact]
++    public void ConfiguredFollowsCredentialPresenceNotTransientFailures()
++    {
++        var root = Directory.CreateTempSubdirectory("commandcode-configured-").FullName;
++        try
++        {
++            var auth = Path.Combine(root, "auth.json");
++            using var missing = new CommandCodeQuotaProvider(auth, Path.Combine(root, "schedule"),
++                new HttpClient(new HttpClientHandler(), false), () => Time, () => null);
++            Assert.False(missing.ReadCachedSnapshot().Configured);
++            File.WriteAllText(auth, """{"apiKey":"key"}""");
++            using var present = new CommandCodeQuotaProvider(auth, Path.Combine(root, "schedule-present"),
++                new HttpClient(new HttpClientHandler(), false), () => Time, () => null);
++            Assert.True(present.ReadCachedSnapshot().Configured);
++        }
++        finally { Directory.Delete(root, true); }
++    }
 +}
 diff --git a/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/QuotaFormatTests.cs
 index ce9f289c..922dc0dc 100644
@@ -3574,10 +3647,10 @@ index 14096288..6e9f91a0 100644
      {
          var loc = new Localizer(Localizer.LoadEmbeddedTable(), LanguageCodes.En);
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-index 90663c85..fb1974dd 100644
+index 8953398f..ab94d92b 100644
 --- a/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSettingsPageTests.cs
-@@ -248,6 +248,7 @@ public class QuotaSettingsPageTests
+@@ -264,6 +264,7 @@ public class QuotaSettingsPageTests
      [InlineData("codex")]
      [InlineData("opencode-go")]
      [InlineData("kimi")]

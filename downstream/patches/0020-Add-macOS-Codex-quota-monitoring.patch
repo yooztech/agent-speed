@@ -1,7 +1,7 @@
-From c8acad09bd9a41d6bbcb965c1cece5f191db9b4d Mon Sep 17 00:00:00 2001
+From 65a5964a0296ac2c9ad06fd17fd93c020706332e Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:08 +0800
-Subject: [PATCH 20/25] Add macOS Codex quota monitoring
+Subject: [PATCH 20/26] Add macOS Codex quota monitoring
 
 ---
  macos/Resources/Codenotch-LICENSE.txt         |  28 +
@@ -9,7 +9,7 @@ Subject: [PATCH 20/25] Add macOS Codex quota monitoring
  .../Sources/AgentSpeed/App/AppDelegate.swift  |   7 +
  macos/Sources/AgentSpeed/App/AppModel.swift   |   7 +-
  .../AgentSpeed/App/LaunchOptions.swift        |   6 +
- .../AgentSpeed/App/QuotaController.swift      | 253 ++++++
+ .../AgentSpeed/App/QuotaController.swift      | 262 ++++++
  .../AgentSpeed/App/QuotaGlyphOutline.swift    | 102 +++
  macos/Sources/AgentSpeed/App/QuotaNotch.swift | 676 ++++++++++++++
  .../App/QuotaNotchContentLayout.swift         |  45 +
@@ -19,13 +19,13 @@ Subject: [PATCH 20/25] Add macOS Codex quota monitoring
  .../AgentSpeed/App/QuotaSourceLogo.swift      |  19 +
  .../AgentSpeed/Dashboard/DashboardView.swift  |  69 ++
  .../AgentSpeed/Localization/StringTable.swift |  91 ++
- .../SettingsWindow/Panes/QuotaPane.swift      | 308 +++++++
+ .../SettingsWindow/Panes/QuotaPane.swift      | 309 +++++++
  .../SettingsWindow/SettingsPaneView.swift     |   2 +-
  .../AgentSpeed/Support/MenuFactory.swift      |   1 +
- .../AgentSpeedCore/CodexQuotaProvider.swift   | 360 ++++++++
- macos/Sources/AgentSpeedCore/Quota.swift      | 138 +++
- .../AgentSpeedCore/QuotaPersistence.swift     |  82 ++
- .../QuotaControllerTests.swift                | 608 +++++++++++++
+ .../AgentSpeedCore/CodexQuotaProvider.swift   | 362 ++++++++
+ macos/Sources/AgentSpeedCore/Quota.swift      | 143 +++
+ .../AgentSpeedCore/QuotaPersistence.swift     |  83 ++
+ .../QuotaControllerTests.swift                | 628 +++++++++++++
  .../AgentSpeedAppTests/QuotaNotchTests.swift  | 262 ++++++
  .../QuotaPresentationTests.swift              | 170 ++++
  .../QuotaWarmStartupTests.swift               |  93 ++
@@ -34,10 +34,10 @@ Subject: [PATCH 20/25] Add macOS Codex quota monitoring
  .../QuotaLifecycleTests.swift                 | 191 ++++
  .../AgentSpeedCoreTests/QuotaTests.swift      |  48 +
  macos/scripts/build-app.sh                    |   1 +
- spec/QUOTA.md                                 | 133 +++
+ spec/QUOTA.md                                 | 136 +++
  spec/fixtures/codex-credit-quota.json         |   8 +
  spec/fixtures/codex-quota.json                |  26 +
- 33 files changed, 5296 insertions(+), 2 deletions(-)
+ 33 files changed, 5337 insertions(+), 2 deletions(-)
  create mode 100644 macos/Resources/Codenotch-LICENSE.txt
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaController.swift
  create mode 100644 macos/Sources/AgentSpeed/App/QuotaGlyphOutline.swift
@@ -262,10 +262,10 @@ index 740fad3c..443a880e 100644
                      options.screenshotsDirectory = URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
 diff --git a/macos/Sources/AgentSpeed/App/QuotaController.swift b/macos/Sources/AgentSpeed/App/QuotaController.swift
 new file mode 100644
-index 00000000..2bd429c8
+index 00000000..4f0b8718
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/App/QuotaController.swift
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,262 @@
 +import AgentSpeedCore
 +import Foundation
 +import Observation
@@ -295,6 +295,8 @@ index 00000000..2bd429c8
 +    private let now: () -> Date
 +    private var disposed = false
 +    private(set) var snapshots: [QuotaSnapshot] = []
++    /// Sources without identified credential configuration never occupy an account slot.
++    private(set) var unconfiguredProviderIDs: Set<String> = []
 +    private(set) var isRefreshing = false
 +    private(set) var networkEnabled = false
 +
@@ -503,7 +505,14 @@ index 00000000..2bd429c8
 +    }
 +
 +    private func collectSnapshots() {
-+        snapshots = providers.compactMap { readers[$0.id]?.snapshot }
++        var visible: [QuotaSnapshot] = []
++        var unconfigured: Set<String> = []
++        for provider in providers {
++            guard let snapshot = readers[provider.id]?.snapshot else { continue }
++            if snapshot.configured == false { unconfigured.insert(provider.id) } else { visible.append(snapshot) }
++        }
++        snapshots = visible
++        unconfiguredProviderIDs = unconfigured
 +        isRefreshing = readers.values.contains { $0.busy }
 +    }
 +
@@ -2685,10 +2694,10 @@ index 1e8dea26..670a6d70 100644
          "mac.settings.about.license": Entry("以 MIT 授權開放原始碼", "以 MIT 许可证开源", "Open source under the MIT License", "MIT ライセンスのオープンソース"),
 diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
 new file mode 100644
-index 00000000..ee2722a4
+index 00000000..8c3f6d4b
 --- /dev/null
 +++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/QuotaPane.swift
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,309 @@
 +import Observation
 +import AgentSpeedCore
 +import SwiftUI
@@ -2710,8 +2719,9 @@ index 00000000..ee2722a4
 +                    Button(l10n("mac.quota.refresh")) { quota.refresh() }
 +                        .disabled(!quota.networkEnabled || quota.isRefreshing)
 +                }
++                let configured = quotaEnabledSources(quota).filter { !quota.unconfiguredProviderIDs.contains($0.id) }
 +                if quotaEnabledSources(quota).isEmpty { Footnote(l10n("mac.quota.enableSource")) }
-+                ForEach(quotaEnabledSources(quota), id: \.id) { provider in
++                ForEach(configured, id: \.id) { provider in
 +                    let accounts = quota.snapshots.filter { $0.id == provider.id }
 +                    if accounts.isEmpty {
 +                        VStack(alignment: .leading, spacing: 12) {
@@ -3031,10 +3041,10 @@ index 7d20173c..7075c36d 100644
              menu.addItem(report)
 diff --git a/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
 new file mode 100644
-index 00000000..3ee8acea
+index 00000000..3627174f
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CodexQuotaProvider.swift
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,362 @@
 +import Foundation
 +#if canImport(CryptoKit)
 +import CryptoKit
@@ -3211,7 +3221,8 @@ index 00000000..3ee8acea
 +                    windows: parsed.windows, headlineId: parsed.headlineId, block: parsed.block, account: parsed.account,
 +                    plan: parsed.plan, observedAt: parsed.observedAt, source: parsed.source, credits: parsed.credits,
 +                    nextAllowedAt: schedule.nextAllowedAt, waitingForRefresh: false,
-+                    resetCreditsAvailable: reset.available, resetCreditsNextExpiry: reset.expiry)
++                    resetCreditsAvailable: reset.available, resetCreditsNextExpiry: reset.expiry,
++                    configured: true)
 +                schedule.observation = QuotaPersistedObservation(accountKey: accountKey, snapshot: result)
 +            case 401, 403:
 +                schedule.rejectedToken = tokenKey
@@ -3388,7 +3399,8 @@ index 00000000..3ee8acea
 +    private func snapshot(status: QuotaStatus, next: Date? = nil, waiting: Bool = false) -> QuotaSnapshot {
 +        QuotaSnapshot(id: "codex", displayName: "Codex", fidelity: "official", status: status,
 +                           windows: [], headlineId: nil, block: nil, account: nil, plan: nil, observedAt: nil,
-+                           source: "wham/usage", credits: nil, nextAllowedAt: next, waitingForRefresh: waiting)
++                           source: "wham/usage", credits: nil, nextAllowedAt: next, waitingForRefresh: waiting,
++                           configured: readCredentials() != nil)
 +    }
 +
 +    private func withStatus(_ value: QuotaSnapshot, status: QuotaStatus, next: Date?) -> QuotaSnapshot {
@@ -3397,10 +3409,10 @@ index 00000000..3ee8acea
 +}
 diff --git a/macos/Sources/AgentSpeedCore/Quota.swift b/macos/Sources/AgentSpeedCore/Quota.swift
 new file mode 100644
-index 00000000..68383153
+index 00000000..0622f4c1
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/Quota.swift
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,143 @@
 +import Foundation
 +
 +public enum QuotaStatus: String, Sendable, Codable {
@@ -3456,12 +3468,16 @@ index 00000000..68383153
 +    public let waitingForRefresh: Bool
 +    public let resetCreditsAvailable: Int?
 +    public let resetCreditsNextExpiry: Date?
++    /// True when this source has identified credential configuration on its own machine.
++    /// A provider without identified configuration never occupies an account slot.
++    public let configured: Bool?
 +
 +    public init(id: String, displayName: String, fidelity: String, status: QuotaStatus,
 +                windows: [QuotaWindow], headlineId: String?, block: String?, account: String?,
 +                plan: String?, observedAt: Date?, source: String, credits: QuotaCredits?,
 +                nextAllowedAt: Date?, waitingForRefresh: Bool,
-+                resetCreditsAvailable: Int? = nil, resetCreditsNextExpiry: Date? = nil) {
++                resetCreditsAvailable: Int? = nil, resetCreditsNextExpiry: Date? = nil,
++                configured: Bool? = nil) {
 +        self.id = id
 +        self.displayName = displayName
 +        self.fidelity = fidelity
@@ -3478,6 +3494,7 @@ index 00000000..68383153
 +        self.waitingForRefresh = waitingForRefresh
 +        self.resetCreditsAvailable = resetCreditsAvailable
 +        self.resetCreditsNextExpiry = resetCreditsNextExpiry
++        self.configured = configured
 +    }
 +}
 +
@@ -3541,10 +3558,10 @@ index 00000000..68383153
 +}
 diff --git a/macos/Sources/AgentSpeedCore/QuotaPersistence.swift b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
 new file mode 100644
-index 00000000..25c2bf28
+index 00000000..bb623608
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,83 @@
 +import Foundation
 +#if canImport(Darwin)
 +import Darwin
@@ -3624,15 +3641,16 @@ index 00000000..25c2bf28
 +                      windows: windows, headlineId: headlineId, block: block, account: account,
 +                      plan: plan, observedAt: observedAt, source: source, credits: credits,
 +                      nextAllowedAt: next, waitingForRefresh: false,
-+                      resetCreditsAvailable: resetCreditsAvailable, resetCreditsNextExpiry: resetCreditsNextExpiry)
++                      resetCreditsAvailable: resetCreditsAvailable, resetCreditsNextExpiry: resetCreditsNextExpiry,
++                      configured: configured)
 +    }
 +}
 diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 new file mode 100644
-index 00000000..ce6e754c
+index 00000000..b1c60c1e
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -0,0 +1,608 @@
+@@ -0,0 +1,628 @@
 +import Foundation
 +#if canImport(FoundationNetworking)
 +import FoundationNetworking
@@ -3680,9 +3698,11 @@ index 00000000..ce6e754c
 +    private var finished = false
 +    private let observed = Date(timeIntervalSince1970: 1_800_000_000)
 +    private var hasObservation: Bool
++    private let configured: Bool?
 +
-+    init(_ id: String, cold: Bool = false) {
++    init(_ id: String, cold: Bool = false, configured: Bool? = nil) {
 +        self.id = id
++        self.configured = configured
 +        hasObservation = !cold
 +        let stream = AsyncStream<Request>.makeStream()
 +        requests = stream.stream
@@ -3734,7 +3754,7 @@ index 00000000..ce6e754c
 +                    used: 0.1, resetAt: nil, duration: 604_800)
 +            ] : [], headlineId: "rolling", block: nil,
 +            account: nil, plan: nil, observedAt: hasObservation ? observed : nil, source: "fixture", credits: nil,
-+            nextAllowedAt: nextAllowedAt, waitingForRefresh: waiting)
++            nextAllowedAt: nextAllowedAt, waitingForRefresh: waiting, configured: configured)
 +    }
 +}
 +
@@ -3771,10 +3791,12 @@ index 00000000..ce6e754c
 +    private var barriers: [Task<Void, Never>] = []
 +    private var cleanup: Task<Void, Never>?
 +
-+    init(ids: [String], automatic: Bool, cold: Bool = false) {
++    init(ids: [String], automatic: Bool, cold: Bool = false, configured: [Bool?] = []) {
 +        defaults = UserDefaults(suiteName: suite)!
 +        defaults.set(automatic, forKey: "quota.autoRefreshEnabled")
-+        providers = ids.map { ControllerQuotaProvider($0, cold: cold) }
++        providers = ids.enumerated().map { index, id in
++            ControllerQuotaProvider(id, cold: cold, configured: index < configured.count ? configured[index] : nil)
++        }
 +        let clock = QuotaTestClock()
 +        self.clock = clock
 +        controller = QuotaController(defaults: defaults, providers: providers, scheduler: scheduler, now: { clock.now })
@@ -3825,8 +3847,9 @@ index 00000000..ce6e754c
 +@MainActor
 +struct QuotaControllerTests {
 +    private func withFixture(ids: [String] = ["codex", "test-source"], automatic: Bool = false, cold: Bool = false,
++                             configured: [Bool?] = [],
 +                             _ body: @MainActor (ControllerFixture) async throws -> Void) async throws {
-+        let fixture = ControllerFixture(ids: ids, automatic: automatic, cold: cold)
++        let fixture = ControllerFixture(ids: ids, automatic: automatic, cold: cold, configured: configured)
 +        try await withTaskCancellationHandler {
 +            do { try await body(fixture) }
 +            catch {
@@ -3836,6 +3859,21 @@ index 00000000..ce6e754c
 +            await fixture.close().value
 +        } onCancel: {
 +            Task { @MainActor in await fixture.close().value }
++        }
++    }
++
++    @Test func providerWithoutIdentifiedConfigurationKeepsRefreshingWithoutAnAccountSlot() async throws {
++        try await withFixture(ids: ["codex", "test-source"], configured: [true, false]) { fixture in
++            let controller = fixture.controller
++            let codex = fixture.providers[0], unconfigured = fixture.providers[1]
++            #expect(controller.snapshots.map(\.id) == ["codex"])
++            #expect(controller.unconfiguredProviderIDs == ["test-source"])
++            controller.setNetworkEnabled(true)
++            // The hidden source still polls so that a later CLI login can surface it.
++            _ = try await fixture.request(codex, .startup)
++            _ = try await fixture.request(unconfigured, .startup)
++            #expect(controller.snapshots.map(\.id) == ["codex"])
++            #expect(controller.unconfiguredProviderIDs == ["test-source"])
 +        }
 +    }
 +
@@ -5499,10 +5537,10 @@ index 300ed6d2..5ee4c047 100755
      [[ -f "$collector" ]] || continue
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
 new file mode 100644
-index 00000000..8e57de14
+index 00000000..56a859d2
 --- /dev/null
 +++ b/spec/QUOTA.md
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,136 @@
 +# Codex quota contract (macOS phase one)
 +
 +This is a local, account-level quota observation, distinct from token usage, spend, and the remote collector's metrics. The Codex provider reads the locally available Codex session and queries the account's usage endpoint. Do not transmit credentials or quota data to the collector, include credentials in logs, or write credentials back. The endpoint and fields below are observed provider behavior, not a guarantee of a stable OpenAI API.
@@ -5526,9 +5564,12 @@ index 00000000..8e57de14
 +| `observedAt` | Nullable time of the last successful observation, not the time an old observation was displayed. |
 +| `source` | Description/identifier of the source of the observation. |
 +| `nextAllowedAt` | Nullable earliest next permitted refresh time, if the provider is backing off. |
++| `configured` | Nullable boolean: `false` means the source machine identified no credential configuration for this provider (no session file, key, environment token or collector credential). An absent value keeps legacy behaviour. |
 +| `waitingForRefresh` | True only when a persisted successful polling interval prevents a refresh and no observation is available in this process. Status remains `error` for compatibility; display this condition as waiting, not a failed request. |
 +| `credits` | Nullable credit information: `hasCredits` and `unlimited` are nullable booleans, `balance` is a nullable decimal string. `limit` and `used` are nullable numeric absolute amounts in provider-reported spend units, with no inferred currency; `usedFraction` and `resetAt` describe the individual spend-control allowance. A balance of `"0"` is known zero, not unknown. The allowance's `usedFraction` is not clamped and may exceed 1. |
 +| `resetCreditsAvailable` | Nullable nonnegative count of available rate-limit reset cards, queried from the separate reset-credits endpoint on macOS. Independent of usage credit balance and spend allowance; missing or failed lookups are unknown, never zero. |
++
++A provider is never a permanent slot: the account list includes a source only while its latest snapshot reports identified credential configuration (`configured` is not `false`). A missing, logged-out or uninstalled CLI must not produce a placeholder card; the source keeps polling in the background so a later CLI login can surface it. The source switch list still lists every implemented provider so selection can be prepared in advance. A collector reports `configured` from credentials present on the collector host.
 +
 +A window contains `id`, `label`, `usedFraction`, `remaining`, `used`, `resetAt`, and `duration`. `id` is stable and unique within a snapshot; `label` is display text. For Codex windows, `usedFraction` and `used` are the reported percentage divided by 100, and `remaining` is 1 minus that fraction. These nullable fractions are not absolute counts and are not clamped: usage may exceed 1 and remaining may be negative. Zero is known zero, not unknown. `resetAt` is a nullable absolute instant and `duration` is a nullable window length in seconds. Unknown fields remain null, including an unknown fraction on an otherwise valid window.
 +
