@@ -1,4 +1,4 @@
-From 9770e4e5a6a11bab1789211e98a73bab23aed3a0 Mon Sep 17 00:00:00 2001
+From c8dbae2d7aa82bb154d0f087eca66a9aba725d91 Mon Sep 17 00:00:00 2001
 From: agent-speed <dev@agent-speed.local>
 Date: Wed, 18 Nov 2026 13:56:35 +0800
 Subject: [PATCH] Add Command Code quota monitoring
@@ -30,6 +30,7 @@ Adapted from Codenotch (MIT, commit 835550a342871779135b6484d6899161c5222f7c); l
  .../CommandCodeQuotaProvider.swift            | 357 ++++++++++++
  .../AgentSpeedCore/CommandCodeUsage.swift     | 255 ++++++++
  macos/Sources/AgentSpeedCore/Quota.swift      |   6 +-
+ .../AgentSpeedCore/QuotaPersistence.swift     |   4 +-
  .../Sources/AgentSpeedCore/RemoteQuota.swift  |   3 +-
  .../CommandCodeCredentialTransportTests.swift | 141 +++++
  .../CommandCodeKeyControllerTests.swift       | 151 +++++
@@ -63,7 +64,7 @@ Adapted from Codenotch (MIT, commit 835550a342871779135b6484d6899161c5222f7c); l
  .../CommandCodeKeySettingsTests.cs            | 210 +++++++
  .../QuotaNotchViewTests.cs                    |   1 +
  .../QuotaSettingsPageTests.cs                 |   1 +
- 56 files changed, 5578 insertions(+), 130 deletions(-)
+ 57 files changed, 5580 insertions(+), 132 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/CommandCodeCredentialResponse.swift
  create mode 100644 macos/Sources/AgentSpeed/SettingsWindow/Panes/CommandCodeKeyEditor.swift
  create mode 100644 macos/Sources/AgentSpeedCore/CommandCodeAPIKeyStore.swift
@@ -2473,7 +2474,7 @@ index 00000000..6d73bd88
 +}
 diff --git a/macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift b/macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift
 new file mode 100644
-index 00000000..8737f661
+index 00000000..36b5bbe4
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CommandCodeQuotaProvider.swift
 @@ -0,0 +1,357 @@
@@ -2602,7 +2603,7 @@ index 00000000..8737f661
 +        schedules[identity] = schedule
 +        if cached[identity] == nil,
 +           let observation = schedule.observation?.validated(accountKey: identity, id: id, source: Self.source) {
-+            cached[identity] = Self.labelled(observation.copying(status: .stale, next: schedule.next),
++            cached[identity] = Self.labelled(observation.copying(status: .stale, next: schedule.next, configured: true),
 +                                             account: schedule.accountLabel)
 +        }
 +        return schedule
@@ -2742,7 +2743,7 @@ index 00000000..8737f661
 +
 +    private func stale(_ identity: String, next: Date?) -> QuotaSnapshot {
 +        guard let value = cached[identity], value.observedAt != nil else { return snapshot(.error, next: next) }
-+        return value.copying(status: .stale, next: next)
++        return value.copying(status: .stale, next: next, configured: true)
 +    }
 +
 +    private func save(_ schedule: Schedule, key: String) {
@@ -2836,7 +2837,7 @@ index 00000000..8737f661
 +}
 diff --git a/macos/Sources/AgentSpeedCore/CommandCodeUsage.swift b/macos/Sources/AgentSpeedCore/CommandCodeUsage.swift
 new file mode 100644
-index 00000000..25d923cb
+index 00000000..9e451023
 --- /dev/null
 +++ b/macos/Sources/AgentSpeedCore/CommandCodeUsage.swift
 @@ -0,0 +1,255 @@
@@ -2944,7 +2945,7 @@ index 00000000..25d923cb
 +                             status: .ok, windows: windows, headlineId: headline, block: nil,
 +                             account: whoamiIdentity.account, plan: plan.map(planName), observedAt: time,
 +                             source: source, credits: creditsValue, nextAllowedAt: nil,
-+                             waitingForRefresh: false)
++                             waitingForRefresh: false, configured: true)
 +    }
 +
 +    static func parse(whoami: Data, credits: Data, subscriptions: Data, at time: Date) throws -> QuotaSnapshot {
@@ -3109,6 +3110,25 @@ index 6b241b41..52e33840 100644
 +                                     commandCodeKeyStore: any CommandCodeAPIKeyStoring = CommandCodeKeychainStore()) -> [any QuotaProvider] {
 +        [CodexQuotaProvider(), OpenCodeGoQuotaProvider(), KimiQuotaProvider(keyStore: kimiKeyStore),
 +         CommandCodeQuotaProvider(keyStore: commandCodeKeyStore)]
+     }
+ }
+diff --git a/macos/Sources/AgentSpeedCore/QuotaPersistence.swift b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
+index 27d421a8..81e3922b 100644
+--- a/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
++++ b/macos/Sources/AgentSpeedCore/QuotaPersistence.swift
+@@ -77,12 +77,12 @@ struct QuotaPersistedObservation: Codable, Sendable {
+ }
+ 
+ extension QuotaSnapshot {
+-    func copying(status: QuotaStatus, next: Date?) -> QuotaSnapshot {
++    func copying(status: QuotaStatus, next: Date?, configured: Bool? = nil) -> QuotaSnapshot {
+         QuotaSnapshot(id: id, displayName: displayName, fidelity: fidelity, status: status,
+                       windows: windows, headlineId: headlineId, block: block, account: account,
+                       plan: plan, observedAt: observedAt, source: source, credits: credits,
+                       nextAllowedAt: next, waitingForRefresh: false,
+                       resetCreditsAvailable: resetCreditsAvailable, resetCreditsNextExpiry: resetCreditsNextExpiry,
+-                      accountIdentity: accountIdentity, configured: configured)
++                      accountIdentity: accountIdentity, configured: configured ?? self.configured)
      }
  }
 diff --git a/macos/Sources/AgentSpeedCore/RemoteQuota.swift b/macos/Sources/AgentSpeedCore/RemoteQuota.swift
