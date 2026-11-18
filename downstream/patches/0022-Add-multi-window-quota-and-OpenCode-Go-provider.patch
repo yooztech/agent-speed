@@ -847,16 +847,17 @@ diff --git a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift b/macos/T
 index b1c60c1e..c4acaa75 100644
 --- a/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
 +++ b/macos/Tests/AgentSpeedAppTests/QuotaControllerTests.swift
-@@ -45,11 +45,9 @@ private actor ControllerQuotaProvider: QuotaProvider {
+@@ -45,11 +45,11 @@ private actor ControllerQuotaProvider: QuotaProvider {
      private var finished = false
      private let observed = Date(timeIntervalSince1970: 1_800_000_000)
-     private var hasObservation: Bool
+-    private var hasObservation: Bool
 -    private let configured: Bool?
++    private let configured: Bool?
++    private var hasObservation: Bool
  
--    init(_ id: String, cold: Bool = false, configured: Bool? = nil) {
-+    init(_ id: String, cold: Bool = false) {
+     init(_ id: String, cold: Bool = false, configured: Bool? = nil) {
          self.id = id
--        self.configured = configured
+         self.configured = configured
          hasObservation = !cold
          let stream = AsyncStream<Request>.makeStream()
          requests = stream.stream
