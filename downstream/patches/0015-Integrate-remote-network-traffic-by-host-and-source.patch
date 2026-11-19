@@ -1,4 +1,4 @@
-From 2ae3aa7240d4940300e8519cc1f95b3e8e6a9fbe Mon Sep 17 00:00:00 2001
+From 93cd0fd22b59ef584257f1e8e095c4bea45ccf6a Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
 Subject: [PATCH 15/25] Integrate remote network traffic by host and source
@@ -6,32 +6,32 @@ Subject: [PATCH 15/25] Integrate remote network traffic by host and source
 ---
  README.md                                     |   2 +
  linux/collector/daemon.cpp                    |   2 +-
- linux/collector/protocol.cpp                  |  46 +++++-
+ linux/collector/protocol.cpp                  |  46 ++++-
  linux/collector/protocol.hpp                  |   3 +-
  linux/collector/sampling.cpp                  |   2 +-
  linux/collector/sampling.hpp                  |   1 +
  linux/core/include/agentspeed/monitor.hpp     |   1 +
  .../include/agentspeed/traffic_service.hpp    |   1 +
  linux/core/src/traffic.cpp                    |  11 +-
- linux/tests/collector_test.cpp                |  50 ++++++
- linux/tests/traffic_test.cpp                  |  21 +++
+ linux/tests/collector_test.cpp                |  50 +++++
+ linux/tests/traffic_test.cpp                  |  21 ++
  .../Sources/AgentSpeed/App/AppDelegate.swift  |   6 +
  macos/Sources/AgentSpeed/App/AppModel.swift   |   1 +
- .../App/Orbs/OrbSourceTraffic.swift           |  31 ++++
+ .../App/Orbs/OrbSourceTraffic.swift           |  31 +++
  .../AgentSpeed/App/Orbs/OrbsController.swift  |   6 +-
- .../Sources/AgentSpeed/App/RemoteHosts.swift  |  10 ++
+ .../Sources/AgentSpeed/App/RemoteHosts.swift  |  10 +
  .../AgentSpeed/App/RemoteSnapshot.swift       |   3 +-
- .../AgentSpeed/App/RemoteTraffic.swift        |  72 ++++++++
- .../Dashboard/Traffic/TrafficSection.swift    |  84 ++++++++--
- .../AgentSpeed/History/HistoryViewModel.swift |  44 ++++-
+ .../AgentSpeed/App/RemoteTraffic.swift        |  72 +++++++
+ .../Dashboard/Traffic/TrafficSection.swift    |  84 ++++++--
+ .../AgentSpeed/History/HistoryViewModel.swift | 109 +++++++++--
  .../History/HistoryWindowController.swift     |   4 +-
- .../History/Model/HistoryTraffic.swift        |   7 +-
+ .../History/Model/HistoryTraffic.swift        |  32 ++-
  .../History/Views/HistoryView.swift           |   6 +
  .../OrbDashboardContextTests.swift            |   4 +
- .../RemoteTrafficTests.swift                  | 110 +++++++++++++
- spec/NETWORK.md                               |  26 ++-
+ .../RemoteTrafficTests.swift                  | 184 ++++++++++++++++++
+ spec/NETWORK.md                               |  28 ++-
  .../src/AgentSpeed.Core/RemoteAggregation.cs  |  16 +-
- windows/src/AgentSpeed.Core/RemoteTraffic.cs  | 154 ++++++++++++++++++
+ windows/src/AgentSpeed.Core/RemoteTraffic.cs  | 154 +++++++++++++++
  windows/src/AgentSpeed.Core/SpeedHub.cs       |   9 +-
  .../AgentSpeed.Core/Traffic/TrafficTypes.cs   |   8 +
  .../Formatting/DashboardTraffic.cs            |  22 ++-
@@ -47,12 +47,12 @@ Subject: [PATCH 15/25] Integrate remote network traffic by host and source
  .../AgentSpeed/History/HistoryViewModel.cs    |  26 ++-
  windows/src/AgentSpeed/Orb/OrbManager.cs      |   9 +-
  .../src/AgentSpeed/Traffic/TrafficService.cs  |   9 +-
- .../RemoteConsumerTests.cs                    |  93 +++++++++--
+ .../RemoteConsumerTests.cs                    |  93 +++++++--
  .../HistoryTrafficTests.cs                    |  33 ++++
  .../OrbDashboardContextTests.cs               |   4 +
- .../RemoteHistoryCsvTests.cs                  |  37 +++++
- .../TrafficSurfaceTests.cs                    |  82 ++++++++++
- 48 files changed, 1100 insertions(+), 98 deletions(-)
+ .../RemoteHistoryCsvTests.cs                  |  37 ++++
+ .../TrafficSurfaceTests.cs                    |  82 ++++++++
+ 48 files changed, 1258 insertions(+), 106 deletions(-)
  create mode 100644 macos/Sources/AgentSpeed/App/Orbs/OrbSourceTraffic.swift
  create mode 100644 macos/Sources/AgentSpeed/App/RemoteTraffic.swift
  create mode 100644 macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
@@ -698,10 +698,83 @@ index aa3f2078..9d8c2aee 100644
          .accessibilityAddTraits(.isButton)
      }
 diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-index 420de6a8..949d021f 100644
+index 420de6a8..a13efa1e 100644
 --- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 +++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-@@ -72,6 +72,11 @@ final class HistoryViewModel {
+@@ -21,23 +21,29 @@ final class HistoryViewModel {
+     /// Stored traffic days (METRICS 10.9).
+     let traffic: TrafficStore
+     private let appModel: AppModel?
+-    /// Select each machine's history per source, using the same connections for status and data.
+-    private var remoteHistorySelection: (usage: [DailyUsage], states: [RemoteHostState]) {
+-        guard let remote = appModel?.remoteHosts else { return ([], []) }
+-        let hosts = remote.hosts.filter(\.enabled).sorted {
++    /// Enabled hosts with their state, freshest connection first, so duplicate connections to one machine pick one
++    /// representative for status and data.
++    private var remoteHostsByFreshness: [(host: RemoteHost, state: RemoteHostState)] {
++        guard let remote = appModel?.remoteHosts else { return [] }
++        return remote.hosts.filter(\.enabled).sorted {
+             let left = remote.states[$0.id], right = remote.states[$1.id]
+             let leftFresh = left?.online == true && left?.historyReceivedOnConnection == true
+             let rightFresh = right?.online == true && right?.historyReceivedOnConnection == true
+             if leftFresh != rightFresh { return leftFresh }
+             return (left?.historyReceivedAt ?? .distantPast) > (right?.historyReceivedAt ?? .distantPast)
+-        }
++        }.map { (host: $0, state: remote.states[$0.id] ?? RemoteHostState()) }
++    }
++
++    /// Select each machine's history per source, using the same connections for status and data.
++    private var remoteHistorySelection: (usage: [DailyUsage], states: [RemoteHostState]) {
++        let hosts = remoteHostsByFreshness
++        guard !hosts.isEmpty else { return ([], []) }
+         var seen: [String: Set<SourceKind>] = [:]
+         var representatives: [String: RemoteHostState] = [:]
+         var contributingMachines: Set<String> = []
+         var selectedStates: [RemoteHostState] = []
+         var usage: [DailyUsage] = []
+-        for host in hosts {
+-            let state = remote.states[host.id] ?? RemoteHostState()
++        for (host, state) in hosts {
+             let identity = state.snapshot?.machineId ?? host.id.uuidString
+             if representatives[identity] == nil { representatives[identity] = state }
+             guard let days = state.historyUsage else { continue }
+@@ -55,6 +61,35 @@ final class HistoryViewModel {
+         return (usage, selectedStates)
+     }
+ 
++    /// Duplicate connections to one machine prefer the online one for traffic, as the Windows history does.
++    private var remoteTrafficHosts: [(host: RemoteHost, state: RemoteHostState)] {
++        remoteHostsByFreshness.sorted {
++            if $0.state.online != $1.state.online { return $0.state.online }
++            return ($0.state.historyReceivedAt ?? .distantPast) > ($1.state.historyReceivedAt ?? .distantPast)
++        }
++    }
++
++    /// Remote traffic rows for the all-hosts view, once per machine and source key. Missing remote days stay
++    /// unknown in `HistoryTraffic.combined`, never measured zero.
++    private var remoteTrafficDays: [TrafficDay] {
++        var seen: Set<String> = []
++        var days: [TrafficDay] = []
++        for (host, state) in remoteTrafficHosts {
++            guard state.snapshot?.traffic?.enabled == true else { continue }
++            let enabled = SourceSet(state.dashboardSnapshot?.sources.filter(\.enabled).map(\.kind) ?? [])
++            let machine = state.snapshot?.machineId ?? host.id.uuidString
++            let rows = TrafficVisibility.days(state.trafficHistory.values.filter { !$0.isMachine }.map {
++                TrafficDay(day: $0.day, key: $0.key, rx: $0.rx, tx: $0.tx, rxTools: $0.rxTools,
++                           txTools: $0.txTools, sampledMs: $0.sampledMs)
++            }, enabled: enabled)
++            for row in rows {
++                guard seen.insert(machine + "\u{0}" + row.key).inserted else { continue }
++                days.append(row)
++            }
++        }
++        return days
++    }
++
+     private var enabledRemoteStates: [RemoteHostState] { remoteHistorySelection.states }
+ 
+     var combinedUsage: [DailyUsage] { store.days + remoteHistorySelection.usage }
+@@ -72,6 +107,11 @@ final class HistoryViewModel {
      /// Pointer, keyboard and selection state, kept apart so hovering never rebuilds the content.
      let interaction = HistoryInteraction()
  
@@ -713,7 +786,7 @@ index 420de6a8..949d021f 100644
      private(set) var source: SourceKind?
      private(set) var rangeKind: HistoryRangeKind = .days30
      private(set) var customRange: DayRange?
-@@ -143,6 +148,15 @@ final class HistoryViewModel {
+@@ -143,6 +183,15 @@ final class HistoryViewModel {
  
      var motion: Animation? { accessibility.reduceMotion ? nil : HistoryMotion.chart }
  
@@ -729,7 +802,7 @@ index 420de6a8..949d021f 100644
      /// Also when the source is already selected: opening the window applies the traffic rule below again.
      func select(source: SourceKind?) {
          if source != self.source {
-@@ -238,11 +252,11 @@ final class HistoryViewModel {
+@@ -238,11 +287,11 @@ final class HistoryViewModel {
          let options = HistoryCostOptions(
              marked: cost.settings.subscriptionSources, includeSubscriptions: includeSubscriptions, metric: chartMetric
          )
@@ -743,7 +816,7 @@ index 420de6a8..949d021f 100644
              prices: cost.prices.book.current
          )
          if next != content { content = next }
-@@ -260,7 +274,7 @@ final class HistoryViewModel {
+@@ -260,7 +309,7 @@ final class HistoryViewModel {
                                               machine: state?.snapshot?.machineId ?? host.id.uuidString,
                                               records: state?.performanceHistory)
          }
@@ -752,10 +825,12 @@ index 420de6a8..949d021f 100644
                                                  range: next.range, source: source, today: today)
          if nextPerf != perf { perf = nextPerf }
      }
-@@ -271,8 +285,30 @@ final class HistoryViewModel {
+@@ -271,8 +320,44 @@ final class HistoryViewModel {
                         includeTools: settings.trafficIncludeTools, bits: settings.trafficUnit == .bits)
      }
  
+-    /// The metric control offers traffic while measuring is on or traffic history exists (DESIGN 10).
+-    var offersTraffic: Bool { cost.settings.trafficEnabled || !traffic.days.isEmpty }
 +    static func remoteHistoryTraffic(host: RemoteHost?, state: RemoteHostState?, includeTools: Bool, bits: Bool) -> HistoryTraffic {
 +        let enabled: SourceSet
 +        if host?.enabled == true, state?.snapshot?.traffic?.enabled == true {
@@ -772,15 +847,28 @@ index 420de6a8..949d021f 100644
 +    }
 +
 +    private var selectedTraffic: HistoryTraffic {
-+        guard let hostID else { return Self.historyTraffic(traffic, settings: cost.settings) }
-+        return Self.remoteHistoryTraffic(host: appModel?.remoteHosts.hosts.first { $0.id == hostID },
-+                                         state: appModel?.remoteHosts.states[hostID],
-+                                         includeTools: cost.settings.trafficIncludeTools, bits: cost.settings.trafficUnit == .bits)
++        if let hostID {
++            return Self.remoteHistoryTraffic(host: appModel?.remoteHosts.hosts.first { $0.id == hostID },
++                                             state: appModel?.remoteHosts.states[hostID],
++                                             includeTools: cost.settings.trafficIncludeTools,
++                                             bits: cost.settings.trafficUnit == .bits)
++        }
++        let remote = remoteTrafficDays
++        guard !remote.isEmpty else { return Self.historyTraffic(traffic, settings: cost.settings) }
++        let local = TrafficVisibility.days(traffic.days, enabled: SourceSet(cost.settings.enabledSources))
++        return HistoryTraffic.combined([local, remote], since: traffic.since,
++                                       includeTools: cost.settings.trafficIncludeTools,
++                                       bits: cost.settings.trafficUnit == .bits)
 +    }
 +
-     /// The metric control offers traffic while measuring is on or traffic history exists (DESIGN 10).
--    var offersTraffic: Bool { cost.settings.trafficEnabled || !traffic.days.isEmpty }
-+    var offersTraffic: Bool { hostID != nil || cost.settings.trafficEnabled || !traffic.days.isEmpty }
++    private var hasRemoteTraffic: Bool {
++        remoteTrafficHosts.contains { $0.state.snapshot?.traffic?.enabled == true }
++    }
++
++    /// The metric control offers traffic while this computer or an enabled remote host measures it, or history exists.
++    var offersTraffic: Bool {
++        hostID != nil || cost.settings.trafficEnabled || !traffic.days.isEmpty || hasRemoteTraffic
++    }
  }
  
  /// Hover, keyboard focus day, row selection and the reveal flash.
@@ -802,7 +890,7 @@ index f7da3ee3..400aa0ec 100644
          if viewModel.showsLiveDay { viewModel.refreshToday() }
          startLiveDayTimer()
 diff --git a/macos/Sources/AgentSpeed/History/Model/HistoryTraffic.swift b/macos/Sources/AgentSpeed/History/Model/HistoryTraffic.swift
-index db8179fc..6d1bbd50 100644
+index db8179fc..3bd9a2cd 100644
 --- a/macos/Sources/AgentSpeed/History/Model/HistoryTraffic.swift
 +++ b/macos/Sources/AgentSpeed/History/Model/HistoryTraffic.swift
 @@ -28,12 +28,13 @@ struct HistoryTraffic: Equatable, Sendable {
@@ -820,15 +908,40 @@ index db8179fc..6d1bbd50 100644
          for row in days {
              guard let day = DayKey(row.day) else { continue }
              rows[day, default: [:]][row.key] = row
-@@ -41,6 +42,7 @@ struct HistoryTraffic: Equatable, Sendable {
+@@ -41,6 +42,32 @@ struct HistoryTraffic: Equatable, Sendable {
          self.since = since.flatMap(DayKey.init) ?? rows.keys.min()
          self.includeTools = includeTools
          self.bits = bits
 +        self.requiresRecordedRows = requiresRecordedRows
++    }
++
++    /// Combine this computer's and remote hosts' rows, summing a day and source recorded by more than one host.
++    /// Missing days and sources stay unknown (`requiresRecordedRows`), never measured zero.
++    static func combined(_ hosts: [[TrafficDay]], since: String?, includeTools: Bool, bits: Bool) -> HistoryTraffic {
++        var merged: [DayKey: [String: TrafficDay]] = [:]
++        for row in hosts.joined() {
++            guard let day = DayKey(row.day) else { continue }
++            var keyed = merged[day, default: [:]]
++            if let existing = keyed[row.key] {
++                keyed[row.key] = TrafficDay(day: existing.day, key: existing.key,
++                                            rx: existing.rx + row.rx, tx: existing.tx + row.tx,
++                                            rxTools: existing.rxTools + row.rxTools,
++                                            txTools: existing.txTools + row.txTools,
++                                            sampledMs: max(existing.sampledMs, row.sampledMs))
++            } else {
++                keyed[row.key] = row
++            }
++            merged[day] = keyed
++        }
++        let days = merged.values.flatMap { Array($0.values) }
++        let sinceDay = since.flatMap { DayKey($0) }
++        let first = ([sinceDay].compactMap { $0 } + Array(merged.keys)).min()
++        return HistoryTraffic(days: days, since: first?.description, includeTools: includeTools, bits: bits,
++                              requiresRecordedRows: true)
      }
  
      var hasData: Bool { !rows.isEmpty }
-@@ -55,6 +57,9 @@ struct HistoryTraffic: Equatable, Sendable {
+@@ -55,6 +82,9 @@ struct HistoryTraffic: Equatable, Sendable {
      /// today has elapsed, for the partial mark.
      func day(_ day: DayKey, source: SourceKind?, today: DayKey, now: Date, calendar: Calendar) -> DayTraffic? {
          guard !notRecorded(day) else { return nil }
@@ -872,10 +985,10 @@ index 4833e1bb..4f90d75b 100644
          #expect(model.snapshot == globalSnapshot)
 diff --git a/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift b/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
 new file mode 100644
-index 00000000..fdaa60b8
+index 00000000..8abe17fc
 --- /dev/null
 +++ b/macos/Tests/AgentSpeedAppTests/RemoteTrafficTests.swift
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,184 @@
 +import AgentSpeedCore
 +import Foundation
 +import Testing
@@ -985,9 +1098,83 @@ index 00000000..fdaa60b8
 +        #expect(traffic.sources?["codex"]?.today == nil)
 +        #expect(traffic.history == nil)
 +    }
++
++    @Test func combinedHistorySumsHostRowsAndLeavesMissingDaysUnknown() throws {
++        let day = try #require(DayKey("2026-01-01"))
++        let local = [TrafficDay(day: "2026-01-01", key: "codex", rx: 10, tx: 1, rxTools: 2, sampledMs: 500)]
++        let remote = [TrafficDay(day: "2026-01-01", key: "codex", rx: 100, tx: 20, rxTools: 5, txTools: 2,
++                                 sampledMs: 1000)]
++        let history = HistoryTraffic.combined([local, remote], since: "2026-01-01", includeTools: true, bits: false)
++        let value = try #require(history.day(day, source: .codex, today: day, now: Date(), calendar: .current))
++        #expect(value.own == TrafficBytes(rx: 110, tx: 21))
++        #expect(value.tools == TrafficBytes(rx: 7, tx: 2))
++        #expect(value.recordedMs == 1000)
++        #expect(history.day(day.adding(days: 1), source: .codex, today: day, now: Date(), calendar: .current) == nil)
++    }
++
++    private func trafficSnapshot(machine: String, rx: Int64) throws -> RemoteMessage {
++        try decode(#"{"version":1,"type":"snapshot","machine_id":"\#(machine)","sources":[{"source":"codex","enabled":true,"available":true,"sessions":0,"active_agents":0,"today_input":0,"today_output":0,"today_requests":0}],"traffic":{"enabled":true,"available":true,"sources":{"codex":{"self_rate":null,"with_tools_rate":null,"today":null}},"history":[{"day":"2026-01-01","key":"codex","rx":\#(rx),"tx":20,"rx_tools":5,"tx_tools":2,"sampled_ms":1000}]}}"#)
++    }
++
++    @Test @MainActor func allHostsHistoryCombinesRemoteTrafficOncePerMachine() throws {
++        let suite = "RemoteTrafficHistory.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let first = RemoteHost(label: "First", destination: "first", enabled: true)
++        let duplicate = RemoteHost(label: "Duplicate", destination: "duplicate", enabled: true)
++        defaults.set(try JSONEncoder().encode([first, duplicate]), forKey: "remoteHosts.v1")
++        var firstState = RemoteHostState()
++        firstState.apply(try trafficSnapshot(machine: "same-machine", rx: 100))
++        firstState.historyReceivedOnConnection = true
++        var duplicateState = RemoteHostState()
++        duplicateState.apply(try trafficSnapshot(machine: "same-machine", rx: 999))
++        duplicateState.online = false
++        let hosts = RemoteHosts(defaults: defaults, states: [first.id: firstState, duplicate.id: duplicateState])
++        let store = HistoryStore()
++        let settings = AppSettings(defaults: defaults)
++        settings.trafficEnabled = false
++        let app = AppModel(settings: settings, history: store, remoteHosts: hosts)
++        app.traffic.publish(days: [TrafficDay(day: "2026-01-01", key: "codex", rx: 10, tx: 1, sampledMs: 500)],
++                            since: "2026-01-01")
++        let view = HistoryViewModel(store: store, l10n: app.l10n, accessibility: app.accessibility,
++                                    cost: app.cost, traffic: app.traffic, model: app)
++        view.select(range: .all)
++        #expect(view.offersTraffic)
++        view.select(metric: .traffic)
++        let day = try #require(DayKey("2026-01-01"))
++        let traffic = try #require(view.content.chart.traffic[day])
++        #expect(traffic.own.rx == 110)
++        #expect(traffic.bySource[.codex]?.rx == 115)
++        #expect(traffic.machine == .zero)
++        #expect(view.content.chart.traffic[day.adding(days: 1)] == nil)
++    }
++
++    @Test @MainActor func remoteTrafficOffersHistoryWithoutLocalMeasuring() throws {
++        let suite = "RemoteOnlyTrafficHistory.\(UUID().uuidString)"
++        let defaults = try #require(UserDefaults(suiteName: suite))
++        defer { defaults.removePersistentDomain(forName: suite) }
++        let host = RemoteHost(label: "Server", destination: "server", enabled: true)
++        defaults.set(try JSONEncoder().encode([host]), forKey: "remoteHosts.v1")
++        var state = RemoteHostState()
++        state.apply(try trafficSnapshot(machine: "server-machine", rx: 100))
++        let hosts = RemoteHosts(defaults: defaults, states: [host.id: state])
++        let store = HistoryStore()
++        let settings = AppSettings(defaults: defaults)
++        settings.trafficEnabled = false
++        let app = AppModel(settings: settings, history: store, remoteHosts: hosts)
++        let view = HistoryViewModel(store: store, l10n: app.l10n, accessibility: app.accessibility,
++                                    cost: app.cost, traffic: app.traffic, model: app)
++        view.select(range: .all)
++        #expect(view.offersTraffic)
++        view.select(metric: .traffic)
++        let day = try #require(DayKey("2026-01-01"))
++        let traffic = try #require(view.content.chart.traffic[day])
++        #expect(traffic.own.rx == 100)
++        #expect(traffic.bySource[.codex]?.rx == 105)
++    }
 +}
 diff --git a/spec/NETWORK.md b/spec/NETWORK.md
-index 3c9ad5ae..09841984 100644
+index 3c9ad5ae..bf118567 100644
 --- a/spec/NETWORK.md
 +++ b/spec/NETWORK.md
 @@ -240,8 +240,8 @@ and outputs, and absolute working paths do not. SSH credentials are not embedded
@@ -1001,7 +1188,7 @@ index 3c9ad5ae..09841984 100644
  After the client requests its time zone, `today_day`, `today_start_ms` and snapshot today totals use that zone;
  `today_day` is in `YYYY-MM-DD` form or null if conversion fails. Untagged or null-zone snapshots retain collector-local
  compatibility behavior. Snapshot and history frames identify their aggregation time zone; history from an older
-@@ -250,6 +250,28 @@ history `peak` only for days it observed live, per viewer time zone; unobserved
+@@ -250,6 +250,30 @@ history `peak` only for days it observed live, per viewer time zone; unobserved
  reconstructed from logs. `peak_today` is null when no peak can be measured or live data is incomplete. If global live
  data is incomplete, each source's live rates and estimated share are also null.
  
@@ -1025,7 +1212,9 @@ index 3c9ad5ae..09841984 100644
 +collector's local time zone, independently of the requested token-history zone. Older collectors omit `traffic`.
 +On disconnect, clients retain cumulative counts and set live rates to zero.
 +On macOS, the network dashboard and its remote traffic history use the remote host's enabled source statuses;
-+the local Data Sources selection filters local traffic only and does not hide another host's sources.
++the local Data Sources selection filters local traffic only and does not hide another host's sources. Usage History's
++all-hosts view combines this computer's traffic with every enabled remote host's rows once per machine and source;
++a missing remote day or source stays unknown, never a measured zero.
 +
  Protocol v1 optionally carries an agent `perf` object containing `form`, `score`, `shown`, `provisional`, `n`,
  `tools`, `active_ms`, `span_start_ms`, `model`, `components`, `baseline`, `vs_usual`, `vs_usual_percent` and

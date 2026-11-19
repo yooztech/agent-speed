@@ -1,0 +1,159 @@
+From 590faee6268656d59a89a0fa93d9c4ccf7d439e4 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Thu, 19 Nov 2026 12:10:42 +0800
+Subject: [PATCH 28/28] Update the About page branding and drop its repository
+ link
+
+The About page no longer offers GitHub navigation on any platform, and the
+macOS footer credits yooztech. Removes the now-unused repository helpers
+(AppInfo.repositoryURL, AppPaths.RepositoryUrl, OpenRepositoryCommand and the
+trailing-icon label style) while keeping the MIT license links.
+---
+ linux/app/qml/AboutPage.qml                   | 13 ---------
+ .../AgentSpeed/Localization/StringTable.swift |  2 +-
+ .../SettingsWindow/Panes/AboutPane.swift      | 27 +++----------------
+ .../Sources/AgentSpeed/Support/AppInfo.swift  |  2 --
+ windows/src/AgentSpeed/App/AppPaths.cs        |  1 -
+ .../AgentSpeed/Settings/Pages/AboutPage.xaml  |  3 +--
+ .../AgentSpeed/Settings/SettingsViewModel.cs  |  3 ---
+ 7 files changed, 6 insertions(+), 45 deletions(-)
+
+diff --git a/linux/app/qml/AboutPage.qml b/linux/app/qml/AboutPage.qml
+index 82333fb9..838fe889 100644
+--- a/linux/app/qml/AboutPage.qml
++++ b/linux/app/qml/AboutPage.qml
+@@ -26,19 +26,6 @@ SettingsPage {
+                 color: Theme.ink2
+                 font.pixelSize: 12
+             }
+-            Text {
+-                text: S.tr2(S.rev, "settings.about.github")
+-                color: Theme.accent
+-                font.pixelSize: 12
+-                font.underline: linkArea.containsMouse
+-                MouseArea {
+-                    id: linkArea
+-                    anchors.fill: parent
+-                    hoverEnabled: true
+-                    cursorShape: Qt.PointingHandCursor
+-                    onClicked: catalog.openUrl("https://github.com/zoefix/agent-speed")
+-                }
+-            }
+             Text {
+                 Layout.topMargin: 4
+                 text: S.tr2(S.rev, "settings.about.update")
+diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+index 2b38844a..57feec07 100644
+--- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
++++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+@@ -479,7 +479,7 @@ enum StringTable {
+         "mac.quota.open": Entry("開啟額度設定", "打开额度设置", "Open quota settings", "使用枠の設定を開く"),
+         "mac.quota.durationSeparator": Entry("", "", " ", ""),
+         "mac.report.ws.milliseconds": Entry("%@ ms", "%@ ms", "%@ ms", "%@ ms"),
+-        "mac.settings.about.copyright": Entry("© 2026 zoefix", "© 2026 zoefix", "© 2026 zoefix", "© 2026 zoefix"),
++        "mac.settings.about.copyright": Entry("© 2026 yooztech", "© 2026 yooztech", "© 2026 yooztech", "© 2026 yooztech"),
+         "mac.settings.about.license": Entry("以 MIT 授權開放原始碼", "以 MIT 许可证开源", "Open source under the MIT License", "MIT ライセンスのオープンソース"),
+         "mac.settings.about.tagline": Entry("本機 AI agent 的即時 token 速度。", "本机 AI agent 的实时 token 速度。", "Live token speed of your local AI agents.", "ローカル AI エージェントのリアルタイム token 速度。"),
+         "mac.settings.effects.previewHint": Entry("用 20 秒依序展示每個速度階段。", "用 20 秒依次展示每个速度阶段。", "A 20-second sweep through every speed tier.", "20 秒間ですべての速度段階を順に表示します。"),
+diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/AboutPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/AboutPane.swift
+index 61ee75e4..202be9c8 100644
+--- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/AboutPane.swift
++++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/AboutPane.swift
+@@ -23,17 +23,10 @@ struct AboutPane: View {
+                 .textSelection(.enabled)
+                 .padding(.top, Spacing.xs)
+ 
+-            VStack(spacing: Spacing.xxs) {
+-                Link(destination: AppInfo.repositoryURL) {
+-                    Label(l10n("settings.about.github"), systemImage: "arrow.up.right")
+-                        .labelStyle(TrailingIconLabelStyle())
+-                }
+-                .help(AppInfo.repositoryURL.absoluteString)
+-                Text(l10n("mac.settings.about.license"))
+-                    .font(.subheadline)
+-                    .foregroundStyle(.secondary)
+-            }
+-            .padding(.top, Spacing.l)
++            Text(l10n("mac.settings.about.license"))
++                .font(.subheadline)
++                .foregroundStyle(.secondary)
++                .padding(.top, Spacing.l)
+ 
+             NetworkSettingsCard(model: model)
+                 .padding(.top, Spacing.xl)
+@@ -102,15 +95,3 @@ struct AboutPane: View {
+         .accessibilityElement(children: .combine)
+     }
+ }
+-
+-/// Title first, then a small icon: "View on GitHub ↗".
+-private struct TrailingIconLabelStyle: LabelStyle {
+-    func makeBody(configuration: Configuration) -> some View {
+-        HStack(spacing: 3) {
+-            configuration.title
+-            configuration.icon
+-                .imageScale(.small)
+-                .font(.body.weight(.semibold))
+-        }
+-    }
+-}
+diff --git a/macos/Sources/AgentSpeed/Support/AppInfo.swift b/macos/Sources/AgentSpeed/Support/AppInfo.swift
+index af23cbfd..4da29b41 100644
+--- a/macos/Sources/AgentSpeed/Support/AppInfo.swift
++++ b/macos/Sources/AgentSpeed/Support/AppInfo.swift
+@@ -1,8 +1,6 @@
+ import Foundation
+ 
+ enum AppInfo {
+-    static let repositoryURL = URL(string: "https://github.com/zoefix/agent-speed")!
+-
+     static var version: String {
+         Bundle.main.object(forInfoDictionaryKey: "AgentSpeedVersion") as? String
+             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
+diff --git a/windows/src/AgentSpeed/App/AppPaths.cs b/windows/src/AgentSpeed/App/AppPaths.cs
+index de0737ba..a7e25c29 100644
+--- a/windows/src/AgentSpeed/App/AppPaths.cs
++++ b/windows/src/AgentSpeed/App/AppPaths.cs
+@@ -5,7 +5,6 @@ namespace AgentSpeed.App;
+ internal static class AppPaths
+ {
+     public const string ProductFolder = "AgentSpeed";
+-    public const string RepositoryUrl = "https://github.com/zoefix/agent-speed";
+     public const string LicenseUrl = "https://github.com/zoefix/agent-speed/blob/main/LICENSE";
+     public const string ReleasesUrl = "https://github.com/yooztech/agent-speed/releases";
+ 
+diff --git a/windows/src/AgentSpeed/Settings/Pages/AboutPage.xaml b/windows/src/AgentSpeed/Settings/Pages/AboutPage.xaml
+index a8fef0ee..97610867 100644
+--- a/windows/src/AgentSpeed/Settings/Pages/AboutPage.xaml
++++ b/windows/src/AgentSpeed/Settings/Pages/AboutPage.xaml
+@@ -26,8 +26,7 @@
+                 <TextBlock Text="{Binding PrivacyReport}" Style="{StaticResource BodyText}" Margin="0,8,0,0" />
+                 <TextBlock Text="{loc:Loc settings.about.update}" Style="{StaticResource CaptionText}" Margin="0,8,0,0" />
+                 <StackPanel Orientation="Horizontal" Margin="-4,12,0,0">
+-                    <Button Style="{StaticResource LinkButton}" Command="{Binding OpenRepositoryCommand}" Content="{loc:Loc settings.about.github}" />
+-                    <Button Style="{StaticResource LinkButton}" Command="{Binding OpenLicenseCommand}" Content="{loc:Loc win.settings.about.license}" Margin="12,0,0,0" />
++                    <Button Style="{StaticResource LinkButton}" Command="{Binding OpenLicenseCommand}" Content="{loc:Loc win.settings.about.license}" />
+                     <Button Style="{StaticResource LinkButton}" Command="{Binding OpenLogsCommand}" Content="{loc:Loc win.settings.about.logs}" Margin="12,0,0,0" />
+                 </StackPanel>
+             </StackPanel>
+diff --git a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
+index 4d7f0a04..b2bdf337 100644
+--- a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
++++ b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
+@@ -244,7 +244,6 @@ internal sealed class SettingsViewModel : ObservableObject
+                 clearHistory();
+             }
+         });
+-        OpenRepositoryCommand = new RelayCommand(() => OpenUrl(AppPaths.RepositoryUrl));
+         OpenLicenseCommand = new RelayCommand(() => OpenUrl(AppPaths.LicenseUrl));
+         OpenLogsCommand = new RelayCommand(OpenLogs);
+         CheckForUpdatesCommand = new RelayCommand(() => _ = _updates.CheckAsync(manual: true), () => !_updates.Status.IsBusy && _updates.NetworkEnabled);
+@@ -441,8 +440,6 @@ internal sealed class SettingsViewModel : ObservableObject
+     /// <summary>Asks for confirmation, then clears the stored history.</summary>
+     public RelayCommand ClearHistoryCommand { get; }
+ 
+-    public RelayCommand OpenRepositoryCommand { get; }
+-
+     public RelayCommand OpenLicenseCommand { get; }
+ 
+     public RelayCommand OpenLogsCommand { get; }

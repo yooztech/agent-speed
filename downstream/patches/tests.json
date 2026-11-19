@@ -451,5 +451,22 @@
       {"platform": "macos", "run": "swift test --package-path macos --filter 'QuotaPresentationTests|QuotaControllerTests'"}
     ],
     "reason": "Command Code is the fourth local Windows/macOS and remote collector subscription-quota supplier: it reads COMMAND_CODE_API_KEY or ~/.commandcode/auth.json without writing, refreshes or re-authenticating, queries the CLI's /alpha whoami, credits, subscriptions and usage/summary routes with the organization scope, derives the monthly window from real period spend over spend plus remaining monthly credits (the server grant is the only fallback when the summary is absent and a plan id never implies a percentage), maps the weekly and 5-hour used/cap windows, and keeps purchased/free credits as a separate balance. Account identity is the credential digest, cache and persisted backoff are per account, and remote collectors read their own host credentials while returning only structured observations. Adapted from Codenotch commit 835550a (MIT) with license notices. The /alpha routes are the CLI's internal contract, so missing or unknown fields degrade to unsupported instead of synthesizing a monthly percentage; plan ids only supply a display name. Native WPF/AppKit appearance, live Command Code accounts and macOS SDK execution remain unverified."
+  },
+  "0027-Remove-the-API-live-reporting-module-from-the-produc.patch": {
+    "regression": [],
+    "related": [],
+    "reason": "Removes the live reporting (Settings -> API) module from the product surface on macOS, Windows and Linux: the pane, its navigation entry, the dashboard invitation/indicator and every activation seam are cut while the reporting engine sources stay in the tree. No portable test covers the removed wiring; the change is verified by the queue replay plus focused application compilation, and native settings-window appearance on both platforms remains a Release responsibility."
+  },
+  "0028-Update-the-About-page-branding-and-drop-its-reposito.patch": {
+    "regression": [],
+    "related": [],
+    "reason": "Content-only About page change: removes the GitHub navigation entry on macOS, Windows and Linux, credits yooztech in the macOS footer, and deletes the helpers that only linked to the upstream repository. No behavioral test covers localized footer copy; the change is verified by queue replay and the Windows application cross-build, and native About pane appearance remains a Release responsibility."
+  },
+  "0029-Describe-the-price-table-as-coming-from-the-service.patch": {
+    "regression": [
+      {"platform": "linux", "run": "dotnet test windows/tests/AgentSpeed.Core.Tests -c Release -f net10.0 --filter FullyQualifiedName~PriceTableSyncTests"}
+    ],
+    "related": [],
+    "reason": "The price card no longer links to the upstream price file and its shared copy now names the Agent Speed price service with public mirrors as the fallback; the Windows constant test no longer pins the removed source-page URL. The localized caption itself is not asserted, and native settings appearance on both platforms remains a Release responsibility."
   }
 }

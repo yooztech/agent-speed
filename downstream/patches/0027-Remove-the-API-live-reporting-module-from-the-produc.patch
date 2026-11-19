@@ -1,0 +1,413 @@
+From 0c201629e6b4c29c8b6b784708c5d653182c3730 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Thu, 19 Nov 2026 12:02:21 +0800
+Subject: [PATCH 27/27] Remove the API live reporting module from the product
+
+Cut the live reporting (Settings -> API) module at its integration seams on
+all three platforms instead of deleting its engine sources.
+
+macOS: the settings window builds tabs from a filtered pane list, the menu
+bar dashboard no longer offers the reporting invitation or footer indicator,
+and AppModel.activate(live:) no longer activates the ReportController.
+
+Windows: the settings navigation no longer lists the report page, and the
+report controller is never started and never attaches dashboard surfaces.
+
+Linux: the ReportController object and all of its settings, tray, preview and
+consent wiring are removed; the API page leaves the settings stack and the
+dashboard drops the invitation card and reporting indicator.
+
+The reporting engine (macOS Sources/AgentSpeed/Reporting, Windows
+Reporting/*, Linux core/src/report) and its view files stay in the tree so
+the queue keeps rebasing cleanly.
+---
+ linux/app/qml/AboutPage.qml                   | 10 ++--
+ linux/app/qml/Dashboard.qml                   | 26 +--------
+ linux/app/qml/SettingsWindow.qml              |  2 -
+ linux/app/qml/TrafficPage.qml                 |  2 +-
+ linux/app/src/main.cpp                        | 53 ++-----------------
+ macos/Sources/AgentSpeed/App/AppModel.swift   |  2 -
+ .../Dashboard/DashboardFooter.swift           |  6 ---
+ .../AgentSpeed/Dashboard/DashboardView.swift  | 15 ------
+ .../SettingsTabViewController.swift           | 10 ++--
+ windows/src/AgentSpeed/App/AppController.cs   |  5 --
+ .../AgentSpeed/Settings/SettingsViewModel.cs  |  1 -
+ 11 files changed, 17 insertions(+), 115 deletions(-)
+
+diff --git a/linux/app/qml/AboutPage.qml b/linux/app/qml/AboutPage.qml
+index f35a7a78..82333fb9 100644
+--- a/linux/app/qml/AboutPage.qml
++++ b/linux/app/qml/AboutPage.qml
+@@ -58,10 +58,10 @@ SettingsPage {
+                 anchors.right: parent.right
+                 anchors.margins: 14
+                 anchors.verticalCenter: parent.verticalCenter
+-                // DESIGN 11: while reporting is on, no sentence claims that nothing is sent.
+-                text: S.tr2(S.rev, report.reporting ? "privacy.statement.report" : "privacy.statement") + "\n\n"
+-                      + S.tr2(S.rev, report.reporting ? "privacy.traffic.report" : "privacy.traffic") + "\n\n"
+-                      + S.tr2(S.rev, "privacy.report") + "\n\n" + S.tr2(S.rev, "privacy.perfScore")
++                // DESIGN 11: the privacy text describes local storage and network use.
++                text: S.tr2(S.rev, "privacy.statement") + "\n\n"
++                      + S.tr2(S.rev, "privacy.traffic") + "\n\n"
++                      + S.tr2(S.rev, "privacy.perfScore")
+                 color: Theme.ink2
+                 font.pixelSize: 12
+                 lineHeight: 1.3
+@@ -73,7 +73,7 @@ SettingsPage {
+     SettingsGroup {
+         SettingsRow {
+             label: S.tr2(S.rev, "settings.network")
+-            caption: S.tr2(S.rev, report.reporting ? "settings.network.hint.report" : "settings.network.hint")
++            caption: S.tr2(S.rev, "settings.network.hint")
+             ToggleSwitch {
+                 label: S.tr2(S.rev, "settings.network")
+                 checked: prefs.networkEnabled
+diff --git a/linux/app/qml/Dashboard.qml b/linux/app/qml/Dashboard.qml
+index ef6d5afb..ec910810 100644
+--- a/linux/app/qml/Dashboard.qml
++++ b/linux/app/qml/Dashboard.qml
+@@ -315,8 +315,6 @@ Window {
+                 width: 328
+                 spacing: 0
+ 
+-                ReportInviteCard {}
+-
+                 // Hero
+                 RowLayout {
+                     Layout.fillWidth: true
+@@ -846,28 +844,6 @@ Window {
+                         HoverHandler { cursorShape: Qt.PointingHandCursor }
+                     }
+                     Item { Layout.fillWidth: true }
+-                    // DESIGN 11: reporting is on (or being set up); a dot when the user must act.
+-                    IconButton {
+-                        visible: report.indicatorVisible
+-                        glyph: "broadcast"
+-                        label: report.indicatorTip
+-                        opacity: report.indicatorPaused ? 0.4 : 1
+-                        onClicked: {
+-                            root.dismissed()
+-                            report.showSettings()
+-                        }
+-                        ToolTip.visible: hovered
+-                        ToolTip.text: report.indicatorTip
+-                        Rectangle {
+-                            visible: report.indicatorAttention
+-                            width: 5
+-                            height: 5
+-                            radius: 2.5
+-                            color: Theme.amber
+-                            x: parent.width - 9
+-                            y: 5
+-                        }
+-                    }
+                     IconButton {
+                         glyph: "chart"
+                         label: S.tr2(S.rev, "history.open")
+@@ -893,7 +869,7 @@ Window {
+                     IconButton {
+                         glyph: "power"
+                         label: S.tr2(S.rev, "menu.quit")
+-                        onClicked: report.quitApp()
++                        onClicked: Qt.quit()
+                     }
+                 }
+             }
+diff --git a/linux/app/qml/SettingsWindow.qml b/linux/app/qml/SettingsWindow.qml
+index f35d1b17..0e287d74 100644
+--- a/linux/app/qml/SettingsWindow.qml
++++ b/linux/app/qml/SettingsWindow.qml
+@@ -19,7 +19,6 @@ Window {
+         { glyph: "sparkle", key: "settings.effects" },
+         { glyph: "coin", key: "settings.cost" },
+         { glyph: "chart", key: "settings.traffic" },
+-        { glyph: "broadcast", key: "settings.report" },
+         { glyph: "folder", key: "settings.sources" },
+         { glyph: "info", key: "settings.about" }
+     ]
+@@ -141,7 +140,6 @@ Window {
+             EffectsPage {}
+             CostPage {}
+             TrafficPage {}
+-            ApiPage {}
+             SourcesPage {}
+             AboutPage {}
+         }
+diff --git a/linux/app/qml/TrafficPage.qml b/linux/app/qml/TrafficPage.qml
+index 9e6951ea..f5bf9b62 100644
+--- a/linux/app/qml/TrafficPage.qml
++++ b/linux/app/qml/TrafficPage.qml
+@@ -8,7 +8,7 @@ SettingsPage {
+     SettingsGroup {
+         SettingsRow {
+             label: S.tr2(S.rev, "settings.traffic.enabled")
+-            caption: S.tr2(S.rev, "settings.traffic.enabled.hint") + (report.trafficNote.length > 0 ? "\n" + report.trafficNote : "")
++            caption: S.tr2(S.rev, "settings.traffic.enabled.hint")
+             ToggleSwitch {
+                 label: S.tr2(S.rev, "settings.traffic.enabled")
+                 checked: prefs.trafficEnabled
+diff --git a/linux/app/src/main.cpp b/linux/app/src/main.cpp
+index 1a372844..bb8ddc4c 100644
+--- a/linux/app/src/main.cpp
++++ b/linux/app/src/main.cpp
+@@ -29,18 +29,14 @@
+ #include "orb/preview.hpp"
+ #include "hero/hero_item.hpp"
+ #include "preferences.hpp"
+-#include "report/report_controller.hpp"
+ #include "strings.hpp"
+ #include "title_themes.hpp"
+ #include "tray_icon.hpp"
+ 
+ namespace {
+ 
+-// The settings pane between 網路流量 and 資料來源 (DESIGN 11).
+-constexpr int kApiPage = 5;
+-constexpr int kSourcesPage = 6;
+-constexpr int kAboutPage = 7;
+-
++constexpr int kSourcesPage = 5;
++constexpr int kAboutPage = 6;
+ 
+ std::vector<BoardSpec> boardSpecs(const BoardStore* store) {
+     std::vector<BoardSpec> specs;
+@@ -233,12 +229,6 @@ int main(int argc, char* argv[]) {
+         QMetaObject::invokeMethod(historyWorker, "analyze", Qt::QueuedConnection);
+     });
+     QObject::connect(&catalog, &Catalog::changed, &app, [=] { pushOptions(false); });
+-    // DESIGN 11: live reporting, fed by every live engine tick.
+-    qRegisterMetaType<ReportTick>();
+-    ReportController report(prefs, strings, prices, QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
+-    engine.rootContext()->setContextProperty(QStringLiteral("report"), &report);
+-    QObject::connect(worker, &MonitorWorker::reportTick, &report, &ReportController::onTick);
+-    report.setWatchSink([worker](bool on, qint64 responses, qint64 calls) { worker->setReportWatch(on, responses, calls); });
+     // DESIGN 2c: the boards, their windows fed by every snapshot.
+     BoardWindows boardWindows(boardStore, engine);
+     engine.rootContext()->setContextProperty(QStringLiteral("boardWindows"), &boardWindows);
+@@ -279,36 +269,6 @@ int main(int argc, char* argv[]) {
+     QObject::connect(&tray, &TrayIcon::settingsRequested, &app, [&] { openSettings(-1); });
+     QObject::connect(&tray, &TrayIcon::sourcesRequested, &app, [&] { openSettings(kSourcesPage); });
+     QObject::connect(&tray, &TrayIcon::aboutRequested, &app, [&] { openSettings(kAboutPage); });
+-    QObject::connect(&report, &ReportController::settingsRequested, &app, [&] { openSettings(kApiPage); });
+-    QObject::connect(&tray, &TrayIcon::reportSettings, &app, [&] { openSettings(kApiPage); });
+-    QObject::connect(&tray, &TrayIcon::reportPause, &report, &ReportController::pause);
+-    QObject::connect(&tray, &TrayIcon::reportResume, &report, &ReportController::resume);
+-    QObject::connect(&tray, &TrayIcon::reportLeaderboard, &report, [&] { report.openLink(report.leaderboardUrl()); });
+-    QObject::connect(&report, &ReportController::changed, &tray, [&] {
+-        tray.setReport(report.menuVisible(), report.menuText(), report.paused(), !report.leaderboardUrl().isEmpty());
+-    });
+-    // The preview and the consent sheet are windows of their own (DESIGN 11).
+-    QQmlComponent previewComponent(&engine, QStringLiteral("AgentSpeed"), QStringLiteral("ReportPreviewWindow"));
+-    QQmlComponent consentComponent(&engine, QStringLiteral("AgentSpeed"), QStringLiteral("ReportConsentWindow"));
+-    QQmlComponent devicesComponent(&engine, QStringLiteral("AgentSpeed"), QStringLiteral("ReportDevicesWindow"));
+-    QQuickWindow* previewWindow = nullptr;
+-    QQuickWindow* consentWindow = nullptr;
+-    QQuickWindow* devicesWindow = nullptr;
+-    const auto present = [&](QQmlComponent& component, QQuickWindow*& slot) {
+-        if (!slot) {
+-            slot = qobject_cast<QQuickWindow*>(component.create(engine.rootContext()));
+-            if (!slot) {
+-                qWarning() << component.errorString();
+-                return;
+-            }
+-        }
+-        slot->show();
+-        slot->raise();
+-        slot->requestActivate();
+-    };
+-    QObject::connect(&report, &ReportController::previewRequested, &app, [&] { present(previewComponent, previewWindow); });
+-    QObject::connect(&report, &ReportController::consentRequested, &app, [&] { present(consentComponent, consentWindow); });
+-    QObject::connect(&report, &ReportController::devicesRequested, &app, [&] { present(devicesComponent, devicesWindow); });
+     // The update window (UPDATES 4), from the tray item, the notification, the dashboard pill or Settings.
+     QQmlComponent updateComponent(&engine, QStringLiteral("AgentSpeed"), QStringLiteral("UpdateWindow"));
+     QQuickWindow* updateWindow = nullptr;
+@@ -353,8 +313,8 @@ int main(int argc, char* argv[]) {
+     });
+     QObject::connect(&tray, &TrayIcon::demoToggled, &state, &AppState::setDemo);
+     QObject::connect(&state, &AppState::demoChanged, &tray, &TrayIcon::setDemo);
+-    // Quitting sends a leaving report when it can go out within 1 s (METRICS 11.5).
+-    const auto quitApp = [&] { report.quitApp(); };
++    // Quitting goes straight through; the tray and orbs share this handler.
++    const auto quitApp = [&] { QCoreApplication::quit(); };
+     QObject::connect(&tray, &TrayIcon::quitRequested, &app, quitApp);
+     QObject::connect(&tray, &TrayIcon::toggleDashboard, &flyout, &Flyout::toggle);
+     QObject::connect(&boardWindows, &BoardWindows::dashboardRequested, &flyout, &Flyout::toggle);
+@@ -383,11 +343,6 @@ int main(int argc, char* argv[]) {
+     syncOrbMenu();
+     const auto arguments = app.arguments();
+     network.start();
+-    report.start();
+-    // Development aid: --report-selftest=<http://127.0.0.1:port> reports to a local reference server.
+-    for (const auto& arg : arguments) {
+-        if (arg.startsWith(QStringLiteral("--report-selftest=")) && !report.startSelfTest(arg.mid(18))) qWarning("report selftest: loopback http only");
+-    }
+     // After a one-click update the new instance says so once (UPDATES 4).
+     if (const auto at = arguments.indexOf(QStringLiteral("--after-update")); at >= 0) {
+         QTimer::singleShot(1500, &tray, [&] {
+diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
+index 2b9cb923..b22b24af 100644
+--- a/macos/Sources/AgentSpeed/App/AppModel.swift
++++ b/macos/Sources/AgentSpeed/App/AppModel.swift
+@@ -305,8 +305,6 @@ final class AppModel {
+         appliedConfiguration = settings.monitorConfiguration
+         monitor.setSubsets(orbSubsets.union(boardSubsets))
+         monitor.start()
+-        report.perfWatchHandler = { [weak monitor] epoch in monitor?.setReportWatch(epoch) }
+-        report.activate()
+         loops.append(ObservationLoop { [weak self] in
+             guard let self else { return }
+             let configuration = self.settings.monitorConfiguration
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardFooter.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardFooter.swift
+index b56446d4..940a442f 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/DashboardFooter.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardFooter.swift
+@@ -52,11 +52,6 @@ struct DashboardFooter: View {
+                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
+             }
+ 
+-            if model.report.indicatorShown {
+-                ReportIndicator(model: model)
+-                    .transition(.opacity)
+-            }
+-
+             Button {
+                 if let orbID = context?.orbID { model.commands?.showOrbSettings(orbID) }
+                 else { model.commands?.showSettings(.general) }
+@@ -79,7 +74,6 @@ struct DashboardFooter: View {
+             .accessibilityLabel(l10n("menu.quit"))
+         }
+         .animation(model.dashboardMotion, value: model.updates.availableRelease?.tag)
+-        .animation(model.dashboardMotion, value: model.report.indicatorShown)
+     }
+ }
+ 
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+index 41d38d53..249f49e2 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardView.swift
+@@ -22,11 +22,6 @@ struct DashboardView: View {
+                     .padding(.bottom, DashboardLayout.sectionSpacing)
+                     .transition(.opacity.combined(with: .move(edge: .top)))
+             }
+-            if showsInvitation {
+-                ReportInvitationCard(model: model)
+-                    .padding(.bottom, DashboardLayout.sectionSpacing)
+-                    .transition(model.accessibility.reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+-            }
+             DashboardContent(model: model)
+                 .dashboardFlexible()
+             Hairline()
+@@ -41,19 +36,9 @@ struct DashboardView: View {
+         .frame(width: DashboardController.width, alignment: .top)
+         .animation(model.dashboardMotion, value: model.isPreviewing)
+         .animation(model.dashboardMotion, value: model.updates.justUpdatedTo)
+-        .animation(model.dashboardMotion, value: showsInvitation)
+-    }
+-
+-    /// The live reporting invitation (DESIGN 11): one card at a time, so it waits for the update and preview banners;
+-    /// it stays for its done line after being accepted.
+-    private var showsInvitation: Bool {
+-        let report = model.report
+-        if report.inviteJustAccepted { return true }
+-        return report.invitationOffered && model.updates.justUpdatedTo == nil && !model.isPreviewing
+     }
+ }
+ 
+-
+ /// Switches between startup, missing-sources and live layouts.
+ private struct DashboardContent: View {
+     let model: AppModel
+diff --git a/macos/Sources/AgentSpeed/SettingsWindow/SettingsTabViewController.swift b/macos/Sources/AgentSpeed/SettingsWindow/SettingsTabViewController.swift
+index 8228cf8b..206a53e4 100644
+--- a/macos/Sources/AgentSpeed/SettingsWindow/SettingsTabViewController.swift
++++ b/macos/Sources/AgentSpeed/SettingsWindow/SettingsTabViewController.swift
+@@ -8,6 +8,8 @@ final class SettingsTabViewController: NSTabViewController {
+     var onSelect: (@MainActor (SettingsPane) -> Void)?
+ 
+     private let model: AppModel
++    /// The panes that get a tab, in tab order; the live reporting pane has no product surface.
++    private static let panes: [SettingsPane] = SettingsPane.allCases.filter { $0 != .report }
+     private var heights: [SettingsPane: CGFloat] = [:]
+     private var resizePending = false
+     private var titleLoop: ObservationLoop?
+@@ -20,7 +22,7 @@ final class SettingsTabViewController: NSTabViewController {
+         tabStyle = .toolbar
+         transitionOptions = [.crossfade, .allowUserInteraction]
+         canPropagateSelectedChildViewControllerTitle = true
+-        for pane in SettingsPane.allCases {
++        for pane in Self.panes {
+             let root = SettingsPaneHost(pane: pane, model: model) { [weak self] height in
+                 self?.pane(pane, didReportHeight: height)
+             }
+@@ -40,19 +42,19 @@ final class SettingsTabViewController: NSTabViewController {
+     }
+ 
+     var selectedPane: SettingsPane {
+-        let panes = SettingsPane.allCases
++        let panes = Self.panes
+         return panes.indices.contains(selectedTabViewItemIndex) ? panes[selectedTabViewItemIndex] : .general
+     }
+ 
+     func select(_ pane: SettingsPane) {
+-        guard let index = SettingsPane.allCases.firstIndex(of: pane), index != selectedTabViewItemIndex else { return }
++        guard let index = Self.panes.firstIndex(of: pane), index != selectedTabViewItemIndex else { return }
+         selectedTabViewItemIndex = index
+     }
+ 
+     /// Localized tab labels and window title; re-run whenever the language changes.
+     func applyTitles() {
+         let l10n = model.l10n
+-        for (pane, item) in zip(SettingsPane.allCases, tabViewItems) {
++        for (pane, item) in zip(Self.panes, tabViewItems) {
+             let title = l10n(pane.titleKey)
+             let label = l10n(pane.tabTitleKey)
+             if item.label != label { item.label = label }
+diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
+index 680ff9f2..9d2a7531 100644
+--- a/windows/src/AgentSpeed/App/AppController.cs
++++ b/windows/src/AgentSpeed/App/AppController.cs
+@@ -237,7 +237,6 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             StartUpdates();
+             _cost.Start();
+             _traffic.Start();
+-            StartReporting();
+             if (_launch.DemoSpeedValues is { Count: > 0 } speeds)
+             {
+                 HeroStats.Enabled = true;
+@@ -977,7 +976,6 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             _dashboard.TrafficHistoryRequested += (_, row) => ShowHistory(row.Kind, traffic: true, hostId: row.HostId);
+             _dashboard.TrafficSettingsRequested += (_, _) => OpenSettings("traffic");
+             _dashboard.BoardsMenuRequested += (_, _) => ShowDashboardBoardsMenu();
+-            AttachReporting(_dashboard);
+             _dashboard.IsVisibleChanged += (_, _) =>
+             {
+                 if (_dashboard?.IsVisible != true)
+@@ -1000,8 +998,6 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         _dashboard.SetUpdate(UpdatePillText());
+         _dashboard.SetUpdateDone(_updateDoneText);
+         _updateDoneShown = _updateDoneText is not null;
+-        ShowReportInvitation();
+-        RefreshReportSurfaces();
+         _dashboard.ApplyBackground();
+         RefreshDashboard();
+         _quota?.SetFlyoutActive(true);
+@@ -1349,7 +1345,6 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         _settingsModel?.Relocalize(_loc);
+         _quota?.Relocalize();
+         _settingsModel?.Report?.SetLocalizer(_loc);
+-        RefreshReportSurfaces();
+         _orbs?.Relocalize(_loc);
+         _boards?.Relocalize(_loc);
+         _updateWindowModel?.Relocalize(_loc);
+diff --git a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
+index 12b53821..4d7f0a04 100644
+--- a/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
++++ b/windows/src/AgentSpeed/Settings/SettingsViewModel.cs
+@@ -158,7 +158,6 @@ internal sealed class SettingsViewModel : ObservableObject
+         Pages.Add(new NavItem("effects", "", "settings.effects"));
+         Pages.Add(new NavItem("cost", "", "settings.cost"));
+         Pages.Add(new NavItem("traffic", "", "settings.traffic"));
+-        Pages.Add(new NavItem("report", "\uEC05", "settings.report"));
+         Pages.Add(new NavItem("quota", "\uED0E", "win.quota.title"));
+         Pages.Add(new NavItem("sources", "", "settings.sources"));
+         Pages.Add(new NavItem("about", "", "settings.about"));

@@ -1,0 +1,205 @@
+From bda75c2af6e5836d08f0ac72710334897cac10d0 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Thu, 19 Nov 2026 12:21:08 +0800
+Subject: [PATCH 29/29] Describe the price table as coming from the service
+
+The daily price card no longer links to the upstream price file, and its copy
+now says the table comes from the Agent Speed price service (public mirrors
+when it is unreachable) and that only a download happens. Drops the unused
+prices.viewSource string, the macOS and Windows source-page URLs, the Windows
+view-source command and the trailing-icon label style.
+---
+ linux/app/qml/CostPage.qml                    |  4 ----
+ .../AgentSpeed/Localization/StringTable.swift |  3 +--
+ .../SettingsWindow/Panes/CostPane.swift       | 19 +------------------
+ .../Network/PriceTableSync.swift              |  2 --
+ spec/strings.json                             | 14 ++++----------
+ .../AgentSpeed.Core/Network/PriceTableSync.cs |  3 ---
+ .../AgentSpeed/Settings/CostPaneViewModel.cs  |  3 ---
+ .../AgentSpeed/Settings/Pages/CostPage.xaml   |  9 ---------
+ .../PriceTableSyncTests.cs                    |  1 -
+ 9 files changed, 6 insertions(+), 52 deletions(-)
+
+diff --git a/linux/app/qml/CostPage.qml b/linux/app/qml/CostPage.qml
+index c3243172..9eca613e 100644
+--- a/linux/app/qml/CostPage.qml
++++ b/linux/app/qml/CostPage.qml
+@@ -94,10 +94,6 @@ SettingsPage {
+             label: S.rev >= 0 && appState.snapshot.priceVersion >= 0
+                    ? catalog.priceStatus() + (catalog.pricesBundled() ? " · " + S.tr2(S.rev, "prices.bundled") : "") : ""
+             caption: network.priceResult.length > 0 ? network.priceResult : network.priceLine
+-            LinkButton {
+-                text: S.tr2(S.rev, "prices.viewSource") + " ↗"
+-                onClicked: catalog.openUrl("https://github.com/zoefix/agent-speed/blob/main/spec/assets/prices.json")
+-            }
+             PillButton {
+                 enabled: prefs.networkEnabled && !network.priceChecking
+                 text: network.priceChecking ? S.tr2(S.rev, "prices.checking") : S.tr2(S.rev, "prices.check")
+diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+index 57feec07..7e27a306 100644
+--- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
++++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+@@ -689,7 +689,7 @@ enum StringTable {
+         "phase.idle": Entry("閒置", "空闲", "Idle", "待機中"),
+         "phase.tools": Entry("執行工具", "运行工具", "Running tools", "ツール実行中"),
+         "prices.autoSync": Entry("每天自動更新價格表", "每天自动更新价格表", "Update Prices Daily", "価格表を毎日更新"),
+-        "prices.autoSync.hint": Entry("從 GitHub 上的 Agent Speed 專案下載公開價格表，不會傳送任何資料。", "从 GitHub 上的 Agent Speed 项目下载公开价格表，不会发送任何数据。", "Downloads the public price table from the Agent Speed project on GitHub. Nothing is sent.", "GitHub の Agent Speed プロジェクトから公開価格表をダウンロードします。データは送信しません。"),
++        "prices.autoSync.hint": Entry("每天從 Agent Speed 價格服務下載公開的模型 API 牌價；服務未能連線時改用公開鏡像，只下載、不上傳任何資料。", "每天从 Agent Speed 价格服务下载公开的模型 API 牌价；服务无法连接时改用公开镜像，只下载、不上传任何数据。", "Downloads public model API list prices from the Agent Speed price service, falling back to public mirrors if it can't be reached. Nothing is uploaded.", "公開されているモデルの API 定価を Agent Speed の価格サービスから毎日ダウンロードします（接続できないときは公開ミラーを使用）。ダウンロードのみで、データは送信しません。"),
+         "prices.bundled": Entry("內建", "内置", "Built-in", "内蔵"),
+         "prices.check": Entry("立即檢查", "立即检查", "Check Now", "今すぐ確認"),
+         "prices.checking": Entry("檢查中…", "检查中…", "Checking…", "確認中…"),
+@@ -703,7 +703,6 @@ enum StringTable {
+         "prices.unknownToday.item": Entry("%@（%@）", "%@（%@）", "%@ (%@)", "%@（%@）"),
+         "prices.upToDate": Entry("價格表已是最新", "价格表已是最新", "The price table is up to date", "価格表は最新です"),
+         "prices.updatedTo": Entry("已更新至版本 %d", "已更新到版本 %d", "Updated to version %d", "バージョン %d に更新しました"),
+-        "prices.viewSource": Entry("查看價格與來源", "查看价格与来源", "View Prices and Sources", "価格と出典を見る"),
+         "privacy.perfScore": Entry("性能分數：Agent Speed 依回應的時間與 token 數，以及工具呼叫的開始與結束時間、是否出錯，計算每個 agent 的性能分數；用量歷史只保存各模型每天的彙總數字。只有在你開啟即時上報並保留模型分享、且服務支援時，才會把目前的分數和各模型的性能統計（輸出與耗時總和、首段延遲分布、思考、快取、工具呼叫的次數、耗時與失敗數、活躍時間）傳送給該服務，供排名與統計分析；從不傳送單一請求或工具呼叫的資料，也不含提示詞、指令、路徑或時間點。", "性能分数：Agent Speed 依响应的时间与 token 数，以及工具调用的开始与结束时间、是否出错，计算每个 agent 的性能分数；用量历史只保存各模型每天的汇总数字。只有在你开启实时上报并保留模型分享、且服务支持时，才会把当前的分数和各模型的性能统计（输出与耗时总和、首段延迟分布、思考、缓存、工具调用的次数、耗时与失败数、活跃时间）发送给该服务，供排名与统计分析；从不发送单个请求或工具调用的数据，也不含提示词、命令、路径或时间点。", "Performance score: Agent Speed computes each agent's performance score from the timing and token counts of its responses and from when its tool calls start and finish and whether they fail; the usage history keeps only per-model daily totals of these figures. Only live reporting sends anything of it, when you turn it on, leave model sharing on and the service supports it: the current score and per-model performance statistics (sums of output and duration, the first-content latency distribution, thinking, cache, tool-call counts, time and failures, active time), for ranking and statistical analysis. It never sends anything about a single request or tool call, and no prompts, commands, paths or timestamps.", "性能スコア：Agent Speed は、応答の時間と token 数、ツール呼び出しの開始・終了の時刻とエラーの有無から各 agent の性能スコアを計算し、使用履歴にはモデルごとの日別の合計だけを保存します。送信するのは、ライブ送信をオンにしてモデルの共有もオンのままにし、サービスが対応している場合だけで、内容は現在のスコアとモデルごとの性能統計（出力量と所要時間の合計、最初の出力までの時間の分布、思考、キャッシュ、ツール呼び出しの回数・所要時間・失敗数、アクティブ時間）です。ランキングと統計分析に使われます。個々のリクエストやツール呼び出しのデータ、プロンプト、コマンド、パス、時刻は送信しません。"),
+         "privacy.report": Entry("即時上報（選用，預設關閉）：開啟後，Agent Speed 會在 agent 工作時每隔幾秒，把即時速度、token 用量，以及你保留的費用、網路流量和模型（含性能分數、各模型的性能統計和思考速度）等數字，連同你選擇的使用者名稱傳送到你指定的服務。不會傳送對話內容、指令、檔案或專案名稱，也不會傳送歷史紀錄；每筆上報都以只存在這台電腦上的金鑰簽章。", "实时上报（可选，默认关闭）：开启后，Agent Speed 会在 agent 工作时每隔几秒，把实时速度、token 用量，以及你保留的费用、网络流量和模型（含性能分数、各模型的性能统计和思考速度）等数字，连同你选择的用户名发送到你指定的服务。不会发送对话内容、命令、文件或项目名称，也不会发送历史记录；每条上报都用只保存在这台电脑上的密钥签名。", "Live reporting (optional, off by default): when you turn it on, Agent Speed sends live speed, token usage and — if you keep them — cost, network traffic and model numbers (including the performance score, per-model performance statistics and thinking speed), with the username you choose, to the service you pick, every few seconds while your agents work. It never sends conversation content, commands, file or project names, or history, and signs every report with a key that stays on this computer.", "ライブ送信（任意・初期設定はオフ）：オンにすると、Agent Speed は agent の作業中に数秒ごと、現在の速度と token 使用量、そしてオンのままにした費用・通信量・モデル（性能スコア、モデルごとの性能統計、思考の速度を含む）などの数値を、選んだユーザー名と一緒に指定したサービスへ送信します。会話の内容、コマンド、ファイル名やプロジェクト名、履歴は送信せず、各送信はこのコンピューターから出ない鍵で署名されます。"),
+         "privacy.statement": Entry("Agent Speed 只讀取本機紀錄，不收集任何資料，也不會儲存或顯示對話內容。只有在檢查更新、每天更新公開的模型價格表，以及使用美元以外的貨幣時更新匯率才會連網，而且都不傳送任何個人資料；可在下方一次關閉所有網路連線。", "Agent Speed 只读取本机记录，不收集任何数据，也不会保存或显示对话内容。只有在检查更新、每天更新公开的模型价格表，以及使用美元以外的货币时更新汇率才会联网，且均不发送任何个人数据；可在下方一键关闭所有网络连接。", "Agent Speed only reads local transcripts. It collects nothing and never stores or shows conversation content. It connects only to check for updates, to refresh the public model price table daily and, when you use a currency other than US dollars, to refresh exchange rates — and it sends no personal data. You can turn all network access off below.", "Agent Speed はローカルの記録のみを読み取ります。データを収集せず、会話の内容を保存・表示することもありません。通信するのは、アップデートの確認、公開モデル価格表の毎日の更新、米ドル以外の通貨を使うときの為替レートの更新だけで、個人データは送信しません。下のスイッチですべての通信をオフにできます。"),
+diff --git a/macos/Sources/AgentSpeed/SettingsWindow/Panes/CostPane.swift b/macos/Sources/AgentSpeed/SettingsWindow/Panes/CostPane.swift
+index 2750680a..6373b9e5 100644
+--- a/macos/Sources/AgentSpeed/SettingsWindow/Panes/CostPane.swift
++++ b/macos/Sources/AgentSpeed/SettingsWindow/Panes/CostPane.swift
+@@ -186,12 +186,6 @@ private struct PriceTableSection: View {
+                     .font(.subheadline)
+                     .foregroundStyle(.secondary)
+                     .lineLimit(2)
+-                Spacer(minLength: Spacing.xs)
+-                Link(destination: PriceTableSync.sourcePage) {
+-                    Label(l10n("prices.viewSource"), systemImage: "arrow.up.right")
+-                        .labelStyle(TrailingIcon())
+-                }
+-                .font(.subheadline)
+             }
+             .animation(Motion.fade, value: prices.checkState)
+ 
+@@ -272,15 +266,4 @@ enum PriceDate {
+         calendar.timeZone = TimeZone(identifier: "UTC")!
+         return calendar.date(from: components).map { Int64($0.timeIntervalSince1970 * 1000) }
+     }
+-}
+-
+-/// Title first, then a small icon: "View Prices and Sources ↗".
+-private struct TrailingIcon: LabelStyle {
+-    func makeBody(configuration: Configuration) -> some View {
+-        HStack(spacing: 3) {
+-            configuration.title
+-            configuration.icon
+-                .imageScale(.small)
+-        }
+-    }
+-}
++}
+\ No newline at end of file
+diff --git a/macos/Sources/AgentSpeedCore/Network/PriceTableSync.swift b/macos/Sources/AgentSpeedCore/Network/PriceTableSync.swift
+index 6214fc40..ab08b1a3 100644
+--- a/macos/Sources/AgentSpeedCore/Network/PriceTableSync.swift
++++ b/macos/Sources/AgentSpeedCore/Network/PriceTableSync.swift
+@@ -120,8 +120,6 @@ public struct PriceTableSync: Sendable {
+         URL(string: "https://cdn.jsdelivr.net/gh/zoefix/agent-speed@main/spec/assets/prices.json")!,
+     ]
+     public static let allowedHosts: Set<String> = ["agent-speed.yooztech.com", "raw.githubusercontent.com", "cdn.jsdelivr.net"]
+-    /// Where Settings' `prices.viewSource` link points.
+-    public static let sourcePage = URL(string: "https://github.com/zoefix/agent-speed/blob/main/spec/assets/prices.json")!
+ 
+     public static let launchDelay: TimeInterval = 60
+     public static let interval: TimeInterval = 24 * 3600
+diff --git a/spec/strings.json b/spec/strings.json
+index c04ad308..9103a483 100644
+--- a/spec/strings.json
++++ b/spec/strings.json
+@@ -3049,10 +3049,10 @@
+     "ja": "価格表を毎日更新"
+   },
+   "prices.autoSync.hint": {
+-    "zh-Hant": "從 GitHub 上的 Agent Speed 專案下載公開價格表，不會傳送任何資料。",
+-    "zh-Hans": "从 GitHub 上的 Agent Speed 项目下载公开价格表，不会发送任何数据。",
+-    "en": "Downloads the public price table from the Agent Speed project on GitHub. Nothing is sent.",
+-    "ja": "GitHub の Agent Speed プロジェクトから公開価格表をダウンロードします。データは送信しません。"
++    "zh-Hant": "每天從 Agent Speed 價格服務下載公開的模型 API 牌價；服務未能連線時改用公開鏡像，只下載、不上傳任何資料。",
++    "zh-Hans": "每天从 Agent Speed 价格服务下载公开的模型 API 牌价；服务无法连接时改用公开镜像，只下载、不上传任何数据。",
++    "en": "Downloads public model API list prices from the Agent Speed price service, falling back to public mirrors if it can't be reached. Nothing is uploaded.",
++    "ja": "公開されているモデルの API 定価を Agent Speed の価格サービスから毎日ダウンロードします（接続できないときは公開ミラーを使用）。ダウンロードのみで、データは送信しません。"
+   },
+   "prices.check": {
+     "zh-Hant": "立即檢查",
+@@ -3090,12 +3090,6 @@
+     "en": "A newer price table format is available — update Agent Speed to use it",
+     "ja": "新しい形式の価格表があります。Agent Speed をアップデートしてください"
+   },
+-  "prices.viewSource": {
+-    "zh-Hant": "查看價格與來源",
+-    "zh-Hans": "查看价格与来源",
+-    "en": "View Prices and Sources",
+-    "ja": "価格と出典を見る"
+-  },
+   "prices.unknownToday": {
+     "zh-Hant": "今天價格未知的模型：%@",
+     "zh-Hans": "今天价格未知的模型：%@",
+diff --git a/windows/src/AgentSpeed.Core/Network/PriceTableSync.cs b/windows/src/AgentSpeed.Core/Network/PriceTableSync.cs
+index b438f9a4..a3aef39c 100644
+--- a/windows/src/AgentSpeed.Core/Network/PriceTableSync.cs
++++ b/windows/src/AgentSpeed.Core/Network/PriceTableSync.cs
+@@ -206,9 +206,6 @@ public sealed class PriceTableSync
+     public static readonly IReadOnlySet<string> AllowedHosts =
+         new HashSet<string>(["agent-speed.yooztech.com", "raw.githubusercontent.com", "cdn.jsdelivr.net"], StringComparer.Ordinal);
+ 
+-    /// <summary>Where Settings' <c>prices.viewSource</c> link points.</summary>
+-    public static readonly Uri SourcePage = new("https://github.com/zoefix/agent-speed/blob/main/spec/assets/prices.json");
+-
+     public static readonly TimeSpan LaunchDelay = TimeSpan.FromSeconds(60);
+     public static readonly TimeSpan Interval = TimeSpan.FromHours(24);
+     public static readonly TimeSpan RetryDelay = TimeSpan.FromHours(1);
+diff --git a/windows/src/AgentSpeed/Settings/CostPaneViewModel.cs b/windows/src/AgentSpeed/Settings/CostPaneViewModel.cs
+index 32f693ff..519ba0a4 100644
+--- a/windows/src/AgentSpeed/Settings/CostPaneViewModel.cs
++++ b/windows/src/AgentSpeed/Settings/CostPaneViewModel.cs
+@@ -94,7 +94,6 @@ internal sealed class CostPaneViewModel : ObservableObject
+         RefreshRatesCommand = new RelayCommand(() => _cost.Rates.Refresh(), () => _rate?.CanRefresh == true);
+         CheckPricesCommand = new RelayCommand(CheckPrices, () => _prices?.CanCheck == true);
+         OpenAttributionCommand = new RelayCommand(() => OpenHttps(ExchangeRateSync.AttributionUrl));
+-        ViewPriceSourceCommand = new RelayCommand(() => OpenHttps(PriceTableSync.SourcePage));
+         settings.Changed += (_, _) => Refresh();
+         cost.Changed += (_, _) => Refresh();
+         Refresh();
+@@ -204,8 +203,6 @@ internal sealed class CostPaneViewModel : ObservableObject
+ 
+     public RelayCommand CheckPricesCommand { get; }
+ 
+-    public RelayCommand ViewPriceSourceCommand { get; }
+-
+     /// <summary><c>prices.unknownToday</c>; empty when every request of today has a price.</summary>
+     public string UnknownToday { get => _unknownToday; private set => Set(ref _unknownToday, value); }
+ 
+diff --git a/windows/src/AgentSpeed/Settings/Pages/CostPage.xaml b/windows/src/AgentSpeed/Settings/Pages/CostPage.xaml
+index a5ae48b2..07ff3702 100644
+--- a/windows/src/AgentSpeed/Settings/Pages/CostPage.xaml
++++ b/windows/src/AgentSpeed/Settings/Pages/CostPage.xaml
+@@ -175,15 +175,6 @@
+                                    Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                         <TextBlock Text="{loc:Loc settings.network.offHint}" Style="{StaticResource CaptionText}" />
+                     </StackPanel>
+-                    <Button Style="{StaticResource LinkButton}" Command="{Binding ViewPriceSourceCommand}" FontSize="12" Height="26" Margin="-4,4,0,-4"
+-                            ToolTip="https://github.com/zoefix/agent-speed/blob/main/spec/assets/prices.json"
+-                            AutomationProperties.Name="{loc:Loc prices.viewSource}">
+-                        <StackPanel Orientation="Horizontal">
+-                            <TextBlock Text="{loc:Loc prices.viewSource}" VerticalAlignment="Center" />
+-                            <TextBlock Text="&#xE8A7;" FontFamily="{DynamicResource AppSymbolFontFamily}" FontSize="11" Margin="6,1,0,0"
+-                                       VerticalAlignment="Center" />
+-                        </StackPanel>
+-                    </Button>
+                 </StackPanel>
+                 <Button Grid.Column="2" Content="{loc:Loc prices.check}" Command="{Binding CheckPricesCommand}" MinWidth="120" VerticalAlignment="Center"
+                         ToolTip="{Binding NetworkOffTooltip}" ToolTipService.ShowOnDisabled="True" />
+diff --git a/windows/tests/AgentSpeed.Core.Tests/PriceTableSyncTests.cs b/windows/tests/AgentSpeed.Core.Tests/PriceTableSyncTests.cs
+index 6020522e..ac71a9e2 100644
+--- a/windows/tests/AgentSpeed.Core.Tests/PriceTableSyncTests.cs
++++ b/windows/tests/AgentSpeed.Core.Tests/PriceTableSyncTests.cs
+@@ -29,7 +29,6 @@ public sealed class PriceTableSyncTests
+             ],
+             PriceTableSync.Urls.Select(u => u.AbsoluteUri));
+         Assert.True(PriceTableSync.AllowedHosts.SetEquals(["agent-speed.yooztech.com", "raw.githubusercontent.com", "cdn.jsdelivr.net"]));
+-        Assert.Equal("https://github.com/zoefix/agent-speed/blob/main/spec/assets/prices.json", PriceTableSync.SourcePage.AbsoluteUri);
+     }
+ 
+     [Fact]
