@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Safely prepare, trigger, and observe the downstream Release workflow."""
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager, nullcontext, redirect_stderr
 from datetime import datetime, timezone
 import argparse
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -251,6 +252,14 @@ def push_tag(tag, expected, desired, commit):
         check_remote_contains(commit)
         if remote_ref(ref) != desired:
             raise
+    if remote_ref(ref) != desired:
+        raise RuntimeError('remote tag did not reach the requested state')
+    # git push updates only the remote ref. Keep the local candidate tag aligned so
+    # retries cannot leave a stale local tag after the remote tag moved.
+    if desired is None:
+        git('update-ref', '-d', ref)
+    else:
+        git('update-ref', ref, desired)
 
 
 def target_release(tag, *, deadline=None):
@@ -337,10 +346,10 @@ class ProgressDisplay:
 
     @staticmethod
     def _terminal():
+        if os.environ.get('RELEASE_PLAIN_PROGRESS'):
+            return None
         if sys.stdout.isatty():
             return sys.stdout
-        if os.environ.get('RELEASE_PLAIN_PROGRESS') or sys.stderr.isatty():
-            return None
         try:
             stream = open('/dev/tty', 'w')
             if stream.isatty():
@@ -356,31 +365,49 @@ class ProgressDisplay:
         name = clean_progress_text(job['name'])
         key = job.get('id', (name, index))
         duration = job_duration(job)
-        text = f"{name} | {status} | {duration}"
-        return key, (name, status), text, status
+        return key, (name, status), name, status, duration
 
     def update(self, jobs):
-        rows = [self._row(job, index) for index, job in enumerate(jobs)]
+        attempts = [job.get('run_attempt') for job in jobs if isinstance(job.get('run_attempt'), int)]
+        if attempts:
+            latest = max(attempts)
+            jobs = [job for job in jobs if job.get('run_attempt', latest) == latest]
+        rows = []
+        seen = set()
+        for index, job in enumerate(jobs):
+            key = job.get('id', clean_progress_text(job['name']))
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(self._row(job, index))
         if self.tty:
             self._render(rows)
         else:
-            for key, signature, text, _status in rows:
+            for key, signature, name, status, duration in rows:
                 if self.previous.get(key) != signature:
-                    print(text, flush=True)
+                    print(f'{name} | {status} | {duration}', flush=True)
         self.previous = {key: signature for key, signature, *_ in rows}
 
     def _render(self, rows):
-        width = max(1, shutil.get_terminal_size((80, 24)).columns - 1)
+        try:
+            width = max(1, os.get_terminal_size(self.stream.fileno()).columns - 1)
+        except (AttributeError, OSError, ValueError):
+            width = max(1, shutil.get_terminal_size((80, 24)).columns - 1)
         if self.lines:
             print(f'\033[{self.lines}A', end='', file=self.stream)
         count = max(self.lines, len(rows))
         for index in range(count):
             if index < len(rows):
-                _, _, text, status = rows[index]
-                line = fit_terminal(text, width)
+                _, _, name, status, duration = rows[index]
+                suffix = f' | {status} | {duration}'
+                budget = width - len(suffix)
+                if len(name) > budget:
+                    name = (fit_terminal(name, budget - 1) + '…') if budget > 1 else ''
+                line = name + suffix
                 color = self.STATUS_COLORS.get(status)
-                if color and f' | {status} |' in line:
-                    line = line.replace(f' | {status} |', f' | {color}{status}{self.RESET} |', 1)
+                if color:
+                    marker = f' | {status} |'
+                    line = line.replace(marker, f' | {color}{status}{self.RESET} |', 1)
             else:
                 line = ''
             print('\r\033[2K' + line, file=self.stream)
@@ -396,9 +423,23 @@ def watch(tag, sha, old_ids, *, resume_id=None, deadline=None):
     run_id = resume_id
     announced = False
     display = ProgressDisplay()
+
+    def quiet_read(operation):
+        while True:
+            if time.monotonic() >= deadline:
+                raise RuntimeError('timed out refreshing the Release workflow')
+            try:
+                with redirect_stderr(io.StringIO()):
+                    return operation()
+            except (json.JSONDecodeError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                pass
+            time.sleep(min(10, max(0, deadline - time.monotonic())))
+
     while time.monotonic() < deadline:
-        matching = ([api(f'repos/{REPO}/actions/runs/{resume_id}', deadline=deadline)] if resume_id is not None else
-                    [r for r in runs(tag, deadline=deadline) if r['id'] not in old_ids and r['head_branch'] == tag and r['head_sha'] == sha])
+        matching = quiet_read(
+            lambda: ([api(f'repos/{REPO}/actions/runs/{resume_id}', deadline=deadline)] if resume_id is not None else
+                     [r for r in runs(tag, deadline=deadline)
+                      if r['id'] not in old_ids and r['head_branch'] == tag and r['head_sha'] == sha]))
         if len(matching) > 1:
             raise RuntimeError('multiple new release runs found; inspect Actions manually')
         if matching:
@@ -411,17 +452,17 @@ def watch(tag, sha, old_ids, *, resume_id=None, deadline=None):
             if not announced:
                 print(f"Found Release run {run_id}: {run.get('html_url') or f'https://github.com/{REPO}/actions/runs/{run_id}'}", flush=True)
                 announced = True
-            jobs = pages(f'repos/{REPO}/actions/runs/{run_id}/jobs', 'jobs', deadline=deadline)
+            jobs = quiet_read(lambda: pages(f'repos/{REPO}/actions/runs/{run_id}/jobs', 'jobs', deadline=deadline))
             display.update(jobs)
             if run['status'] == 'completed':
                 if run['conclusion'] != 'success':
                     raise RuntimeError(f"Release run {run_id} ended: {progress_status(run)}")
-                r = target_release(tag, deadline=deadline)
+                r = quiet_read(lambda: target_release(tag, deadline=deadline))
                 if not r or r['draft'] or r['prerelease']:
                     raise RuntimeError('workflow succeeded but no formal published release exists')
-                if remote_ref('refs/tags/' + tag, deadline=deadline) != sha:
+                if quiet_read(lambda: remote_ref('refs/tags/' + tag, deadline=deadline)) != sha:
                     raise RuntimeError('published tag no longer matches the release commit')
-                assets = pages(f"repos/{REPO}/releases/{r['id']}/assets", deadline=deadline)
+                assets = quiet_read(lambda: pages(f"repos/{REPO}/releases/{r['id']}/assets", deadline=deadline))
                 names = {a['name'] for a in assets if a.get('state') == 'uploaded' and a.get('size', 0) > 0}
                 missing = assets_expected(tag[1:]) - names
                 if missing:

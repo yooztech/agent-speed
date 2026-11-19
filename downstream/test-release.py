@@ -248,7 +248,7 @@ class ReleaseDriverTests(unittest.TestCase):
                 self.launch(api)
         self.assertEqual(len(attempted), 1)
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), self.latest)
-        self.assertEqual(git(self.root, "rev-parse", "refs/tags/" + tag), self.old)
+        self.assertEqual(git(self.root, "tag", "--list", tag), "")
         remote_tag = git(self.root, "ls-remote", "--refs", "origin", ref)
         self.assertEqual(remote_tag, f"{self.latest}\t{ref}" if accepted else "")
 
@@ -264,7 +264,7 @@ class ReleaseDriverTests(unittest.TestCase):
                          ([":" + ref] if accepted else []) + [self.latest + ":" + ref])
         self.assertEqual(git(self.root, "rev-parse", "HEAD"), self.latest)
         self.assertEqual(self.remote_sha(tag), self.latest)
-        self.assertEqual(git(self.root, "rev-parse", "refs/tags/" + tag), self.old)
+        self.assertEqual(git(self.root, "rev-parse", "refs/tags/" + tag), self.latest)
         self.assertEqual(observed[0][:2], (tag, self.latest))
 
     def test_tag_push_failure_before_remote_acceptance_retries(self):
@@ -283,7 +283,7 @@ class ReleaseDriverTests(unittest.TestCase):
         self.assertEqual(observed[0][:2], ("v1.2.3-fork.2", self.latest))
         self.assertTrue(any(method == "POST" and path.endswith("/42/cancel") for method, path in api.calls))
         self.assertTrue(any(method == "DELETE" and path.endswith("/releases/2") for method, path in api.calls))
-        self.assertEqual(git(self.root, "rev-parse", "refs/tags/v1.2.3-fork.2"), self.old)
+        self.assertEqual(git(self.root, "rev-parse", "refs/tags/v1.2.3-fork.2"), self.latest)
 
     def mutate_workspace(self):
         (self.root / "downstream/config.json").write_text("not the selected configuration\n")
@@ -301,14 +301,13 @@ class ReleaseDriverTests(unittest.TestCase):
             self.assertNotEqual(snapshot, self.root)
             self.mutate_workspace()
             git(self.root, "push", "origin", "HEAD:refs/heads/" + driver.BRANCH)
-            # The caller is free to replace even its local candidate tag meanwhile.
             git(self.root, "tag", "-f", "v1.2.3-fork.2", "HEAD")
             self.concurrent_head = git(self.root, "rev-parse", "HEAD")
 
         observed = self.launch(api, during_preflight=change)
         self.assertEqual(observed[0][:2], ("v1.2.3-fork.2", self.latest))
         self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
-        self.assertEqual(git(self.root, "rev-parse", "refs/tags/v1.2.3-fork.2"), self.concurrent_head)
+        self.assertEqual(git(self.root, "rev-parse", "refs/tags/v1.2.3-fork.2"), self.latest)
         self.assertEqual(git(self.root, "branch", "--show-current"), "unrelated-work")
         self.assertTrue(any(line.startswith("prepare ") for line in self.preflight_log.read_text().splitlines()))
 
@@ -396,7 +395,7 @@ class ReleaseDriverTests(unittest.TestCase):
         self.assertEqual(self.remote_sha("v1.2.3-fork.2"), self.latest)
         self.assertTrue(all(method == "GET" for method, _ in api.calls))
 
-    def test_local_candidate_tag_is_irrelevant_and_preserved(self):
+    def test_local_candidate_tag_is_synchronized(self):
         git(self.root, "tag", "-f", "v1.2.3-fork.2", self.latest)
         api = FakeAPI(self.baseline, [self.published.copy(), self.draft.copy()])
         self.launch(api)
@@ -586,6 +585,13 @@ class ActionsProgressTests(unittest.TestCase):
                         conclusion = ('failure' if os.environ['SCENARIO'] == 'failure' else 'success') if status == 'completed' else None
                         data = {'workflow_runs': [{'id': 42, 'head_branch': 'v1.2.3-fork.2', 'head_sha': 'abc', 'status': status, 'conclusion': conclusion, 'html_url': 'https://example.invalid/runs/42'}]}
                 elif '/jobs?' in path:
+                    if os.environ['SCENARIO'] == 'transient-jobs':
+                        failures = pathlib.Path(os.environ['FAIL_FILE'])
+                        count = int(failures.read_text()) if failures.exists() else 0
+                        if count < 4:
+                            failures.write_text(str(count + 1))
+                            print('connection reset by peer', file=sys.stderr)
+                            sys.exit(1)
                     status = 'completed' if n >= 6 else 'in_progress'
                     conclusion = ('failure' if os.environ['SCENARIO'] == 'failure' else 'success') if status == 'completed' else None
                     step = 'Package' if n >= 5 else 'Build'
@@ -639,7 +645,8 @@ class ActionsProgressTests(unittest.TestCase):
                     sys.exit(1)
             ''')
             env = dict(os.environ, RELEASE_GH=str(fake), FAKE_STATE=str(root / 'state'),
-                       SCENARIO=scenario, ASSETS=json.dumps(list(driver.assets_expected('1.2.3-fork.2'))),
+                       FAIL_FILE=str(root / 'failures'), SCENARIO=scenario,
+                       ASSETS=json.dumps(list(driver.assets_expected('1.2.3-fork.2'))),
                        RELEASE_PLAIN_PROGRESS='1')
             return subprocess.run([sys.executable, '-c', code, str(HERE / 'release.py'), scenario,
                                    'cli' if cli else 'watch', str(root)],
@@ -655,10 +662,17 @@ class ActionsProgressTests(unittest.TestCase):
             self.assertIn(text, result.stdout)
         self.assertNotIn('\x1b', result.stdout)
 
+    def test_transient_job_refreshes_retry_silently(self):
+        result = self.run_watch('transient-jobs')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('transient failure', result.stderr)
+        self.assertNotIn('connection reset', result.stderr)
+        self.assertIn('Linux | running | -', result.stdout)
+
     def test_failure_timeout_and_api_error_exit_nonzero(self):
         for scenario, message in (('failure', 'ended: failed'),
                                   ('timeout', 'timed out watching'),
-                                  ('api-error', 'GitHub API unavailable')):
+                                  ('api-error', 'timed out refreshing the Release workflow')):
             with self.subTest(scenario=scenario):
                 result = self.run_watch(scenario)
                 self.assertNotEqual(result.returncode, 0)
