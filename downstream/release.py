@@ -329,23 +329,38 @@ class ProgressDisplay:
     }
     RESET = '\033[0m'
 
-    def __init__(self):
-        self.tty = sys.stdout.isatty()
+    def __init__(self, stream=None):
+        self.stream = stream if stream is not None else self._terminal()
+        self.tty = self.stream is not None and self.stream.isatty()
         self.lines = 0
         self.previous = {}
 
     @staticmethod
-    def _row(job, index, updated):
+    def _terminal():
+        if sys.stdout.isatty():
+            return sys.stdout
+        if os.environ.get('RELEASE_PLAIN_PROGRESS') or sys.stderr.isatty():
+            return None
+        try:
+            stream = open('/dev/tty', 'w')
+            if stream.isatty():
+                return stream
+            stream.close()
+        except OSError:
+            pass
+        return None
+
+    @staticmethod
+    def _row(job, index):
         status = progress_status(job)
         name = clean_progress_text(job['name'])
         key = job.get('id', (name, index))
         duration = job_duration(job)
-        text = f"{name} | {status} | {duration} | updated {updated}"
+        text = f"{name} | {status} | {duration}"
         return key, (name, status), text, status
 
     def update(self, jobs):
-        updated = datetime.now().strftime('%H:%M:%S')
-        rows = [self._row(job, index, updated) for index, job in enumerate(jobs)]
+        rows = [self._row(job, index) for index, job in enumerate(jobs)]
         if self.tty:
             self._render(rows)
         else:
@@ -357,7 +372,7 @@ class ProgressDisplay:
     def _render(self, rows):
         width = max(1, shutil.get_terminal_size((80, 24)).columns - 1)
         if self.lines:
-            print(f'\033[{self.lines}A', end='')
+            print(f'\033[{self.lines}A', end='', file=self.stream)
         count = max(self.lines, len(rows))
         for index in range(count):
             if index < len(rows):
@@ -368,11 +383,11 @@ class ProgressDisplay:
                     line = line.replace(f' | {status} |', f' | {color}{status}{self.RESET} |', 1)
             else:
                 line = ''
-            print('\r\033[2K' + line)
+            print('\r\033[2K' + line, file=self.stream)
         if count > len(rows):
-            print(f'\033[{count - len(rows)}A', end='')
+            print(f'\033[{count - len(rows)}A', end='', file=self.stream)
         self.lines = len(rows)
-        sys.stdout.flush()
+        self.stream.flush()
 
 
 def watch(tag, sha, old_ids, *, resume_id=None, deadline=None):

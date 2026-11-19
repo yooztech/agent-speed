@@ -1,7 +1,7 @@
-From 93cd0fd22b59ef584257f1e8e095c4bea45ccf6a Mon Sep 17 00:00:00 2001
+From 0bb7c784705fe39554a5c511e1810e5f13a2436b Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Fri, 6 Nov 2026 14:43:10 +0800
-Subject: [PATCH 15/25] Integrate remote network traffic by host and source
+Subject: [PATCH 15/29] Integrate remote network traffic by host and source
 
 ---
  README.md                                     |   2 +
@@ -698,7 +698,7 @@ index aa3f2078..9d8c2aee 100644
          .accessibilityAddTraits(.isButton)
      }
 diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
-index 420de6a8..a13efa1e 100644
+index 420de6a8..385b5d7c 100644
 --- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 +++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 @@ -21,23 +21,29 @@ final class HistoryViewModel {
@@ -759,10 +759,10 @@ index 420de6a8..a13efa1e 100644
 +            guard state.snapshot?.traffic?.enabled == true else { continue }
 +            let enabled = SourceSet(state.dashboardSnapshot?.sources.filter(\.enabled).map(\.kind) ?? [])
 +            let machine = state.snapshot?.machineId ?? host.id.uuidString
-+            let rows = TrafficVisibility.days(state.trafficHistory.values.filter { !$0.isMachine }.map {
++            let rows = TrafficVisibility.days(state.trafficHistory.values.map {
 +                TrafficDay(day: $0.day, key: $0.key, rx: $0.rx, tx: $0.tx, rxTools: $0.rxTools,
 +                           txTools: $0.txTools, sampledMs: $0.sampledMs)
-+            }, enabled: enabled)
++            }.filter { !$0.isMachine }, enabled: enabled)
 +            for row in rows {
 +                guard seen.insert(machine + "\u{0}" + row.key).inserted else { continue }
 +                days.append(row)

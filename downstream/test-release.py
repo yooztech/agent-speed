@@ -518,7 +518,7 @@ class ActionsProgressTests(unittest.TestCase):
              'steps': [{'name': 'Compile', 'status': 'in_progress'}]},
         ]
         with patch.object(sys, 'stdout', out):
-            display = driver.ProgressDisplay()
+            display = driver.ProgressDisplay(out)
             display.update(jobs)
             display.update(jobs)
             jobs[0]['status'] = 'in_progress'
@@ -531,10 +531,10 @@ class ActionsProgressTests(unittest.TestCase):
         text = out.getvalue()
         self.assertEqual(text.count('Build (linux, x86_64) | waiting'), 1)
         self.assertEqual(text.count('Build (linux, arm64) | running'), 1)
-        self.assertIn('Build (linux, arm64) | running | 1:02:03 | updated ', text)
-        self.assertIn('Build (linux, x86_64) | running | - | updated ', text)
-        self.assertIn('Build (linux, x86_64) | success | - | updated ', text)
-        self.assertIn('Build (linux, arm64) | cancelled | 1:02:03 | updated ', text)
+        self.assertIn('Build (linux, arm64) | running | 1:02:03', text)
+        self.assertIn('Build (linux, x86_64) | running | -', text)
+        self.assertIn('Build (linux, x86_64) | success | -', text)
+        self.assertIn('Build (linux, arm64) | cancelled | 1:02:03', text)
         self.assertNotIn('Compile', text)
         self.assertNotIn('Test', text)
         self.assertNotIn('Complete job', text)
@@ -554,7 +554,7 @@ class ActionsProgressTests(unittest.TestCase):
         ]
         with patch.object(sys, 'stdout', out), patch.object(
                 driver.shutil, 'get_terminal_size', lambda fallback: os.terminal_size((80, 24))):
-            display = driver.ProgressDisplay()
+            display = driver.ProgressDisplay(out)
             display.update(jobs)
             display.update(jobs)
         text = out.getvalue()
@@ -639,7 +639,8 @@ class ActionsProgressTests(unittest.TestCase):
                     sys.exit(1)
             ''')
             env = dict(os.environ, RELEASE_GH=str(fake), FAKE_STATE=str(root / 'state'),
-                       SCENARIO=scenario, ASSETS=json.dumps(list(driver.assets_expected('1.2.3-fork.2'))))
+                       SCENARIO=scenario, ASSETS=json.dumps(list(driver.assets_expected('1.2.3-fork.2'))),
+                       RELEASE_PLAIN_PROGRESS='1')
             return subprocess.run([sys.executable, '-c', code, str(HERE / 'release.py'), scenario,
                                    'cli' if cli else 'watch', str(root)],
                                   cwd=HERE.parent, env=env, capture_output=True, text=True)
@@ -648,8 +649,8 @@ class ActionsProgressTests(unittest.TestCase):
         result = self.run_watch('success')
         self.assertEqual(result.returncode, 0, result.stderr)
         for text in ('Waiting for GitHub Actions', 'https://example.invalid/runs/42',
-                     'Linux | running | - | updated ', 'Windows | waiting | - | updated ',
-                     'macOS | success | - | updated ', 'Linux | success | - | updated ',
+                     'Linux | running | -', 'Windows | waiting | -',
+                     'macOS | success | -', 'Linux | success | -',
                      'Published v1.2.3-fork.2'):
             self.assertIn(text, result.stdout)
         self.assertNotIn('\x1b', result.stdout)
@@ -671,7 +672,7 @@ class ActionsProgressTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('Waiting for GitHub Actions Release run', result.stdout)
         self.assertIn('Found Release run 42:', result.stdout)
-        self.assertIn('Linux | running | - | updated ', result.stdout)
+        self.assertIn('Linux | running | -', result.stdout)
         self.assertIn('Published v1.2.3-fork.2', result.stdout)
 
 

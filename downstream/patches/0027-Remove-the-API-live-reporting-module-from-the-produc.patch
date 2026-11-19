@@ -1,7 +1,7 @@
-From 0c201629e6b4c29c8b6b784708c5d653182c3730 Mon Sep 17 00:00:00 2001
+From d4d29108a5fb80e0973eb8cae93f397ee8919147 Mon Sep 17 00:00:00 2001
 From: Downstream Patch Queue <downstream@localhost>
 Date: Thu, 19 Nov 2026 12:02:21 +0800
-Subject: [PATCH 27/27] Remove the API live reporting module from the product
+Subject: [PATCH 27/29] Remove the API live reporting module from the product
 
 Cut the live reporting (Settings -> API) module at its integration seams on
 all three platforms instead of deleting its engine sources.
@@ -32,7 +32,8 @@ the queue keeps rebasing cleanly.
  .../SettingsTabViewController.swift           | 10 ++--
  windows/src/AgentSpeed/App/AppController.cs   |  5 --
  .../AgentSpeed/Settings/SettingsViewModel.cs  |  1 -
- 11 files changed, 17 insertions(+), 115 deletions(-)
+ .../Reporting/ReportStringsTests.cs           |  2 +-
+ 12 files changed, 18 insertions(+), 116 deletions(-)
 
 diff --git a/linux/app/qml/AboutPage.qml b/linux/app/qml/AboutPage.qml
 index f35a7a78..82333fb9 100644
@@ -411,3 +412,16 @@ index 12b53821..4d7f0a04 100644
          Pages.Add(new NavItem("quota", "\uED0E", "win.quota.title"));
          Pages.Add(new NavItem("sources", "", "settings.sources"));
          Pages.Add(new NavItem("about", "", "settings.about"));
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportStringsTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportStringsTests.cs
+index 4e78bb9b..c7745920 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportStringsTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/Reporting/ReportStringsTests.cs
+@@ -9,7 +9,7 @@ public partial class ReportStringsTests
+     /// <summary>The live reporting strings the Windows UI uses (DESIGN 11).</summary>
+     public static readonly string[] UsedKeys =
+     [
+-        "settings.report", "report.enabled", "report.enabled.hint",
++        "report.enabled", "report.enabled.hint",
+         "report.service", "report.service.custom", "report.url", "report.url.placeholder", "report.url.invalid", "report.url.https",
+         "report.url.loopback", "report.service.checking", "report.service.notSupported", "report.service.invalid",
+         "report.service.unreachable", "report.service.insecure", "report.service.unavailable", "report.service.retry",
