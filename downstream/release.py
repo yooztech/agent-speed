@@ -318,59 +318,61 @@ def fit_terminal(text, width):
 
 
 class ProgressDisplay:
-    """Render a live table on a direct TTY, or a compact change log through tee."""
+    """Render one live row per job on a TTY; log only status changes through a pipe."""
+    STATUS_COLORS = {
+        'waiting': '\033[36m',
+        'running': '\033[33m',
+        'success': '\033[32m',
+        'failed': '\033[31m',
+        'cancelled': '\033[90m',
+        'skipped': '\033[90m',
+    }
+    RESET = '\033[0m'
+
     def __init__(self):
         self.tty = sys.stdout.isatty()
         self.lines = 0
         self.previous = {}
-        self.last_output = time.monotonic()
+
+    @staticmethod
+    def _row(job, index, updated):
+        status = progress_status(job)
+        name = clean_progress_text(job['name'])
+        key = job.get('id', (name, index))
+        duration = job_duration(job)
+        text = f"{name} | {status} | {duration} | updated {updated}"
+        return key, (name, status), text, status
 
     def update(self, jobs):
-        now = time.monotonic()
-        rows = []
-        for index, job in enumerate(jobs):
-            status = progress_status(job)
-            current = next((step for step in job.get('steps', [])
-                            if step['status'] == 'in_progress'), None) if status == 'running' else None
-            step = clean_progress_text(current['name']) if current else ''
-            name = clean_progress_text(job['name'])
-            key = job.get('id', (name, index))
-            signature = (name, status, step)
-            duration = job_duration(job)
-            row = f"{name} | {status} | {duration}" + (f' | {step}' if step else '')
-            rows.append((key, signature, row, name, status, duration, step))
+        updated = datetime.now().strftime('%H:%M:%S')
+        rows = [self._row(job, index, updated) for index, job in enumerate(jobs)]
         if self.tty:
-            if self.lines:
-                print(f'\033[{self.lines}A', end='')
-            width = max(1, shutil.get_terminal_size((80, 24)).columns - 1)
-            count = max(self.lines, len(rows))
-            for index in range(count):
-                if index < len(rows):
-                    _, _, _, name, status, duration, step = rows[index]
-                    suffix = f' | {status} | {duration}'
-                    available = max(0, width - len(suffix))
-                    if len(name) > available and available > 3:
-                        left = (available - 1) // 2
-                        name = name[:left] + '…' + name[-(available - left - 1):]
-                    line = name + suffix + (f' | {step}' if step else '')
-                    line = fit_terminal(line, width)
-                else:
-                    line = ''
-                print('\r\033[2K' + line)
-            if count > len(rows):
-                print(f'\033[{count - len(rows)}A', end='')
-            self.lines = len(rows)
-            sys.stdout.flush()
+            self._render(rows)
         else:
-            changed = [row for key, signature, row, *_ in rows if self.previous.get(key) != signature]
-            for row in changed:
-                print(row, flush=True)
-            if changed:
-                self.last_output = now
-            elif now - self.last_output >= 60:
-                print(f'Actions still running ({len(rows)} jobs reported).', flush=True)
-                self.last_output = now
+            for key, signature, text, _status in rows:
+                if self.previous.get(key) != signature:
+                    print(text, flush=True)
         self.previous = {key: signature for key, signature, *_ in rows}
+
+    def _render(self, rows):
+        width = max(1, shutil.get_terminal_size((80, 24)).columns - 1)
+        if self.lines:
+            print(f'\033[{self.lines}A', end='')
+        count = max(self.lines, len(rows))
+        for index in range(count):
+            if index < len(rows):
+                _, _, text, status = rows[index]
+                line = fit_terminal(text, width)
+                color = self.STATUS_COLORS.get(status)
+                if color and f' | {status} |' in line:
+                    line = line.replace(f' | {status} |', f' | {color}{status}{self.RESET} |', 1)
+            else:
+                line = ''
+            print('\r\033[2K' + line)
+        if count > len(rows):
+            print(f'\033[{count - len(rows)}A', end='')
+        self.lines = len(rows)
+        sys.stdout.flush()
 
 
 def watch(tag, sha, old_ids, *, resume_id=None, deadline=None):
