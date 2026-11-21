@@ -96,11 +96,11 @@ jobs:
   macos:
     name: macOS
     needs: collector
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
       - name: Prepare downstream tree
-        timeout-minutes: 10
+        timeout-minutes: 3
         run: python3 downstream/manage.py prepare "$RUNNER_TEMP/agent-speed-prepared"
       - uses: actions/download-artifact@v8
         with:

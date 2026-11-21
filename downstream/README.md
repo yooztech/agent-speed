@@ -1318,14 +1318,9 @@ tagged commit must be an ancestor of `downstream/patch-build`. Fork tags use
 prepared release tree and used by all platform builds and packages.
 The workflow publishes Linux, macOS and Windows artifacts together, including
 the x86_64 collector in macOS and Windows packages. Windows offers both a
-portable ZIP and a per-user installer. The macOS job uses the repository's
-self-hosted Apple Silicon runner selected by
-`[self-hosted, macOS, ARM64]`; that host must keep a current Xcode 26/macOS 26
-SDK, Python 3 and a logged-in GUI session for the AppKit update test. Xcode is
-selected for the job through `DEVELOPER_DIR`; the Release does not run
-`xcode-select`, require sudo or mutate the shared runner's system default. This
-runner executes only trusted tagged Release code, and an unavailable runner
-queues the job rather than falling back to another host.
+portable ZIP and a per-user installer. The macOS job uses GitHub's hosted
+`macos-26` runner. It selects Xcode through `DEVELOPER_DIR` without changing the
+system default and runs the AppKit update relaunch test before packaging.
 The Windows installer smoke test exercises legacy startup migration, upgrades
 with startup enabled and disabled, and explicit installer task overrides.
 Drafts can be retried and published; published releases are left unchanged.
@@ -1350,7 +1345,7 @@ Prepare clones the pinned upstream and applies every entry in order with
 `git am`. Each clone attempt has a 60-second timeout; Git also aborts an HTTP
 transfer that stays below 1 KiB/s for 15 seconds. Retryable clone failures
 remove the partial checkout before retrying, up to four attempts per clone.
-The macOS Release prepare step has a separate 10-minute limit.
+The macOS Release prepare step has a separate 3-minute limit.
 The `verify` implementation remains a maintenance diagnostic, not a release
 prerequisite. Do not run full registered platform suites before starting
 Release: Release owns those checks and blocks publication on failure. Use
