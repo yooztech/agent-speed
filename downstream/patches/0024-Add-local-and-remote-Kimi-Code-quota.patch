@@ -1641,6 +1641,16 @@ index c83fa3d5..9fc7235c 100644
          scheduler.cancelRetry(for: reader.provider.id)
          if startup { startupAttempted.insert(reader.provider.id) }
          // Supersede a cache-only load without allowing its late result to overwrite a live read.
+@@ -277,6 +365,9 @@ final class QuotaController {
+         var unconfigured: Set<String> = []
+         for provider in providers {
+             guard let snapshot = readers[provider.id]?.snapshot else { continue }
++            // A remote cache miss is not evidence of a Kimi account.
++            if QuotaSourceIdentity.providerID(provider.id) == "kimi",
++               snapshot.configured == nil, snapshot.observedAt == nil { continue }
+             if snapshot.configured == false { unconfigured.insert(provider.id) } else { visible.append(snapshot) }
+         }
+         snapshots = visible
 diff --git a/macos/Sources/AgentSpeed/App/QuotaNotch.swift b/macos/Sources/AgentSpeed/App/QuotaNotch.swift
 index 2edf493b..39b21eb8 100644
 --- a/macos/Sources/AgentSpeed/App/QuotaNotch.swift
@@ -2088,6 +2098,15 @@ index 9daefa31..55f4aabf 100644
  
      var body: some View {
          let quota = model.quota
+@@ -23,7 +24,7 @@ struct QuotaPane: View {
+                 if quotaEnabledSources(quota).isEmpty { Footnote(l10n("mac.quota.enableSource")) }
+                 ForEach(configured, id: \.id) { provider in
+                     let accounts = quota.snapshots.filter { $0.id == provider.id }
+-                    if accounts.isEmpty {
++                    if accounts.isEmpty && QuotaSourceIdentity.providerID(provider.id) != "kimi" {
+                         VStack(alignment: .leading, spacing: 12) {
+                             Text(provider.name).font(.headline)
+                             Footnote(l10n(!quota.networkEnabled ? "mac.quota.offline" : quota.isRefreshing ? "mac.quota.refreshing" : "mac.quota.initial"))
 @@ -40,6 +41,9 @@ struct QuotaPane: View {
                  Toggle(l10n("mac.quota.floating"), isOn: Binding(get: { quota.floatingVisible }, set: { quota.floatingVisible = $0 }))
                  Toggle(l10n("mac.quota.keepExpanded"), isOn: Binding(get: { quota.keepExpanded }, set: { quota.keepExpanded = $0 }))
@@ -3018,9 +3037,8 @@ index 619fa13a..9f97b107 100644
              fixture.connect()
              await fixture.controller.operationBarrier().value
 -            #expect(Set(fixture.controller.availableSources.map(\.id)) == [fixture.codex, fixture.go])
--            #expect(Set(fixture.controller.snapshots.map(\.id)) == [fixture.codex, fixture.go])
 +            #expect(Set(fixture.controller.availableSources.map(\.id)) == [fixture.codex, fixture.go, fixture.kimi])
-+            #expect(Set(fixture.controller.snapshots.map(\.id)) == [fixture.codex, fixture.go, fixture.kimi])
+             #expect(Set(fixture.controller.snapshots.map(\.id)) == [fixture.codex, fixture.go])
              #expect(fixture.controller.snapshots.allSatisfy { $0.status == .error && $0.observedAt == nil })
              #expect(fixture.sent == 0, "Offline hydration must never issue remote HTTP or SSH quota commands")
 -            #expect(quotaEnabledSources(fixture.controller).count == 2)
@@ -5145,6 +5163,16 @@ index a26d6ec8..f76a30ee 100644
                  !_readers.TryGetValue(id, out var current) || !ReferenceEquals(current, reader) || reader.Busy) return;
              if (reader.Retry.DueAt is { } deadline && deadline > _now()) { ScheduleRetry(id, reader); return; }
              RefreshReader(id, reader, startup: false);
+@@ -359,7 +475,8 @@ internal sealed class QuotaSurface : IDisposable
+         .Where(definition => _readers.ContainsKey(definition.Id))
+         .Select(definition => _readers[definition.Id].Snapshot)
+         // A provider without identified credential configuration never occupies an account slot.
+-        .Where(snapshot => snapshot.Configured != false).ToArray();
++        .Where(snapshot => snapshot.Configured != false && (QuotaProviders.ProviderId(snapshot.Id) != "kimi" ||
++            snapshot.Configured == true || snapshot.ObservedAt.HasValue)).ToArray();
+ 
+     private string Text(string key) => _loc["win.quota." + key];
+     private string Percent(double? value) => QuotaFormat.Percent(_loc, value);
 diff --git a/windows/tests/AgentSpeed.Core.Tests/KimiApiKeyTests.cs b/windows/tests/AgentSpeed.Core.Tests/KimiApiKeyTests.cs
 new file mode 100644
 index 00000000..a3b4035a

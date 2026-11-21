@@ -3637,10 +3637,10 @@ index 9f97b107..0d22fe67 100644
              fixture.connect()
              await fixture.controller.operationBarrier().value
 -            #expect(Set(fixture.controller.availableSources.map(\.id)) == [fixture.codex, fixture.go, fixture.kimi])
--            #expect(Set(fixture.controller.snapshots.map(\.id)) == [fixture.codex, fixture.go, fixture.kimi])
+-            #expect(Set(fixture.controller.snapshots.map(\.id)) == [fixture.codex, fixture.go])
 +            let expected = [fixture.codex, fixture.go, fixture.kimi, fixture.commandCode]
 +            #expect(Set(fixture.controller.availableSources.map(\.id)) == Set(expected))
-+            #expect(Set(fixture.controller.snapshots.map(\.id)) == Set(expected))
++            #expect(Set(fixture.controller.snapshots.map(\.id)) == [fixture.codex, fixture.go, fixture.commandCode])
              #expect(fixture.controller.snapshots.allSatisfy { $0.status == .error && $0.observedAt == nil })
              #expect(fixture.sent == 0, "Offline hydration must never issue remote HTTP or SSH quota commands")
 -            #expect(quotaEnabledSources(fixture.controller).count == 3)
