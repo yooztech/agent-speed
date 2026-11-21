@@ -1347,7 +1347,10 @@ python3 downstream/manage.py prepare /tmp/agent-speed-prepared
 ```
 
 Prepare clones the pinned upstream and applies every entry in order with
-`git am`; it stops on the first failure and leaves the output for diagnosis.
+`git am`. Each clone attempt has a 60-second timeout; Git also aborts an HTTP
+transfer that stays below 1 KiB/s for 15 seconds. Retryable clone failures
+remove the partial checkout before retrying, up to four attempts per clone.
+The macOS Release prepare step has a separate 10-minute limit.
 The `verify` implementation remains a maintenance diagnostic, not a release
 prerequisite. Do not run full registered platform suites before starting
 Release: Release owns those checks and blocks publication on failure. Use

@@ -81,6 +81,8 @@ def registry(names, require_commands=True):
     return entries
 
 
+CLONE_TIMEOUT = 60
+CLONE_LOW_SPEED_TIME = 15
 PREPARE_ATTEMPTS = 2
 PREPARE_RETRY_DELAY = 1
 CHECKOUT_SETTLE_DELAY = 1
@@ -97,15 +99,24 @@ def prepare(output, base, names):
         if not output.is_symlink() and (current.st_dev, current.st_ino) == (identity.st_dev, identity.st_ino):
             shutil.rmtree(output)
 
+    clone_attempt = 0
+
     def clone():
+        nonlocal clone_attempt
+        clone_attempt += 1
+        print(f"prepare: cloning upstream (attempt {clone_attempt}, timeout {CLONE_TIMEOUT}s)",
+              flush=True)
         # Reserve the destination atomically; never remove a directory we did not create.
         output.mkdir()
         identity = output.stat()
         try:
             release_network.run_once(
-                ["git", "clone", "--no-checkout", CONFIG["upstream_url"], str(output)],
-                timeout=300)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                ["git", "-c", "http.lowSpeedLimit=1024", "-c",
+                 f"http.lowSpeedTime={CLONE_LOW_SPEED_TIME}", "clone", "--no-checkout",
+                 CONFIG["upstream_url"], str(output)],
+                timeout=CLONE_TIMEOUT, kill_group_on_timeout=True)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+            print(f"prepare: clone attempt {clone_attempt} failed: {error}", file=sys.stderr, flush=True)
             discard(identity)
             raise
         return identity
@@ -197,7 +208,7 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except subprocess.CalledProcessError as error:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         print(f"error: {error}", file=sys.stderr)
         detail = error.stderr or error.stdout or ""
         if isinstance(detail, bytes):

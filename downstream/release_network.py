@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Bounded retries for transient failures of read-only network operations."""
+import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -47,16 +49,32 @@ def is_transient(exc):
     return bool(_TRANSIENT.search(_text(exc)))
 
 
-def run_once(args, *, cwd=None, capture=True, timeout=60, deadline=None, env=None):
+def run_once(args, *, cwd=None, capture=True, timeout=60, deadline=None, env=None,
+             kill_group_on_timeout=False):
     if deadline is not None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('network operation deadline exceeded')
         timeout = min(timeout, remaining)
     try:
-        result = subprocess.run(args, cwd=cwd, check=True, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                timeout=timeout, env=env)
+        if kill_group_on_timeout and os.name == 'posix':
+            # Git launches transport and pack helpers that can outlive the parent.
+            with subprocess.Popen(args, cwd=cwd, text=True, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, env=env, start_new_session=True) as proc:
+                try:
+                    stdout, stderr = proc.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    raise
+                result = subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+                result.check_returncode()
+        else:
+            result = subprocess.run(args, cwd=cwd, check=True, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    timeout=timeout, env=env)
     except subprocess.CalledProcessError as exc:
         if not capture and exc.stdout:
             print(exc.stdout, end='', flush=True)
@@ -81,7 +99,7 @@ def retry(operation, *, label, deadline=None, attempts=4, retry_any=False):
             # A public-repository clone can fail with a git/curl message that is
             # still transient but not worth enumerating forever. Retry those
             # failures unless the text proves the request is deterministic.
-            transient = (retry_any and not permanent) or is_transient(exc)
+            transient = not permanent if retry_any else is_transient(exc)
             if not transient or attempt + 1 >= attempts:
                 raise
             delay = 2 ** attempt

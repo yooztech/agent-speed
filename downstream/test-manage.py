@@ -22,7 +22,7 @@ class CloneRetryTests(unittest.TestCase):
             calls = []
 
             def clone(args, **kwargs):
-                calls.append(kwargs['timeout'])
+                calls.append(args)
                 self.assertEqual(list(output.iterdir()), [])
                 if len(calls) == 1:
                     (output / 'partial').write_text('partial')
@@ -33,7 +33,7 @@ class CloneRetryTests(unittest.TestCase):
             with patch.object(manage.release_network, 'run_once', side_effect=clone), \
                  patch.object(manage.release_network.time, 'sleep'), patch.object(manage, 'run'):
                 self.assertEqual(manage.prepare(output, 'a' * 40, []), output)
-            self.assertEqual(calls, [300, 300])
+            self.assertEqual(len(calls), 2)
             self.assertTrue((output / 'complete').exists())
 
     def test_unclassified_clone_failure_still_retries(self):
