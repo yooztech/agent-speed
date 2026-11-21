@@ -1,7 +1,7 @@
-From bc26f6bc72da92c65262ebf2221f3c76dedb568e Mon Sep 17 00:00:00 2001
+From 965b919bd22bb4a68886e9988ae44939f75cb19a Mon Sep 17 00:00:00 2001
 From: yooztech <service@yooztech.com>
 Date: Mon, 16 Nov 2026 12:22:09 +0800
-Subject: [PATCH 21/26] Add Windows Codex quota monitoring
+Subject: [PATCH 21/29] Add Windows Codex quota monitoring
 
 ---
  spec/QUOTA.md                                 |  34 +-
@@ -31,11 +31,10 @@ Subject: [PATCH 21/26] Add Windows Codex quota monitoring
  .../AgentSpeed/Settings/QuotaDisplayClock.cs  |  60 ++
  .../Settings/QuotaNotch.LICENSE.txt           |  49 ++
  .../src/AgentSpeed/Settings/QuotaNotchGoo.cs  |  95 +++
- .../AgentSpeed/Settings/QuotaNotchRegion.cs   | 118 +++
- .../src/AgentSpeed/Settings/QuotaNotchView.cs | 477 +++++++++++
- .../AgentSpeed/Settings/QuotaNotchWindow.cs   | 776 ++++++++++++++++++
+ .../src/AgentSpeed/Settings/QuotaNotchView.cs | 471 +++++++++++
+ .../AgentSpeed/Settings/QuotaNotchWindow.cs   | 762 ++++++++++++++++++
  .../Settings/QuotaRetryScheduler.cs           |  35 +
- .../AgentSpeed/Settings/QuotaSettingsPage.cs  | 319 +++++++
+ .../AgentSpeed/Settings/QuotaSettingsPage.cs  | 319 ++++++++
  .../src/AgentSpeed/Settings/QuotaSurface.cs   | 398 +++++++++
  .../AgentSpeed/Settings/SettingsViewModel.cs  |   1 +
  .../AgentSpeed/Settings/SettingsWindow.xaml   |  12 +-
@@ -47,7 +46,7 @@ Subject: [PATCH 21/26] Add Windows Codex quota monitoring
  .../QuotaFailureRetryTests.cs                 | 112 +++
  .../QuotaFormatTests.cs                       | 260 ++++++
  .../QuotaNotchGripMotionTests.cs              | 179 ++++
- .../QuotaNotchLayoutTests.cs                  |  36 +++
+ .../QuotaNotchLayoutTests.cs                  |  36 +
  .../Reporting/ReportMenuTests.cs              |  11 +-
  .../SettingsSerializerTests.cs                | 109 +++
  .../AgentSpeed.Windows.Tests/AssemblyInfo.cs  |   3 +
@@ -57,7 +56,7 @@ Subject: [PATCH 21/26] Add Windows Codex quota monitoring
  .../QuotaSurfaceRetryTests.cs                 | 151 ++++
  .../QuotaSurfaceTests.cs                      | 526 ++++++++++++
  .../QuotaWarmStartupTests.cs                  | 101 +++
- 53 files changed, 7054 insertions(+), 54 deletions(-)
+ 52 files changed, 6914 insertions(+), 54 deletions(-)
  create mode 100644 windows/src/AgentSpeed.Core/CodexQuotaProvider.cs
  create mode 100644 windows/src/AgentSpeed.Core/QuotaSnapshot.cs
  create mode 100644 windows/src/AgentSpeed.Presentation/Settings/QuotaFailureRetry.cs
@@ -72,7 +71,6 @@ Subject: [PATCH 21/26] Add Windows Codex quota monitoring
  create mode 100644 windows/src/AgentSpeed/Settings/QuotaDisplayClock.cs
  create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotch.LICENSE.txt
  create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchGoo.cs
- create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchRegion.cs
  create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchView.cs
  create mode 100644 windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
  create mode 100644 windows/src/AgentSpeed/Settings/QuotaRetryScheduler.cs
@@ -93,7 +91,7 @@ Subject: [PATCH 21/26] Add Windows Codex quota monitoring
  create mode 100644 windows/tests/AgentSpeed.Windows.Tests/QuotaWarmStartupTests.cs
 
 diff --git a/spec/QUOTA.md b/spec/QUOTA.md
-index 56a859d2..cc7bda34 100644
+index 56a859d2..78c1e2fd 100644
 --- a/spec/QUOTA.md
 +++ b/spec/QUOTA.md
 @@ -1,8 +1,8 @@
@@ -149,10 +147,10 @@ index 56a859d2..cc7bda34 100644
  Both floating panels retain full-strength provider logos, allowance rings and numerical readings when showing an old observation, including after a refresh failure, with network access disabled or when the observation is more than fifteen minutes old. Stale status, the original observation time and details remain visible; full brightness never marks old data as fresh. Ring background tracks, unknown-reading styling and the normal expansion/collapse fade are independent and unchanged.
  
 -By default, without pointer attention, the macOS panel start and rest as a collapsed strip: 10 by 79 logical pixels on vertical edges or 79 by 10 on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
-+Dashboard floating windows and the quota floating panel have independent context-menu controls. On Windows, the quota panel uses direct WPF drawing in tightly bounded native windows for the main shape and its details card. The host owns physical monitor/work-area placement, closest-edge dragging, persisted monitor/edge/along position, and DPI correction. Drawing, hit classification, and the operating-system window region use the same geometry, leaving unpainted corners and holes available to other desktop windows. Successful region handles are owned by Windows; intermediate handles and handles from failed region updates are released by the application. A region setup failure hides the panel rather than leaving a transparent rectangular input blocker. The panel follows the existing ThemeService's resolved light/dark appearance, including live System changes.
++Dashboard floating windows and the quota floating panel have independent context-menu controls. On Windows, the quota panel uses direct WPF drawing in tightly bounded native windows for the main shape and its details card. The host owns physical monitor/work-area placement, closest-edge dragging, persisted monitor/edge/along position, and DPI correction. Layered-window painting, hit classification and the operating system's per-pixel alpha hit test use the same geometry, so unpainted corners and holes stay transparent and available to other desktop windows. Windows clips the silhouette from the antialiased alpha itself; no GDI window region, region handle or region update is installed or owned. A failure to produce the first painted frame hides the panel rather than leaving a transparent rectangular input blocker. The panel follows the existing ThemeService's resolved light/dark appearance, including live System changes.
  
 -On macOS the Subscription preference “Keep expanded” (Simplified Chinese: “保持展开”) sits immediately after the floating-panel visibility switch. It defaults off and persists independently of visibility and monitor/edge/along placement; missing or nonboolean values retain the off default without a settings-version migration. When enabled, the first visible body is already expanded at startup or re-show, even if Settings has never been opened. Leaving the panel does not collapse its body. This preference changes only the body target: it does not synthesize pointer attention, reveal the six-dot grip, open an account card, refresh quota or rebuild a provider. The resting arc still follows body expansion and the arc/disc/dots retain their independent real hover/held interaction. Disabling the preference applies immediately but preserves any real body/card/menu/grace/pending-drag/active-drag attention until that interaction ends. Hide/close clear interaction and stop finite motion; re-show reads the preference again, and settled pinned rest has no continuous rendering subscription.
-+The main HWND keeps a bounded animation canvas stable while the painted shape changes. Its actual input region excludes unused canvas except for the small control padding and narrow connecting routes described below; this is not a screen-sized interception rectangle. The body-center anchor remains stable while expanding, collapsing and dragging. This stationary-anchor principle was also cross-checked against [WIsland's native Qt window](https://github.com/AsamiAkito/wisland/blob/11ebd0f0a3af2afcb5b8a4d9792f4f6f011f53f4/wisland/ui/island.py); desktop capture, constant compact animation and cursor polling are not used. The control-pocket liquid filter, tight local source rasterizer and shared alpha-mask input conversion run only for finite arc/disc/drop transitions, not for the body or desktop. The native region converter treats a null flattened transform as identity before appending DPI, and frozen parsed paths receive transforms through an immutable parent geometry group.
++The main HWND keeps a bounded animation canvas stable while the painted shape changes. Only painted pixels and the small alpha-one control padding and narrow connecting routes described below accept input; the unpainted remainder of the canvas is fully transparent and stays available to the desktop, so this is neither a screen-sized interception rectangle nor a GDI region clip. The body-center anchor remains stable while expanding, collapsing and dragging. This stationary-anchor principle was also cross-checked against [WIsland's native Qt window](https://github.com/AsamiAkito/wisland/blob/11ebd0f0a3af2afcb5b8a4d9792f4f6f011f53f4/wisland/ui/island.py); desktop capture, constant compact animation and cursor polling are not used. The control-pocket liquid filter, tight local source rasterizer and shared alpha-mask input conversion run only for finite arc/disc/drop transitions, not for the body or desktop. Frozen parsed paths stay immutable and are transformed through a parent geometry group; the antialiased paint is never quantized into a 1-bit window region.
  
 -The expanded macOS floating panel have an independently visible quarter-circle affordance in the trailing flare pocket. This is not the body's outline, a blank body hotspot, an internal footer or a settings shortcut. Settings remains available through the context menu and tray/main Settings entry; no gear or permanent disc is restored. The original Codenotch `SettingsHandle.swift` describes the arc as saying "there is something here". The reference Windows geometry (`windows/codenotch/ui/notch.html` at `835550a`, lines 1983–1984 and 2223–2354) supplies GooArc, DiscToArc and DiscMerge shapes. Arc and temporary disc retain their 0.9 reference scale: arc radius 25.65 logical pixels, fill stroke 6.12 with an 8.12 outer stroke, and disc radius 20.97. The enlarged dot grid is independently 8.0 neutral diameter and 12.5 pitch, with the existing 30% hover growth to 10.4, one-pixel outlines and held squeeze ratios unchanged. Do not globally enlarge the arc or body to enlarge the dots. All are derived from the flare center `(38.7, BodyEnd + 38.7)`; the final grid moves only eight logical pixels along the edge from that center rather than adding the original 43.2 external reach. Left/right grids are three columns by two rows; the same edge transform makes top/bottom grids two columns by three rows. Fill and outlines use the panel palette (dark `#000000`/`#2e2e2e`, light `#f5f5f7`/`#d2d2d7`), not six bright white ink dots.
 +By default, without pointer attention, both native panels start and rest as a collapsed strip: 10 by 79 logical pixels on vertical edges or 79 by 10 on horizontal edges, solid black in both themes, with no icon, value, settings control or grip. Only that visible strip accepts input; the rest of the fixed canvas remains available to the desktop. Pointer entry expands the body with a finite 220 ms eased transition; leaving the body or details card retains the existing 250 ms grace period before collapse. Moving from body to card must not collapse or flash the body. The body stays expanded while the pointer is in either window, a context menu is open, a drag is pending or active, or the grace period is running. The existing reduced-motion preference settles transitions immediately. Expansion and collapse retain the fixed canvas and body-center anchor on all four edges and at every DPI; resting collapsed or expanded states do not keep a rendering subscription alive. Expanded contents continue to follow the resolved light/dark theme.
@@ -168,9 +166,9 @@ index 56a859d2..cc7bda34 100644
  The optional edge-attached floating renderer retains the matte central supplier-logo disk, round progress caps and concave native flares from [Codenotch at commit `835550a342871779135b6484d6899161c5222f7c`](https://github.com/vinzdg/codenotch/tree/835550a342871779135b6484d6899161c5222f7c). Each account has its own ring group. Periods run longest to shortest from outside inward: month, week, five-hour. Missing windows reserve no empty ring. Additional windows remain represented with stable labels, not silently discarded. The center logo/disk does not shrink as rings are added; the actual body, stable canvas, placement and native input geometry expand together to contain the outer ring and every period reading outside the flares. A genuine zero retains its track; unknown is distinguishable from zero. No synthetic provider or quota reading is presented as real.
  
 -The existing transient menu-bar popover or tray flyout shows a compact summary of every selected account, including healthy ones, and every available quota window within each account. Authentication, block, low-allowance, unknown and offline states stay explicit; there is no account-count cap. With networking disabled, previously hydrated snapshots remain visible with the offline status instead of disappearing. Open the existing Settings quota page for details.
-+The Windows quota renderer uses WPF and native window regions, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
++The Windows quota renderer uses WPF over a layered per-pixel-alpha window, without a browser runtime or browser-specific Windows SDK/CsWinRT projections. The application, Windows tests, and profiling harness target `net10.0-windows`; existing Direct3D and DirectComposition dependencies for the dashboard orb remain separate. Native Windows interaction, cross-process hit routing, DPI and monitor placement, and visual comparison require verification on Windows; non-Windows checks cannot establish those results.
 +
-+Windows startup regressions use the real `QuotaSurface` → `Window.Show` → `SourceInitialized` path with ephemeral settings, networking and automatic polling disabled, and no credentials. They require a visible HWND, nonzero placement, an opaque black collapsed bar in both themes, transparent unused canvas, and a nonempty installed native region that includes only the painted bar on all four edges. Deterministic pointer/card/grace and menu/drag-state regressions exercise real paint and installed input regions with reduced motion, while finite animation runs are advanced to their terminal samples without sleeps. The body-to-grip route is sampled through the production pointer handlers, visible pixels and installed native region, with grace expiration driven between samples to represent arbitrarily slow movement. Both grip and Alt-body presses must acquire real mouse capture, remain pending below threshold, move the anchor above threshold, resample a different edge on release, persist the result and release capture; another physical monitor is used when available. An explicitly expanded injected first-render failure must be hidden and retain a safe stage/type/HResult/inner-exception diagnostic in the native runtime state. These are Windows-only regressions, not claims based on a portable geometry check.
++Windows startup regressions use the real `QuotaSurface` → `Window.Show` → `SourceInitialized` path with ephemeral settings, networking and automatic polling disabled, and no credentials. They require a visible HWND, nonzero placement, an opaque black collapsed bar in both themes, and transparent unused canvas. Deterministic pointer/card/grace and menu/drag-state regressions exercise real paint and real hit classification with reduced motion, while finite animation runs are advanced to their terminal samples without sleeps. The body-to-grip route is sampled through the production pointer handlers and visible pixels, with grace expiration driven between samples to represent arbitrarily slow movement. Both grip and Alt-body presses must acquire real mouse capture, remain pending below threshold, move the anchor above threshold, resample a different edge on release, persist the result and release capture; another physical monitor is used when available. An explicitly expanded injected first-render failure must be hidden and retain a safe stage/type/HResult/inner-exception diagnostic in the native runtime state. These are Windows-only regressions, not claims based on a portable geometry check.
 +
 +The existing transient menu-bar popover or tray flyout shows a compact summary of every selected account, including healthy ones, and every available quota window within each account. A single section title and one plain whole-section click target introduce the summary; each account has a compact logo/name row with its optional plan at the trailing edge, followed by window label/value rows and a secondary status caption. There are no per-account cards or repeated section titles. Authentication, block, low-allowance, unknown and offline states stay explicit; there is no account-count cap. Every displayed window has one graphical usage indicator: known usage drains its remaining-allowance bar, while unknown usage uses the platform's indeterminate/unknown presentation rather than omitting the indicator or inventing zero. With networking disabled, previously hydrated snapshots remain visible with the offline status instead of disappearing, and the observation-age clock stops until networking is restored. Open the existing Settings quota page for details.
  
@@ -2450,136 +2448,12 @@ index 00000000..b1545ba9
 +        geometry.Freeze(); return geometry;
 +    }
 +}
-diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchRegion.cs b/windows/src/AgentSpeed/Settings/QuotaNotchRegion.cs
-new file mode 100644
-index 00000000..13d3dadf
---- /dev/null
-+++ b/windows/src/AgentSpeed/Settings/QuotaNotchRegion.cs
-@@ -0,0 +1,118 @@
-+using System.ComponentModel;
-+using System.Runtime.InteropServices;
-+using System.Windows;
-+using System.Windows.Media;
-+
-+namespace AgentSpeed.Settings;
-+
-+/// <summary>Clips a borderless HWND to the renderer's filled geometry, not its rectangular extent.</summary>
-+internal sealed class QuotaNotchRegion : IDisposable
-+{
-+    private Geometry? _geometry;
-+    private Matrix _device;
-+    private NativePoint[]? _points;
-+    private int[]? _counts;
-+    private int _fillMode;
-+    private bool _disposed;
-+
-+    public int Updates { get; private set; }
-+    public int Vertices => _points?.Length ?? 0;
-+    public int Contours => _counts?.Length ?? 0;
-+
-+    public void Apply(nint hwnd, Geometry geometry, Matrix device)
-+    {
-+        ObjectDisposedException.ThrowIf(_disposed, this);
-+        if (ReferenceEquals(_geometry, geometry) && _device == device) return;
-+
-+        // Flatten in DIPs at a subpixel tolerance, then apply BOTH the path's transform
-+        // and WPF's actual HWND DPI transform. All contours go into one region call:
-+        // combining individual polygons with OR would incorrectly fill arc/ring holes.
-+        var scale = Math.Max(Math.Abs(device.M11), Math.Abs(device.M22));
-+        var path = geometry.GetFlattenedPathGeometry(.2 / Math.Max(1, scale), ToleranceType.Absolute);
-+        var transform = path.Transform?.Value ?? Matrix.Identity;
-+        transform.Append(device);
-+        var points = new List<NativePoint>();
-+        var counts = new List<int>();
-+        foreach (var figure in path.Figures)
-+        {
-+            if (!figure.IsFilled) continue;
-+            var start = points.Count;
-+            Add(figure.StartPoint);
-+            foreach (var segment in figure.Segments)
-+            {
-+                if (segment is PolyLineSegment lines)
-+                    foreach (var point in lines.Points) Add(point);
-+                else if (segment is LineSegment line) Add(line.Point);
-+                else throw new InvalidOperationException();
-+            }
-+            // A filled WPF figure is implicitly closed even if IsClosed is false.
-+            if (points.Count - start >= 3) counts.Add(points.Count - start);
-+            else points.RemoveRange(start, points.Count - start);
-+        }
-+
-+        var vertices = points.ToArray();
-+        var contours = counts.ToArray();
-+        var fillMode = path.FillRule == FillRule.EvenOdd ? 1 : 2; // ALTERNATE / WINDING
-+        if (_fillMode == fillMode && _points is not null && _counts is not null &&
-+            vertices.AsSpan().SequenceEqual(_points) && contours.AsSpan().SequenceEqual(_counts))
-+        {
-+            _geometry = geometry;
-+            _device = device;
-+            return;
-+        }
-+
-+        nint region = contours.Length == 0
-+            ? CreateRectRgn(0, 0, 0, 0)
-+            : CreatePolyPolygonRgn(vertices, contours, contours.Length, fillMode);
-+        if (region == 0) throw new Win32Exception(Marshal.GetLastPInvokeError());
-+        try
-+        {
-+            if (SetWindowRgn(hwnd, region, true) == 0)
-+                throw new Win32Exception(Marshal.GetLastPInvokeError());
-+            // SetWindowRgn transfers ownership on success; Windows frees/replaces it.
-+            region = 0;
-+            _geometry = geometry;
-+            _device = device;
-+            _points = vertices;
-+            _counts = contours;
-+            _fillMode = fillMode;
-+            Updates++;
-+        }
-+        finally
-+        {
-+            // Includes failed SetWindowRgn and any exception before ownership transfer.
-+            if (region != 0) DeleteObject(region);
-+        }
-+
-+        void Add(Point point)
-+        {
-+            point = transform.Transform(point);
-+            points.Add(new NativePoint(checked((int)Math.Round(point.X)), checked((int)Math.Round(point.Y))));
-+        }
-+    }
-+
-+    public void Dispose()
-+    {
-+        _disposed = true;
-+        _geometry = null;
-+        _points = null;
-+        _counts = null;
-+        // No HRGN is retained: every successful handle belongs to its HWND.
-+    }
-+
-+    [StructLayout(LayoutKind.Sequential)]
-+    private readonly record struct NativePoint(int X, int Y);
-+
-+    [DllImport("gdi32.dll", SetLastError = true)]
-+    private static extern nint CreateRectRgn(int left, int top, int right, int bottom);
-+
-+    [DllImport("gdi32.dll", SetLastError = true)]
-+    private static extern nint CreatePolyPolygonRgn([In] NativePoint[] points, [In] int[] counts, int polygons, int fillMode);
-+
-+    [DllImport("user32.dll", SetLastError = true)]
-+    private static extern int SetWindowRgn(nint hwnd, nint region, [MarshalAs(UnmanagedType.Bool)] bool redraw);
-+
-+    [DllImport("gdi32.dll")]
-+    [return: MarshalAs(UnmanagedType.Bool)]
-+    private static extern bool DeleteObject(nint handle);
-+}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchView.cs b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
 new file mode 100644
-index 00000000..54e1c9da
+index 00000000..51237851
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchView.cs
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,471 @@
 +using System.Globalization;
 +using System.Reflection;
 +using System.Text.RegularExpressions;
@@ -2632,7 +2506,6 @@ index 00000000..54e1c9da
 +    internal QuotaNotchGeometry.ContentLayout ContentLayout => QuotaNotchLayout.Vertical(_state.Edge) ? _verticalLayout : _horizontalLayout;
 +    public Size Extent { get; private set; }
 +    public double BodyCenterAlong => _envelope.BodyCenterAlong;
-+    public Geometry InputGeometry { get; private set; } = Geometry.Empty;
 +    public Geometry GripInputGeometry { get; private set; } = Geometry.Empty;
 +    public Geometry GripActivationGeometry { get; private set; } = Geometry.Empty;
 +    private Geometry _entryInput = Geometry.Empty;
@@ -2664,11 +2537,6 @@ index 00000000..54e1c9da
 +        }
 +        drawing.Freeze();
 +        _drawing = drawing;
-+        Geometry union = Geometry.Empty;
-+        foreach (var (shape, _) in _targets)
-+            union = new CombinedGeometry(GeometryCombineMode.Union, union, shape);
-+        if (union.CanFreeze) union.Freeze();
-+        InputGeometry = union;
 +        GripInputGeometry = Geometry.Empty;
 +        foreach (var (shape, hit) in _targets)
 +            if (hit.Target == QuotaNotchTarget.Grip) GripInputGeometry = Union(GripInputGeometry, shape);
@@ -3059,10 +2927,10 @@ index 00000000..54e1c9da
 +}
 diff --git a/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
 new file mode 100644
-index 00000000..f018456a
+index 00000000..16f4682a
 --- /dev/null
 +++ b/windows/src/AgentSpeed/Settings/QuotaNotchWindow.cs
-@@ -0,0 +1,778 @@
+@@ -0,0 +1,762 @@
 +using System.ComponentModel;
 +using System.Diagnostics;
 +using System.Windows;
@@ -3083,7 +2951,7 @@ index 00000000..f018456a
 +
 +internal enum QuotaNotchFailure { InitializationFailed }
 +
-+/// <summary>Two tight, nonactivating HWNDs sharing the vector renderer's painted input geometry.</summary>
++/// <summary>Two tight, nonactivating layered HWNDs whose antialiased paint is their hit shape.</summary>
 +internal sealed class QuotaNotchWindow : Window
 +{
 +    private readonly SettingsService _settings;
@@ -3091,8 +2959,6 @@ index 00000000..f018456a
 +    private readonly QuotaNotchView _view;
 +    private readonly QuotaNotchView _cardView;
 +    private readonly Window _card;
-+    private readonly QuotaNotchRegion _region = new();
-+    private readonly QuotaNotchRegion _cardRegion = new();
 +    private readonly DispatcherTimer _leaveGrace;
 +    private readonly QuotaDisplayClock _displayClock;
 +    private DateTimeOffset _displayNow = DateTimeOffset.UtcNow;
@@ -3130,7 +2996,7 @@ index 00000000..f018456a
 +    public string? FailureDiagnostic { get; private set; }
 +
 +    // Only fixed stages, exception types/codes and numeric/native state; never exception messages or payloads.
-+    public string RuntimeDiagnostic => FormattableString.Invariant($"native=true; initialized={_initialized}; failed={_failed}; failure={FailureDiagnostic ?? "none"}; visible={IsVisible}; cardVisible={_card.IsVisible}; main={_bounds}; card={_cardBounds}; dpi={_monitor?.Dpi ?? 0}; regionUpdates={_region.Updates},{_cardRegion.Updates}; contours={_region.Contours},{_cardRegion.Contours}; vertices={_region.Vertices},{_cardRegion.Vertices}; placements={_placements}; frames={_frames}; rendering={_rendering}; grace={_leaveGrace.IsEnabled}; dragging={_dragging}; attention={_attention}");
++    public string RuntimeDiagnostic => FormattableString.Invariant($"native=true; initialized={_initialized}; failed={_failed}; failure={FailureDiagnostic ?? "none"}; visible={IsVisible}; cardVisible={_card.IsVisible}; main={_bounds}; card={_cardBounds}; dpi={_monitor?.Dpi ?? 0}; placements={_placements}; frames={_frames}; rendering={_rendering}; grace={_leaveGrace.IsEnabled}; dragging={_dragging}; attention={_attention}");
 +
 +    public QuotaNotchWindow(SettingsService settings, Localizer loc, bool dark)
 +    {
@@ -3198,12 +3064,10 @@ index 00000000..f018456a
 +            _source?.AddHook(WindowMessage);
 +            _stage = "main.style";
 +            WindowEffects.AddExtendedStyle(_hwnd, WS_EX.TOOLWINDOW | WS_EX.NOACTIVATE, frameChanged: false);
-+            // Install an EMPTY region before any native visibility is possible.
-+            _stage = "main.empty-region";
-+            _region.Apply(_hwnd, Geometry.Empty, Matrix.Identity);
++            // The layered HWND's per-pixel alpha, not a GDI region, keeps unpainted canvas click-through.
 +            _stage = "main.card-owner";
 +            _card.Owner = this;
-+            // Seed the first painted/native region before Show can expose a collapsed frame.
++            // Seed the first painted frame before Show can expose a collapsed bar.
 +            _expansion = _toExpansion = _settings.Current.KeepQuotaNotchExpanded ? 1 : 0;
 +            Place();
 +        }
@@ -3220,8 +3084,6 @@ index 00000000..f018456a
 +            _cardSource?.AddHook(WindowMessage);
 +            _stage = "card.style";
 +            WindowEffects.AddExtendedStyle(_cardHwnd, WS_EX.TOOLWINDOW | WS_EX.NOACTIVATE, frameChanged: false);
-+            _stage = "card.empty-region";
-+            _cardRegion.Apply(_cardHwnd, Geometry.Empty, Matrix.Identity);
 +        }
 +        catch (Exception ex) { Fail(ex); }
 +    }
@@ -3315,8 +3177,6 @@ index 00000000..f018456a
 +            SizeView(this, _view, extent);
 +            _stage = "main.move";
 +            Move(_hwnd, bounds, ref _bounds);
-+            _stage = "main.region";
-+            _region.Apply(_hwnd, _view.InputGeometry, DeviceTransform(_source, _monitor.Scale));
 +            if (IsVisible && _activeSource is not null && !_dragging)
 +                PlaceCard(state);
 +            else HideCard();
@@ -3352,8 +3212,6 @@ index 00000000..f018456a
 +        SizeView(_card, _cardView, extent);
 +        _stage = "card.move";
 +        Move(_cardHwnd, bounds, ref _cardBounds);
-+        _stage = "card.region";
-+        _cardRegion.Apply(_cardHwnd, _cardView.InputGeometry, DeviceTransform(_cardSource, _monitor.Scale));
 +        _stage = "card.show";
 +        if (!_card.IsVisible) _card.Show();
 +    }
@@ -3364,9 +3222,6 @@ index 00000000..f018456a
 +        _cardView.Update(state);
 +        _cardState = state;
 +    }
-+
-+    private static Matrix DeviceTransform(HwndSource? source, double scale) =>
-+        source?.CompositionTarget?.TransformToDevice ?? new Matrix(scale, 0, 0, scale, 0, 0);
 +
 +    private static void SizeView(Window window, QuotaNotchView view, Size extent)
 +    {
@@ -3809,7 +3664,7 @@ index 00000000..f018456a
 +        for (var cause = exception; cause is not null; cause = cause.InnerException)
 +            causes.Add($"{cause.GetType().FullName}/0x{cause.HResult:X8}" + (cause is Win32Exception native ? $"/native={native.NativeErrorCode}" : string.Empty));
 +        FailureDiagnostic = $"stage={_stage}; exceptions=" + string.Join(" > ", causes);
-+        // There is deliberately no rectangular or hit-test-only fallback on native-region failure.
++        // There is deliberately no rectangular fallback on failure.
 +        StopInteraction();
 +        Hide();
 +        if (!_initialized) InitializationFailed?.Invoke(QuotaNotchFailure.InitializationFailed);
@@ -3819,7 +3674,6 @@ index 00000000..f018456a
 +    {
 +        _cardClosed = true;
 +        _cardSource?.RemoveHook(WindowMessage);
-+        _cardRegion.Dispose();
 +        _cardSource = null;
 +        _cardHwnd = 0;
 +    }
@@ -3832,8 +3686,6 @@ index 00000000..f018456a
 +        _leaveGrace.Tick -= LeaveGraceElapsed;
 +        _source?.RemoveHook(WindowMessage);
 +        _cardSource?.RemoveHook(WindowMessage);
-+        _region.Dispose();
-+        _cardRegion.Dispose();
 +        if (!_cardClosed) _card.Close();
 +        _settings.Changed -= SettingsChanged;
 +        _loc.LanguageChanged -= LanguageChanged;
@@ -7251,7 +7103,7 @@ index 00000000..be4d0544
 +}
 diff --git a/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 new file mode 100644
-index 00000000..a67942a2
+index 00000000..9ad90af1
 --- /dev/null
 +++ b/windows/tests/AgentSpeed.Windows.Tests/QuotaSurfaceTests.cs
 @@ -0,0 +1,526 @@

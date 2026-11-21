@@ -1,0 +1,845 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <downstream@localhost>
+Date: Sat, 21 Nov 2026 12:00:00 +0000
+Subject: [PATCH] Publish widget quota over collector leases
+
+Extend control v2 widget leases with opt-in quota provider selection.
+Schedule the existing supplier workers under persisted refresh deadlines and
+send bounded, current quota projections with the same lease, without coupling
+quota HTTP failures or cadence to statistics.
+
+---
+diff --git a/docs/shared-collector.md b/docs/shared-collector.md
+index 8a752753..89244cde 100644
+--- a/docs/shared-collector.md
++++ b/docs/shared-collector.md
+@@ -185,3 +185,26 @@ This is an unpublished source/queue feature. Production ELF and fixed-loopback T
+ only the former may be delivered as a collector asset. Local process/TLS checks do not validate App Attest,
+ WidgetKit entitlement/signing, APNs acceptance or actual iPhone timeline delivery.
+ 
++## Widget quota feed
++
++Collectors advertising `widget_quota_v1` on control v2 accept optional
++`quotaProviders` on `widget_subscribe`: a set of up to four unique IDs from
++`codex`, `opencode-go`, `kimi`, and `commandcode`. Omission or an empty set
++disables quota publication. A new request ID can change the set on the same
++lease without resetting statistics confirmation or pacing.
++
++Confirmed, unexpired leases allow the existing quota service to schedule its
++provider workers once a minute. Workers honor their persisted refresh deadlines
++and preserve the original observation time on transient failures. Each widget
++receives only its selected providers' current readings, not account history.
++
++Quota uses the same bearer lease but independent HTTPS transport:
++`POST https://agent-speed.yooztech.com/v1/widget-quota-publish` with
++`{"quota":{"version":1,"hostId":hostId,"sampledAt":unixMillis,"records":[...]}}`.
++Each record contains `provider`, `recordKey`, and `snapshot`; `recordKey` is
++unpadded base64url of SHA-256 over the provider ID, LF, and opaque account ID
++(or the empty string). `sampledAt` is the increasing publication version;
++`snapshot.observedAt` remains nullable and represents the actual reading time.
++No SSH endpoint, provider credential, or supplier account label is included.
++Changed projections are sent at most once a minute across the collector. Quota
++HTTP failures do not change statistics publishing or lease authorization.
+diff --git a/linux/collector/daemon.cpp b/linux/collector/daemon.cpp
+index 8e5ee369..0232ec32 100644
+--- a/linux/collector/daemon.cpp
++++ b/linux/collector/daemon.cpp
+@@ -221,8 +221,9 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+     mode_t mask = umask(0177); int bound = bind(listener.value, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)); umask(mask);
+     if (bound || listen(listener.value, 64)) fail("socket bind");
+     if (!socketValid(p, exists) || !exists) fail("runtime socket");
+-    Sampler sampler(p.home, hash); Publisher publisher; WidgetPublisher widgets; Protocol protocol(machineIdentity());
++    Sampler sampler(p.home, hash); Publisher publisher; Protocol protocol(machineIdentity());
+     quota::Service quotas(quota::paths(p.home));
++    WidgetPublisher widgets({}, &quotas);
+     if (!writeAll(ready, "R")) fail("readiness");
+     close(ready);
+     std::map<int, Client> clients; std::uint64_t nextId = 1;
+@@ -238,6 +239,7 @@ void serve(const Paths& p, int lock, int ready, const std::string& hash) {
+     constexpr auto kFirstScanHandshakeWait = std::chrono::seconds(4);
+     while (!stopping) {
+         auto now = nowMs(); auto steady = Clock::now();
++        widgets.refreshQuota();
+         bool pendingHandshakeOutput = false;
+         for (auto& [fd, c] : clients) if (c.handshaken && !c.dead && !c.output.empty()) pendingHandshakeOutput = true;
+         const bool firstScanAllowed = (firstCommandServed && !pendingHandshakeOutput) ||
+diff --git a/linux/collector/publisher.cpp b/linux/collector/publisher.cpp
+index 9c3b3448..6113e8de 100644
+--- a/linux/collector/publisher.cpp
++++ b/linux/collector/publisher.cpp
+@@ -312,7 +312,7 @@ std::vector<std::string> Publisher::control(const std::string& line, std::uint64
+     if (type == "capabilities") {
+         if (!root["version"].isIntegerLiteral() || root["version"].truncated() != 1 || !text(request, 128)) return {};
+         return {J::object({{"version", J::of(1)}, {"type", J::of("capabilities")},
+-            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("live_activity_continuity_v1"), J::of("shared_collector_v1"), J::of("widget_statistics_v2"), J::of("quota_accounts_v1")})},
++            {"requestId", J::of(request)}, {"capabilities", J::array({J::of("live_activity_v2"), J::of("live_activity_edges_v1"), J::of("live_activity_quiet_v1"), J::of("live_activity_continuity_v1"), J::of("shared_collector_v1"), J::of("widget_statistics_v2"), J::of("quota_accounts_v1"), J::of("widget_quota_v1")})},
+             {"controlVersion", J::of(2)}, {"subscribeTimeoutMs", J::of(75000)},
+             {"activityMaxLeaseSeconds", J::of(2592000)},
+             {"relayUrl", J::of(origin)}, {"minPublishIntervalMs", J::of(10000)},
+diff --git a/linux/collector/quota.cpp b/linux/collector/quota.cpp
+index 6d2eb3fc..503fcc46 100644
+--- a/linux/collector/quota.cpp
++++ b/linux/collector/quota.cpp
+@@ -23,6 +23,7 @@
+ #include <linux/fs.h>
+ #include <map>
+ #include <mutex>
++#include <regex>
+ #include <set>
+ #include <stdexcept>
+ #include <sys/stat.h>
+@@ -1091,9 +1092,58 @@ Provider::Provider(std::string id, Paths paths, Transport transport, Now now) :
+ Provider::~Provider() = default;
+ Snapshot Provider::read(bool refresh) { return impl_->read(refresh); }
+ 
++WidgetProviders widgetProvider(const std::string& id) {
++    const auto it = std::find(kProviders.begin(), kProviders.end(), id);
++    return it == kProviders.end() ? 0u : 1u << (it - kProviders.begin());
++}
++
++namespace {
++std::shared_ptr<const WidgetRecord> widgetRecord(Snapshot snapshot) {
++    const auto input = snapshot.id + "\n" + (snapshot.accountIdentity ? snapshot.accountIdentity->id : "");
++    unsigned char hash[32], encoded[45]; unsigned int length = 0;
++    if (EVP_Digest(input.data(), input.size(), hash, &length, EVP_sha256(), nullptr) != 1 || length != sizeof(hash)) return {};
++    if (EVP_EncodeBlock(encoded, hash, sizeof(hash)) != 44) return {};
++    std::string key(reinterpret_cast<const char*>(encoded), 43);
++    std::replace(key.begin(), key.end(), '+', '-');
++    std::replace(key.begin(), key.end(), '/', '_');
++
++    // The legacy whoami label is for direct clients only; it can be a principal name.
++    snapshot.account.reset();
++    if (snapshot.plan && snapshot.plan->size() > 256) snapshot.plan.reset();
++    auto& windows = snapshot.windows;
++    std::set<std::string> ids;
++    windows.erase(std::remove_if(windows.begin(), windows.end(), [&](const Window& w) {
++        return w.id.empty() || w.id.size() > 128 || w.label.size() > 256 || !ids.insert(w.id).second;
++    }), windows.end());
++    if (windows.size() > 16) windows.resize(16);
++    if (snapshot.headlineId && std::none_of(windows.begin(), windows.end(), [&](const Window& w) {
++        return w.id == *snapshot.headlineId;
++    })) snapshot.headlineId.reset();
++    for (auto& window : windows) if (window.duration && *window.duration <= 0) window.duration.reset();
++    if (snapshot.credits && snapshot.credits->balance) {
++        static const std::regex decimal(R"([+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?)");
++        auto& balance = snapshot.credits->balance;
++        if (balance->size() > 64 || !std::regex_match(*balance, decimal)) balance.reset();
++    }
++    if (snapshot.resetCreditsAvailable && *snapshot.resetCreditsAvailable > 9007199254740991LL)
++        snapshot.resetCreditsAvailable.reset();
++    const auto wire = snapshot.json();
++    std::vector<Json::Member> fields = wire.members(), meaning;
++    fields.emplace_back("accountLabel", Json::null());
++    for (const auto& field : fields) {
++        if (field.first != "nextAllowedAt" && field.first != "waitingForRefresh") meaning.push_back(field);
++    }
++    auto rendered = Json::object(std::move(fields));
++    if (rendered.compact().size() > 16 * 1024) return {};
++    auto record = Json::object({{"provider", Json::of(snapshot.id)}, {"recordKey", Json::of(key)},
++        {"snapshot", std::move(rendered)}});
++    return std::make_shared<const WidgetRecord>(WidgetRecord{record.compact(), digest(Json::object(std::move(meaning)).compact())});
++}
++}
++
+ struct Service::Impl {
+     struct Request { std::uint64_t subscriber; std::string id; std::vector<std::string> providers; std::map<std::string, std::shared_ptr<const std::string>> snapshots; };
+-    struct Job { bool refresh; std::vector<std::uint64_t> requests; bool running = false; std::uint64_t generation = 0; };
++    struct Job { bool refresh; std::vector<std::uint64_t> requests; bool running = false; std::uint64_t generation = 0; bool widget = false; };
+     struct Configuration { std::uint64_t sequence; std::string type, operation, region, apiKey; };
+     struct ConfigurationRequest { std::uint64_t subscriber; std::string id; };
+     std::deque<Configuration> configurations;
+@@ -1121,6 +1171,8 @@ struct Service::Impl {
+     bool& refreshNeeded(const std::string& id) { return id == "commandcode" ? commandCodeNeedsRefresh : kimiNeedsRefresh; }
+     void invalidate(const std::string& id) {
+         ++generationOf(id); refreshNeeded(id) = true;
++        const auto i = static_cast<std::size_t>(std::find(kProviders.begin(), kProviders.end(), id) - kProviders.begin());
++        widgetProjection[i].reset(); widgetDue[i].reset();
+         for (auto& item : pending) if (item.second.snapshots.count(id)) item.second.snapshots[id] = cleared(id);
+         for (auto& reply : output) {
+             Document doc; if (!doc.parse(reply.second) || !doc.root()["type"].equals("quota")) continue;
+@@ -1138,10 +1190,15 @@ struct Service::Impl {
+     }
+     std::mutex mutex; std::condition_variable changed; bool stopping = false;
+     std::array<std::deque<std::shared_ptr<Job>>, kProviders.size()> jobs;
++    WidgetProviders selected = 0;
++    WidgetRecords widgetProjection;
++    std::array<std::optional<std::int64_t>, kProviders.size()> widgetDue;
++    std::optional<std::chrono::steady_clock::time_point> nextWidgetTick;
++    Now wall;
+     std::map<std::uint64_t, Request> pending; std::uint64_t sequence = 0;
+     std::vector<std::pair<std::uint64_t, std::string>> output;
+     std::array<std::thread, kProviders.size()> workers;
+-    Impl(Paths paths, Transport transport, Now now) {
++    Impl(Paths paths, Transport transport, Now now) : wall(now ? now : clockNow) {
+         configurationWorker = std::thread([this, paths] {
+             for (;;) {
+                 Configuration configuration;
+@@ -1179,9 +1236,15 @@ struct Service::Impl {
+             const std::string id = kProviders[i];
+             Provider provider(id, paths, transport, now);
+             for (;;) {
+-                std::shared_ptr<Job> job; std::uint64_t generation; bool suppressCache;
+-                { std::unique_lock<std::mutex> lock(mutex); changed.wait(lock, [&] { return stopping || !jobs[i].empty(); }); if (stopping) return; job = jobs[i].front(); job->running = true; generation = job->generation;
+-                  suppressCache = (id == "kimi" || id == "commandcode") && (generation != generationOf(id) || (refreshNeeded(id) && !job->refresh)); }
++                std::shared_ptr<Job> job; std::uint64_t generation; bool suppressCache, project;
++                {
++                    std::unique_lock<std::mutex> lock(mutex);
++                    changed.wait(lock, [&] { return stopping || !jobs[i].empty(); });
++                    if (stopping) return;
++                    job = jobs[i].front(); job->running = true; generation = job->generation;
++                    project = job->refresh && (selected & (1u << i));
++                    suppressCache = (id == "kimi" || id == "commandcode") && (generation != generationOf(id) || (refreshNeeded(id) && !job->refresh));
++                }
+                 Snapshot result; try { result = suppressCache ? empty(id) : provider.read(job->refresh); } catch (...) { result = empty(id); }
+                 if (suppressCache) {
+                     // A suppressed observation is empty, but the host can still be
+@@ -1197,11 +1260,14 @@ struct Service::Impl {
+                 // Serialize once outside the queue mutex, not once per subscriber.
+                 auto serialized = std::make_shared<const std::string>(result.json().compact());
+                 if (serialized->size() > 256 * 1024) serialized = std::make_shared<const std::string>(empty(id).json().compact());
++                auto record = project && !suppressCache ? widgetRecord(result) : nullptr;
+                 { std::lock_guard<std::mutex> lock(mutex);
+-                    if (id == "kimi" || id == "commandcode") {
+-                        if (generation != generationOf(id)) serialized = cleared(id);
+-                        else if (job->refresh) refreshNeeded(id) = false;
+-                    }
++                    const bool managed = id == "kimi" || id == "commandcode";
++                    const bool current = !managed || generation == generationOf(id);
++                    if (!current) serialized = cleared(id);
++                    else if (managed && job->refresh) refreshNeeded(id) = false;
++                    if (current && job->refresh) widgetDue[i] = result.nextAllowedAt;
++                    if (current && project && (selected & (1u << i))) widgetProjection[i] = std::move(record);
+                     for (auto requestId : job->requests) {
+                         auto it = pending.find(requestId); if (it == pending.end()) continue;
+                         auto& request = it->second; request.snapshots[id] = serialized;
+@@ -1307,9 +1373,44 @@ void Service::disconnected(std::uint64_t subscriber) {
+     for (auto& queue : impl_->jobs) for (auto it = queue.begin(); it != queue.end();) {
+         auto& job = **it;
+         job.requests.erase(std::remove_if(job.requests.begin(), job.requests.end(), [&](auto key) { return impl_->pending.count(key) == 0; }), job.requests.end());
+-        if (!job.running && job.requests.empty()) it = queue.erase(it); else ++it;
++        if (!job.running && !job.widget && job.requests.empty()) it = queue.erase(it); else ++it;
+     }
+ }
++void Service::refreshWidgets(WidgetProviders providers, std::chrono::steady_clock::time_point now) {
++    std::lock_guard<std::mutex> lock(impl_->mutex);
++    if (impl_->selected != providers) {
++        impl_->selected = providers;
++        for (std::size_t i = 0; i < kProviders.size(); ++i) if (!(providers & (1u << i))) {
++            impl_->widgetProjection[i].reset(); impl_->widgetDue[i].reset();
++            auto& queue = impl_->jobs[i];
++            queue.erase(std::remove_if(queue.begin(), queue.end(), [](const auto& job) {
++                if (!job->widget) return false;
++                job->widget = false;
++                return !job->running && job->requests.empty();
++            }), queue.end());
++        }
++    }
++    if (!providers || (impl_->nextWidgetTick && now < *impl_->nextWidgetTick)) return;
++    impl_->nextWidgetTick = now + std::chrono::seconds(60);
++    const auto wall = impl_->wall();
++    bool queued = false;
++    for (std::size_t i = 0; i < kProviders.size(); ++i) {
++        auto& queue = impl_->jobs[i];
++        if (!(providers & (1u << i)) || !queue.empty() || (impl_->widgetDue[i] && *impl_->widgetDue[i] > wall)) continue;
++        const std::string id = kProviders[i];
++        auto job = std::make_shared<Impl::Job>();
++        job->refresh = job->widget = true;
++        job->generation = (id == "kimi" || id == "commandcode") ? impl_->generationOf(id) : 0;
++        // On cold start Provider::read loads the account and persisted deadline before any HTTP.
++        queue.push_back(std::move(job));
++        queued = true;
++    }
++    if (queued) impl_->changed.notify_all();
++}
++WidgetRecords Service::widgetRecords() const {
++    std::lock_guard<std::mutex> lock(impl_->mutex);
++    return impl_->widgetProjection;
++}
+ std::vector<std::pair<std::uint64_t, std::string>> Service::replies(std::uint64_t* kimiGeneration, std::uint64_t* commandCodeGeneration) {
+     std::lock_guard<std::mutex> lock(impl_->mutex);
+     if (kimiGeneration) *kimiGeneration = impl_->kimiGeneration;
+diff --git a/linux/collector/quota.hpp b/linux/collector/quota.hpp
+index ecd9ef68..71b42275 100644
+--- a/linux/collector/quota.hpp
++++ b/linux/collector/quota.hpp
+@@ -1,6 +1,8 @@
+ #pragma once
+ 
+ #include "agentspeed/report_json.hpp"
++#include <array>
++#include <chrono>
+ #include <cstdint>
+ #include <functional>
+ #include <memory>
+@@ -80,6 +82,10 @@ private:
+     struct Impl;
+     std::unique_ptr<Impl> impl_;
+ };
++using WidgetProviders = unsigned;
++WidgetProviders widgetProvider(const std::string& id);
++struct WidgetRecord { std::string json, meaning; };
++using WidgetRecords = std::array<std::shared_ptr<const WidgetRecord>, 4>;
+ // One independent worker per supplier. Only queue bookkeeping runs on the
+ // daemon thread; a supplier timeout never holds the sampling/output mutexes.
+ class Service {
+@@ -88,6 +94,8 @@ public:
+     ~Service();
+     bool control(const std::string& line, std::uint64_t subscriber);
+     void disconnected(std::uint64_t subscriber);
++    void refreshWidgets(WidgetProviders, std::chrono::steady_clock::time_point);
++    WidgetRecords widgetRecords() const;
+     std::vector<std::pair<std::uint64_t, std::string>> replies(std::uint64_t* kimiGeneration = nullptr,
+         std::uint64_t* commandCodeGeneration = nullptr);
+ private:
+diff --git a/linux/collector/widget_publisher.cpp b/linux/collector/widget_publisher.cpp
+index 76663b47..7ed96b22 100644
+--- a/linux/collector/widget_publisher.cpp
++++ b/linux/collector/widget_publisher.cpp
+@@ -1,4 +1,5 @@
+ #include "widget_publisher.hpp"
++#include "quota.hpp"
+ #include "widget_statistics.hpp"
+ #include "relay_http.hpp"
+ #include "agentspeed/json.hpp"
+@@ -49,15 +50,15 @@ size_t headerWrite(char* p, size_t a, size_t b, void* data) {
+         else { auto date=curl_getdate(q,nullptr); if (date>=0) ms=std::max<std::int64_t>(0,static_cast<std::int64_t>(date)*1000-wall()); }
+     } return n;
+ }
+-WidgetPublisher::Result transport(const std::string& lease, const std::string& body) {
++WidgetPublisher::Result transport(const std::string& lease, const std::string& body, bool quota) {
+     WidgetPublisher::Result r;
+     if (!initializeRelayHttp()) return r;
+     CURL* c=curl_easy_init(); if (!c) return r;
+ #ifdef AGENTSPEED_COLLECTOR_TEST_RELAY
+-    curl_easy_setopt(c,CURLOPT_URL,"https://localhost:19443/v1/widget-publish");
++    curl_easy_setopt(c,CURLOPT_URL,quota ? "https://localhost:19443/v1/widget-quota-publish" : "https://localhost:19443/v1/widget-publish");
+     curl_easy_setopt(c,CURLOPT_CAINFO,"/tmp/agent-speed-shared-ca.pem");
+ #else
+-    curl_easy_setopt(c,CURLOPT_URL,"https://agent-speed.yooztech.com/v1/widget-publish");
++    curl_easy_setopt(c,CURLOPT_URL,quota ? "https://agent-speed.yooztech.com/v1/widget-quota-publish" : "https://agent-speed.yooztech.com/v1/widget-publish");
+ #endif
+     std::string auth="Authorization: Bearer "+lease;
+     curl_slist* headers=nullptr; headers=curl_slist_append(headers,"Content-Type: application/json"); headers=curl_slist_append(headers,auth.c_str());
+@@ -89,6 +90,10 @@ struct WidgetPublisher::Impl {
+         std::int64_t expiry=0, created=0, deadline=0, next=0, probe=0, notBefore=0;
+         std::int64_t payloadSampledAt=0, lastAttemptSample=-1;
+         std::uint64_t generation=0;
++        quota::WidgetProviders providers=0;
++        std::int64_t lastQuotaSample=-1;
++        std::uint64_t lastQuotaAttempt=0;
++        std::array<std::string, 4> lastQuotaMeaning;
+         View view; bool confirmed=false, inFlight=false;
+         // The stored payload's past days were not scanned; no routine publish may replace it with
+         // a null window until a covered projection arrives.
+@@ -100,18 +105,30 @@ struct WidgetPublisher::Impl {
+     struct Request { std::string binding, response; std::int64_t expiry; };
+     Options options; mutable std::mutex mutex; std::condition_variable cv; bool stop=false;
+     std::thread worker; std::vector<Lease> leases;
++    quota::Service* quotas;
++    std::thread quotaWorker;
++    std::condition_variable quotaCv;
++    std::optional<std::chrono::steady_clock::time_point> nextQuotaPost;
++    std::uint64_t quotaAttempts=0;
+     std::map<std::pair<std::uint64_t,std::string>,Request> requests;
+     std::map<std::pair<std::string,std::string>,std::int64_t> retired;
+     std::vector<std::pair<std::uint64_t,std::string>> pending;
+     std::uint64_t generation=0;
+-    explicit Impl(Options o):options(std::move(o)) {
++    explicit Impl(Options o, quota::Service* q):options(std::move(o)),quotas(q) {
+         if (!options.clock) options.clock=wall;
+-        if (!options.transport) options.transport=transport;
++        if (!options.transport) options.transport=[](const auto& lease,const auto& body){ return transport(lease,body,false); };
++        if (!options.quotaTransport) options.quotaTransport=[](const auto& lease,const auto& body){ return transport(lease,body,true); };
++        if (!options.steadyClock) options.steadyClock=std::chrono::steady_clock::now;
+         options.confirmationMs=std::max<std::int64_t>(1,std::min<std::int64_t>(75000,options.confirmationMs));
+         options.intervalMs=std::max<std::int64_t>(1,options.intervalMs);
+         worker=std::thread([this]{ run(); });
++        if (quotas) quotaWorker=std::thread([this]{ runQuota(); });
++    }
++    ~Impl() {
++        { std::lock_guard<std::mutex> lock(mutex); stop=true; leases.clear(); }
++        cv.notify_all(); quotaCv.notify_all(); worker.join();
++        if (quotaWorker.joinable()) quotaWorker.join();
+     }
+-    ~Impl() { { std::lock_guard<std::mutex> lock(mutex); stop=true; leases.clear(); } cv.notify_all(); worker.join(); }
+     void finish(Lease& l, bool success, const char* error=nullptr) {
+         for (const auto& w:l.waiters) {
+             auto response=ack("widget_subscribe",w.request,l.id,l.host,l.name,l.zone,l.expiry,success,error);
+@@ -152,7 +169,7 @@ struct WidgetPublisher::Impl {
+             it=std::find_if(leases.begin(),leases.end(),[&](const Lease& l){return l.id==id && l.generation==gen;});
+             if (it==leases.end()) continue;
+             it->inFlight=false;
+-            if (result.status==200) { if (!it->confirmed) { it->confirmed=true; finish(*it,true); } }
++            if (result.status==200) { if (!it->confirmed) { it->confirmed=true; finish(*it,true); quotaCv.notify_one(); } }
+             else if (!it->confirmed) { finish(*it,false,"publish_failed"); retire(*it); leases.erase(it); }
+             else if (result.status>=400 && result.status<500 && result.status!=429) { retire(*it); leases.erase(it); }
+             else if (result.status==429 && result.retryAfterMs>0) {
+@@ -162,9 +179,51 @@ struct WidgetPublisher::Impl {
+             }
+         }
+     }
++    void runQuota() {
++        // Never wait on quota HTTP in the stats worker (including initial lease confirmation).
++        std::unique_lock<std::mutex> lock(mutex);
++        while (!stop) {
++            const auto now=options.clock();
++            auto active=[&](const Lease& l){ return l.confirmed && l.providers && l.expiry>now; };
++            if (std::none_of(leases.begin(),leases.end(),active)) { quotaCv.wait(lock); continue; }
++            const auto steady=options.steadyClock();
++            auto it=leases.end();
++            std::array<std::string,4> meaning;
++            quota::WidgetRecords records;
++            if ((!nextQuotaPost || steady>=*nextQuotaPost) && now>=0) {
++                records=quotas->widgetRecords();
++                for (auto l=leases.begin(); l!=leases.end(); ++l) {
++                    if (!active(*l) || now<=l->lastQuotaSample || (it!=leases.end() && l->lastQuotaAttempt>=it->lastQuotaAttempt)) continue;
++                    std::array<std::string,4> candidate;
++                    bool nonempty=false;
++                    for (std::size_t i=0; i<records.size(); ++i) if ((l->providers & (1u<<i)) && records[i]) {
++                        candidate[i]=records[i]->meaning; nonempty=true;
++                    }
++                    if (nonempty && candidate!=l->lastQuotaMeaning) { it=l; meaning=std::move(candidate); }
++                }
++            }
++            if (it==leases.end()) { quotaCv.wait_for(lock,std::chrono::seconds(1)); continue; }
++            auto payload="{\"quota\":{\"version\":1,\"hostId\":"+J::quoted(it->host)+",\"sampledAt\":"+std::to_string(now)+",\"records\":[";
++            bool first=true;
++            for (std::size_t i=0; i<records.size(); ++i) if (!meaning[i].empty()) {
++                if (!first) payload+=',';
++                first=false; payload+=records[i]->json;
++            }
++            payload+="]}}";
++            auto id=it->id, token=it->token; auto gen=it->generation;
++            it->lastQuotaAttempt=++quotaAttempts;
++            it->lastQuotaSample=now;
++            nextQuotaPost=options.steadyClock()+std::chrono::seconds(60);
++            lock.unlock(); auto result=options.quotaTransport(token,payload); lock.lock();
++            if (result.status==200) {
++                it=std::find_if(leases.begin(),leases.end(),[&](const Lease& l){return l.id==id && l.generation==gen;});
++                if (it!=leases.end()) it->lastQuotaMeaning=std::move(meaning);
++            }
++        }
++    }
+ };
+ WidgetPublisher::WidgetPublisher():WidgetPublisher(Options{}) {}
+-WidgetPublisher::WidgetPublisher(Options o):impl_(new Impl(std::move(o))) {}
++WidgetPublisher::WidgetPublisher(Options o, quota::Service* quotas):impl_(new Impl(std::move(o),quotas)) {}
+ WidgetPublisher::~WidgetPublisher()=default;
+ std::vector<std::string> WidgetPublisher::control(const std::string& line,std::uint64_t client,std::int64_t now) {
+     if (line.size()>16384) return {};
+@@ -178,13 +237,26 @@ std::vector<std::string> WidgetPublisher::control(const std::string& line,std::u
+     std::set<std::string> keys={"version","type","controlVersion","requestId","subscriptionId","lease"};
+     if (type=="widget_subscribe") keys.insert({"expiresAt","hostId","hostName","timezone","intervalMs"});
+     std::set<std::string> seen;
+-    for (const auto& member:root.members()) if (!keys.count(member.first) || !seen.insert(member.first).second) return bad("invalid_request");
++    for (const auto& member:root.members()) {
++        const bool optional=type=="widget_subscribe" && member.first=="quotaProviders";
++        if ((!optional && !keys.count(member.first)) || !seen.insert(member.first).second) return bad("invalid_request");
++    }
++    quota::WidgetProviders providers=0;
++    if (seen.erase("quotaProviders")) {
++        auto values=root["quotaProviders"];
++        if (!values.isArray() || values.size()>4) return bad("invalid_request");
++        for (auto value:values.elements()) {
++            auto provider=quota::widgetProvider(value.string().value_or(""));
++            if (!provider || (providers & provider)) return bad("invalid_request");
++            providers|=provider;
++        }
++    }
+     if (seen!=keys || !root["version"].isIntegerLiteral() || root["version"].truncated()!=1 || !root["controlVersion"].isIntegerLiteral() || root["controlVersion"].truncated()!=2 || !text(req,128) || !utf8(req) || !text(id,128) || !utf8(id) || !text(token,4096,true)) return bad("invalid_request");
+     std::shared_ptr<const agentspeed::TimeZone> tz;
+     if (type=="widget_subscribe") {
+         if (!text(host,128) || !utf8(host) || !text(name,128) || !utf8(name) || !zoneName(zone) || !root["intervalMs"].isIntegerLiteral() || root["intervalMs"].truncated()!=1800000 || expiry<=now || expiry-now>2592000000LL || !(tz=agentspeed::TimeZone::load(zone))) return bad("invalid_request");
+     }
+-    auto binding=J::array({J::of(type),J::of(id),J::of(token),J::of(host),J::of(name),J::of(zone),J::of(expiry)}).compact();
++    auto binding=J::array({J::of(type),J::of(id),J::of(token),J::of(host),J::of(name),J::of(zone),J::of(expiry),J::of(static_cast<int>(providers))}).compact();
+     std::lock_guard<std::mutex> lock(impl_->mutex); impl_->prune(now);
+     auto prior=impl_->requests.find({client,req});
+     if (prior!=impl_->requests.end()) {
+@@ -207,16 +279,35 @@ std::vector<std::string> WidgetPublisher::control(const std::string& line,std::u
+     }
+     if (it!=impl_->leases.end() && it->token==token) {
+         if (it->host!=host || it->name!=name || it->zone!=zone || it->expiry!=expiry) return bad("conflicting_request");
+-        if (it->confirmed) { auto response=ack(type,req,id,host,name,zone,expiry,true); impl_->requests[{client,req}]={binding,response,expiry}; return {response}; }
++        if (it->confirmed) {
++            it->providers=providers; impl_->quotaCv.notify_one();
++            auto response=ack(type,req,id,host,name,zone,expiry,true); impl_->requests[{client,req}]={binding,response,expiry}; return {response};
++        }
+         if (it->waiters.size()>=32) return bad("busy");
++        it->providers=providers;
+         it->waiters.push_back({client,req}); impl_->requests[{client,req}]={binding,"",expiry}; return {};
+     }
+     if (impl_->retired.count({id,token})) return bad("cancelled");
+     if (impl_->retired.size()+impl_->leases.size()>=256 || (it==impl_->leases.end() && impl_->leases.size()>=32)) return bad("busy");
+-    if (it!=impl_->leases.end()) { if (!it->confirmed) impl_->finish(*it,false,"cancelled"); impl_->retire(*it); impl_->leases.erase(it); }
++    std::int64_t lastQuotaSample=-1;
++    if (it!=impl_->leases.end()) {
++        lastQuotaSample=it->lastQuotaSample;
++        if (!it->confirmed) impl_->finish(*it,false,"cancelled");
++        impl_->retire(*it); impl_->leases.erase(it);
++    }
+     Impl::Lease l; l.id=id; l.token=token; l.host=host; l.name=name; l.zone=zone; l.expiry=expiry; l.created=now; l.deadline=now+impl_->options.confirmationMs; l.next=now; l.generation=++impl_->generation; l.view={zone,tz}; l.waiters.push_back({client,req});
++    l.providers=providers; l.lastQuotaSample=lastQuotaSample;
+     impl_->leases.push_back(std::move(l)); impl_->requests[{client,req}]={binding,"",expiry}; impl_->cv.notify_one(); return {};
+ }
++void WidgetPublisher::refreshQuota() {
++    if (!impl_->quotas) return;
++    quota::WidgetProviders providers=0;
++    {
++        std::lock_guard<std::mutex> lock(impl_->mutex); const auto now=impl_->options.clock();
++        for (const auto& l:impl_->leases) if (l.confirmed && l.expiry>now) providers|=l.providers;
++    }
++    impl_->quotas->refreshWidgets(providers,impl_->options.steadyClock());
++}
+ void WidgetPublisher::sample(const View& view,const Sample& sample,const std::shared_ptr<const StatisticsHistory>& history) {
+     std::lock_guard<std::mutex> lock(impl_->mutex); auto now=impl_->options.clock(); impl_->prune(now);
+     for (auto& l:impl_->leases) {
+diff --git a/linux/collector/widget_publisher.hpp b/linux/collector/widget_publisher.hpp
+index ed9aaca3..e3b37a61 100644
+--- a/linux/collector/widget_publisher.hpp
++++ b/linux/collector/widget_publisher.hpp
+@@ -1,9 +1,11 @@
+ #pragma once
+ 
+ #include "publisher.hpp"
++#include <chrono>
+ 
+ namespace collector {
+ struct StatisticsHistory;
++namespace quota { class Service; }
+ class WidgetPublisher {
+ public:
+     using Result = Publisher::Result;
+@@ -13,14 +15,17 @@ public:
+         std::function<std::int64_t()> clock;
+         std::int64_t confirmationMs = 75000;
+         std::int64_t intervalMs = 1800000;
++        Transport quotaTransport;
++        std::function<std::chrono::steady_clock::time_point()> steadyClock;
+     };
+     WidgetPublisher();
+-    explicit WidgetPublisher(Options);
++    explicit WidgetPublisher(Options, quota::Service* = nullptr);
+     ~WidgetPublisher();
+     WidgetPublisher(const WidgetPublisher&) = delete;
+     WidgetPublisher& operator=(const WidgetPublisher&) = delete;
+     std::vector<std::string> control(const std::string&, std::uint64_t, std::int64_t);
+     void sample(const View&, const Sample&, const std::shared_ptr<const StatisticsHistory>&);
++    void refreshQuota();
+     std::vector<View> views() const;
+     // True while a lease is waiting for a projection whose history covers the published window.
+     // The sampler should be asked to refresh its history rather than the lease being republished.
+diff --git a/linux/tests/collector_daemon_test.cpp b/linux/tests/collector_daemon_test.cpp
+index 84f05d0d..e82edbff 100644
+--- a/linux/tests/collector_daemon_test.cpp
++++ b/linux/tests/collector_daemon_test.cpp
+@@ -385,6 +385,25 @@ TEST_F(DaemonProcessTest, SlowReaderDoesNotPreventHealthyClientProgress) {
+         EXPECT_TRUE(healthy.capabilities("healthy-" + std::to_string(i)));
+     }
+ }
++
++TEST_F(DaemonProcessTest, WidgetQuotaCapabilityUsesControlV2) {
++    Bridge bridge(home.path);
++    ASSERT_TRUE(bridge.capabilities("widget-quota"));
++    agentspeed::json::Document doc;
++    ASSERT_TRUE(doc.parse(bridge.lastLine));
++    EXPECT_EQ(doc.root()["controlVersion"].truncated().value_or(0), 2);
++    std::size_t count = 0;
++    bool statistics = false, accounts = false;
++    for (auto capability : doc.root()["capabilities"].elements()) {
++        count += capability.equals("widget_quota_v1");
++        statistics |= capability.equals("widget_statistics_v2");
++        accounts |= capability.equals("quota_accounts_v1");
++    }
++    EXPECT_EQ(count, 1u);
++    EXPECT_TRUE(statistics);
++    EXPECT_TRUE(accounts);
++}
++
+ TEST_F(DaemonProcessTest, QuotaCacheOnlyUsesRealStdinTransportAndKeepsSubscriberCorrelation) {
+     fs::create_directories(home.path / ".codex");
+     std::ofstream(home.path / ".codex/auth.json") << R"({"tokens":{"access_token":"synthetic-never-transmitted","account_id":"synthetic-account"}})";
+diff --git a/linux/tests/quota_test.cpp b/linux/tests/quota_test.cpp
+index 8c663022..fcd6ce1a 100644
+--- a/linux/tests/quota_test.cpp
++++ b/linux/tests/quota_test.cpp
+@@ -1609,4 +1609,120 @@ TEST(CollectorCommandCodeKeys, CredentialChangeInvalidatesInFlightAndCachedObser
+     EXPECT_TRUE(doc.root()["snapshots"].at(0)["observedAt"].isNull());
+ }
+ 
++TEST(CollectorQuotaWidgetScheduler, UsesPersistedDeadlineAndRetainsGoodReadingOnFailure) {
++    using namespace std::chrono;
++    Home home; home.goAuth();
++    std::atomic<std::int64_t> wall{now};
++    {
++        q::Provider seed("opencode-go", home.paths(), [&](const auto& url, const auto& c, bool reset) {
++            if (wall == now) return success(url, c, reset);
++            return q::HttpReply{429, "", "120"};
++        }, [&] { return wall.load(); });
++        ASSERT_EQ(seed.read(true).status, "ok");
++        wall += 1000;
++        auto retry = seed.read(true);
++        ASSERT_EQ(retry.status, "stale");
++        ASSERT_EQ(retry.nextAllowedAt.value_or(0), now + 121000);
++    }
++    std::atomic<int> attempts{0};
++    q::Service service(home.paths(), [&](const auto&, const auto&, bool) {
++        ++attempts;
++        return q::HttpReply{503, "", ""};
++    }, [&] { return wall.load(); });
++    const auto selected = q::widgetProvider("opencode-go");
++    const auto tick = steady_clock::time_point{};
++    service.refreshWidgets(selected, tick);
++    ASSERT_TRUE(service.control(command("barrier", false, "\"opencode-go\""), 1));
++    ASSERT_EQ(replies(service, 1).size(), 1u);
++    EXPECT_EQ(attempts, 0);
++    auto records = service.widgetRecords();
++    ASSERT_NE(records[1], nullptr);
++    Document doc; ASSERT_TRUE(doc.parse(records[1]->json));
++    auto observed = doc.root()["snapshot"]["observedAt"].string();
++    ASSERT_TRUE(observed);
++    EXPECT_EQ(agentspeed::parseTimestamp(*observed).value_or(0), now);
++
++    wall = now + 121000;
++    service.refreshWidgets(selected, tick + seconds(59));
++    EXPECT_EQ(attempts, 0);
++    service.refreshWidgets(selected, tick + seconds(60));
++    ASSERT_TRUE(service.control(command("after-due", false, "\"opencode-go\""), 1));
++    ASSERT_EQ(replies(service, 1).size(), 1u);
++    EXPECT_EQ(attempts, 1);
++    records = service.widgetRecords();
++    ASSERT_NE(records[1], nullptr);
++    ASSERT_TRUE(doc.parse(records[1]->json));
++    EXPECT_TRUE(doc.root()["snapshot"]["status"].equals("stale"));
++    EXPECT_TRUE(doc.root()["snapshot"]["observedAt"].equals(*observed));
++    EXPECT_EQ(doc.root()["snapshot"]["windows"].size(), 3u);
++    service.refreshWidgets(0, tick + seconds(120));
++    EXPECT_EQ(service.widgetRecords()[1], nullptr);
++}
++
++TEST(CollectorQuotaWidgetScheduler, CoalescesExplicitReaderAndDoesNotQueueAnotherRefreshWhileRunning) {
++    using namespace std::chrono;
++    Home home; home.goAuth(); home.codexAuth();
++    std::atomic<int> attempts{0};
++    std::mutex mutex; std::condition_variable cv;
++    bool release = false;
++    q::Service service(home.paths(), [&](const auto& url, const auto& c, bool reset) {
++        std::unique_lock<std::mutex> lock(mutex);
++        ++attempts; cv.notify_all();
++        cv.wait_for(lock, seconds(3), [&] { return release; });
++        return success(url, c, reset);
++    }, [] { return now; });
++    const auto tick = steady_clock::time_point{};
++    const auto selected = q::widgetProvider("opencode-go");
++    service.refreshWidgets(selected, tick);
++    {
++        std::unique_lock<std::mutex> lock(mutex);
++        ASSERT_TRUE(cv.wait_for(lock, seconds(1), [&] { return attempts == 1; }));
++    }
++    service.refreshWidgets(selected, tick + seconds(60));
++    EXPECT_TRUE(service.control(command("explicit", true, "\"opencode-go\""), 7));
++    service.disconnected(99); // An unrelated subscriber must not cancel lease work.
++    { std::lock_guard<std::mutex> lock(mutex); release = true; }
++    cv.notify_all();
++    auto response = replies(service, 1);
++    ASSERT_EQ(response.size(), 1u);
++    EXPECT_EQ(response[0].first, 7u);
++    auto records = service.widgetRecords();
++    EXPECT_EQ(attempts, 1);
++    EXPECT_EQ(records[0], nullptr);
++    ASSERT_NE(records[1], nullptr);
++    Document doc; ASSERT_TRUE(doc.parse(records[1]->json));
++    EXPECT_TRUE(doc.root()["recordKey"].equals("ocrN1VjKNFzAKbopxgSjPiyd-0m0XIAdINQ0kwOXDXY"));
++    EXPECT_TRUE(doc.root()["snapshot"]["accountIdentity"].isNull());
++    EXPECT_EQ(records[1]->json.find("synthetic-go"), std::string::npos);
++}
++
++TEST(CollectorQuotaWidgetScheduler, UsesOpaqueAccountInRecordKeyAndDropsPrivateProfileLabel) {
++    Home home; home.codexAuth();
++    Environment key("COMMAND_CODE_API_KEY"); unsetenv("COMMAND_CODE_API_KEY");
++    home.commandCodeAuth();
++    q::Provider codexProvider("codex", home.paths(), success, [] { return now; });
++    ASSERT_TRUE(publicIdentity(codexProvider.read(false)));
++    // The identity directory belongs to the test HOME and holds only this account.
++    const auto identity = "qa1_0123456789abcdef0123456789abcdef";
++    for (const auto& entry : fs::directory_iterator(home.root + "/.agent-speed/quota-accounts")) {
++        if (entry.is_regular_file()) put(entry.path(), identity);
++    }
++    q::Service service(home.paths(), success, [] { return now; });
++    service.refreshWidgets(q::widgetProvider("codex") | q::widgetProvider("commandcode"), {});
++    ASSERT_TRUE(service.control(command("barrier", false, "\"codex\",\"commandcode\""), 1));
++    ASSERT_EQ(replies(service, 1).size(), 1u);
++    auto records = service.widgetRecords();
++    ASSERT_NE(records[0], nullptr); ASSERT_NE(records[3], nullptr);
++    Document doc;
++    ASSERT_TRUE(doc.parse(records[0]->json));
++    EXPECT_TRUE(doc.root()["recordKey"].equals("YWpiQkLf2OlVpCeSy5ds-Nf9ClDEWf10FCTAjTFbsN0"));
++    EXPECT_TRUE(doc.root()["snapshot"]["accountIdentity"]["id"].equals(identity));
++    EXPECT_EQ(records[0]->json.find("account-a"), std::string::npos);
++    ASSERT_TRUE(doc.parse(records[3]->json));
++    EXPECT_TRUE(doc.root()["snapshot"]["account"].isNull());
++    EXPECT_TRUE(doc.root()["snapshot"]["accountLabel"].isNull());
++    EXPECT_EQ(records[3]->json.find("alice"), std::string::npos);
++    EXPECT_EQ(records[3]->json.find("synthetic-command-code"), std::string::npos);
++}
++
+ } // namespace
+diff --git a/linux/tests/widget_publisher_test.cpp b/linux/tests/widget_publisher_test.cpp
+index f56f309d..07bff34e 100644
+--- a/linux/tests/widget_publisher_test.cpp
++++ b/linux/tests/widget_publisher_test.cpp
+@@ -1,11 +1,14 @@
+ #include <gtest/gtest.h>
+ #include "widget_publisher.hpp"
++#include "quota.hpp"
+ #include "agentspeed/json.hpp"
+ #include <algorithm>
+ #include <cstdio>
+ #include <atomic>
+ #include <chrono>
+ #include <condition_variable>
++#include <filesystem>
++#include <cstdlib>
+ #include <mutex>
+ #include <thread>
+ 
+@@ -279,3 +282,139 @@ TEST(WidgetPublisher, RoutineCadenceRepublishesCoveredWindows) {
+     pump(p, now, scanned("UTC", now));
+     ASSERT_TRUE(eventually([&] { return calls.load() == 2; }));
+ }
++
++namespace {
++std::string withProviders(std::string line, const std::string& providers) {
++    line.insert(line.size()-1, ",\"quotaProviders\":" + providers);
++    return line;
++}
++struct QuotaHome {
++    QuotaHome() { char path[]="/tmp/as-widget-quota-XXXXXX"; if (auto p=mkdtemp(path)) home=p; }
++    ~QuotaHome() { if (!home.empty()) { std::error_code error; std::filesystem::remove_all(home,error); } }
++    collector::quota::Paths paths() const {
++        return {home,home+"/codex/auth.json",home+"/go",home+"/go/opencode.db",home+"/kimi.json",home+"/commandcode.json"};
++    }
++    std::string home;
++};
++template<class F> bool eventuallyQuota(F predicate) {
++    const auto until=std::chrono::steady_clock::now()+std::chrono::seconds(3);
++    do {
++        if (predicate()) return true;
++        std::this_thread::sleep_for(std::chrono::milliseconds(5));
++    } while (std::chrono::steady_clock::now()<until);
++    return false;
++}
++}
++
++TEST(WidgetQuotaPublisher, StrictOptionalProviderValidationAndCanonicalRequestReplay) {
++    std::atomic<std::int64_t> now{start};
++    collector::WidgetPublisher::Options options;
++    options.clock=[&]{ return now.load(); };
++    options.transport=[](const auto&,const auto&){ return collector::WidgetPublisher::Result{200}; };
++    collector::WidgetPublisher publisher(options);
++    auto invalid=[&](const std::string& line) {
++        auto responses=publisher.control(line,1,now);
++        ASSERT_EQ(responses.size(),1u);
++        agentspeed::json::Document doc;
++        ASSERT_TRUE(doc.parse(responses[0]));
++        EXPECT_TRUE(doc.root()["error"].equals("invalid_request"));
++    };
++    for (const std::string value : {"null","{}","\"codex\"","[1]","[\"unknown\"]","[\"codex\",\"codex\"]",
++                                    "[\"codex\",\"opencode-go\",\"kimi\",\"commandcode\",\"codex\"]"}) {
++        invalid(withProviders(subscribe(),value));
++    }
++    invalid(withProviders(withProviders(subscribe(),"[]"),"[]"));
++    invalid(withProviders(unsubscribe("u","widget","lease"),"[]"));
++    EXPECT_TRUE(publisher.control(withProviders(subscribe(),"[\"opencode-go\",\"codex\"]"),1,now).empty());
++    EXPECT_TRUE(publisher.control(withProviders(subscribe(),"[\"codex\",\"opencode-go\"]"),1,now).empty());
++    const auto conflict=publisher.control(withProviders(subscribe(),"[\"codex\"]"),1,now);
++    ASSERT_EQ(conflict.size(),1u);
++    EXPECT_NE(conflict[0].find("conflicting_request"),std::string::npos);
++    sample(publisher,now);
++    ASSERT_TRUE(eventually([&]{ return publisher.authorized(now); }));
++    const auto clear=publisher.control(withProviders(subscribe("clear"),"[]"),1,now);
++    ASSERT_EQ(clear.size(),1u); EXPECT_TRUE(accepted(clear[0]));
++    const auto replay=publisher.control(subscribe("clear"),1,now);
++    ASSERT_EQ(replay.size(),1u); EXPECT_TRUE(accepted(replay[0]));
++}
++
++TEST(WidgetQuotaPublisher, ResubscribesAfterDisconnectAndPublishesOnlySelectedRecords) {
++    using namespace std::chrono;
++    QuotaHome home; ASSERT_FALSE(home.home.empty());
++    std::atomic<std::int64_t> now{start}, elapsed{0};
++    std::atomic<int> stats{0}, supplierCalls{0};
++    std::mutex mutex;
++    std::vector<std::pair<std::string,std::string>> posts;
++    collector::quota::Service service(home.paths(), [&](const auto&,const auto&,bool) {
++        ++supplierCalls; return collector::quota::HttpReply{};
++    }, [&]{ return now.load(); });
++    auto postCount=[&]{ std::lock_guard<std::mutex> lock(mutex); return posts.size(); };
++    collector::WidgetPublisher::Options options;
++    options.clock=[&]{ return now.load(); };
++    options.steadyClock=[&]{ return steady_clock::time_point{}+milliseconds(elapsed.load()); };
++    options.intervalMs=60000;
++    options.transport=[&](const auto&,const auto&){ ++stats; return collector::WidgetPublisher::Result{200}; };
++    options.quotaTransport=[&](const auto& token,const auto& body) {
++        std::lock_guard<std::mutex> lock(mutex); posts.emplace_back(token,body);
++        return collector::WidgetPublisher::Result{posts.size()==1 ? 503L : 200L};
++    };
++    collector::WidgetPublisher publisher(options,&service);
++    EXPECT_TRUE(publisher.control(subscribe(),1,now).empty());
++    sample(publisher,now);
++    ASSERT_TRUE(eventually([&]{ return publisher.authorized(now); }));
++    publisher.refreshQuota();
++    EXPECT_EQ(postCount(),0u);
++    const auto updated=publisher.control(withProviders(subscribe("enable"),"[\"opencode-go\"]"),1,now);
++    ASSERT_EQ(updated.size(),1u); EXPECT_TRUE(accepted(updated[0]));
++    publisher.disconnected(1);
++    ASSERT_TRUE(publisher.authorized(now));
++    publisher.refreshQuota();
++    ASSERT_TRUE(eventuallyQuota([&]{ return postCount()==1; }));
++    {
++        std::lock_guard<std::mutex> lock(mutex);
++        const auto& [token,body]=posts[0];
++        EXPECT_EQ(token,"lease");
++        agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(body));
++        ASSERT_EQ(doc.root().members().size(),1u);
++        auto quota=doc.root()["quota"];
++        EXPECT_EQ(quota.members().size(),4u);
++        EXPECT_EQ(quota["version"].truncated().value_or(0),1);
++        EXPECT_EQ(quota["sampledAt"].truncated().value_or(0),start);
++        EXPECT_TRUE(quota["hostId"].equals("host"));
++        ASSERT_EQ(quota["records"].size(),1u);
++        auto record=quota["records"].at(0);
++        EXPECT_EQ(record.members().size(),3u);
++        EXPECT_TRUE(record["provider"].equals("opencode-go"));
++        EXPECT_TRUE(record["snapshot"]["observedAt"].isNull());
++        EXPECT_TRUE(record["snapshot"]["status"].equals("needsAuth"));
++        for (auto field : {"endpointKey","bindingId","receivedAt","hostName","username","lease"})
++            EXPECT_EQ(body.find(field),std::string::npos);
++    }
++    // A raised wall clock cannot bypass the monotonic minute floor.
++    now=start+60000;
++    elapsed=59999;
++    sample(publisher,now);
++    ASSERT_TRUE(eventually([&]{ return stats==2; }));
++    EXPECT_EQ(postCount(),1u);
++    elapsed=60000;
++    publisher.refreshQuota();
++    ASSERT_TRUE(eventuallyQuota([&]{ return postCount()==2; }));
++    const auto change=publisher.control(withProviders(subscribe("change"),"[\"codex\"]"),2,now);
++    ASSERT_EQ(change.size(),1u); EXPECT_TRUE(accepted(change[0]));
++    now=start+120000; elapsed=120000;
++    publisher.refreshQuota();
++    ASSERT_TRUE(eventuallyQuota([&]{ return postCount()==3; }));
++    {
++        std::lock_guard<std::mutex> lock(mutex);
++        agentspeed::json::Document doc; ASSERT_TRUE(doc.parse(posts.back().second));
++        auto quota=doc.root()["quota"];
++        EXPECT_EQ(quota["sampledAt"].truncated().value_or(0),start+120000);
++        ASSERT_EQ(quota["records"].size(),1u);
++        EXPECT_TRUE(quota["records"].at(0)["provider"].equals("codex"));
++    }
++    now=1710098200000LL; elapsed=10000000;
++    publisher.refreshQuota();
++    EXPECT_FALSE(publisher.authorized(now));
++    EXPECT_EQ(postCount(),3u);
++    EXPECT_EQ(supplierCalls,0);
++}

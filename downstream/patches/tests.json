@@ -469,4 +469,14 @@
     "related": [],
     "reason": "The price card no longer links to the upstream price file and its shared copy now names the Agent Speed price service with public mirrors as the fallback; the Windows constant test no longer pins the removed source-page URL. The localized caption itself is not asserted, and native settings appearance on both platforms remains a Release responsibility."
   }
+,
+  "0030-Publish-widget-quota-over-collector-leases.patch": {
+    "regression": [
+      {"platform": "linux", "run": "cmake -S linux -B build-widget-quota -DAGENTSPEED_BUILD_APP=OFF && cmake --build build-widget-quota --target agentspeed_tests agentspeed-collector -j2 && build-widget-quota/tests/agentspeed_tests --gtest_filter='CollectorQuotaWidgetScheduler.*:WidgetQuotaPublisher.*:DaemonProcessTest.WidgetQuotaCapabilityUsesControlV2'"}
+    ],
+    "related": [
+      {"platform": "linux", "run": "build-widget-quota/tests/agentspeed_tests --gtest_filter='WidgetPublisher.*'"}
+    ],
+    "reason": "Control v2 widget leases carry an opt-in quotaProviders set; the collector schedules the existing supplier workers under persisted refresh deadlines and publishes bounded current readings over its own HTTPS bearer to /v1/widget-quota-publish, without touching statistics authorization, cadence or failure handling. Only the selected providers of the subscribing widget are published, recordKey derives from provider and opaque account identity, and no SSH endpoint or supplier account label leaves the host."
+  }
 }
