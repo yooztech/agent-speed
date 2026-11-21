@@ -2663,7 +2663,7 @@ index c402c195..b851595f 100644
 -                content.Children.Add(Line(_loc.Format("win.quota.age", Math.Max(0, (int)(now - observedAt).TotalMinutes)), 12));
 -            if (snapshot.Block is not null) content.Children.Add(Line(Text("block") + ": " + snapshot.Block, 12));
 -            if (headline is not null)
-+            var account = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
++            var account = new StackPanel { Margin = new Thickness(0, 0, 0, 14) };
 +            var header = new Grid { Margin = new Thickness(0, 0, 0, 4) };
 +            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 +            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -2704,11 +2704,11 @@ index c402c195..b851595f 100644
 +                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 +                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 +                var label = Line(QuotaFormat.WindowLabel(_loc, headline, snapshot.DisplayName), 12);
-+                label.Margin = new Thickness(0, 2, 8, 0);
++                label.Margin = new Thickness(0, 3, 8, 0);
 +                row.Children.Add(label);
 +                var remaining = Line(headline.UsedFraction is null ? Text("unknown") :
 +                    _loc.Format("win.quota.remaining", Percent(QuotaFormat.RemainingFraction(headline.UsedFraction))), 12);
-+                remaining.Margin = new Thickness(0, 2, 0, 0);
++                remaining.Margin = new Thickness(0, 3, 0, 0);
 +                remaining.TextAlignment = TextAlignment.Right;
 +                Grid.SetColumn(remaining, 1);
 +                row.Children.Add(remaining);
@@ -2729,7 +2729,7 @@ index c402c195..b851595f 100644
 -            button.Click += (_, _) => OpenSettingsRequested?.Invoke();
 -            summaries.Children.Add(button);
 +            account.Children.Add(SecondaryLine(QuotaFormat.Status(_loc, _settings.Current.NetworkEnabled, snapshot, now),
-+                12, new Thickness(0, 2, 0, 0)));
++                12, new Thickness(0, 4, 0, 0)));
 +            if (snapshot.Block is not null)
 +                account.Children.Add(SecondaryLine(Text("block") + ": " + QuotaFormat.Block(_loc, snapshot.Block), 12));
 +            content.Children.Add(account);

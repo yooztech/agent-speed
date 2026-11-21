@@ -1,0 +1,1606 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Downstream Patch Queue <patch-queue@localhost>
+Date: Sat, 21 Nov 2026 21:28:10 +0800
+Subject: [PATCH 31/31] Add daily total usage to desktop history
+
+Show normalized input and output under a dedicated chart metric on Windows and macOS.
+
+---
+ macos/Resources/strings.macos.json                 |   6 ++
+ .../AgentSpeed/History/HistoryContent.swift        |  16 +--
+ .../AgentSpeed/History/HistoryViewModel.swift      |   2 +-
+ .../AgentSpeed/History/Model/DaySummary.swift      |  30 +++---
+ .../History/Model/HistoryAggregator.swift          |   7 +-
+ .../History/Model/HistoryBreakdown.swift           |  31 ++++--
+ .../History/Model/HistoryChartMath.swift           |   4 +-
+ .../AgentSpeed/History/Model/HistoryMoney.swift    |  15 ++-
+ .../AgentSpeed/History/Model/HistoryText.swift     |  12 ++-
+ .../History/Views/HistoryBreakdownView.swift       | 108 ++++++++++++---------
+ .../History/Views/HistoryChartDescriptor.swift     |  30 +++---
+ .../History/Views/HistoryChartView.swift           |  10 +-
+ .../AgentSpeed/History/Views/HistoryTooltip.swift  |  21 ++--
+ .../AgentSpeed/Localization/StringTable.swift      |   3 +
+ spec/strings.json                                  |  12 +++
+ .../History/DayBreakdown.cs                        |  41 +++++---
+ .../AgentSpeed.Presentation/History/DaySummary.cs  |  36 ++++---
+ .../History/HistoryAggregator.cs                   |   3 +-
+ .../AgentSpeed.Presentation/History/HistoryBars.cs |   8 +-
+ .../History/HistoryChartMath.cs                    |   5 +-
+ .../History/HistoryMoney.cs                        |  18 +++-
+ .../AgentSpeed.Presentation/History/HistoryText.cs |  18 +++-
+ .../History/HistoryTooltipText.cs                  |  14 ++-
+ windows/src/AgentSpeed/History/HistoryChart.cs     |   9 +-
+ windows/src/AgentSpeed/History/HistoryItems.cs     |  27 +++---
+ windows/src/AgentSpeed/History/HistoryViewModel.cs |  14 ++-
+ windows/src/AgentSpeed/History/HistoryWindow.xaml  |  12 ++-
+ .../src/AgentSpeed/History/HistoryWindow.xaml.cs   |  10 +-
+ .../HistoryAggregatorTests.cs                      |   6 +-
+ 29 files changed, 329 insertions(+), 199 deletions(-)
+
+diff --git a/macos/Resources/strings.macos.json b/macos/Resources/strings.macos.json
+index 5e72ff74..9afbe916 100644
+--- a/macos/Resources/strings.macos.json
++++ b/macos/Resources/strings.macos.json
+@@ -566,6 +566,12 @@
+     "en": "Other models",
+     "ja": "その他のモデル"
+   },
++  "mac.history.breakdown.filterSourceHint": {
++    "zh-Hant": "只顯示這個來源的用量",
++    "zh-Hans": "仅显示这个来源的用量",
++    "en": "Show usage from this source only",
++    "ja": "このソースの使用量のみ表示"
++  },
+   "mac.history.breakdown.sourceHint": {
+     "zh-Hant": "查看這個來源的模型分布",
+     "zh-Hans": "查看这个来源的模型分布",
+diff --git a/macos/Sources/AgentSpeed/History/HistoryContent.swift b/macos/Sources/AgentSpeed/History/HistoryContent.swift
+index 8b5aa5ca..62386510 100644
+--- a/macos/Sources/AgentSpeed/History/HistoryContent.swift
++++ b/macos/Sources/AgentSpeed/History/HistoryContent.swift
+@@ -1,7 +1,7 @@
+ import AgentSpeedCore
+ import Foundation
+ 
+-/// One segment of a day's bar: a source's output (or cost, in display units) stacked on the ones below it.
++/// One segment of a day's bar: a source's value stacked on the ones below it.
+ struct ChartSegment: Identifiable, Equatable, Sendable {
+     var id: String { "\(day)/\(source.rawValue)" }
+     let day: DayKey
+@@ -23,15 +23,15 @@ struct HistoryChartModel: Equatable, Sendable {
+     let range: DayRange
+     let today: DayKey
+     var todayInProgress = true
+-    /// Daily output with the speed line, or daily cost without it (DESIGN 9).
++    /// The selected daily measure; only output has the speed line.
+     var metric: HistoryChartMetric = .output
+     /// Bottom first.
+     let stack: [SourceKind]
+     let isSingleSource: Bool
+     let segments: [ChartSegment]
+-    /// One value per day of the range (nil where nothing was measured); all nil for the cost metric.
++    /// One value per day of the range (nil where nothing was measured); all nil outside daily output.
+     let speeds: [Double?]
+-    /// The left axis: output tokens, or cost in the display currency.
++    /// The left axis: tokens, cost in the display currency, or bytes.
+     let outputTicks: AxisTicks
+     let speedTicks: AxisTicks
+     let days: [DayKey: DaySummary]
+@@ -63,7 +63,7 @@ struct HistoryChartModel: Equatable, Sendable {
+         speedTicks.max > 0 ? speed / speedTicks.max * outputTicks.max : 0
+     }
+ 
+-    /// The left axis label at `value`: output, cost in the display currency, or traffic.
++    /// The left axis label at `value`: tokens, cost in the display currency, or traffic.
+     func leadingAxisLabel(_ value: Double) -> String {
+         if metric == .traffic {
+             // The outermost labels name their side: download above the axis, upload below.
+@@ -228,7 +228,7 @@ struct HistoryContent: Equatable, Sendable {
+         )
+     }
+ 
+-    /// Bars of output (with the speed line) or of cost in the display currency (without it), stacked by source.
++    /// Token or cost bars stacked by source; only output includes the speed line.
+     private static func chartModel(
+         days: [DaySummary], range: DayRange, today: DayKey, source: SourceKind?, metric: HistoryChartMetric, money: HistoryMoney
+     ) -> HistoryChartModel {
+@@ -237,8 +237,8 @@ struct HistoryContent: Equatable, Sendable {
+         var maxValue = 0.0
+         func value(_ day: DaySummary, _ kind: SourceKind) -> Double {
+             switch metric {
+-            case .output: Double(source == nil ? day.output(of: kind) : day.output)
+-            case .cost: money.value(source == nil ? day.costMicroUsd(of: kind) : day.cost.microUsd)
++            case .total, .output: source == nil ? Double(day.sourceValue(kind, metric: metric)) : day.value(metric)
++            case .cost: money.value(source == nil ? day.sourceValue(kind, metric: metric) : day.cost.microUsd)
+             case .traffic: 0
+             }
+         }
+diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+index 385b5d7c..176008c0 100644
+--- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
++++ b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
+@@ -227,7 +227,7 @@ final class HistoryViewModel {
+         select(metric: .traffic)
+     }
+ 
+-    /// The chart's (and a single day's breakdown's) metric: output or cost.
++    /// Select the metric shared by the daily chart and the single-day breakdown.
+     func select(metric: HistoryChartMetric) {
+         guard metric != chartMetric, metric != .traffic || offersTraffic else { return }
+         chartMetric = metric
+diff --git a/macos/Sources/AgentSpeed/History/Model/DaySummary.swift b/macos/Sources/AgentSpeed/History/Model/DaySummary.swift
+index ed2c5322..9347a71d 100644
+--- a/macos/Sources/AgentSpeed/History/Model/DaySummary.swift
++++ b/macos/Sources/AgentSpeed/History/Model/DaySummary.swift
+@@ -1,13 +1,22 @@
+ import AgentSpeedCore
+ import Foundation
+ 
+-/// One source's output and cost on one day, for stacking the chart.
+-struct SourceOutput: Equatable, Sendable {
++/// One source's tokens and cost on one day, for stacking the chart.
++struct SourceDayUsage: Equatable, Sendable {
+     let source: SourceKind
+     let output: Int
++    let input: Int
+     var requests = 0
+     /// The source's cost as counted: an excluded subscription source adds nothing (METRICS 9.4).
+     var cost = HistoryCost.none
++
++    func value(_ metric: HistoryChartMetric) -> Int64 {
++        switch metric {
++        case .total, .output: Int64(metric.tokenCount(input: input, output: output))
++        case .cost: cost.microUsd
++        case .traffic: 0
++        }
++    }
+ }
+ 
+ /// A model's cost on a day over the counted sources (METRICS 9.7): nil without cost data.
+@@ -36,8 +45,8 @@ struct DaySummary: Identifiable, Equatable, Sendable {
+     let peak: Double?
+     /// Every model of the day, most output first.
+     let models: [ModelUsage]
+-    /// Output per source (non-zero output or requests only), in `SourceKind` order.
+-    let sources: [SourceOutput]
++    /// Usage per source (non-zero input, output or requests only), in `SourceKind` order.
++    let sources: [SourceDayUsage]
+     /// The day's cost over the counted sources (DESIGN 9: subscriptions left out unless included).
+     var cost = HistoryCost.none
+     /// Every source's cost, for the CSV (subscription exclusion does not apply there); nil without cost data.
+@@ -68,19 +77,18 @@ struct DaySummary: Identifiable, Equatable, Sendable {
+         input > 0 ? (Double(cachedInput) / Double(input)).clamped(to: 0...1) : nil
+     }
+ 
+-    func output(of source: SourceKind) -> Int {
+-        sources.first { $0.source == source }?.output ?? 0
++    func tokenCount(_ metric: HistoryChartMetric) -> Int {
++        metric.tokenCount(input: input, output: output)
+     }
+ 
+-    /// The counted, known cost of `source` (0 when excluded or unpriced).
+-    func costMicroUsd(of source: SourceKind) -> Int64 {
+-        sources.first { $0.source == source }?.cost.microUsd ?? 0
++    func sourceValue(_ source: SourceKind, metric: HistoryChartMetric) -> Int64 {
++        sources.first { $0.source == source }?.value(metric) ?? 0
+     }
+ 
+-    /// The day's value of a chart metric: output tokens, or known micro-USD.
++    /// The day's value of a chart metric: tokens, known micro-USD, or bytes.
+     func value(_ metric: HistoryChartMetric) -> Double {
+         switch metric {
+-        case .output: Double(output)
++        case .total, .output: Double(tokenCount(metric))
+         case .cost: Double(cost.microUsd)
+         case .traffic: Double(traffic?.shown.sum ?? 0)
+         }
+diff --git a/macos/Sources/AgentSpeed/History/Model/HistoryAggregator.swift b/macos/Sources/AgentSpeed/History/Model/HistoryAggregator.swift
+index fe7c983a..26cf52cb 100644
+--- a/macos/Sources/AgentSpeed/History/Model/HistoryAggregator.swift
++++ b/macos/Sources/AgentSpeed/History/Model/HistoryAggregator.swift
+@@ -112,7 +112,7 @@ enum HistoryAggregator {
+         var measuredMs: Int64 = 0
+         var peak: Double?
+         var models: [String: ModelUsage] = [:]
+-        var sources: [SourceKind: SourceOutput] = [:]
++        var sources: [SourceKind: SourceDayUsage] = [:]
+         var dayCost = HistoryCost.none
+         var totalCost: CostTally?
+         var totalRequests = 0
+@@ -125,9 +125,10 @@ enum HistoryAggregator {
+             totalRequests += max(0, record.totals.requests)
+             if let version = record.priceVersion { priceVersion = max(priceVersion ?? version, version) }
+             let previous = sources[record.source]
+-            sources[record.source] = SourceOutput(
++            sources[record.source] = SourceDayUsage(
+                 source: record.source,
+                 output: (previous?.output ?? 0) + max(0, record.totals.output),
++                input: (previous?.input ?? 0) + max(0, record.totals.input),
+                 requests: (previous?.requests ?? 0) + max(0, record.totals.requests),
+                 cost: (previous?.cost ?? .none).adding(counted)
+             )
+@@ -171,7 +172,7 @@ enum HistoryAggregator {
+                 return lhs.model < rhs.model
+             }
+         let sourceList = SourceKind.allCases.compactMap { kind in
+-            sources[kind].flatMap { $0.output > 0 || $0.requests > 0 ? $0 : nil }
++            sources[kind].flatMap { $0.input > 0 || $0.output > 0 || $0.requests > 0 ? $0 : nil }
+         }
+         // A model only subscription sources used has no counted requests (its cost shows `cost.subscription.tag`).
+         for model in modelList where modelCosts[model.model] == nil { modelCosts[model.model] = ModelCost(cost: nil, requests: 0) }
+diff --git a/macos/Sources/AgentSpeed/History/Model/HistoryBreakdown.swift b/macos/Sources/AgentSpeed/History/Model/HistoryBreakdown.swift
+index 3c9df0ed..63602e5a 100644
+--- a/macos/Sources/AgentSpeed/History/Model/HistoryBreakdown.swift
++++ b/macos/Sources/AgentSpeed/History/Model/HistoryBreakdown.swift
+@@ -1,7 +1,7 @@
+ import AgentSpeedCore
+ import Foundation
+ 
+-/// One bar of a single day's breakdown: a source with all sources, else one model of the selected source.
++/// One bar of a single day's breakdown: a source, or one model when the metric has model-level data.
+ struct BreakdownItem: Identifiable, Equatable, Sendable {
+     enum Subject: Hashable, Sendable {
+         case source(SourceKind)
+@@ -13,8 +13,9 @@ struct BreakdownItem: Identifiable, Equatable, Sendable {
+     var id: Subject { subject }
+     let subject: Subject
+     let output: Int
++    let input: Int
+     let requests: Int
+-    /// Share of the day's output (or cost, for the cost metric); the items' shares add up to 1.
++    /// Share of the day for the chosen metric.
+     let share: Double
+     /// The metric relative to the largest item (the bar length, 0…1).
+     let scale: Double
+@@ -24,9 +25,13 @@ struct BreakdownItem: Identifiable, Equatable, Sendable {
+     var cost = HistoryCost.none
+     /// The source's traffic of the day as displayed (DESIGN 10); nil for models and before measuring began.
+     var traffic: TrafficBytes?
++
++    func tokenCount(_ metric: HistoryChartMetric) -> Int {
++        metric.tokenCount(input: input, output: output)
++    }
+ }
+ 
+-/// A single day split by source (all sources) or by model (one source), most output first (DESIGN 4b, item 1).
++/// A single day split by source or by model, sorted by the selected metric (DESIGN 4b, item 1).
+ struct DayBreakdown: Equatable, Sendable {
+     enum Kind: Sendable { case bySource, byModel }
+ 
+@@ -48,7 +53,7 @@ struct DayBreakdown: Equatable, Sendable {
+ }
+ 
+ enum HistoryBreakdown {
+-    /// `day` split by source when `source` is nil, else by the models of `source`, sorted and sized by `metric`.
++    /// Total tokens always break down by source: stored model rows only know output, not input.
+     static func build(
+         _ usage: [DailyUsage], day: DayKey, source: SourceKind?, metric: HistoryChartMetric = .output, excluded: Set<SourceKind> = [],
+         traffic: DayTraffic? = nil
+@@ -56,7 +61,7 @@ enum HistoryBreakdown {
+         let records = usage.filter { record in
+             (source == nil || record.source == source) && HistoryAggregator.hasUsage(record) && DayKey(record.day) == day
+         }
+-        if source == nil {
++        if source == nil || metric == .total {
+             return DayBreakdown(day: day, kind: .bySource,
+                                 items: bySource(records, excluded: excluded, metric: metric, traffic: traffic?.bySource ?? [:]),
+                                 metric: metric)
+@@ -71,6 +76,7 @@ enum HistoryBreakdown {
+ 
+     private struct Tally {
+         var output = 0
++        var input = 0
+         var requests = 0
+         var measuredOutput = 0
+         var measuredMs: Int64 = 0
+@@ -89,10 +95,14 @@ enum HistoryBreakdown {
+     private static func bySource(_ records: [DailyUsage], excluded: Set<SourceKind>, metric: HistoryChartMetric,
+                                  traffic: [SourceKind: TrafficBytes]) -> [BreakdownItem] {
+         var tallies: [BreakdownItem.Subject: Tally] = [:]
+-        for (kind, bytes) in traffic { tallies[.source(kind), default: Tally()].traffic = bytes }
++        // Total is based on usage records only; traffic alone does not create a token row.
++        if metric != .total {
++            for (kind, bytes) in traffic { tallies[.source(kind), default: Tally()].traffic = bytes }
++        }
+         for record in records {
+-            var tally = tallies[.source(record.source)] ?? Tally()
++            var tally = tallies[.source(record.source)] ?? Tally(traffic: traffic[record.source])
+             tally.output += max(0, record.totals.output)
++            tally.input += max(0, record.totals.input)
+             tally.requests += max(0, record.totals.requests)
+             tally.measuredOutput += max(0, record.measuredOutput)
+             tally.measuredMs += max(0, record.measuredMs)
+@@ -143,7 +153,7 @@ enum HistoryBreakdown {
+         let byTraffic = metric == .traffic && tallies.keys.contains { if case .source = $0 { true } else { false } }
+         func value(_ tally: Tally) -> Double {
+             switch metric {
+-            case .output: Double(tally.output)
++            case .total, .output: Double(metric.tokenCount(input: tally.input, output: tally.output))
+             case .cost: Double(tally.cost.microUsd)
+             case .traffic: byTraffic ? Double(tally.traffic?.sum ?? 0) : Double(tally.output)
+             }
+@@ -156,6 +166,7 @@ enum HistoryBreakdown {
+                 return BreakdownItem(
+                     subject: subject,
+                     output: tally.output,
++                    input: tally.input,
+                     requests: tally.requests,
+                     share: total > 0 ? value(tally) / total : 0,
+                     scale: largest > 0 ? value(tally) / largest : 0,
+@@ -171,6 +182,10 @@ enum HistoryBreakdown {
+     /// always last.
+     private static func precedes(_ lhs: BreakdownItem, _ rhs: BreakdownItem, metric: HistoryChartMetric) -> Bool {
+         if (lhs.subject == .otherModels) != (rhs.subject == .otherModels) { return rhs.subject == .otherModels }
++        if metric == .total {
++            let left = lhs.tokenCount(metric), right = rhs.tokenCount(metric)
++            if left != right { return left > right }
++        }
+         if metric == .cost, lhs.cost.microUsd != rhs.cost.microUsd { return lhs.cost.microUsd > rhs.cost.microUsd }
+         if metric == .traffic, let a = lhs.traffic?.sum, let b = rhs.traffic?.sum, a != b { return a > b }
+         if metric == .traffic, (lhs.traffic == nil) != (rhs.traffic == nil) { return lhs.traffic != nil }
+diff --git a/macos/Sources/AgentSpeed/History/Model/HistoryChartMath.swift b/macos/Sources/AgentSpeed/History/Model/HistoryChartMath.swift
+index 4ff8aa4e..4cd82d5c 100644
+--- a/macos/Sources/AgentSpeed/History/Model/HistoryChartMath.swift
++++ b/macos/Sources/AgentSpeed/History/Model/HistoryChartMath.swift
+@@ -59,12 +59,12 @@ enum HistoryChartMath {
+         return AxisTicks(step: niceStep(dataMax / Double(intervals)), intervals: intervals)
+     }
+ 
+-    /// Stacking order: the source with the most output (or cost) in the range first (drawn at the bottom).
++    /// Stacking order: the source with the highest value of the metric in the range first (drawn at the bottom).
+     static func stackOrder(_ days: [DaySummary], metric: HistoryChartMetric = .output) -> [SourceKind] {
+         var totals: [SourceKind: Int64] = [:]
+         for day in days {
+             for entry in day.sources {
+-                totals[entry.source, default: 0] += metric == .output ? Int64(entry.output) : entry.cost.microUsd
++                totals[entry.source, default: 0] += entry.value(metric)
+             }
+         }
+         return totals
+diff --git a/macos/Sources/AgentSpeed/History/Model/HistoryMoney.swift b/macos/Sources/AgentSpeed/History/Model/HistoryMoney.swift
+index 0facd34d..11c1197d 100644
+--- a/macos/Sources/AgentSpeed/History/Model/HistoryMoney.swift
++++ b/macos/Sources/AgentSpeed/History/Model/HistoryMoney.swift
+@@ -1,19 +1,28 @@
+ import AgentSpeedCore
+ import Foundation
+ 
+-/// What the daily chart and the single-day breakdown measure (DESIGN 9, Usage history: `history.chart.output` |
+-/// `history.chart.cost`).
++/// What the daily chart and the single-day breakdown measure (DESIGN 9–10).
+ enum HistoryChartMetric: String, CaseIterable, Identifiable, Sendable {
+-    case output, cost, traffic
++    case total, output, cost, traffic
++
++    static let withoutTraffic = allCases.filter { $0 != .traffic }
+ 
+     var id: String { rawValue }
+     var titleKey: String {
+         switch self {
++        case .total: "history.chart.total"
+         case .output: "history.chart.output"
+         case .cost: "history.chart.cost"
+         case .traffic: "history.chart.traffic"
+         }
+     }
++
++    var tokenTitleKey: String { self == .total ? "history.table.totalTokens" : "history.table.output" }
++
++    func tokenCount(input: Int, output: Int) -> Int {
++        // Normalized input already includes cache reads/writes; output already includes reasoning.
++        self == .total ? input + output : output
++    }
+ }
+ 
+ /// How costs count in the window (METRICS 9.4, DESIGN 9): the sources left out as subscriptions and the chart metric.
+diff --git a/macos/Sources/AgentSpeed/History/Model/HistoryText.swift b/macos/Sources/AgentSpeed/History/Model/HistoryText.swift
+index 5fb1e989..bacce3ba 100644
+--- a/macos/Sources/AgentSpeed/History/Model/HistoryText.swift
++++ b/macos/Sources/AgentSpeed/History/Model/HistoryText.swift
+@@ -206,7 +206,7 @@ enum HistoryText {
+ 
+     /// Everything a day holds, as one sentence for screen readers; `traffic` when the table shows its column.
+     static func accessible(_ day: DaySummary, today: DayKey, money: HistoryMoney? = nil, traffic: Bool = false,
+-                           inProgress: Bool = true, _ l10n: Localizer) -> String {
++                           inProgress: Bool = true, metric: HistoryChartMetric = .output, _ l10n: Localizer) -> String {
+         var parts = [
+             labelled(l10n("history.table.output"), fullNumber(day.output, l10n), l10n),
+             labelled(l10n("history.table.input"), fullNumber(day.input, l10n), l10n),
+@@ -216,11 +216,14 @@ enum HistoryText {
+             labelled(l10n("history.table.cacheHit"), percent(day.cacheHitRatio), l10n),
+             labelled(l10n("history.table.speed"), speed(day.averageSpeed, l10n), l10n),
+         ]
++        if metric == .total {
++            parts.insert(labelled(l10n(metric.tokenTitleKey), fullNumber(day.tokenCount(metric), l10n), l10n), at: 0)
++        }
+         if let peak = day.peak {
+             parts.append(labelled(l10n("history.table.peak"), speed(peak, l10n), l10n))
+         }
+         parts.append(labelled(l10n("history.table.agents"), fullNumber(day.agents, l10n), l10n))
+-        if !day.models.isEmpty {
++        if metric != .total, !day.models.isEmpty {
+             let models = day.models.prefix(3).map { modelWithSpeed($0, l10n) } + (day.models.count > 3 ? [l10n("mac.history.models.more", day.models.count - 3)] : [])
+             parts.append(labelled(l10n("history.table.models"), models.joined(separator: ", "), l10n))
+         }
+@@ -245,9 +248,10 @@ enum HistoryText {
+     }
+ 
+     /// One breakdown bar for screen readers: `輸出：312,345，費用：4.20 美元，佔比：38%，平均速度：88.2 tok/s，請求：151`.
+-    static func accessible(_ item: BreakdownItem, money: HistoryMoney? = nil, _ l10n: Localizer) -> String {
++    static func accessible(_ item: BreakdownItem, money: HistoryMoney? = nil, metric: HistoryChartMetric = .output,
++                           _ l10n: Localizer) -> String {
+         join([
+-            labelled(l10n("history.table.output"), fullNumber(item.output, l10n), l10n),
++            labelled(l10n(metric.tokenTitleKey), fullNumber(item.tokenCount(metric), l10n), l10n),
+             money.map { labelled(l10n("history.table.cost"), spokenCost(item.cost, money: $0, l10n), l10n) } ?? "",
+             item.traffic.map { labelled(l10n("history.table.traffic"), TrafficText(l10n: l10n, bits: false).spokenPair($0), l10n) } ?? "",
+             labelled(l10n("mac.history.breakdown.share"), percent(item.share), l10n),
+diff --git a/macos/Sources/AgentSpeed/History/Views/HistoryBreakdownView.swift b/macos/Sources/AgentSpeed/History/Views/HistoryBreakdownView.swift
+index 41cf95aa..37d63c29 100644
+--- a/macos/Sources/AgentSpeed/History/Views/HistoryBreakdownView.swift
++++ b/macos/Sources/AgentSpeed/History/Views/HistoryBreakdownView.swift
+@@ -2,9 +2,8 @@ import AgentSpeedCore
+ import AppKit
+ import SwiftUI
+ 
+-/// Takes the daily chart's place for a single day (DESIGN 4b, item 1): one horizontal bar per source (all sources) or
+-/// per model (one source), most output first, with output, share of the day and average speed. Bars are scaled to the
+-/// largest one. Today's bars wear the chart's in-progress hatching. A source row opens that source's model breakdown.
++/// Takes the daily chart's place for a single day (DESIGN 4b, item 1); the largest item sets the bar scale.
++/// Today's bars wear the chart's in-progress hatching. Source rows can narrow an all-sources view.
+ struct HistoryBreakdownCard: View {
+     let breakdown: DayBreakdown
+     let today: DayKey
+@@ -15,7 +14,7 @@ struct HistoryBreakdownCard: View {
+     let reduceMotion: Bool
+     var offersTraffic = true
+     var todayInProgress = true
+-    /// Output or cost sorts and sizes the bars (DESIGN 9).
++    /// The metric that sorts and sizes the bars.
+     @Binding var metric: HistoryChartMetric
+     let onSelectSource: (SourceKind) -> Void
+ 
+@@ -29,7 +28,7 @@ struct HistoryBreakdownCard: View {
+         // Bars spring to their new lengths; under Reduce Motion the rows crossfade instead.
+         let identity = reduceMotion ? "\(breakdown.day)-\(breakdown.kind)-\(breakdown.metric)-\(source?.rawValue ?? "all")" : "breakdown"
+         VStack(alignment: .leading, spacing: Spacing.xxs) {
+-            header(columns: columns, inProgress: inProgress)
++            header(inProgress: inProgress)
+             if breakdown.isEmpty {
+                 Text(l10n("history.empty"))
+                     .font(HistoryFont.cell)
+@@ -58,53 +57,69 @@ struct HistoryBreakdownCard: View {
+     }
+ 
+     /// The title (with 進行中 for today) over the names, the column captions over the numbers.
+-    private func header(columns: BreakdownColumns, inProgress: Bool) -> some View {
+-        HStack(alignment: .firstTextBaseline, spacing: BreakdownColumns.spacing) {
+-            HStack(alignment: .firstTextBaseline, spacing: Spacing.s) {
+-                Picker(l10n(breakdown.metric.titleKey), selection: $metric) {
+-                    ForEach(offersTraffic ? HistoryChartMetric.allCases : [.output, .cost]) { metric in
+-                        Text(l10n(metric.titleKey)).tag(metric)
+-                    }
+-                }
+-                .pickerStyle(.segmented)
+-                .labelsHidden()
+-                .controlSize(.small)
+-                .fixedSize()
+-                Text(l10n(breakdown.titleKey))
+-                    .font(HistoryFont.sectionTitle)
+-                    .fixedSize()
+-                    .accessibilityAddTraits(.isHeader)
+-                if inProgress {
+-                    InProgressBadge(l10n: l10n)
+-                }
++    private func header(inProgress: Bool) -> some View {
++        ViewThatFits(in: .horizontal) {
++            HStack(alignment: .firstTextBaseline, spacing: BreakdownColumns.spacing) {
++                controls(inProgress: inProgress)
++                Spacer(minLength: 0)
++                columnHeadings
+             }
+-            .frame(maxWidth: .infinity, alignment: .leading)
+-            Group {
+-                Text(l10n("history.table.output"))
+-                    .frame(width: BreakdownColumns.output, alignment: .trailing)
+-                Text(l10n("history.table.cost"))
+-                    .frame(width: BreakdownColumns.cost, alignment: .trailing)
+-                Text(l10n("mac.history.breakdown.share"))
+-                    .frame(width: BreakdownColumns.share, alignment: .trailing)
+-                Text(l10n("history.table.speed"))
+-                    .frame(width: BreakdownColumns.speed, alignment: .trailing)
++            VStack(alignment: .leading, spacing: Spacing.xs) {
++                controls(inProgress: inProgress)
++                columnHeadings.frame(maxWidth: .infinity, alignment: .trailing)
+             }
+-            .font(HistoryFont.header)
+-            .foregroundStyle(.historySecondary)
+-            .lineLimit(1)
+-            .minimumScaleFactor(0.85)
+-            .accessibilityHidden(true)
+         }
+         .padding(.horizontal, BreakdownColumns.inset)
+         .padding(.bottom, Spacing.xxs)
+     }
+ 
++    private func controls(inProgress: Bool) -> some View {
++        HStack(alignment: .firstTextBaseline, spacing: Spacing.s) {
++            Picker(l10n(breakdown.metric.titleKey), selection: $metric) {
++                ForEach(offersTraffic ? HistoryChartMetric.allCases : HistoryChartMetric.withoutTraffic) { metric in
++                    Text(l10n(metric.titleKey)).tag(metric)
++                }
++            }
++            .pickerStyle(.segmented)
++            .labelsHidden()
++            .controlSize(.small)
++            .fixedSize()
++            Text(l10n(breakdown.titleKey))
++                .font(HistoryFont.sectionTitle)
++                .fixedSize()
++                .accessibilityAddTraits(.isHeader)
++            if inProgress {
++                InProgressBadge(l10n: l10n)
++            }
++        }
++        .fixedSize(horizontal: true, vertical: false)
++    }
++
++    private var columnHeadings: some View {
++        HStack(alignment: .firstTextBaseline, spacing: BreakdownColumns.spacing) {
++            Text(l10n(breakdown.metric.tokenTitleKey))
++                .frame(width: BreakdownColumns.tokens, alignment: .trailing)
++            Text(l10n("history.table.cost"))
++                .frame(width: BreakdownColumns.cost, alignment: .trailing)
++            Text(l10n("mac.history.breakdown.share"))
++                .frame(width: BreakdownColumns.share, alignment: .trailing)
++            Text(l10n("history.table.speed"))
++                .frame(width: BreakdownColumns.speed, alignment: .trailing)
++        }
++        .font(HistoryFont.header)
++        .foregroundStyle(.historySecondary)
++        .lineLimit(1)
++        .minimumScaleFactor(0.85)
++        .accessibilityHidden(true)
++    }
++
+     @ViewBuilder
+     private func row(_ item: BreakdownItem, columns: BreakdownColumns, inProgress: Bool, dark: Bool) -> some View {
+         let name = HistoryText.breakdownName(item.subject, l10n)
+-        let value = HistoryText.accessible(item, money: money, l10n)
++        let value = HistoryText.accessible(item, money: money, metric: breakdown.metric, l10n)
+         let content = BreakdownRowContent(
+             item: item,
++            metric: breakdown.metric,
+             name: name,
+             tint: tint(item.subject, dark: dark),
+             columns: columns,
+@@ -113,8 +128,8 @@ struct HistoryBreakdownCard: View {
+             money: money,
+             l10n: l10n
+         )
+-        if case .source(let kind) = item.subject {
+-            let hint = l10n("mac.history.breakdown.sourceHint")
++        if case .source(let kind) = item.subject, breakdown.metric != .total || source == nil {
++            let hint = l10n(breakdown.metric == .total ? "mac.history.breakdown.filterSourceHint" : "mac.history.breakdown.sourceHint")
+             Button {
+                 onSelectSource(kind)
+             } label: {
+@@ -148,7 +163,7 @@ struct HistoryBreakdownCard: View {
+ struct BreakdownColumns {
+     static let inset: CGFloat = Spacing.xs
+     static let spacing: CGFloat = Spacing.s
+-    static let output: CGFloat = 60
++    static let tokens: CGFloat = 60
+     static let cost: CGFloat = 80
+     static let share: CGFloat = 44
+     static let speed: CGFloat = 92
+@@ -164,9 +179,10 @@ struct BreakdownColumns {
+     }
+ }
+ 
+-/// Swatch and name, the bar, then output, share and speed in fixed columns.
++/// Swatch and name, the bar, then tokens, cost, share and speed in fixed columns.
+ private struct BreakdownRowContent: View {
+     let item: BreakdownItem
++    let metric: HistoryChartMetric
+     let name: String
+     let tint: Color
+     let columns: BreakdownColumns
+@@ -191,9 +207,9 @@ private struct BreakdownRowContent: View {
+                 .frame(height: 12)
+                 .frame(maxWidth: .infinity)
+                 .help(item.traffic.map { TrafficText(l10n: l10n, bits: false).pair($0) } ?? "")
+-            Text(SpeedFormat.tokens(item.output))
++            Text(SpeedFormat.tokens(item.tokenCount(metric)))
+                 .font(HistoryFont.cell)
+-                .frame(width: BreakdownColumns.output, alignment: .trailing)
++                .frame(width: BreakdownColumns.tokens, alignment: .trailing)
+             cost
+                 .frame(width: BreakdownColumns.cost, alignment: .trailing)
+             Text(HistoryText.percent(item.share))
+diff --git a/macos/Sources/AgentSpeed/History/Views/HistoryChartDescriptor.swift b/macos/Sources/AgentSpeed/History/Views/HistoryChartDescriptor.swift
+index e107dcc8..9f151f3e 100644
+--- a/macos/Sources/AgentSpeed/History/Views/HistoryChartDescriptor.swift
++++ b/macos/Sources/AgentSpeed/History/Views/HistoryChartDescriptor.swift
+@@ -2,8 +2,7 @@ import Accessibility
+ import AgentSpeedCore
+ import SwiftUI
+ 
+-/// Audio graph of the daily chart: output per day with the average speed as a second series, or cost per day in the
+-/// display currency (DESIGN 9).
++/// Audio graph of the daily chart. Only daily output has average speed as a second series.
+ struct HistoryChartDescriptor: AXChartDescriptorRepresentable {
+     let title: String
+     let summary: String
+@@ -13,6 +12,7 @@ struct HistoryChartDescriptor: AXChartDescriptorRepresentable {
+     let labels: [String]
+     let outputs: [Double]
+     let speeds: [Double?]
++    let showsSpeed: Bool
+     let outputMax: Double
+     let language: AppLanguage
+     /// Cost values read as amounts (`12.34 美元`).
+@@ -28,15 +28,16 @@ struct HistoryChartDescriptor: AXChartDescriptorRepresentable {
+         dayTitle = l10n("history.table.date")
+         let traffic = chart.metric == .traffic
+         bytes = traffic
+-        outputTitle = l10n(traffic ? "history.table.traffic" : cost ? "history.table.cost" : "history.table.output")
++        outputTitle = l10n(traffic ? "history.table.traffic" : cost ? "history.table.cost" : chart.metric.tokenTitleKey)
+         speedTitle = "\(l10n("history.chart.speed")) (\(l10n("unit.tokS")))"
+         labels = chart.range.days.map { HistoryText.longDate($0, l10n) }
+         outputs = chart.range.days.map { day in
+             if traffic { return Double(chart.traffic[day]?.shown.sum ?? 0) }
+             guard let summary = chart.days[day] else { return 0 }
+-            return cost ? (chart.money?.value(summary.cost.microUsd) ?? 0) : Double(summary.output)
++            return cost ? (chart.money?.value(summary.cost.microUsd) ?? 0) : summary.value(chart.metric)
+         }
+         speeds = chart.speeds
++        showsSpeed = chart.metric == .output
+         outputMax = max(chart.outputTicks.max + (chart.lowerTicks?.max ?? 0), cost ? 0.000001 : 1)
+         language = l10n.language
+         money = cost ? chart.money : nil
+@@ -56,23 +57,26 @@ struct HistoryChartDescriptor: AXChartDescriptorRepresentable {
+             isContinuous: false,
+             dataPoints: zip(labels, outputs).map { AXDataPoint(x: $0, y: $1) }
+         )
+-        let speed = AXDataSeriesDescriptor(
+-            name: speedTitle,
+-            isContinuous: true,
+-            dataPoints: zip(labels, speeds).compactMap { label, value in value.map { AXDataPoint(x: label, y: $0) } }
+-        )
++        var series = [output]
++        if showsSpeed {
++            series.append(AXDataSeriesDescriptor(
++                name: speedTitle,
++                isContinuous: true,
++                dataPoints: zip(labels, speeds).compactMap { label, value in value.map { AXDataPoint(x: label, y: $1) } }
++            ))
++        }
+         return AXChartDescriptor(
+             title: title,
+             summary: summary,
+             xAxis: xAxis,
+             yAxis: yAxis,
+             additionalAxes: [],
+-            series: money == nil ? [output, speed] : [output]
++            series: series
+         )
+     }
+ }
+ 
+-/// Audio graph of a single day's breakdown: output per source or model, most first.
++/// Audio graph of a single day's breakdown, in the same order as the visible bars.
+ struct HistoryBreakdownDescriptor: AXChartDescriptorRepresentable {
+     let title: String
+     let summary: String
+@@ -90,9 +94,9 @@ struct HistoryBreakdownDescriptor: AXChartDescriptorRepresentable {
+         title = l10n(breakdown.titleKey)
+         summary = HistoryText.longDate(breakdown.day, l10n)
+         nameTitle = l10n(breakdown.kind == .bySource ? "dashboard.sources" : "history.table.models")
+-        outputTitle = l10n(cost ? "history.table.cost" : "history.table.output")
++        outputTitle = l10n(cost ? "history.table.cost" : breakdown.metric.tokenTitleKey)
+         names = breakdown.items.map { HistoryText.breakdownName($0.subject, l10n) }
+-        outputs = breakdown.items.map { cost ? money.value($0.cost.microUsd) : Double($0.output) }
++        outputs = breakdown.items.map { cost ? money.value($0.cost.microUsd) : Double($0.tokenCount(breakdown.metric)) }
+         self.money = cost ? money : nil
+     }
+ 
+diff --git a/macos/Sources/AgentSpeed/History/Views/HistoryChartView.swift b/macos/Sources/AgentSpeed/History/Views/HistoryChartView.swift
+index 046a313c..715f405c 100644
+--- a/macos/Sources/AgentSpeed/History/Views/HistoryChartView.swift
++++ b/macos/Sources/AgentSpeed/History/Views/HistoryChartView.swift
+@@ -19,7 +19,7 @@ struct HistoryChartCard: View {
+         VStack(alignment: .leading, spacing: Spacing.s) {
+             ChartLegend(chart: chart, l10n: l10n, dark: colorScheme == .dark, increasedContrast: contrast == .increased,
+                         metric: Binding(get: { model.chartMetric }, set: { model.select(metric: $0) }),
+-                        metrics: model.offersTraffic ? HistoryChartMetric.allCases : [.output, .cost],
++                        metrics: model.offersTraffic ? HistoryChartMetric.allCases : HistoryChartMetric.withoutTraffic,
+                         trafficTotal: model.content.trafficTotal.map { TrafficText(l10n: l10n, bits: false).pair($0) })
+             HistoryChartView(
+                 chart: chart,
+@@ -37,8 +37,8 @@ struct HistoryChartCard: View {
+     }
+ }
+ 
+-/// The metric control (`每日輸出` | `費用`, DESIGN 9) with the source swatches in stacking order, and the speed line key on
+-/// the right (output only). When the swatches do not fit on the title line they wrap onto their own lines below it.
++/// The metric control with source swatches in stacking order and a speed key for output. When the swatches do not
++/// fit on the title line they wrap onto their own lines below it.
+ private struct ChartLegend: View {
+     let chart: HistoryChartModel
+     let l10n: Localizer
+@@ -273,7 +273,7 @@ struct HistoryChartView: View {
+                     Rectangle()
+                         .accessibilityLabel(HistoryText.dayTitle(day.day, today: chart.today, inProgress: chart.todayInProgress, l10n))
+                         .accessibilityValue(HistoryText.accessible(day, today: chart.today, money: chart.money,
+-                                                                  inProgress: chart.todayInProgress, l10n))
++                                                                  inProgress: chart.todayInProgress, metric: chart.metric, l10n))
+                         .accessibilityAction { interaction.revealInTable(day.day) }
+                 }
+             }
+@@ -396,7 +396,7 @@ private struct HistoryChartAxes: ViewModifier {
+                         }
+                     }
+                 }
+-                // The cost metric has no speed line, so no right axis (DESIGN 9).
++                // Only output has the speed line and its right axis.
+                 AxisMarks(position: .trailing, values: chart.metric == .output ? chart.outputTicks.values : []) { value in
+                     AxisValueLabel {
+                         if let output = value.as(Double.self) {
+diff --git a/macos/Sources/AgentSpeed/History/Views/HistoryTooltip.swift b/macos/Sources/AgentSpeed/History/Views/HistoryTooltip.swift
+index e5c9a0fb..31497275 100644
+--- a/macos/Sources/AgentSpeed/History/Views/HistoryTooltip.swift
++++ b/macos/Sources/AgentSpeed/History/Views/HistoryTooltip.swift
+@@ -31,7 +31,7 @@ struct HistoryTooltip: View {
+                 traffic
+             } else if let summary {
+                 rows(summary)
+-                if !summary.models.isEmpty {
++                if chart.metric != .total, !summary.models.isEmpty {
+                     Divider().padding(.vertical, 8)
+                     models(summary)
+                 }
+@@ -43,7 +43,7 @@ struct HistoryTooltip: View {
+                         .fixedSize(horizontal: false, vertical: true)
+                 }
+             } else {
+-                row(l10n("history.table.output"), "0")
++                row(l10n(chart.metric.tokenTitleKey), "0")
+             }
+         }
+         .padding(12)
+@@ -53,10 +53,15 @@ struct HistoryTooltip: View {
+     @ViewBuilder
+     private func rows(_ summary: DaySummary) -> some View {
+         let costFirst = chart.metric == .cost
++        let totalFirst = chart.metric == .total
+         VStack(alignment: .leading, spacing: 4) {
+             if costFirst { costRow(summary, emphasized: true) }
+-            row(l10n("history.table.output"), HistoryText.fullNumber(summary.output, l10n), emphasized: !costFirst)
+-            if !costFirst { shareBar(summary) }
++            if totalFirst {
++                row(l10n(chart.metric.tokenTitleKey), HistoryText.fullNumber(summary.tokenCount(chart.metric), l10n), emphasized: true)
++                shareBar(summary)
++            }
++            row(l10n("history.table.output"), HistoryText.fullNumber(summary.output, l10n), emphasized: !costFirst && !totalFirst)
++            if !costFirst && !totalFirst { shareBar(summary) }
+             row(l10n("history.table.input"), HistoryText.fullNumber(summary.input, l10n))
+             row(l10n("history.table.requests"), HistoryText.fullNumber(summary.requests, l10n))
+             row(l10n("history.table.speed"), HistoryText.speed(summary.averageSpeed, l10n))
+@@ -106,8 +111,8 @@ struct HistoryTooltip: View {
+         }
+     }
+ 
+-    private func value(_ source: SourceOutput) -> Double {
+-        chart.metric == .cost ? Double(source.cost.microUsd) : Double(source.output)
++    private func value(_ source: SourceDayUsage) -> Double {
++        Double(source.value(chart.metric))
+     }
+ 
+     /// The day's cost: always present (DESIGN 9), with `≥` and the unpriced count, `–` when nothing is priced.
+@@ -188,12 +193,12 @@ struct HistoryTooltip: View {
+     }
+ }
+ 
+-/// The day's output (or cost) split by source, in stacking order, as one thin bar.
++/// The selected metric split by source, in stacking order, as one thin bar.
+ private struct SourceShareBar: View {
+     let summary: DaySummary
+     let stack: [SourceKind]
+     let dark: Bool
+-    let value: (SourceOutput) -> Double
++    let value: (SourceDayUsage) -> Double
+ 
+     var body: some View {
+         GeometryReader { proxy in
+diff --git a/macos/Sources/AgentSpeed/Localization/StringTable.swift b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+index 7e27a306..5ea322bf 100644
+--- a/macos/Sources/AgentSpeed/Localization/StringTable.swift
++++ b/macos/Sources/AgentSpeed/Localization/StringTable.swift
+@@ -228,6 +228,7 @@ enum StringTable {
+         "history.chart.cost": Entry("費用", "费用", "Cost", "費用"),
+         "history.chart.output": Entry("每日輸出", "每日输出", "Daily output", "日別の出力"),
+         "history.chart.speed": Entry("平均速度", "平均速度", "Average speed", "平均速度"),
++        "history.chart.total": Entry("每日總用量", "每日总用量", "Daily total usage", "日別の総使用量"),
+         "history.chart.traffic": Entry("網路流量", "网络流量", "Traffic", "通信量"),
+         "history.clear": Entry("清除歷史統計…", "清除历史统计…", "Clear History…", "履歴をクリア…"),
+         "history.clear.action": Entry("清除", "清除", "Clear", "クリア"),
+@@ -305,6 +306,7 @@ enum StringTable {
+         "history.table.peak": Entry("峰值", "峰值", "Peak", "ピーク"),
+         "history.table.requests": Entry("請求", "请求", "Requests", "リクエスト"),
+         "history.table.speed": Entry("平均速度", "平均速度", "Avg speed", "平均速度"),
++        "history.table.totalTokens": Entry("總 token", "总 token", "Total tokens", "総トークン"),
+         "history.table.traffic": Entry("網路", "网络", "Network", "通信量"),
+         "history.title": Entry("用量歷史", "用量历史", "Usage History", "使用履歴"),
+         "history.today": Entry("今天", "今天", "Today", "今日"),
+@@ -363,6 +365,7 @@ enum StringTable {
+         "mac.dashboard.stopPreview": Entry("停止", "停止", "Stop", "停止"),
+         "mac.history.a11y.item": Entry("%@：%@", "%@：%@", "%@: %@", "%@：%@"),
+         "mac.history.a11y.join": Entry("，", "，", ", ", "、"),
++        "mac.history.breakdown.filterSourceHint": Entry("只顯示這個來源的用量", "仅显示这个来源的用量", "Show usage from this source only", "このソースの使用量のみ表示"),
+         "mac.history.breakdown.otherModels": Entry("其他模型", "其他模型", "Other models", "その他のモデル"),
+         "mac.history.breakdown.share": Entry("佔比", "占比", "Share", "割合"),
+         "mac.history.breakdown.sourceHint": Entry("查看這個來源的模型分布", "查看这个来源的模型分布", "Show this source by model", "このソースをモデル別に表示"),
+diff --git a/spec/strings.json b/spec/strings.json
+index 9103a483..82aa7a88 100644
+--- a/spec/strings.json
++++ b/spec/strings.json
+@@ -2142,6 +2142,12 @@
+     "en": "%@ vs the day before",
+     "ja": "前日比 %@"
+   },
++  "history.chart.total": {
++    "zh-Hant": "每日總用量",
++    "zh-Hans": "每日总用量",
++    "en": "Daily total usage",
++    "ja": "日別の総使用量"
++  },
+   "history.chart.output": {
+     "zh-Hant": "每日輸出",
+     "zh-Hans": "每日输出",
+@@ -2178,6 +2184,12 @@
+     "en": "Requests",
+     "ja": "リクエスト"
+   },
++  "history.table.totalTokens": {
++    "zh-Hant": "總 token",
++    "zh-Hans": "总 token",
++    "en": "Total tokens",
++    "ja": "総トークン"
++  },
+   "history.table.output": {
+     "zh-Hant": "輸出",
+     "zh-Hans": "输出",
+diff --git a/windows/src/AgentSpeed.Presentation/History/DayBreakdown.cs b/windows/src/AgentSpeed.Presentation/History/DayBreakdown.cs
+index b15ac0b6..edcf6be3 100644
+--- a/windows/src/AgentSpeed.Presentation/History/DayBreakdown.cs
++++ b/windows/src/AgentSpeed.Presentation/History/DayBreakdown.cs
+@@ -14,7 +14,7 @@ public enum BreakdownKind
+ 
+ /// <summary>One bar of a day's breakdown.</summary>
+ /// <param name="Model">The model name; null on a source bar and on <paramref name="OtherModels"/>.</param>
+-/// <param name="Share">Output (or cost, for the cost metric) as a share (0..1) of the day's; the bars' shares add up to 1.</param>
++/// <param name="Share">The bar's share (0..1) of the day's metric; the bars' shares add up to 1 when the day has a nonzero total.</param>
+ /// <param name="Fraction">The metric relative to the largest bar (0..1), the bar's length.</param>
+ /// <param name="Speed">Σ measured output ÷ Σ measured time (per source, or per model, METRICS 8); null when nothing was measured.</param>
+ /// <param name="OtherModels">Output no named model accounts for (responses without a model, days stored before per-model time).</param>
+@@ -28,6 +28,11 @@ public sealed record BreakdownRow(
+     double? Speed,
+     bool OtherModels = false)
+ {
++    /// <summary>The bar's normalized input; only available for source bars.</summary>
++    public long Input { get; init; }
++
++    public long TokenValue(HistoryChartMetric metric) => HistoryChartMetrics.TokenValue(metric, Input, Output);
++
+     /// <summary>The bar's cost as counted (an excluded subscription source adds nothing, METRICS 9.4).</summary>
+     public HistoryCost Cost { get; init; }
+ 
+@@ -39,8 +44,8 @@ public sealed record BreakdownRow(
+ }
+ 
+ /// <summary>
+-/// What a single-day range shows instead of the daily chart (DESIGN 4b, toolbar): the day's output by source, or by
+-/// model for one source, sorted and sized by the chosen metric (DESIGN 9).
++/// What a single-day range shows instead of the daily chart (DESIGN 4b, toolbar): usage by source, or by model when
++/// a source is selected and the metric supports model attribution, sorted and sized by the chosen metric.
+ /// </summary>
+ /// <param name="Output">Σ output of the bars.</param>
+ public sealed record DayBreakdown(BreakdownKind Kind, DateOnly Day, long Output, IReadOnlyList<BreakdownRow> Rows)
+@@ -80,8 +85,9 @@ public sealed record DayBreakdown(BreakdownKind Kind, DateOnly Day, long Output,
+         var tallies = new Dictionary<SourceKind, Tally>();
+         foreach (var record in OfDay(usage, day, source: null))
+         {
+-            tallies[record.Source] = tallies.GetValueOrDefault(record.Source).Add(new Tally(record.Totals.Output, record.Totals.Requests,
+-                record.MeasuredOutput, record.MeasuredMs, HistoryAggregator.CostOf(record, excluded)));
++            var part = new Tally(record.Totals.Output, record.Totals.Requests, record.MeasuredOutput, record.MeasuredMs,
++                HistoryAggregator.CostOf(record, excluded)) { Input = record.Totals.Input };
++            tallies[record.Source] = tallies.GetValueOrDefault(record.Source).Add(part);
+         }
+ 
+         foreach (var (kind, bytes) in traffic?.BySource ?? new Dictionary<SourceKind, TrafficBytes>())
+@@ -89,7 +95,9 @@ public sealed record DayBreakdown(BreakdownKind Kind, DateOnly Day, long Output,
+             tallies[kind] = tallies.GetValueOrDefault(kind) with { Traffic = bytes };
+         }
+ 
+-        var bars = tallies.Select(t => new Bar(t.Key, null, false, t.Value)).ToList();
++        var bars = tallies
++            .Where(t => metric != HistoryChartMetric.Total || t.Value.TokenValue(metric) > 0)
++            .Select(t => new Bar(t.Key, null, false, t.Value)).ToList();
+         return Build(BreakdownKind.Sources, day, bars, metric);
+     }
+ 
+@@ -101,6 +109,12 @@ public sealed record DayBreakdown(BreakdownKind Kind, DateOnly Day, long Output,
+         HistoryChartMetric metric = HistoryChartMetric.Output)
+     {
+         ArgumentNullException.ThrowIfNull(usage);
++        // ModelUsage records output but no input. A filtered Total view still shows one source bar.
++        if (metric == HistoryChartMetric.Total)
++        {
++            return BySource(usage.Where(record => record?.Source == source), day, metric);
++        }
++
+         var models = new Dictionary<string, Tally>(StringComparer.Ordinal);
+         var other = new Tally();
+         var hasOther = false;
+@@ -163,7 +177,7 @@ public sealed record DayBreakdown(BreakdownKind Kind, DateOnly Day, long Output,
+         var byTraffic = metric == HistoryChartMetric.Traffic && kind == BreakdownKind.Sources;
+         bars.Sort((a, b) => Precedes(a, b, metric, byTraffic));
+         double Value(Bar bar) => byTraffic ? bar.Tally.Traffic?.Sum ?? 0
+-            : metric == HistoryChartMetric.Cost ? bar.Tally.Cost.MicroUsd : bar.Tally.Output;
++            : metric == HistoryChartMetric.Cost ? bar.Tally.Cost.MicroUsd : bar.Tally.TokenValue(metric);
+         var total = bars.Sum(Value);
+         var largest = bars.Count > 0 ? bars.Max(Value) : 0;
+         var rows = bars
+@@ -171,14 +185,14 @@ public sealed record DayBreakdown(BreakdownKind Kind, DateOnly Day, long Output,
+                 total > 0 ? Value(b) / total : 0,
+                 largest > 0 ? Value(b) / largest : 0,
+                 b.Tally.Speed,
+-                b.Other) { Cost = b.Tally.Cost, Traffic = b.Tally.Traffic })
++                b.Other) { Input = b.Tally.Input, Cost = b.Tally.Cost, Traffic = b.Tally.Traffic })
+             .ToArray();
+         return new DayBreakdown(kind, day, bars.Sum(b => b.Tally.Output), rows) { Metric = metric };
+     }
+ 
+     /// <summary>
+-    /// Most of the metric first (cost, then output for the cost metric; traffic, sources with traffic first, for the traffic
+-    /// metric), then most requests, then source order or model name; other models always last.
++    /// Most of the metric first (then output for cost or traffic), then most requests, then source order or model
++    /// name; other models always last.
+     /// </summary>
+     private static int Precedes(Bar a, Bar b, HistoryChartMetric metric, bool byTraffic)
+     {
+@@ -196,7 +210,7 @@ public sealed record DayBreakdown(BreakdownKind Kind, DateOnly Day, long Output,
+             : metric == HistoryChartMetric.Cost ? b.Tally.Cost.MicroUsd.CompareTo(a.Tally.Cost.MicroUsd) : 0;
+         if (order == 0)
+         {
+-            order = b.Tally.Output.CompareTo(a.Tally.Output);
++            order = b.Tally.TokenValue(metric).CompareTo(a.Tally.TokenValue(metric));
+         }
+ 
+         if (order == 0)
+@@ -219,6 +233,10 @@ public sealed record DayBreakdown(BreakdownKind Kind, DateOnly Day, long Output,
+     /// <summary>Counts of one bar; negative inputs count as zero.</summary>
+     private readonly record struct Tally(long Output, long Requests, long MeasuredOutput, long MeasuredMs, HistoryCost Cost = default)
+     {
++        public long Input { get; init; }
++
++        public long TokenValue(HistoryChartMetric metric) => HistoryChartMetrics.TokenValue(metric, Input, Output);
++
+         public TrafficBytes? Traffic { get; init; }
+ 
+         public double? Speed => MeasuredMs > 0 && MeasuredOutput > 0 ? MeasuredOutput / (MeasuredMs / 1000.0) : null;
+@@ -230,6 +248,7 @@ public sealed record DayBreakdown(BreakdownKind Kind, DateOnly Day, long Output,
+             MeasuredMs + Math.Max(0, part.MeasuredMs),
+             Cost.Add(part.Cost))
+         {
++            Input = Input + Math.Max(0, part.Input),
+             Traffic = Traffic,
+         };
+     }
+diff --git a/windows/src/AgentSpeed.Presentation/History/DaySummary.cs b/windows/src/AgentSpeed.Presentation/History/DaySummary.cs
+index 0821b968..54b188c2 100644
+--- a/windows/src/AgentSpeed.Presentation/History/DaySummary.cs
++++ b/windows/src/AgentSpeed.Presentation/History/DaySummary.cs
+@@ -2,9 +2,15 @@ using AgentSpeed.Core;
+ 
+ namespace AgentSpeed.Presentation.History;
+ 
+-/// <summary>One source's output and cost on one day, for stacking the chart.</summary>
++/// <summary>One source's token usage and cost on one day, for stacking the chart.</summary>
+ /// <param name="Cost">The source's cost as counted: an excluded subscription source adds nothing (METRICS 9.4).</param>
+-public readonly record struct SourceOutput(SourceKind Source, long Output, long Requests = 0, HistoryCost Cost = default);
++public readonly record struct SourceOutput(SourceKind Source, long Output, long Requests = 0, HistoryCost Cost = default)
++{
++    public long Input { get; init; }
++
++    public long Value(HistoryChartMetric metric) => metric == HistoryChartMetric.Cost
++        ? Cost.MicroUsd : HistoryChartMetrics.TokenValue(metric, Input, Output);
++}
+ 
+ /// <summary>
+ /// One calendar day of usage for the selected source, or summed over every source (METRICS 8). Speeds are always
+@@ -12,7 +18,7 @@ public readonly record struct SourceOutput(SourceKind Source, long Output, long
+ /// </summary>
+ /// <param name="Peak">Highest stored live peak of the day; only days observed live have one.</param>
+ /// <param name="Models">Every model of the day, most output first.</param>
+-/// <param name="Sources">Output and cost per source (non-zero output or requests only), in source order, for stacking.</param>
++/// <param name="Sources">Token usage and cost per source, in source order, for stacking.</param>
+ public sealed record DaySummary(
+     DateOnly Day,
+     long Requests,
+@@ -60,35 +66,27 @@ public sealed record DaySummary(
+     /// <summary>Share of input served from the cache (cachedInput ÷ input).</summary>
+     public double? CacheHitRatio => Input > 0 ? Math.Clamp((double)CachedInput / Input, 0, 1) : null;
+ 
+-    public long OutputOf(SourceKind source)
+-    {
+-        foreach (var entry in Sources)
+-        {
+-            if (entry.Source == source)
+-            {
+-                return entry.Output;
+-            }
+-        }
+-
+-        return 0;
+-    }
++    public long OutputOf(SourceKind source) => ValueOf(source, HistoryChartMetric.Output);
+ 
+     /// <summary>The counted, known cost of <paramref name="source"/> (0 when excluded or unpriced).</summary>
+-    public long CostMicroUsdOf(SourceKind source)
++    public long CostMicroUsdOf(SourceKind source) => ValueOf(source, HistoryChartMetric.Cost);
++
++    public long ValueOf(SourceKind source, HistoryChartMetric metric)
+     {
+         foreach (var entry in Sources)
+         {
+             if (entry.Source == source)
+             {
+-                return entry.Cost.MicroUsd;
++                return entry.Value(metric);
+             }
+         }
+ 
+         return 0;
+     }
+ 
+-    /// <summary>The day's value of a chart metric: output tokens, or known micro-USD.</summary>
+-    public double Value(HistoryChartMetric metric) => metric == HistoryChartMetric.Cost ? Cost.MicroUsd : Output;
++    /// <summary>The day's value of a usage chart metric: tokens, or known micro-USD.</summary>
++    public long Value(HistoryChartMetric metric) => metric == HistoryChartMetric.Cost
++        ? Cost.MicroUsd : HistoryChartMetrics.TokenValue(metric, Input, Output);
+ 
+     /// <summary>A model's cost as counted; null for a model the day does not have.</summary>
+     public ModelCost? CostOf(string model) => ModelCosts.TryGetValue(model, out var cost) ? cost : null;
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs b/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
+index 67f7853c..bfd23a88 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryAggregator.cs
+@@ -222,6 +222,7 @@ public static class HistoryAggregator
+             var previous = sources.GetValueOrDefault(record.Source, new SourceOutput(record.Source, 0));
+             sources[record.Source] = previous with
+             {
++                Input = previous.Input + Math.Max(0, record.Totals.Input),
+                 Output = previous.Output + Math.Max(0, record.Totals.Output),
+                 Requests = previous.Requests + recordRequests,
+                 Cost = previous.Cost.Add(counted),
+@@ -275,7 +276,7 @@ public static class HistoryAggregator
+             .ThenBy(m => m.Model, StringComparer.Ordinal)
+             .ToArray();
+         var sourceList = sources.Values
+-            .Where(s => s.Output > 0 || s.Requests > 0)
++            .Where(s => s.Input > 0 || s.Output > 0 || s.Requests > 0)
+             .OrderBy(s => s.Source)
+             .ToArray();
+         // A model only subscription sources used has no counted requests (its cost reads cost.subscription.tag).
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryBars.cs b/windows/src/AgentSpeed.Presentation/History/HistoryBars.cs
+index 99eb93e7..96e2c449 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryBars.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryBars.cs
+@@ -170,6 +170,7 @@ public sealed class HistoryBars
+     {
+         ArgumentNullException.ThrowIfNull(days);
+         var cost = metric == HistoryChartMetric.Cost;
++        var withSpeed = HistoryChartMetrics.ShowsSpeedLine(metric);
+         if (cost && money is null)
+         {
+             throw new ArgumentNullException(nameof(money), "The cost metric needs the display currency.");
+@@ -191,12 +192,11 @@ public sealed class HistoryBars
+             present[index] = true;
+             for (var k = 0; k < order.Count; k++)
+             {
+-                values[index][k] = cost
+-                    ? money!.Value(source is null ? day.CostMicroUsdOf(order[k]) : day.Cost.MicroUsd)
+-                    : source is null ? day.OutputOf(order[k]) : day.Output;
++                var value = source is null ? day.ValueOf(order[k], metric) : day.Value(metric);
++                values[index][k] = cost ? money!.Value(value) : value;
+             }
+ 
+-            speeds[index] = cost ? null : day.AverageSpeed;
++            speeds[index] = withSpeed ? day.AverageSpeed : null;
+         }
+ 
+         return new HistoryBars(range, order, values, speeds, metric, present);
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryChartMath.cs b/windows/src/AgentSpeed.Presentation/History/HistoryChartMath.cs
+index d7e9dbc6..8330289f 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryChartMath.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryChartMath.cs
+@@ -139,7 +139,7 @@ public static class HistoryChartMath
+         return (upper, new AxisTicks(lowerStep, intervals));
+     }
+ 
+-    /// <summary>Stacking order: the source with the most output (or cost) in the range first (drawn at the bottom).</summary>
++    /// <summary>Stacking order: the source with the largest metric value in the range first (drawn at the bottom).</summary>
+     public static IReadOnlyList<SourceKind> StackOrder(IEnumerable<DaySummary> days, HistoryChartMetric metric = HistoryChartMetric.Output)
+     {
+         ArgumentNullException.ThrowIfNull(days);
+@@ -148,8 +148,7 @@ public static class HistoryChartMath
+         {
+             foreach (var entry in day.Sources)
+             {
+-                totals[entry.Source] = totals.GetValueOrDefault(entry.Source)
+-                    + (metric == HistoryChartMetric.Cost ? entry.Cost.MicroUsd : entry.Output);
++                totals[entry.Source] = totals.GetValueOrDefault(entry.Source) + entry.Value(metric);
+             }
+         }
+ 
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryMoney.cs b/windows/src/AgentSpeed.Presentation/History/HistoryMoney.cs
+index 93a947c5..3586be6b 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryMoney.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryMoney.cs
+@@ -5,10 +5,7 @@ using AgentSpeed.Presentation.Cost;
+ 
+ namespace AgentSpeed.Presentation.History;
+ 
+-/// <summary>
+-/// What the daily chart and the single-day breakdown measure (DESIGN 9, Usage history: <c>history.chart.output</c> |
+-/// <c>history.chart.cost</c>).
+-/// </summary>
++/// <summary>What the daily chart and the single-day breakdown measure.</summary>
+ public enum HistoryChartMetric
+ {
+     Output,
+@@ -16,16 +13,29 @@ public enum HistoryChartMetric
+ 
+     /// <summary>Observed network traffic (DESIGN 10, Usage history): mirrored daily bars.</summary>
+     Traffic,
++
++    /// <summary>Normalized input (including cache reads and writes) plus output.</summary>
++    Total,
+ }
+ 
+ public static class HistoryChartMetrics
+ {
+     public static string TitleKey(HistoryChartMetric metric) => metric switch
+     {
++        HistoryChartMetric.Total => "history.chart.total",
+         HistoryChartMetric.Cost => "history.chart.cost",
+         HistoryChartMetric.Traffic => "history.chart.traffic",
+         _ => "history.chart.output",
+     };
++
++    public static bool ShowsSpeedLine(HistoryChartMetric metric) => metric == HistoryChartMetric.Output;
++
++    public static string TokenLabelKey(HistoryChartMetric metric) =>
++        metric == HistoryChartMetric.Total ? "history.table.totalTokens" : "history.table.output";
++
++    // Input is already inclusive of cache reads and writes; those are not additional tokens.
++    public static long TokenValue(HistoryChartMetric metric, long input, long output) =>
++        metric == HistoryChartMetric.Total ? input + output : output;
+ }
+ 
+ /// <summary>How costs count in the window (METRICS 9.4, DESIGN 9): the sources left out as subscriptions and the chart metric.</summary>
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryText.cs b/windows/src/AgentSpeed.Presentation/History/HistoryText.cs
+index 7fc1087a..982ffcdf 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryText.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryText.cs
+@@ -237,7 +237,8 @@ public static class HistoryText
+     }
+ 
+     /// <summary>Everything a day holds, as one sentence for screen readers; with <paramref name="money"/>, its cost too.</summary>
+-    public static string Accessible(DaySummary day, DateOnly today, Localizer loc, HistoryMoney? money = null)
++    public static string Accessible(DaySummary day, DateOnly today, Localizer loc, HistoryMoney? money = null,
++        HistoryChartMetric metric = HistoryChartMetric.Output)
+     {
+         ArgumentNullException.ThrowIfNull(day);
+         ArgumentNullException.ThrowIfNull(loc);
+@@ -251,6 +252,11 @@ public static class HistoryText
+             Labelled(loc["history.table.cacheHit"], Percent(day.CacheHitRatio), loc),
+             Labelled(loc["history.table.speed"], Speed(day.AverageSpeed, loc), loc),
+         };
++        if (metric == HistoryChartMetric.Total)
++        {
++            parts.Insert(0, Labelled(loc[HistoryChartMetrics.TokenLabelKey(metric)], SpeedFormat.Tokens(day.Value(metric)), loc));
++        }
++
+         if (day.Peak is { } peak)
+         {
+             parts.Add(Labelled(loc["history.table.peak"], Speed(peak, loc), loc));
+@@ -283,13 +289,14 @@ public static class HistoryText
+     /// The values of one breakdown bar: <c>輸出：312,345，費用：4.20 美元，佔比：38%，平均速度：88.2 tok/s，請求：151</c> (the cost
+     /// only with <paramref name="money"/>).
+     /// </summary>
+-    public static string BreakdownValue(BreakdownRow row, Localizer loc, HistoryMoney? money = null)
++    public static string BreakdownValue(BreakdownRow row, Localizer loc, HistoryMoney? money = null,
++        HistoryChartMetric metric = HistoryChartMetric.Output)
+     {
+         ArgumentNullException.ThrowIfNull(row);
+         ArgumentNullException.ThrowIfNull(loc);
+         return JoinParts(
+         [
+-            Labelled(loc["history.table.output"], FullNumber(row.Output, loc), loc),
++            Labelled(loc[HistoryChartMetrics.TokenLabelKey(metric)], FullNumber(row.TokenValue(metric), loc), loc),
+             money is null ? string.Empty : Labelled(loc["history.table.cost"], SpokenCost(row.Cost, money, loc), loc),
+             row.Traffic is { } traffic ? Labelled(loc["history.table.traffic"], HistoryTrafficText.Spoken(traffic, loc), loc) : string.Empty,
+             Labelled(loc["win.history.share"], Percent(row.Share), loc),
+@@ -307,8 +314,9 @@ public static class HistoryText
+     }
+ 
+     /// <summary>One breakdown bar for screen readers: its name, then its values.</summary>
+-    public static string Accessible(BreakdownRow row, Localizer loc, HistoryMoney? money = null) =>
+-        Labelled(BreakdownName(row, loc), BreakdownValue(row, loc, money), loc);
++    public static string Accessible(BreakdownRow row, Localizer loc, HistoryMoney? money = null,
++        HistoryChartMetric metric = HistoryChartMetric.Output) =>
++        Labelled(BreakdownName(row, loc), BreakdownValue(row, loc, money, metric), loc);
+ 
+     /// <summary>Source names in source order, joined with <c>list.separator</c>.</summary>
+     public static string SourceList(IEnumerable<SourceKind> sources, Localizer loc)
+diff --git a/windows/src/AgentSpeed.Presentation/History/HistoryTooltipText.cs b/windows/src/AgentSpeed.Presentation/History/HistoryTooltipText.cs
+index f76e6ec7..c49c4466 100644
+--- a/windows/src/AgentSpeed.Presentation/History/HistoryTooltipText.cs
++++ b/windows/src/AgentSpeed.Presentation/History/HistoryTooltipText.cs
+@@ -7,7 +7,7 @@ namespace AgentSpeed.Presentation.History;
+ 
+ /// <summary>A line of the chart's hover card.</summary>
+ /// <param name="Source">The source of an indented per-source line (drawn with its color dot).</param>
+-/// <param name="Strong">The value the chart shows (output, or cost for the cost metric).</param>
++/// <param name="Strong">The primary value the chart shows.</param>
+ /// <param name="IsNote">A small explanatory line under the one before it (the label is the whole text).</param>
+ public sealed record TooltipRow(string Label, string Value, SourceKind? Source = null, bool Strong = false, bool IsNote = false);
+ 
+@@ -38,6 +38,7 @@ public static class HistoryTooltipText
+         ArgumentNullException.ThrowIfNull(money);
+         ArgumentNullException.ThrowIfNull(loc);
+         var cost = metric == HistoryChartMetric.Cost;
++        var total = metric == HistoryChartMetric.Total;
+         var rows = new List<TooltipRow>();
+         if (cost)
+         {
+@@ -47,8 +48,12 @@ public static class HistoryTooltipText
+         }
+         else
+         {
+-            rows.Add(new TooltipRow(loc["history.table.output"], SpeedFormat.Tokens(day.Output), Strong: true));
++            rows.Add(new TooltipRow(loc[HistoryChartMetrics.TokenLabelKey(metric)], SpeedFormat.Tokens(day.Value(metric)), Strong: true));
+             AddSources(rows, day, order, allSources, metric, money, loc);
++            if (total)
++            {
++                rows.Add(new TooltipRow(loc["history.table.output"], SpeedFormat.Tokens(day.Output)));
++            }
+         }
+ 
+         rows.Add(new TooltipRow(loc["history.table.input"], SpeedFormat.Tokens(day.Input)));
+@@ -64,7 +69,8 @@ public static class HistoryTooltipText
+             AddCost(rows, day, money, loc, strong: false);
+         }
+ 
+-        var models = day.Models.Take(3)
++        // Stored model usage has no input allocation; output shares would not describe the Total chart.
++        var models = total ? Array.Empty<TooltipModelRow>() : day.Models.Take(3)
+             .Select(m =>
+             {
+                 var share = day.Output > 0 ? (double)m.Output / day.Output : 0;
+@@ -148,7 +154,7 @@ public static class HistoryTooltipText
+ 
+         var cost = metric == HistoryChartMetric.Cost;
+         var parts = order
+-            .Select(source => (Source: source, Value: cost ? day.CostMicroUsdOf(source) : day.OutputOf(source)))
++            .Select(source => (Source: source, Value: day.ValueOf(source, metric)))
+             .Where(p => p.Value > 0)
+             .ToArray();
+         if (parts.Length < 2)
+diff --git a/windows/src/AgentSpeed/History/HistoryChart.cs b/windows/src/AgentSpeed/History/HistoryChart.cs
+index f5afba05..9eff3972 100644
+--- a/windows/src/AgentSpeed/History/HistoryChart.cs
++++ b/windows/src/AgentSpeed/History/HistoryChart.cs
+@@ -29,7 +29,7 @@ internal sealed record ChartTexts(
+         (d, _) => d.ToString("MMM", CultureInfo.InvariantCulture), d => d.ToString("M/d", CultureInfo.InvariantCulture), _ => string.Empty,
+         TokenAxis);
+ 
+-    /// <summary>Output tokens in the compact form.</summary>
++    /// <summary>Tokens in the compact form.</summary>
+     public static string TokenAxis(double value, double step) => SpeedFormat.Tokens((long)Math.Round(value));
+ 
+     /// <summary>The label of the traffic chart's band of days before measuring began (<c>history.traffic.notRecorded</c>).</summary>
+@@ -56,10 +56,9 @@ internal enum ChartTransition
+ internal readonly record struct ChartHover(int? Index, bool Pointer);
+ 
+ /// <summary>
+-/// Daily output bars (stacked by source) with the average-speed line on a second axis (DESIGN 4b, item 3), daily cost
+-/// bars on a money axis without the speed line (DESIGN 9), or mirrored traffic bars, download above the axis and upload
+-/// below it (DESIGN 10). Drawn into three layers so hovering never redraws the bars: the slot highlight behind, the
+-/// chart, and the crosshair in front.
++/// Daily token or cost bars (stacked by source), or mirrored traffic bars, download above the axis and upload below it.
++/// Only Daily Output has an average-speed line on a second axis. Drawn into three layers so hovering never redraws
++/// the bars: the slot highlight behind, the chart, and the crosshair in front.
+ /// </summary>
+ internal sealed class HistoryChart : FrameworkElement
+ {
+diff --git a/windows/src/AgentSpeed/History/HistoryItems.cs b/windows/src/AgentSpeed/History/HistoryItems.cs
+index a73287b5..6c4ee692 100644
+--- a/windows/src/AgentSpeed/History/HistoryItems.cs
++++ b/windows/src/AgentSpeed/History/HistoryItems.cs
+@@ -166,13 +166,13 @@ internal sealed class SummaryCardView(SummaryMetric metric) : ObservableObject
+ internal sealed class BreakdownRowView(string key) : ObservableObject
+ {
+     private SourceKind _source;
+-    private bool _isSource;
++    private bool _canDrillIn;
+     private string _name = string.Empty;
+     private Brush _dotBrush = Brushes.Gray;
+     private Color _barColor = Colors.Gray;
+     private bool _hatched;
+     private double _fraction;
+-    private string _outputText = string.Empty;
++    private string _tokenText = string.Empty;
+     private string _costPrefix = string.Empty;
+     private string _costText = string.Empty;
+     private bool _costQuiet;
+@@ -187,8 +187,8 @@ internal sealed class BreakdownRowView(string key) : ObservableObject
+ 
+     public SourceKind Source { get => _source; private set => Set(ref _source, value); }
+ 
+-    /// <summary>A source bar: activating it shows that source's models.</summary>
+-    public bool IsSource { get => _isSource; private set => Set(ref _isSource, value); }
++    /// <summary>Activating the bar shows that source's models when model attribution is available.</summary>
++    public bool CanDrillIn { get => _canDrillIn; private set => Set(ref _canDrillIn, value); }
+ 
+     public string Name { get => _name; private set => Set(ref _name, value); }
+ 
+@@ -202,7 +202,7 @@ internal sealed class BreakdownRowView(string key) : ObservableObject
+     /// <summary>Length relative to the largest bar.</summary>
+     public double Fraction { get => _fraction; private set => Set(ref _fraction, value); }
+ 
+-    public string OutputText { get => _outputText; private set => Set(ref _outputText, value); }
++    public string TokenText { get => _tokenText; private set => Set(ref _tokenText, value); }
+ 
+     /// <summary><c>≥</c> when part of the cost is unpriced, drawn small in front of <see cref="CostText"/>.</summary>
+     public string CostPrefix { get => _costPrefix; private set => Set(ref _costPrefix, value); }
+@@ -227,12 +227,11 @@ internal sealed class BreakdownRowView(string key) : ObservableObject
+ 
+     public string AccessibleName { get => _accessibleName; private set => Set(ref _accessibleName, value); }
+ 
+-    /// <param name="traffic">The traffic metric: the bar's tooltip leads with its traffic (DESIGN 10).</param>
+-    public void Apply(BreakdownRow row, BreakdownKind kind, bool inProgress, Localizer loc, HistoryMoney money, bool traffic = false)
++    public void Apply(BreakdownRow row, BreakdownKind kind, bool inProgress, Localizer loc, HistoryMoney money, HistoryChartMetric metric)
+     {
+         var color = (row.OtherModels ? HeatPalette.Neutral : HeatPalette.SourceColor(row.Source)).ToColor();
+         Source = row.Source;
+-        IsSource = kind == BreakdownKind.Sources;
++        CanDrillIn = kind == BreakdownKind.Sources && metric != HistoryChartMetric.Total;
+         Name = HistoryText.BreakdownName(row, loc);
+         if (BarColor != color)
+         {
+@@ -242,7 +241,7 @@ internal sealed class BreakdownRowView(string key) : ObservableObject
+ 
+         Hatched = inProgress;
+         Fraction = row.Fraction;
+-        OutputText = SpeedFormat.Tokens(row.Output);
++        TokenText = SpeedFormat.Tokens(row.TokenValue(metric));
+         var cost = money.Text(row.Cost, loc["cost.subscription.tag"]);
+         var partial = row.Cost.IsPartial;
+         CostPrefix = partial ? cost[..1] : string.Empty;
+@@ -251,15 +250,15 @@ internal sealed class BreakdownRowView(string key) : ObservableObject
+         CostToolTip = HistoryTable.CostTooltip(row.Cost, money, loc) ?? cost;
+         ShareText = HistoryText.Percent(row.Share);
+         SpeedText = HistoryText.Speed(row.Speed, loc);
+-        var value = HistoryText.BreakdownValue(row, loc);
+-        if (traffic && row.Traffic is { } bytes)
++        var value = HistoryText.BreakdownValue(row, loc, metric: metric);
++        if (metric == HistoryChartMetric.Traffic && row.Traffic is { } bytes)
+         {
+             value = $"{HistoryTrafficText.Pair(bytes, loc)}{Environment.NewLine}{value}";
+         }
+ 
+-        var hint = IsSource ? loc["win.history.breakdown.sourceHint"] : string.Empty;
++        var hint = CanDrillIn ? loc["win.history.breakdown.sourceHint"] : string.Empty;
+         HelpText = HistoryText.JoinParts([HistoryText.CostNote(row.Cost, loc) ?? string.Empty, hint], loc);
+-        ToolTip = IsSource ? $"{value}{Environment.NewLine}{hint}" : value;
+-        AccessibleName = HistoryText.Accessible(row, loc, money);
++        ToolTip = CanDrillIn ? $"{value}{Environment.NewLine}{hint}" : value;
++        AccessibleName = HistoryText.Accessible(row, loc, money, metric);
+     }
+ }
+diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.cs b/windows/src/AgentSpeed/History/HistoryViewModel.cs
+index 153700b4..de7dee1d 100644
+--- a/windows/src/AgentSpeed/History/HistoryViewModel.cs
++++ b/windows/src/AgentSpeed/History/HistoryViewModel.cs
+@@ -71,6 +71,7 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+     private bool _includeSubscriptions;
+     private bool _offersSubscriptions;
+     private string _breakdownTitle = string.Empty;
++    private string _breakdownTokenLabel = string.Empty;
+     private string _chartName = string.Empty;
+     private bool _showsSpeedKey = true;
+     private readonly Func<PriceTable> _currentTable;
+@@ -249,19 +250,21 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+     /// <summary><c>每日輸出</c>, or <c>來源分布</c> / <c>模型分布</c> for one day.</summary>
+     public string ChartTitle { get => _chartTitle; private set => Set(ref _chartTitle, value); }
+ 
+-    /// <summary>The single day has bars to show (a day with input but no output has none).</summary>
++    /// <summary>The single day has bars to show for the current metric.</summary>
+     public bool HasBreakdown { get => _hasBreakdown; private set => Set(ref _hasBreakdown, value); }
+ 
+-    /// <summary>What the chart and the breakdown measure (DESIGN 9: <c>history.chart.output</c> | <c>history.chart.cost</c>).</summary>
++    /// <summary>What the chart and the breakdown measure.</summary>
+     public HistoryChartMetric Metric => _metric;
+ 
+     /// <summary><c>來源分布</c> / <c>模型分布</c> beside the metric control for one day; empty for several days.</summary>
+     public string BreakdownTitle { get => _breakdownTitle; private set => Set(ref _breakdownTitle, value); }
+ 
++    public string BreakdownTokenLabel { get => _breakdownTokenLabel; private set => Set(ref _breakdownTokenLabel, value); }
++
+     /// <summary>The chart's accessible name: the metric it draws.</summary>
+     public string ChartName { get => _chartName; private set => Set(ref _chartName, value); }
+ 
+-    /// <summary>The speed line's key: only for the daily output chart (the cost chart has no speed line).</summary>
++    /// <summary>The speed line's key: only for the daily output chart.</summary>
+     public bool ShowsSpeedKey { get => _showsSpeedKey; private set => Set(ref _showsSpeedKey, value); }
+ 
+     /// <summary>At least one source is marked as a subscription: the toolbar offers <c>history.includeSubscriptions</c>.</summary>
+@@ -648,7 +651,7 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+         IsSingleDay = Range.IsSingleDay;
+         IsInProgress = Range.IsSingleDay && Range.Start == Today;
+         OffersSubscriptions = options.OffersSubscriptionToggle;
+-        ShowsSpeedKey = !Range.IsSingleDay && _metric == HistoryChartMetric.Output;
++        ShowsSpeedKey = !Range.IsSingleDay && HistoryChartMetrics.ShowsSpeedLine(_metric);
+         ChartName = _loc[HistoryChartMetrics.TitleKey(_metric)];
+         UpdateBreakdown(DayBreakdown.For(usage, Range, _source, _metric, excluded, TrafficAt(Range.Start)), rebuild: kind == HistoryUpdate.Filter);
+         UpdateModes(rebuild: false);
+@@ -718,6 +721,7 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+     {
+         ChartTitle = _loc[breakdown?.TitleKey ?? HistoryChartMetrics.TitleKey(_metric)];
+         BreakdownTitle = breakdown is null ? string.Empty : _loc[breakdown.TitleKey];
++        BreakdownTokenLabel = _loc[HistoryChartMetrics.TokenLabelKey(_metric)];
+         HasBreakdown = breakdown is { Rows.Count: > 0 };
+         if (rebuild || breakdown is null)
+         {
+@@ -744,7 +748,7 @@ internal sealed partial class HistoryViewModel : ObservableObject, IDisposable
+                 Breakdown.Move(at, i);
+             }
+ 
+-            view.Apply(row, breakdown.Kind, inProgress, _loc, Money, _metric == HistoryChartMetric.Traffic);
++            view.Apply(row, breakdown.Kind, inProgress, _loc, Money, breakdown.Metric);
+         }
+ 
+         foreach (var stale in existing.Values)
+diff --git a/windows/src/AgentSpeed/History/HistoryWindow.xaml b/windows/src/AgentSpeed/History/HistoryWindow.xaml
+index 94ef5428..4c50921b 100644
+--- a/windows/src/AgentSpeed/History/HistoryWindow.xaml
++++ b/windows/src/AgentSpeed/History/HistoryWindow.xaml
+@@ -291,7 +291,7 @@
+                             <history:BreakdownBar Grid.Column="1" Height="10" VerticalAlignment="Center" Value="{Binding Fraction}"
+                                                   Color="{Binding BarColor}" Hatched="{Binding Hatched}"
+                                                   Track="{DynamicResource SubtleFillColorTertiaryBrush}" />
+-                            <TextBlock Grid.Column="2" Text="{Binding OutputText}" FontSize="13" FontWeight="SemiBold" TextAlignment="Right"
++                            <TextBlock Grid.Column="2" Text="{Binding TokenText}" FontSize="13" FontWeight="SemiBold" TextAlignment="Right"
+                                        VerticalAlignment="Center" Typography.NumeralAlignment="Tabular" />
+                             <!-- ≥ small and secondary in front of the amount; – and the subscription tag stay quiet (DESIGN 9). -->
+                             <TextBlock Grid.Column="3" TextAlignment="Right" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+@@ -343,7 +343,7 @@
+                             <Trigger Property="IsMouseOver" Value="True">
+                                 <Setter TargetName="Chip" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                             </Trigger>
+-                            <DataTrigger Binding="{Binding IsSource}" Value="True">
++                            <DataTrigger Binding="{Binding CanDrillIn}" Value="True">
+                                 <Setter Property="Cursor" Value="Hand" />
+                             </DataTrigger>
+                         </ControlTemplate.Triggers>
+@@ -616,10 +616,12 @@
+                                     <ColumnDefinition Width="Auto" />
+                                 </Grid.ColumnDefinitions>
+                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+-                                    <!-- 每日輸出 | 費用 | 網路流量 (DESIGN 9, 10): what the bars, or one day's breakdown, measure. -->
++                                    <!-- What the daily bars or the single-day breakdown measure. -->
+                                     <Border x:Name="MetricGroup" Style="{StaticResource SegmentedContainer}" VerticalAlignment="Center"
+                                             KeyboardNavigation.TabNavigation="Once" KeyboardNavigation.DirectionalNavigation="Cycle">
+                                         <StackPanel Orientation="Horizontal">
++                                            <RadioButton x:Name="MetricTotal" Style="{StaticResource SegmentedItem}" GroupName="HistoryMetric"
++                                                         Tag="Total" Content="{loc:Loc history.chart.total}" Checked="OnMetricChecked" />
+                                             <RadioButton x:Name="MetricOutput" Style="{StaticResource SegmentedItem}" GroupName="HistoryMetric"
+                                                          Tag="Output" Content="{loc:Loc history.chart.output}" Checked="OnMetricChecked" />
+                                             <RadioButton x:Name="MetricCost" Style="{StaticResource SegmentedItem}" GroupName="HistoryMetric"
+@@ -692,7 +694,7 @@
+                                                   FocusBrush="{DynamicResource KeyboardFocusBorderColorBrush}"
+                                                   AutomationProperties.Name="{Binding ChartName}" />
+ 
+-                            <!-- One day: a bar per source (all sources) or per model (one source), largest first -->
++                            <!-- One day: a bar per source, or per model when the metric supports it. -->
+                             <Grid x:Name="BreakdownPanel" Grid.Row="1" Margin="0,12,0,6"
+                                   Visibility="{Binding IsSingleDay, Converter={StaticResource Visible}}">
+                                 <Grid.RowDefinitions>
+@@ -708,7 +710,7 @@
+                                         <ColumnDefinition Width="{x:Static history:BreakdownColumns.Share}" />
+                                         <ColumnDefinition Width="Auto" />
+                                     </Grid.ColumnDefinitions>
+-                                    <TextBlock Grid.Column="2" Text="{loc:Loc history.table.output}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
++                                    <TextBlock Grid.Column="2" Text="{Binding BreakdownTokenLabel}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                                     <TextBlock Grid.Column="3" Text="{loc:Loc history.table.cost}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                                     <TextBlock Grid.Column="4" Text="{loc:Loc win.history.share}" TextAlignment="Right" TextTrimming="CharacterEllipsis" />
+                                     <TextBlock Grid.Column="5" Text="{loc:Loc history.table.speed}" TextAlignment="Right" TextTrimming="CharacterEllipsis"
+diff --git a/windows/src/AgentSpeed/History/HistoryWindow.xaml.cs b/windows/src/AgentSpeed/History/HistoryWindow.xaml.cs
+index cfbbacf1..f2378833 100644
+--- a/windows/src/AgentSpeed/History/HistoryWindow.xaml.cs
++++ b/windows/src/AgentSpeed/History/HistoryWindow.xaml.cs
+@@ -206,7 +206,8 @@ internal sealed partial class HistoryWindow : Window
+         if (update != HistoryUpdate.Sort)
+         {
+             var today = _model.Today;
+-            Func<double, double, string> axis = _model.Bars.Metric switch
++            var metric = _model.Bars.Metric;
++            Func<double, double, string> axis = metric switch
+             {
+                 HistoryChartMetric.Cost => money.AxisLabel,
+                 HistoryChartMetric.Traffic => static (value, _) => HistoryTrafficText.AxisBytes(value),
+@@ -215,7 +216,7 @@ internal sealed partial class HistoryWindow : Window
+             var range = _model.Range;
+             var texts = new ChartTexts(loc.Culture, loc["unit.tokS"], loc["history.inProgress"],
+                 (day, withYear) => HistoryText.Month(day, withYear, loc), day => HistoryText.MonthDay(day, loc),
+-                day => HistoryText.Accessible(day, today, loc, money), axis)
++                day => HistoryText.Accessible(day, today, loc, money, metric), axis)
+             {
+                 NotRecorded = loc["history.traffic.notRecorded"],
+                 TrafficAccessible = index => HistoryTooltipText.AccessibleTraffic(range.DayAt(index), _model.TrafficAt(range.DayAt(index)), today, loc),
+@@ -269,6 +270,7 @@ internal sealed partial class HistoryWindow : Window
+         _syncingMetric = true;
+         try
+         {
++            MetricTotal.IsChecked = _model.Metric == HistoryChartMetric.Total;
+             MetricOutput.IsChecked = _model.Metric == HistoryChartMetric.Output;
+             MetricCost.IsChecked = _model.Metric == HistoryChartMetric.Cost;
+             MetricTraffic.IsChecked = _model.Metric == HistoryChartMetric.Traffic;
+@@ -514,7 +516,7 @@ internal sealed partial class HistoryWindow : Window
+ 
+     private void OnBreakdownKeyDown(object sender, KeyEventArgs e)
+     {
+-        if (e.Key is Key.Enter or Key.Space && Keyboard.FocusedElement is ListBoxItem { DataContext: BreakdownRowView row } && row.IsSource)
++        if (e.Key is Key.Enter or Key.Space && Keyboard.FocusedElement is ListBoxItem { DataContext: BreakdownRowView row } && row.CanDrillIn)
+         {
+             ShowModelsOf(row, keyboard: true);
+             e.Handled = true;
+@@ -524,7 +526,7 @@ internal sealed partial class HistoryWindow : Window
+     /// <summary>A source bar opens that source's models for the same day; keyboard focus moves to the first model bar.</summary>
+     private void ShowModelsOf(BreakdownRowView row, bool keyboard)
+     {
+-        if (!row.IsSource)
++        if (!row.CanDrillIn)
+         {
+             return;
+         }
+diff --git a/windows/tests/AgentSpeed.Presentation.Tests/HistoryAggregatorTests.cs b/windows/tests/AgentSpeed.Presentation.Tests/HistoryAggregatorTests.cs
+index c61441d3..e3d11f84 100644
+--- a/windows/tests/AgentSpeed.Presentation.Tests/HistoryAggregatorTests.cs
++++ b/windows/tests/AgentSpeed.Presentation.Tests/HistoryAggregatorTests.cs
+@@ -25,8 +25,8 @@ public class HistoryAggregatorTests
+         // Records without cost data: each source's requests are unavailable for cost.
+         Assert.Equal(
+             [
+-                new SourceOutput(SourceKind.Codex, 200, 2, new HistoryCost(null, 2)),
+-                new SourceOutput(SourceKind.ClaudeCode, 300, 3, new HistoryCost(null, 3)),
++                new SourceOutput(SourceKind.Codex, 200, 2, new HistoryCost(null, 2)) { Input = 50_000 },
++                new SourceOutput(SourceKind.ClaudeCode, 300, 3, new HistoryCost(null, 3)) { Input = 50_000 },
+             ],
+             twentieth.Sources);
+         Assert.Equal(200, twentieth.OutputOf(SourceKind.Codex));
+@@ -40,7 +40,7 @@ public class HistoryAggregatorTests
+         var codex = HistoryAggregator.Daily(Mixed, SourceKind.Codex);
+         Assert.Equal([D(2026, 10, 19), D(2026, 10, 20)], codex.Select(d => d.Day));
+         Assert.Equal(200, codex[1].Output);
+-        Assert.Equal([new SourceOutput(SourceKind.Codex, 200, 2, new HistoryCost(null, 2))], codex[1].Sources);
++        Assert.Equal([new SourceOutput(SourceKind.Codex, 200, 2, new HistoryCost(null, 2)) { Input = 50_000 }], codex[1].Sources);
+ 
+         Assert.Empty(HistoryAggregator.Daily(Mixed, SourceKind.DeepSeek));
+     }
+-- 
+2.41.0
