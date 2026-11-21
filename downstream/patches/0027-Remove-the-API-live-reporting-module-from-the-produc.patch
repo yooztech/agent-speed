@@ -251,7 +251,7 @@ index 2b9cb923..b22b24af 100644
 +++ b/macos/Sources/AgentSpeed/App/AppModel.swift
 @@ -305,8 +305,6 @@ final class AppModel {
          appliedConfiguration = settings.monitorConfiguration
-         monitor.setSubsets(orbSubsets.union(boardSubsets))
+         applyMonitoredSubsets()
          monitor.start()
 -        report.perfWatchHandler = { [weak monitor] epoch in monitor?.setReportWatch(epoch) }
 -        report.activate()

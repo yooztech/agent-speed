@@ -3768,6 +3768,79 @@ index 00000000..f7b7ad43
 +}
 +
 +}  // namespace
+diff --git a/macos/Sources/AgentSpeed/App/AppModel.swift b/macos/Sources/AgentSpeed/App/AppModel.swift
+index 3ea19c82..ea7516e3 100644
+--- a/macos/Sources/AgentSpeed/App/AppModel.swift
++++ b/macos/Sources/AgentSpeed/App/AppModel.swift
+@@ -87,6 +87,7 @@ final class AppModel {
+     @ObservationIgnored private var combinedHistory = CombinedLiveHistory()
+     @ObservationIgnored private var orbSubsets: Set<SourceSet> = []
+     @ObservationIgnored private var boardSubsets: Set<SourceSet> = []
++    @ObservationIgnored private var dashboardPeakSubsets: Set<SourceSet> = []
+ 
+     init(
+         store: SpeedStore = SpeedStore(),
+@@ -278,6 +279,9 @@ final class AppModel {
+         boards.activate(model: self)
+         titles.activate(model: self)
+         guard live else { return }
++        loops.append(ObservationLoop { [weak self] in
++            self?.refreshDashboardPeakSubsets()
++        })
+         remoteHosts.start()
+         // Stored day bindings first, so the engine never re-binds a day that was priced before (METRICS 9.7).
+         HistoryService.restorePricing(into: priceBook)
+@@ -289,7 +293,7 @@ final class AppModel {
+         let monitor = LiveMonitor(store: store, configuration: settings.monitorConfiguration, pricing: priceBook)
+         self.monitor = monitor
+         appliedConfiguration = settings.monitorConfiguration
+-        monitor.setSubsets(orbSubsets.union(boardSubsets))
++        applyMonitoredSubsets()
+         monitor.start()
+         report.perfWatchHandler = { [weak monitor] epoch in monitor?.setReportWatch(epoch) }
+         report.activate()
+@@ -365,18 +369,39 @@ final class AppModel {
+         history.clear()
+     }
+ 
++    private func refreshDashboardPeakSubsets() {
++        var sets: Set<SourceSet> = []
++        func include(_ sources: SourceSet?, _ excluded: [OrbSourceExclusion]) {
++            let mask = DashboardContext.localPeakSources(sources: sources, excluded: excluded)
++            if !mask.isEmpty && mask != .everything { sets.insert(mask) }
++        }
++        include(nil, settings.dashboardSources.excluded)
++        for orb in orbs.document.orbs {
++            include(orb.sources.sourceSet, orb.excludedSources)
++        }
++        guard sets != dashboardPeakSubsets else { return }
++        dashboardPeakSubsets = sets
++        applyMonitoredSubsets()
++    }
++
++    private func applyMonitoredSubsets() {
++        guard let monitor else { return }
++        let sets = orbSubsets.union(boardSubsets).union(dashboardPeakSubsets)
++        if sets != monitor.subsets { monitor.setSubsets(sets) }
++    }
++
+     /// The source sets of the orbs tracking a subset, whose peaks the engine reports (METRICS 6.8).
+     func setOrbSubsets(_ sets: Set<SourceSet>) {
+         guard sets != orbSubsets else { return }
+         orbSubsets = sets
+-        monitor?.setSubsets(orbSubsets.union(boardSubsets))
++        applyMonitoredSubsets()
+     }
+ 
+     /// The source sets of the boards tracking a subset (METRICS 6.8), reported with the orbs'.
+     func setBoardSubsets(_ sets: Set<SourceSet>) {
+         guard sets != boardSubsets else { return }
+         boardSubsets = sets
+-        monitor?.setSubsets(orbSubsets.union(boardSubsets))
++        applyMonitoredSubsets()
+     }
+ 
+     func shutdown() {
 diff --git a/macos/Sources/AgentSpeed/App/RemoteHosts.swift b/macos/Sources/AgentSpeed/App/RemoteHosts.swift
 index 679ab899..000a5b08 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteHosts.swift
@@ -3870,22 +3943,35 @@ index 679ab899..000a5b08 100644
      let timezone: String?
      let responseId: String?
      let partial: Bool?
-@@ -168,6 +238,7 @@ struct RemoteHostState {
+@@ -168,8 +238,10 @@ struct RemoteHostState {
      var snapshot: RemoteMessage?
      var connectionID = UUID()
      var days: [RemoteDay] = []
 +    var perfRecords: [RemotePerfRecord]?
      var historyPartial: Bool?
      var historyReceivedAt: Date?
++    private(set) var historyTodayPeak: RemoteHistoryTodayPeak?
      /// True only after this connection has supplied a history frame.
-@@ -183,6 +254,7 @@ struct RemoteHostState {
+     var historyReceivedOnConnection = false
+     var completions: [RemoteCompletion] = []
+@@ -181,10 +253,15 @@ struct RemoteHostState {
+             snapshot = message
+             online = true
              error = nil
-         } else if message.type == "history", message.timezone == TimeZone.current.identifier, let replacement = message.days {
+-        } else if message.type == "history", message.timezone == TimeZone.current.identifier, let replacement = message.days {
++        } else if message.type == "history", let replacement = message.days {
++            let timezone = TimeZone.current
++            guard message.timezone == timezone.identifier else { return }
              days = replacement
 +            perfRecords = message.perfRecords
              historyPartial = message.partial
-             historyReceivedAt = Date()
+-            historyReceivedAt = Date()
++            let receivedAt = Date()
++            historyReceivedAt = receivedAt
++            historyTodayPeak = RemoteHistoryTodayPeak(replacement, receivedAt: receivedAt, timezone: timezone)
              historyReceivedOnConnection = true
+         } else if message.type == "completion", let id = message.responseId,
+                   let source = message.source, let output = message.output, seenCompletionIDs.insert(source + ":" + id).inserted {
 diff --git a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift b/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
 index 9a14a664..29426e0c 100644
 --- a/macos/Sources/AgentSpeed/App/RemoteSnapshot.swift
@@ -3930,7 +4016,7 @@ index 9a14a664..29426e0c 100644
                      result.sources[index].sessionCount += source.sessionCount
                      result.sources[index].activeAgents += source.activeAgents
                      if source.available {
-@@ -203,10 +206,37 @@ extension RemoteHosts {
+@@ -205,16 +208,86 @@ extension RemoteHosts {
                      result.sources.append(source)
                  }
              }
@@ -3968,6 +4054,55 @@ index 9a14a664..29426e0c 100644
          result.liveEstimatedShare = result.live.output > 0 ? estimated / result.live.output : 0
          return result
      }
+ }
+ 
++/// History rows repeat a host-wide output peak; their source is not peak attribution.
++/// Project once per accepted frame rather than walking the history on every dashboard refresh.
++struct RemoteHistoryTodayPeak {
++    let day: String
++    let timezone: String
++    private(set) var sources: Set<String> = []
++    private(set) var value = 0.0
++
++    init(_ days: [RemoteDay], receivedAt: Date, timezone: TimeZone) {
++        var calendar = Calendar(identifier: .gregorian)
++        calendar.timeZone = timezone
++        self.timezone = timezone.identifier
++        day = DayKey(receivedAt, calendar: calendar).description
++        for row in days where row.day == day {
++            sources.insert(row.source)
++            if let peak = row.peak, peak.isFinite, peak > value { value = peak }
++        }
++    }
++}
++
+ extension RemoteHostState {
++    func todayPeakBound(members: Set<String>, day: String, interval: DateInterval, timezone: String) -> Double? {
++        guard online, let snapshot, let sources = snapshot.sources,
++              sources.lazy.filter({ $0.enabled || $0.available }).allSatisfy({ members.contains($0.source) }) else { return nil }
++
++        var bound = 0.0
++        if historyReceivedOnConnection, let history = historyTodayPeak, history.timezone == timezone, history.day == day {
++            guard history.sources.isSubset(of: members) else { return nil }
++            bound = history.value
++        }
++
++        let startMs = interval.start.timeIntervalSince1970 * 1000
++        let endMs = interval.end.timeIntervalSince1970 * 1000
++        if snapshot.timezone == timezone,
++           snapshot.todayDay.map({ $0 == day }) ?? true,
++           snapshot.todayStartMs.map({ $0 == startMs }) ?? true,
++           snapshot.nowMs.map({ $0 >= startMs && $0 < endMs }) ?? true,
++           snapshot.todayDay != nil || snapshot.todayStartMs != nil || snapshot.nowMs != nil,
++           let peak = snapshot.peakToday, peak.isFinite, peak > bound {
++            bound = peak
++        }
++        return bound > 0 ? bound : nil
++    }
++
+     var capabilities: RemoteCapabilities {
+         var result = RemoteCapabilities()
+         if let snapshot {
 @@ -239,8 +269,11 @@ extension RemoteHostState {
                  activeAgents: source.activeAgents,
                  liveEstimated: Rate(output: live.output * share, total: live.total * share),
@@ -4037,6 +4172,216 @@ index 9a14a664..29426e0c 100644
  }
  
  private func remoteCost(_ cost: Int64?, _ unpriced: Int?) -> CostTally? {
+diff --git a/macos/Sources/AgentSpeed/Dashboard/DashboardContext.swift b/macos/Sources/AgentSpeed/Dashboard/DashboardContext.swift
+index 5c12fab3..3258d250 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/DashboardContext.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/DashboardContext.swift
+@@ -2,13 +2,19 @@ import AgentSpeedCore
+ import AgentSpeedOrbModel
+ import SwiftUI
+ 
++struct DashboardTodayPeak {
++    let value: Double
++    var time: Date?
++    var isLowerBound = false
++}
++
+ /// The popover's origin is immutable. Its projection reads the current orb configuration, not a copy captured
+ /// when the popover opened, so changing sources immediately updates every section without another sample.
+ @MainActor
+ final class DashboardContext {
+     let model: AppModel
+     let orbID: String?
+-    private let missingFeed = OrbFeed()
++    private lazy var missingFeed = OrbFeed()
+ 
+     init(model: AppModel, orbID: String? = nil) {
+         self.model = model
+@@ -42,6 +48,83 @@ final class DashboardContext {
+         return runtime.feed
+     }
+ 
++    /// Today has its own evidence; the chart and orb effects still use their native peaks.
++    func todayPeak(in selected: SpeedSnapshot) -> DashboardTodayPeak? {
++        let sources: SourceSet?
++        let excluded: [OrbSourceExclusion]
++        if let orbID {
++            guard let orb = model.orbs.orb(orbID) else { return nil }
++            sources = orb.sources.sourceSet
++            excluded = orb.excludedSources
++        } else {
++            sources = nil
++            excluded = model.settings.dashboardSources.excluded
++        }
++
++        let previewing = model.store.isPreviewing
++        let local = previewing ? model.snapshot : model.localSnapshot
++        let mask = Self.localPeakSources(sources: sources, excluded: excluded)
++        let enabled = SourceSet(local.sources.lazy.filter(\.enabled).map(\.kind))
++        let localMembers = enabled.intersection(mask)
++        let metric = model.settings.metric
++        let now = Date()
++        guard let interval = Calendar.current.dateInterval(of: .day, for: now) else { return nil }
++        let dayStart = interval.start
++        var best = 0.0
++        var hasRemoteScope = false
++        if !previewing {
++            hasRemoteScope = OrbSubset.hasUnknownSources(hosts: model.unknownOrbHosts, sources: sources, excluded: excluded)
++            // Use the dashboard's chosen owners, not every connection to a physical machine.
++            var remoteMembers: [UUID: Set<String>] = [:]
++            for instance in selected.sourceInstances {
++                guard let host = instance.hostID else { continue }
++                remoteMembers[host, default: []].insert(instance.status.kind.rawValue)
++                hasRemoteScope = hasRemoteScope || instance.status.enabled || instance.status.available
++            }
++            if !remoteMembers.isEmpty {
++                var calendar = Calendar(identifier: .gregorian)
++                calendar.timeZone = .current
++                let day = DayKey(now, calendar: calendar).description
++                let states = model.remoteHosts.states
++                for (host, members) in remoteMembers {
++                    guard let peak = states[host]?.todayPeakBound(members: members, day: day, interval: interval,
++                                                                 timezone: calendar.timeZone.identifier) else { continue }
++                    // Independent daily maxima cannot be added. Output is also a bound on input + output.
++                    best = max(best, peak)
++                    hasRemoteScope = true
++                }
++            }
++        }
++
++        // A preview without a day boundary still carries a dated sample.
++        if !localMembers.isEmpty, local.peakTodayAvailable,
++           local.dayStart == dayStart || (local.dayStart == .distantPast && local.timestamp >= dayStart && local.timestamp < interval.end) {
++            if localMembers == enabled {
++                let value = local.peakToday.value(for: metric)
++                if value.isFinite, value > 0 {
++                    if !hasRemoteScope {
++                        // The engine timestamps the output peak, not the independent total peak.
++                        let time = local.peakTodayAt.flatMap { $0 >= dayStart && $0 <= local.timestamp ? $0 : nil }
++                        return DashboardTodayPeak(value: value, time: metric == .output ? time : nil)
++                    }
++                    best = max(best, value)
++                }
++            } else if let measured = local.subsetPeaks[mask], measured.isFinite, measured > 0 {
++                // Measured output is a bound on either metric; subset peaks don't include the full day's live component.
++                best = max(best, measured)
++            }
++        }
++        return best > 0 ? DashboardTodayPeak(value: best, isLowerBound: true) : nil
++    }
++
++    static func localPeakSources(sources: SourceSet?, excluded: [OrbSourceExclusion]) -> SourceSet {
++        var set = sources ?? .everything
++        for exclusion in excluded where exclusion.hostID == nil {
++            if let kind = SourceKind(rawValue: exclusion.source) { set.remove(SourceSet(kind)) }
++        }
++        return set
++    }
++
+     func hostName(_ hostID: UUID?) -> String {
+         guard let hostID else { return model.l10n("orbs.sources.local") }
+         return model.remoteHosts.hosts.first { $0.id == hostID }?.displayName(in: model.remoteHosts.hosts) ?? hostID.uuidString
+diff --git a/macos/Sources/AgentSpeed/Dashboard/TodaySection.swift b/macos/Sources/AgentSpeed/Dashboard/TodaySection.swift
+index 924e6849..98e35409 100644
+--- a/macos/Sources/AgentSpeed/Dashboard/TodaySection.swift
++++ b/macos/Sources/AgentSpeed/Dashboard/TodaySection.swift
+@@ -11,7 +11,8 @@ struct TodaySection: View {
+ 
+     var body: some View {
+         let l10n = model.l10n
+-        let snapshot = context?.snapshot ?? model.snapshot
++        let context = context ?? DashboardContext(model: model)
++        let snapshot = context.snapshot
+         let today = snapshot.today
+         let unit = l10n("unit.tokS")
+ 
+@@ -52,19 +53,16 @@ struct TodaySection: View {
+                     )
+                 }
+             }
+-            if snapshot.peakTodayAvailable {
+-                PeakRow(
+-                    title: l10n("today.peak"),
+-                    value: model.value(of: snapshot.peakToday),
+-                    time: snapshot.peakTodayAt,
+-                    unit: unit,
+-                    locale: l10n.locale,
+-                    redline: model.settings.redline,
+-                    dark: colorScheme == .dark,
+-                    increasedContrast: contrast == .increased
+-                )
+-                .padding(.top, 2)
+-            }
++            PeakRow(
++                title: l10n("today.peak"),
++                peak: context.todayPeak(in: snapshot),
++                unit: unit,
++                locale: l10n.locale,
++                redline: model.settings.redline,
++                dark: colorScheme == .dark,
++                increasedContrast: contrast == .increased
++            )
++            .padding(.top, 2)
+             if snapshot.todayAvailable {
+                 TodayCostRow(model: model)
+             }
+@@ -102,8 +100,7 @@ private struct MetricCell: View {
+ 
+ private struct PeakRow: View {
+     let title: String
+-    let value: Double
+-    let time: Date?
++    let peak: DashboardTodayPeak?
+     let unit: String
+     let locale: Locale
+     let redline: Double
+@@ -111,28 +108,27 @@ private struct PeakRow: View {
+     let increasedContrast: Bool
+ 
+     var body: some View {
+-        let heat = HeatPalette.heat(value: value, redline: redline)
+-        let hasPeak = value > 0
++        let heat = HeatPalette.heat(value: peak?.value ?? 0, redline: redline)
+         HStack(alignment: .firstTextBaseline, spacing: Spacing.xs) {
+             Image(systemName: "flag.checkered")
+                 .font(.system(size: 11, weight: .medium))
+-                .foregroundStyle(hasPeak ? AnyShapeStyle(DashboardPalette.heatText(heat, dark: dark, increasedContrast: increasedContrast)) : AnyShapeStyle(.dashboardSecondary))
++                .foregroundStyle(peak != nil ? AnyShapeStyle(DashboardPalette.heatText(heat, dark: dark, increasedContrast: increasedContrast)) : AnyShapeStyle(.dashboardSecondary))
+                 .accessibilityHidden(true)
+             Text(title)
+                 .font(DashboardFont.note)
+                 .foregroundStyle(.dashboardSecondary)
+                 .lineLimit(1)
+             Spacer(minLength: Spacing.xs)
+-            if hasPeak {
++            if let peak {
+                 HStack(alignment: .firstTextBaseline, spacing: 3) {
+-                    Text(SpeedFormat.speed(value))
++                    Text(peak.isLowerBound ? "≥" + lowerBoundText(peak.value) : SpeedFormat.speed(peak.value))
+                         .font(DashboardFont.rowNumber.weight(.semibold))
+                         .foregroundStyle(DashboardPalette.heatText(heat, dark: dark, increasedContrast: increasedContrast))
+                     Text(unit)
+                         .font(DashboardFont.metricUnit)
+                         .foregroundStyle(.dashboardSecondary)
+                 }
+-                if let time {
++                if let time = peak.time {
+                     Text("· " + time.formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(locale)))
+                         .font(DashboardFont.detail)
+                         .foregroundStyle(.dashboardSecondary)
+@@ -146,4 +142,12 @@ private struct PeakRow: View {
+         }
+         .accessibilityElement(children: .combine)
+     }
++
++    private func lowerBoundText(_ value: Double) -> String {
++        // Keep the row's compact precision, but never round a guaranteed threshold up.
++        if value < 10 { return SpeedFormat.speed((value * 10).rounded(.down) / 10) }
++        if value < 1_000 { return SpeedFormat.speed(value.rounded(.down)) }
++        let step = pow(10, min(floor(log10(value)) - 2, 9))
++        return SpeedFormat.speed((value / step).rounded(.down) * step)
++    }
+ }
 diff --git a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift b/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
 index 0049d5b5..420de6a8 100644
 --- a/macos/Sources/AgentSpeed/History/HistoryViewModel.swift
@@ -4809,6 +5154,56 @@ index 4c1b0630..9d722236 100644
          _output.AddInterval(interval.StartMs, interval.EndMs, sign * (double)entry.Tokens.Output, StartMs);
          _total.AddInterval(interval.StartMs, interval.EndMs, sign * (double)entry.Tokens.Total, StartMs);
          _sourceOutput.AddInterval(entry.Source, interval.StartMs, interval.EndMs, sign * (double)entry.Tokens.Output, StartMs);
+diff --git a/windows/src/AgentSpeed.Core/LiveMonitor.cs b/windows/src/AgentSpeed.Core/LiveMonitor.cs
+index d8e8dc6e..38c52b53 100644
+--- a/windows/src/AgentSpeed.Core/LiveMonitor.cs
++++ b/windows/src/AgentSpeed.Core/LiveMonitor.cs
+@@ -31,6 +31,7 @@ public sealed class LiveMonitor : IDisposable
+     private bool _rescanRequested;
+     private MonitorConfiguration _configuration;
+     private SourceSet[] _subsets = [];
++    private SourceSet[] _dashboardSubsets = [];
+     private int _subsetsChanged;
+     private IReadOnlyList<Perf.PerfRecord>? _perfRecords;
+     private int _perfRecordsChanged;
+@@ -272,19 +273,24 @@ public sealed class LiveMonitor : IDisposable
+     /// METRICS 6.8). Callable from any thread, also before <see cref="Start"/>; kept across configuration changes. A
+     /// running monitor publishes a fresh snapshot promptly when the sets change.
+     /// </summary>
+-    public void SetSubsets(IReadOnlyCollection<SourceSet> sets)
++    public void SetSubsets(IReadOnlyCollection<SourceSet> sets) => SetSubsets(ref _subsets, sets);
++
++    /// <summary>Requests measured local subsets for the dashboard without changing the orb or board readings.</summary>
++    public void SetDashboardSubsets(IReadOnlyCollection<SourceSet> sets) => SetSubsets(ref _dashboardSubsets, sets);
++
++    private void SetSubsets(ref SourceSet[] destination, IReadOnlyCollection<SourceSet> sets)
+     {
+         ArgumentNullException.ThrowIfNull(sets);
+         var next = sets.Distinct().ToArray();
+         lock (_gate)
+         {
+-            var current = _subsets;
++            var current = destination;
+             if (current.Length == next.Length && current.All(next.Contains))
+             {
+                 return;
+             }
+ 
+-            Volatile.Write(ref _subsets, next);
++            Volatile.Write(ref destination, next);
+         }
+ 
+         Interlocked.Exchange(ref _subsetsChanged, 1);
+@@ -537,7 +543,8 @@ public sealed class LiveMonitor : IDisposable
+         IReadOnlyList<SpeedEvent> events;
+         try
+         {
+-            (snapshot, events) = core.BuildSnapshot(now, LocalDay.StartMs(now, zone), state, observeLive, Volatile.Read(ref _subsets));
++            (snapshot, events) = core.BuildSnapshot(now, LocalDay.StartMs(now, zone), state, observeLive,
++                Volatile.Read(ref _subsets), Volatile.Read(ref _dashboardSubsets));
+         }
+         catch (Exception e) when (e is not OperationCanceledException and not OutOfMemoryException)
+         {
 diff --git a/windows/src/AgentSpeed.Core/Models.cs b/windows/src/AgentSpeed.Core/Models.cs
 index 46edfce5..f4277a44 100644
 --- a/windows/src/AgentSpeed.Core/Models.cs
@@ -4822,10 +5217,41 @@ index 46edfce5..f4277a44 100644
  
      /// <summary>The live cost rate (METRICS 9.5).</summary>
      public LiveCost LiveCost { get; init; }
+@@ -261,6 +263,11 @@ public sealed record SpeedSnapshot(
+     /// </summary>
+     public IReadOnlyDictionary<SourceSet, double> SubsetPeaks { get; init; } = ReadOnlyDictionary<SourceSet, double>.Empty;
+ 
++    internal IReadOnlyDictionary<SourceSet, double> DashboardSubsetPeaks { get; init; } = ReadOnlyDictionary<SourceSet, double>.Empty;
++
++    // The monitor's configuration may briefly differ from the hub's current enabled-source selection.
++    internal SourceSet? NativePeakSources { get; init; }
++
+     /// <summary>Local midnight at which this snapshot's "today" starts; <see cref="DateTimeOffset.MinValue"/> when unknown.</summary>
+     public DateTimeOffset DayStart { get; init; } = DateTimeOffset.MinValue;
+ 
 diff --git a/windows/src/AgentSpeed.Core/Monitoring/MonitorCore.cs b/windows/src/AgentSpeed.Core/Monitoring/MonitorCore.cs
 index a455f2a4..a61ae188 100644
 --- a/windows/src/AgentSpeed.Core/Monitoring/MonitorCore.cs
 +++ b/windows/src/AgentSpeed.Core/Monitoring/MonitorCore.cs
+@@ -707,7 +707,8 @@ internal sealed partial class MonitorCore : IDisposable
+ 
+     /// <param name="subsets">Source sets whose measured peak today the snapshot reports in <see cref="SpeedSnapshot.SubsetPeaks"/>.</param>
+     public (SpeedSnapshot Snapshot, IReadOnlyList<SpeedEvent> Events) BuildSnapshot(
+-        long nowMs, long todayStartMs, MonitorState state, bool observeLive, IReadOnlyCollection<SourceSet>? subsets = null)
++        long nowMs, long todayStartMs, MonitorState state, bool observeLive, IReadOnlyCollection<SourceSet>? subsets = null,
++        IReadOnlyCollection<SourceSet>? dashboardSubsets = null)
+     {
+         ResolveParents();
+         _engine.FollowPerfWatch(PerfWatch);
+@@ -757,6 +758,8 @@ internal sealed partial class MonitorCore : IDisposable
+         {
+             InstanceHistory = frame.SourceHistory.ToDictionary(pair => new OrbSourceInstance(null, pair.Key), pair => pair.Value),
+             SubsetPeaks = subsets is { Count: > 0 } ? SubsetPeaks(subsets) : SpeedSnapshot.Empty.SubsetPeaks,
++            DashboardSubsetPeaks = dashboardSubsets is { Count: > 0 } ? SubsetPeaks(dashboardSubsets) : SpeedSnapshot.Empty.DashboardSubsetPeaks,
++            NativePeakSources = _enabledSet,
+             DayStart = DateTimeOffset.FromUnixTimeMilliseconds(todayStartMs),
+             LiveCost = frame.LiveCost,
+             TodayCost = frame.TodayCost,
 @@ -789,6 +789,7 @@ internal sealed partial class MonitorCore : IDisposable
          {
              LiveCost = frame.SourceLiveCost[index],
@@ -4838,6 +5264,16 @@ diff --git a/windows/src/AgentSpeed.Core/OrbSubset.cs b/windows/src/AgentSpeed.C
 index a625867a..6eab1f6f 100644
 --- a/windows/src/AgentSpeed.Core/OrbSubset.cs
 +++ b/windows/src/AgentSpeed.Core/OrbSubset.cs
+@@ -51,6 +51,9 @@ public sealed record SubsetReading(
+     public bool TodayComplete { get; init; } = true;
+ }
+ 
++/// <summary>The dashboard's peak: an exact native reading or the lower bound supported by scoped evidence.</summary>
++public readonly record struct DashboardPeak(double Value, bool AtLeast = false, DateTimeOffset? At = null);
++
+ /// <summary>Per-orb views of a snapshot (METRICS 6.8, DESIGN 2b).</summary>
+ public static class OrbSubset
+ {
 @@ -241,7 +241,7 @@ public static class OrbSubset
              PeakTodayOutputAvailable = hasPeak,
              PeakTodayTotalAvailable = false,
@@ -4847,6 +5283,99 @@ index a625867a..6eab1f6f 100644
              LastResponse = last,
              History = history,
              RemoteLiveComplete = reading.LiveComplete,
+@@ -265,6 +268,92 @@ public static class OrbSubset
+         };
+     }
+ 
++    /// <summary>The local portion of a dashboard scope, also the key for its measured subset peak.</summary>
++    public static SourceSet DashboardLocalMembers(SourceSet enabled, SourceSet? sources, IReadOnlyCollection<OrbSourceInstance> exclusions)
++    {
++        var members = enabled.Intersect(sources ?? SourceSet.Everything);
++        foreach (var exclusion in exclusions)
++            if (exclusion.HostId is null) members = members.Without(exclusion.Kind);
++        return members;
++    }
++
++    /// <summary>Reads the peak from the original snapshot, using the same source scope as <see cref="Project"/>.</summary>
++    public static DashboardPeak? DashboardTodayPeak(SpeedSnapshot snapshot, SourceSet? sources,
++        IReadOnlyCollection<OrbSourceInstance> exclusions, SpeedMetric metric, DateTimeOffset now)
++    {
++        var localMembers = DashboardLocalMembers(snapshot.EnabledSources, sources, exclusions);
++        var zone = TimeZoneInfo.Local;
++        var today = TimeZoneInfo.ConvertTime(now, zone).Date;
++        bool localCurrent = snapshot.DayStart == DateTimeOffset.MinValue
++            ? snapshot.Timestamp != DateTimeOffset.MinValue && TimeZoneInfo.ConvertTime(snapshot.Timestamp, zone).Date == today
++            : snapshot.DayStart.ToUnixTimeMilliseconds() == Monitoring.LocalDay.StartMs(now.ToUnixTimeMilliseconds(), zone);
++        var nativeSources = snapshot.NativePeakSources ?? snapshot.EnabledSources;
++        double local = 0, localOutput = 0;
++        DateTimeOffset? localAt = null;
++        if (localCurrent && !localMembers.IsEmpty && localMembers.IsSubsetOf(nativeSources))
++        {
++            if (localMembers == nativeSources)
++            {
++                if (snapshot.PeakTodayOutputAvailable) localOutput = Positive(snapshot.PeakToday.Output);
++                local = metric == SpeedMetric.Output ? localOutput
++                    : snapshot.PeakTodayTotalAvailable ? Positive(snapshot.PeakToday.Total) : 0;
++                // The native timestamp belongs to the output maximum, not an independent total maximum.
++                if ((metric == SpeedMetric.Output || local == localOutput) && snapshot.PeakTodayAt is { } at
++                    && at <= now && TimeZoneInfo.ConvertTime(at, zone).Date == today) localAt = at;
++            }
++            else
++            {
++                if (snapshot.DashboardSubsetPeaks.TryGetValue(localMembers, out var value)
++                    || snapshot.SubsetPeaks.TryGetValue(localMembers, out value)) localOutput = Positive(value);
++            }
++        }
++
++        var localPeak = local > 0 ? new DashboardPeak(local, At: localAt)
++            : localOutput > 0 ? new DashboardPeak(localOutput, AtLeast: true) : (DashboardPeak?)null;
++        if (snapshot.RemoteHosts.Count == 0) return localPeak;
++
++        // A scoped dashboard can promote an alternate connection if its preferred instance was excluded.
++        var selected = sources is null && exclusions.Count == 0 ? snapshot.Sources
++            : SelectedInstances(snapshot, sources ?? SourceSet.Everything, exclusions);
++        var selectedByHost = new Dictionary<Guid, SourceSet>();
++        bool remote = false;
++        foreach (var status in selected)
++            if (status.HostId is { } host && status.Enabled)
++            {
++                selectedByHost[host] = selectedByHost.GetValueOrDefault(host).With(status.Kind);
++                remote |= !status.NotDetected;
++            }
++
++        var day = today.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
++        var timezone = RemoteHostData.LocalTimezone();
++        // Output is also a lower bound for total; daily maxima are not necessarily simultaneous, so never sum them.
++        double lowerBound = Math.Max(local, localOutput);
++        foreach (var host in snapshot.RemoteHosts)
++        {
++            var collector = host.CollectorPeak;
++            var history = host.HistoryPeak;
++            bool currentCollector = collector.Matches(day, timezone);
++            bool currentHistory = history.Matches(day, timezone);
++            var contributors = collector.Sources;
++            if (currentCollector) contributors = contributors.Union(collector.HistoricalSources);
++            if (currentHistory) contributors = contributors.Union(history.Sources);
++            var members = selectedByHost.GetValueOrDefault(host.Id);
++            bool unknown = !host.SourcesKnown || collector.UnknownSource || (currentCollector && collector.UnknownHistoricalSource)
++                || (currentHistory && history.UnknownSource);
++            remote |= !members.Intersect(contributors).IsEmpty
++                || (unknown && SourceSet.Everything.Any(kind => !exclusions.Contains(new OrbSourceInstance(host.Id, kind))));
++            if (!host.Online || unknown || contributors.IsEmpty || !contributors.IsSubsetOf(members)) continue;
++
++            var peak = currentCollector ? Positive(collector.Output) : 0;
++            if (currentHistory) peak = Math.Max(peak, Positive(history.Output));
++            lowerBound = Math.Max(lowerBound, peak);
++        }
++        if (!remote) return localPeak;
++        return lowerBound > 0 ? new DashboardPeak(lowerBound, AtLeast: true) : null;
++    }
++
++    private static double Positive(double value) => double.IsFinite(value) && value > 0 ? value : 0;
++
+     /// <summary>The provider-wide cost reading used by boards and global surfaces.</summary>
+     public static CostReading Cost(SpeedSnapshot snapshot, SourceSet? sources, SourceSet billable) =>
+         Cost(snapshot, sources, billable, null, SourceScope.Provider);
 @@ -409,3 +409,20 @@ public static class OrbSubset
          a.Output + b.Output,
          a.Reasoning + b.Reasoning);
@@ -4957,7 +5486,7 @@ index bfd0dde9..35c60075 100644
  
  namespace AgentSpeed.Core;
  
-@@ -12,6 +13,8 @@ public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string
+@@ -12,9 +13,20 @@ public sealed record RemoteHostStatus(Guid Id, string Label, bool Online, string
      /// <summary>Enabled sources covered by this host's source list.</summary>
      public SourceSet EnabledSources { get; init; }
      public IReadOnlyList<DailyUsage> Days { get; init; } = [];
@@ -4966,31 +5495,113 @@ index bfd0dde9..35c60075 100644
      public bool? HistoryPartial { get; init; }
      public DateTimeOffset? HistoryReceivedAt { get; init; }
      public bool HistoryCurrent { get; init; }
-@@ -30,6 +33,7 @@ internal sealed class RemoteHostData(Guid id, string label)
++    internal RemoteDashboardPeak CollectorPeak { get; init; }
++    internal RemoteDashboardPeak HistoryPeak { get; init; }
++}
++
++// Both wire values describe a collector-wide daily peak, including the peak repeated on each history row.
++internal readonly record struct RemoteDashboardPeak(string? Day, string? Timezone, SourceSet Sources, bool UnknownSource,
++    double Output, SourceSet HistoricalSources = default, bool UnknownHistoricalSource = false)
++{
++    public bool Matches(string day, string timezone) => Day == day && Timezone == timezone;
+ }
+ 
+ internal sealed record RemoteCompletion(string Id, SourceKind Source, long Output, double? Speed);
+@@ -29,7 +41,10 @@ internal sealed class RemoteHostData(Guid id, string label)
+     public JsonElement? Snapshot { get; set; }
      private string? _machineId;
      private string? _historyMachineId;
++    private RemoteDashboardPeak _collectorPeak;
++    private RemoteDashboardPeak _historyPeak;
      public IReadOnlyList<DailyUsage> Days { get; set; } = [];
 +    public IReadOnlyList<PerfRecord>? PerfRecords { get; set; }
      public string? HistoryTimezone { get; set; }
      public bool? HistoryPartial { get; set; }
      public DateTimeOffset? HistoryReceivedAt { get; set; }
-@@ -59,6 +63,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -51,14 +66,16 @@ internal sealed class RemoteHostData(Guid id, string label)
+                     { Error = "Invalid collector sources"; return false; }
+                     Snapshot = root.Clone(); Online = true; Error = null;
+                     _machineId = root.Text("machine_id");
++                    _collectorPeak = ReadCollectorPeak(root, sources);
+                     return true;
+                 case "history":
+                     var timezone = root.Text("timezone");
+                     if (timezone != LocalTimezone() || root.Array("days") is not { } days) { Error = "Invalid collector history"; return false; }
+                     if (days.EnumerateArray().Any(d => d.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(d.Text("day")) || string.IsNullOrWhiteSpace(d.Text("source"))))
                      { Error = "Invalid collector history row"; return false; }
-                     Days = days.EnumerateArray().Select(Day).Where(d => d is not null).Cast<DailyUsage>().ToArray();
+-                    Days = days.EnumerateArray().Select(Day).Where(d => d is not null).Cast<DailyUsage>().ToArray();
++                    Days = ReadDays(days, timezone!);
                      _historyMachineId = _machineId;
 +                    PerfRecords = RemotePerformance.Records(root)?.Select(r => r with { HostId = Id, HostLabel = Label }).ToArray();
                      HistoryTimezone = timezone; HistoryPartial = root.Boolean("partial");
                      HistoryReceivedAt = DateTimeOffset.UtcNow; HistoryCurrent = true;
                      return true;
-@@ -107,7 +112,7 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -83,6 +100,52 @@ internal sealed class RemoteHostData(Guid id, string label)
+     public bool IsSourceEnabled(SourceKind kind) => Snapshot?.Array("sources") is not { } sources
+         || sources.EnumerateArray().Any(source => Kind(source.Text("source")) == kind && source.Boolean("enabled") == true);
+ 
++    private static RemoteDashboardPeak ReadCollectorPeak(JsonElement root, JsonElement rows)
++    {
++        var sources = SourceSet.Empty;
++        var unknownSource = false;
++        var historicalSources = SourceSet.Empty;
++        var unknownHistoricalSource = false;
++        foreach (var row in rows.EnumerateArray())
++        {
++            if (row.Boolean("enabled") == true && row.Boolean("available") != false)
++            {
++                if (Kind(row.Text("source")) is { } kind) sources = sources.With(kind);
++                else unknownSource = true;
++            }
++            else if (row.Integer("today_requests") > 0 || row.Integer("today_output") > 0 || row.Integer("measured_ms") > 0)
++            {
++                if (Kind(row.Text("source")) is { } kind) historicalSources = historicalSources.With(kind);
++                else unknownHistoricalSource = true;
++            }
++        }
++        return new(root.Text("today_day"), root.Text("timezone"), sources, unknownSource, root.Number("peak_today"),
++            historicalSources, unknownHistoricalSource);
++    }
++
++    private IReadOnlyList<DailyUsage> ReadDays(JsonElement rows, string timezone)
++    {
++        var day = DateTime.Now.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
++        var days = new List<DailyUsage>(rows.GetArrayLength());
++        var sources = SourceSet.Empty;
++        var unknownSource = false;
++        double peak = 0;
++        foreach (var row in rows.EnumerateArray())
++        {
++            var usage = Day(row);
++            if (usage is not null) days.Add(usage);
++            if (row.Text("day") != day) continue;
++            if (usage is null) unknownSource = true;
++            else
++            {
++                sources = sources.With(usage.Source);
++                peak = Math.Max(peak, usage.Peak ?? 0);
++            }
++        }
++        _historyPeak = new(day, timezone, sources, unknownSource, peak);
++        return days;
++    }
++
+     private DailyUsage? Day(JsonElement d)
+     {
+         if (d.Text("day") is not { } day || Kind(d.Text("source")) is not { } kind) return null;
+@@ -107,8 +170,10 @@ internal sealed class RemoteHostData(Guid id, string label)
      {
          bool sameZone = HistoryTimezone == LocalTimezone();
          return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null,
 -            EnabledSources = SourceSet.From(Enum.GetValues<SourceKind>().Where(IsSourceEnabled)), Days = sameZone ? Days : [], HistoryPartial = sameZone ? HistoryPartial : null,
+-            HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
 +            EnabledSources = SourceSet.From(Enum.GetValues<SourceKind>().Where(IsSourceEnabled)), Days = sameZone ? Days : [], PerfRecords = sameZone ? PerfRecords : null, HistoryPartial = sameZone ? HistoryPartial : null,
-             HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
++            HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent,
++            CollectorPeak = _collectorPeak,
++            HistoryPeak = sameZone && Online && HistoryCurrent && _historyMachineId == _machineId ? _historyPeak : default };
      }
  
+     internal static string LocalTimezone() => TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana) ? iana : TimeZoneInfo.Local.Id;
 @@ -121,6 +126,12 @@ internal sealed class RemoteHostData(Guid id, string label)
      internal static CostTally? Cost(JsonElement e) => e.NullableNumber("cost_micro_usd") is not null && e.NullableNumber("unpriced_requests") is not null
          ? new CostTally(e.Integer("cost_micro_usd"), e.Integer("unpriced_requests")) : null;
@@ -5073,6 +5684,90 @@ index 00000000..cb8c4e13
 +        return result;
 +    }
 +}
+diff --git a/windows/src/AgentSpeed.Core/SpeedFormat.cs b/windows/src/AgentSpeed.Core/SpeedFormat.cs
+index 3f2be834..7e0a1793 100644
+--- a/windows/src/AgentSpeed.Core/SpeedFormat.cs
++++ b/windows/src/AgentSpeed.Core/SpeedFormat.cs
+@@ -7,7 +7,12 @@ public static class SpeedFormat
+ {
+     private static readonly (double Scale, string Unit)[] Units = [(1e3, "k"), (1e6, "M"), (1e9, "B")];
+ 
+-    public static string Speed(double value)
++    public static string Speed(double value) => Speed(value, MidpointRounding.AwayFromZero);
++
++    /// <summary>Uses the same compact precision as <see cref="Speed(double)"/> without overstating a lower bound.</summary>
++    public static string SpeedLowerBound(double value) => Speed(value, MidpointRounding.ToNegativeInfinity);
++
++    private static string Speed(double value, MidpointRounding rounding)
+     {
+         if (!double.IsFinite(value) || value <= 0)
+         {
+@@ -16,17 +21,17 @@ public static class SpeedFormat
+ 
+         if (value < 10)
+         {
+-            var rounded = Math.Round(value, 1, MidpointRounding.AwayFromZero);
++            var rounded = Math.Round(value, 1, rounding);
+             return rounded >= 10 ? "10" : Fixed(rounded, 1);
+         }
+ 
+         if (value < 1000)
+         {
+-            var rounded = Math.Round(value, MidpointRounding.AwayFromZero);
++            var rounded = Math.Round(value, rounding);
+             return rounded >= 1000 ? "1.00k" : ((long)rounded).ToString(CultureInfo.InvariantCulture);
+         }
+ 
+-        return Compact(value);
++        return Compact(value, rounding);
+     }
+ 
+     public static string Tokens(long value)
+@@ -40,34 +45,31 @@ public static class SpeedFormat
+     }
+ 
+     // Three significant digits; a value that rounds up to the next unit uses it (999 700 → 1.00M).
+-    private static string Compact(double value)
++    private static string Compact(double value, MidpointRounding rounding = MidpointRounding.AwayFromZero)
+     {
+         for (var i = 0; i < Units.Length; i++)
+         {
+             var (scale, unit) = Units[i];
+             var scaled = value / scale;
+-            if (Round(scaled, 2) < 10)
++            if (Math.Round(scaled, 2, rounding) < 10)
+             {
+-                return Fixed(scaled, 2) + unit;
++                return Fixed(scaled, 2, rounding) + unit;
+             }
+ 
+-            if (Round(scaled, 1) < 100)
++            if (Math.Round(scaled, 1, rounding) < 100)
+             {
+-                return Fixed(scaled, 1) + unit;
++                return Fixed(scaled, 1, rounding) + unit;
+             }
+ 
+-            if (Round(scaled, 0) < 1000 || i == Units.Length - 1)
++            if (Math.Round(scaled, 0, rounding) < 1000 || i == Units.Length - 1)
+             {
+-                return Fixed(scaled, 0) + unit;
++                return Fixed(scaled, 0, rounding) + unit;
+             }
+         }
+ 
+-        return Fixed(value, 0);
++        return Fixed(value, 0, rounding);
+     }
+ 
+-    private static double Round(double value, int digits) =>
+-        Math.Round(value, digits, MidpointRounding.AwayFromZero);
+-
+-    private static string Fixed(double value, int digits) =>
+-        Round(value, digits).ToString("F" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
++    private static string Fixed(double value, int digits, MidpointRounding rounding = MidpointRounding.AwayFromZero) =>
++        Math.Round(value, digits, rounding).ToString("F" + digits.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+ }
 diff --git a/windows/src/AgentSpeed.Core/SpeedHub.cs b/windows/src/AgentSpeed.Core/SpeedHub.cs
 index b845d3fa..9a7d36d9 100644
 --- a/windows/src/AgentSpeed.Core/SpeedHub.cs
@@ -5299,19 +5994,113 @@ index 975b1d7b..4e14fccb 100644
          }
  
          return new PerfHistorySection(PerfHistoryState.Rows, sorted, chosen, PerfHistoryChart.Of(chosen, days, highlighted, loc), sort);
+diff --git a/windows/src/AgentSpeed/App/AppController.cs b/windows/src/AgentSpeed/App/AppController.cs
+index 852c0daa..9cc8078f 100644
+--- a/windows/src/AgentSpeed/App/AppController.cs
++++ b/windows/src/AgentSpeed/App/AppController.cs
+@@ -534,6 +534,7 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         try
+         {
+             _monitor = new LiveMonitor(_hub, Settings.ToMonitorConfiguration(), _cost.Book);
++            UpdateDashboardSubsets(Settings);
+             _monitor.Start();
+         }
+         catch (Exception ex)
+@@ -644,10 +645,10 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         RefreshDashboard();
+     }
+ 
+-    private bool TryDashboardView(out SpeedSnapshot snapshot, out OrbFeed? feed)
++    private bool TryDashboardView(out SpeedSnapshot snapshot, out OrbFeed? feed, SpeedSnapshot? original = null)
+     {
+         _dashboardContext.ConfigureGlobal(Settings.DashboardExcludedSources, _speed.Metric, _speed.Redline, _speed.Now);
+-        if (_dashboardContext.TryResolve(_speed.Snapshot, id => _orbs?.FeedFor(id), out snapshot, out feed)) return true;
++        if (_dashboardContext.TryResolve(original ?? _speed.Snapshot, id => _orbs?.FeedFor(id), out snapshot, out feed)) return true;
+         _dashboard?.Dismiss();
+         _dashboardTimer?.Stop();
+         _dashboardDirty = false;
+@@ -662,7 +663,8 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         }
+ 
+         _dashboardDirty = false;
+-        if (!TryDashboardView(out var snapshot, out var feed)) return;
++        var original = _speed.Snapshot;
++        if (!TryDashboardView(out var snapshot, out var feed, original)) return;
+         var value = feed?.Value ?? _speed.Value;
+         var title = feed?.Title ?? _speed.Title;
+         var redline = feed?.Redline ?? _speed.Redline;
+@@ -678,7 +680,8 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+         _dashboardModel.CapsuleAppearance = CapsuleAppearance;
+         _dashboardModel.TransparencyEnabled = _theme.TransparencyEnabled;
+         _dashboardModel.LiveUnit = Settings.Cost.LiveUnit;
+-        _dashboardModel.Update(snapshot, value, title, redline, _speed.Metric, _loc, _theme.IsDark);
++        var dashboardPeak = OrbSubset.DashboardTodayPeak(original, feed?.Sources, feed?.ExcludedSources ?? [], _speed.Metric, DateTimeOffset.Now);
++        _dashboardModel.Update(snapshot, value, title, redline, _speed.Metric, _loc, _theme.IsDark, dashboardPeak);
+         var peakAvailable = snapshot.RemoteHosts.Count == 0 && (_speed.Metric == SpeedMetric.Output
+             ? snapshot.PeakTodayOutputAvailable : snapshot.PeakTodayTotalAvailable);
+         var peak = peakAvailable ? snapshot.PeakToday.ValueFor(_speed.Metric) : 0;
+@@ -691,6 +694,21 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             _loc["win.chart.peak"], _loc["unit.tokS"], summary);
+     }
+ 
++    private void UpdateDashboardSubsets(AppSettings settings)
++    {
++        if (_monitor is not { } monitor) return;
++        var enabled = settings.EnabledSourceSet();
++        var sets = new HashSet<SourceSet>();
++        void Add(SourceSet? sources, IReadOnlyCollection<OrbSourceInstance> exclusions)
++        {
++            var subset = OrbSubset.DashboardLocalMembers(enabled, sources, exclusions);
++            if (!subset.IsEmpty && subset != enabled) sets.Add(subset);
++        }
++        Add(null, settings.DashboardExcludedSources);
++        foreach (var orb in settings.Orbs.Orbs) Add(orb.TrackedSources, orb.ExcludedSources);
++        monitor.SetDashboardSubsets(sets);
++    }
++
+     // ---- Surfaces ----
+ 
+     private void ConfigureOrb()
+@@ -1139,6 +1157,9 @@ internal sealed partial class AppController : IAppCommands, IOrbHost, IDisposabl
+             _speed.Configure(current.Metric, current.Redline);
+         }
+ 
++        if (previous.Orbs.Orbs != current.Orbs.Orbs || previous.DashboardExcludedSources != current.DashboardExcludedSources
++            || previous.EnabledSourceSet() != current.EnabledSourceSet()) UpdateDashboardSubsets(current);
++
+         if (!previous.ToMonitorConfiguration().Equals(current.ToMonitorConfiguration()))
+         {
+             _hub.SetEnabledSources(current.ToMonitorConfiguration().EnabledSources);
 diff --git a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
 index d63ba01b..c6bd097a 100644
 --- a/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
 +++ b/windows/src/AgentSpeed/Dashboard/DashboardViewModel.cs
-@@ -450,7 +450,7 @@ internal sealed partial class DashboardViewModel : ObservableObject
+@@ -407,7 +407,7 @@ internal sealed partial class DashboardViewModel : ObservableObject
+ 
+     /// <param name="title">The speed title shown under the hero value.</param>
+     public void Update(SpeedSnapshot snapshot, double value, SpeedTitle title, double redline, SpeedMetric metric,
+-        Localizer loc, bool darkTheme)
++        Localizer loc, bool darkTheme, DashboardPeak? dashboardPeak = null)
+     {
+         var unit = loc["unit.tokS"];
+         ValueText = snapshot.RemoteLiveComplete ? SpeedFormat.Speed(value) : "—";
+@@ -450,11 +450,11 @@ internal sealed partial class DashboardViewModel : ObservableObject
          OutputText = snapshot.RemoteTodayComplete ? SpeedFormat.Tokens(today.Output) : "—";
          InputText = snapshot.RemoteTodayComplete ? SpeedFormat.Tokens(today.Input) : "—";
          RequestsText = snapshot.RemoteTodayComplete ? today.Requests.ToString("N0", loc.Culture) : "—";
 -        AverageText = snapshot.RemoteHosts.Count == 0 && snapshot.AverageToday is { } average ? $"{SpeedFormat.Speed(average)} {unit}" : "—";
+-        var peak = snapshot.PeakToday.ValueFor(metric);
+-        var peakAvailable = metric == SpeedMetric.Output ? snapshot.PeakTodayOutputAvailable : snapshot.PeakTodayTotalAvailable;
+-        PeakText = snapshot.RemoteHosts.Count == 0 && peakAvailable ? $"{SpeedFormat.Speed(peak)} {unit}" : "—";
+-        PeakTimeText = snapshot.RemoteHosts.Count == 0 && peakAvailable && snapshot.PeakTodayAt is { } at && peak > 0
 +        AverageText = snapshot.AverageToday is { } average ? $"{SpeedFormat.Speed(average)} {unit}" : "—";
-         var peak = snapshot.PeakToday.ValueFor(metric);
-         var peakAvailable = metric == SpeedMetric.Output ? snapshot.PeakTodayOutputAvailable : snapshot.PeakTodayTotalAvailable;
-         PeakText = snapshot.RemoteHosts.Count == 0 && peakAvailable ? $"{SpeedFormat.Speed(peak)} {unit}" : "—";
++        PeakText = dashboardPeak is { } peak
++            ? (peak.AtLeast ? "≥" + SpeedFormat.SpeedLowerBound(peak.Value) : SpeedFormat.Speed(peak.Value)) + " " + unit
++            : "—";
++        PeakTimeText = dashboardPeak?.At is { } at
+             ? at.ToLocalTime().ToString("t", loc.Culture)
+             : string.Empty;
+ 
 diff --git a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs b/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs
 index aa900294..d92e557c 100644
 --- a/windows/src/AgentSpeed/History/HistoryViewModel.Perf.cs

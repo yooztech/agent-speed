@@ -1232,7 +1232,7 @@ index 35c60075..f8ceece2 100644
      public DateTimeOffset? HistoryReceivedAt { get; init; }
      public bool HistoryCurrent { get; init; }
 @@ -34,6 +35,16 @@ internal sealed class RemoteHostData(Guid id, string label)
-     private string? _historyMachineId;
+     private RemoteDashboardPeak _historyPeak;
      public IReadOnlyList<DailyUsage> Days { get; set; } = [];
      public IReadOnlyList<PerfRecord>? PerfRecords { get; set; }
 +    public RemoteTraffic? Traffic { get; set; }
@@ -1248,10 +1248,11 @@ index 35c60075..f8ceece2 100644
      public string? HistoryTimezone { get; set; }
      public bool? HistoryPartial { get; set; }
      public DateTimeOffset? HistoryReceivedAt { get; set; }
-@@ -55,6 +66,9 @@ internal sealed class RemoteHostData(Guid id, string label)
+@@ -55,7 +66,10 @@ internal sealed class RemoteHostData(Guid id, string label)
                      { Error = "Invalid collector sources"; return false; }
                      Snapshot = root.Clone(); Online = true; Error = null;
                      _machineId = root.Text("machine_id");
+                     _collectorPeak = ReadCollectorPeak(root, sources);
 +                    var receivedTraffic = RemoteTraffic.Parse(root);
 +                    Traffic = receivedTraffic is null ? (Traffic ?? _previousTraffic)?.Unavailable()
 +                        : RemoteTraffic.PreserveMissingToday(Traffic, RemoteTraffic.MergeSession(_previousTraffic, receivedTraffic));
@@ -1264,9 +1265,9 @@ index 35c60075..f8ceece2 100644
          return new(Id, Label, Online, Error) { MachineId = _historyMachineId ?? _machineId ?? Id.ToString(), SourcesKnown = Snapshot?.Array("sources") is not null,
 -            EnabledSources = SourceSet.From(Enum.GetValues<SourceKind>().Where(IsSourceEnabled)), Days = sameZone ? Days : [], PerfRecords = sameZone ? PerfRecords : null, HistoryPartial = sameZone ? HistoryPartial : null,
 +            EnabledSources = SourceSet.From(Enum.GetValues<SourceKind>().Where(IsSourceEnabled)), Days = sameZone ? Days : [], PerfRecords = sameZone ? PerfRecords : null, Traffic = Online ? Traffic : Traffic?.Offline(), HistoryPartial = sameZone ? HistoryPartial : null,
-             HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent };
-     }
- 
+             HistoryReceivedAt = sameZone ? HistoryReceivedAt : null, HistoryCurrent = sameZone && Online && HistoryCurrent,
+             CollectorPeak = _collectorPeak,
+             HistoryPeak = sameZone && Online && HistoryCurrent && _historyMachineId == _machineId ? _historyPeak : default };
 diff --git a/windows/src/AgentSpeed.Core/RemoteTraffic.cs b/windows/src/AgentSpeed.Core/RemoteTraffic.cs
 new file mode 100644
 index 00000000..1d92d44b
